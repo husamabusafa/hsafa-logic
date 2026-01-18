@@ -1,19 +1,19 @@
 import { useState, useEffect } from 'react';
 
 export interface UseAgentConfigResult {
-  agentYaml: string | null;
+  agentConfig: string | null;
   loading: boolean;
   error: Error | null;
 }
 
 /**
- * Hook to load agent YAML configuration from the server
+ * Hook to load agent configuration from the server
  * @param agentName - Name of the agent (without .hsafa extension)
  * @param baseUrl - Base URL of the server (default: '')
- * @returns Object with agentYaml, loading, and error states
+ * @returns Object with agentConfig, loading, and error states
  */
 export function useAgentConfig(agentName: string, baseUrl: string = ''): UseAgentConfigResult {
-  const [agentYaml, setAgentYaml] = useState<string | null>(null);
+  const [agentConfig, setAgentConfig] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -36,7 +36,7 @@ export function useAgentConfig(agentName: string, baseUrl: string = ''): UseAgen
         return response.json();
       })
       .then((data) => {
-        setAgentYaml(data.agentYaml);
+        setAgentConfig(data.agentConfig);
         setLoading(false);
       })
       .catch((err) => {
@@ -45,5 +45,5 @@ export function useAgentConfig(agentName: string, baseUrl: string = ''): UseAgen
       });
   }, [agentName, baseUrl]);
 
-  return { agentYaml, loading, error };
+  return { agentConfig, loading, error };
 }

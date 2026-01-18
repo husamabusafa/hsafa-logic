@@ -46,8 +46,8 @@ import { lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
 export interface UseHsafaAgentConfig {
   /** The agent name (references .hsafa/agents/{agentName}.hsafa) */
   agentName: string;
-  /** The agent YAML configuration string */
-  agentYaml: string;
+  /** The agent configuration string */
+  agentConfig: string;
   /** Base URL of your backend server */
   baseUrl?: string;
   /** Custom tools that the agent can use */
@@ -129,7 +129,7 @@ export interface HsafaAgentAPI {
 export function useHsafaAgent(config: UseHsafaAgentConfig): HsafaAgentAPI {
   const {
     agentName,
-    agentYaml,
+    agentConfig,
     baseUrl: configBaseUrl = '',
     tools: customTools = {},
     uiComponents: customUIComponents = {},
@@ -164,7 +164,7 @@ export function useHsafaAgent(config: UseHsafaAgentConfig): HsafaAgentAPI {
   }, [chatId, setCurrentChatId]);
 
   // Configure transport to fetch from the correct endpoint
-  const transport = useMemo(() => createHsafaTransport(effectiveBaseUrl, agentName, agentYaml, chatId, templateParams), [effectiveBaseUrl, agentName, agentYaml, chatId, templateParams]);
+  const transport = useMemo(() => createHsafaTransport(effectiveBaseUrl, agentName, agentConfig, chatId, templateParams), [effectiveBaseUrl, agentName, agentConfig, chatId, templateParams]);
   
   // Memoize callbacks to prevent infinite loops
   const onFinishCallback = useCallback((payload: any) => {

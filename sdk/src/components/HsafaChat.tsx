@@ -19,7 +19,7 @@ import CursorController from "./web-controler/CursorController";
 
 export function HsafaChat({
   agentName,
-  agentYaml,
+  agentConfig,
   theme,
   primaryColor,
   primaryColorDark,
@@ -202,7 +202,7 @@ export function HsafaChat({
   // Use the agent hook for all agent-related logic
   const agent = useHsafaAgent({
     agentName,
-    agentYaml,
+    agentConfig,
     baseUrl: effectiveBaseUrl,
     tools: HsafaTools,
     uiComponents: HsafaUI,

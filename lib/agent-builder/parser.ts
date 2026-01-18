@@ -1,5 +1,5 @@
 import yaml from 'js-yaml';
-import { AgentYamlConfigSchema, type AgentYamlConfig } from './types';
+import { AgentConfigSchema, type AgentConfig } from './types';
 
 export class AgentConfigParseError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
@@ -8,15 +8,15 @@ export class AgentConfigParseError extends Error {
   }
 }
 
-export function parseAgentYaml(yamlString: string): AgentYamlConfig {
+export function parseAgentConfig(configString: string): AgentConfig {
   try {
-    const parsed = yaml.load(yamlString);
+    const parsed = yaml.load(configString);
     
     if (!parsed || typeof parsed !== 'object') {
       throw new AgentConfigParseError('Invalid YAML: expected an object');
     }
 
-    const validated = AgentYamlConfigSchema.parse(parsed);
+    const validated = AgentConfigSchema.parse(parsed);
     
     return validated;
   } catch (error) {
@@ -50,7 +50,7 @@ export function interpolateEnvVars(value: string, env: Record<string, string | u
   });
 }
 
-export function interpolateConfigEnvVars(config: AgentYamlConfig): AgentYamlConfig {
+export function interpolateConfigEnvVars(config: AgentConfig): AgentConfig {
   const cloned = structuredClone(config);
   
   if (cloned.tools) {

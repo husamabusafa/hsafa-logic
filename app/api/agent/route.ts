@@ -58,11 +58,11 @@ function normalizeToUIMessages(messages: IncomingMessage[]): UIMessage[] {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { agentYaml, messages } = body;
+    const { agentConfig, messages } = body;
 
-    if (!agentYaml) {
+    if (!agentConfig) {
       return new Response(
-        JSON.stringify({ error: 'Missing required field: agentYaml' }),
+        JSON.stringify({ error: 'Missing required field: agentConfig' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -76,7 +76,7 @@ export async function POST(request: Request) {
 
     console.log('[Agent API] Received messages:', JSON.stringify(messages, null, 2));
 
-    const { agent } = await buildAgent({ yamlConfig: agentYaml });
+    const { agent } = await buildAgent({ configString: agentConfig });
 
     const uiMessages = normalizeToUIMessages(messages);
     

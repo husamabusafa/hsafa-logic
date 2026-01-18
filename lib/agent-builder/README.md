@@ -32,7 +32,7 @@ Executes an agent based on YAML configuration and returns a streaming response.
 **Request Body:**
 ```json
 {
-  "agentYaml": "version: \"1.0\"\nagent:\n  name: basic-chat\n  ...",
+  "agentConfig": "version: \"1.0\"\nagent:\n  name: basic-chat\n  ...",
   "messages": [
     { "role": "user", "content": "Hello!" }
   ]
@@ -79,7 +79,7 @@ const response = await fetch('/api/agent', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    agentYaml: yamlConfigString,
+    agentConfig: configString,
     messages: [
       { role: 'user', content: 'What is the weather?' }
     ]
@@ -109,7 +109,7 @@ function ChatComponent() {
     transport: {
       api: '/api/agent',
       body: {
-        agentYaml: yamlConfigString
+        agentConfig: configString
       }
     }
   });
@@ -237,7 +237,7 @@ Test the basic chat agent:
 curl -X POST http://localhost:3000/api/agent \
   -H "Content-Type: application/json" \
   -d '{
-    "agentYaml": "version: \"1.0\"\nagent:\n  name: test\n  system: You are helpful.\nmodel:\n  provider: openai\n  name: gpt-4o-mini",
+    "agentConfig": "version: \"1.0\"\nagent:\n  name: test\n  system: You are helpful.\nmodel:\n  provider: openai\n  name: gpt-4o-mini",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```

@@ -1,15 +1,15 @@
 import { ToolLoopAgent, stepCountIs } from 'ai';
-import { parseAgentYaml, interpolateConfigEnvVars } from './parser';
+import { parseAgentConfig, interpolateConfigEnvVars } from './parser';
 import { resolveModel, getModelSettings } from './model-resolver';
-import type { AgentYamlConfig } from './types';
+import type { AgentConfig } from './types';
 
 export interface BuildAgentOptions {
-  yamlConfig: string;
+  configString: string;
 }
 
 export interface BuildAgentResult {
   agent: ToolLoopAgent;
-  config: AgentYamlConfig;
+  config: AgentConfig;
 }
 
 export class AgentBuildError extends Error {
@@ -20,11 +20,11 @@ export class AgentBuildError extends Error {
 }
 
 export async function buildAgent(options: BuildAgentOptions): Promise<BuildAgentResult> {
-  const { yamlConfig } = options;
+  const { configString } = options;
 
-  let config: AgentYamlConfig;
+  let config: AgentConfig;
   try {
-    config = parseAgentYaml(yamlConfig);
+    config = parseAgentConfig(configString);
     config = interpolateConfigEnvVars(config);
   } catch (error) {
     throw new AgentBuildError(

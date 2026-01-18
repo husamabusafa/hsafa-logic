@@ -19,7 +19,7 @@ The HSAFA agent builder system has been successfully refactored to work with the
    - `/api/agent-config/[agentName]` - Load agent YAML configs (GET)
 
 3. **SDK Updates** (`sdk/src/`)
-   - Updated `HsafaChat` component to accept `agentName` and `agentYaml` props
+   - Updated `HsafaChat` component to accept `agentName` and `agentConfig` props
    - Updated `useHsafaAgent` hook to work with new API
    - Created `useAgentConfig` hook for loading agent configs client-side
    - Updated transport to use `/api/agent` endpoint
@@ -66,15 +66,15 @@ import { useAgentConfig } from '@/sdk/src/hooks/useAgentConfig';
 
 export default function Page() {
   // Load agent config from server
-  const { agentYaml, loading, error } = useAgentConfig('basic-chat');
+  const { agentConfig, loading, error } = useAgentConfig('basic-chat');
 
   if (loading) return <div>Loading agent...</div>;
-  if (error || !agentYaml) return <div>Error: {error?.message}</div>;
+  if (error || !agentConfig) return <div>Error: {error?.message}</div>;
 
   return (
     <HsafaChat
       agentName="basic-chat"
-      agentYaml={agentYaml}
+      agentConfig={agentConfig}
       fullPageChat={true}
       theme="dark"
       title="My Agent"
@@ -88,14 +88,14 @@ export default function Page() {
 
 1. **Client** calls `useAgentConfig('basic-chat')` hook
 2. **Hook** fetches from `/api/agent-config/basic-chat`
-3. **API** loads YAML from `.hsafa/agents/basic-chat.hsafa`
-4. **Client** receives `agentYaml` string
-5. **HsafaChat** passes `agentYaml` to `useHsafaAgent` hook
-6. **useHsafaAgent** creates transport with `agentYaml` embedded
+3. **API** loads config from `.hsafa/agents/basic-chat.hsafa`
+4. **Client** receives `agentConfig` string
+5. **HsafaChat** passes `agentConfig` to `useHsafaAgent` hook
+6. **useHsafaAgent** creates transport with `agentConfig` embedded
 7. **On message send**, transport posts to `/api/agent` with:
-   - `agentYaml` - The agent configuration
+   - `agentConfig` - The agent configuration
    - `messages` - Chat messages in UIMessage format
-8. **API** parses YAML, builds ToolLoopAgent, streams response
+8. **API** parses config, builds ToolLoopAgent, streams response
 
 ## Key Changes from Old System
 
@@ -105,7 +105,7 @@ export default function Page() {
 - API endpoint: `/api/run/{agentId}`
 
 ### After (New System)
-- Uses `agentName` + `agentYaml` configuration
+- Uses `agentName` + `agentConfig` configuration
 - Agents are built dynamically at request time
 - API endpoint: `/api/agent`
 - Agent configs stored in `.hsafa/agents/`
@@ -137,11 +137,11 @@ export default function Page() {
 
 3. Use in your app:
    ```tsx
-   const { agentYaml, loading, error } = useAgentConfig('my-agent');
+   const { agentConfig, loading, error } = useAgentConfig('my-agent');
    
    <HsafaChat
      agentName="my-agent"
-     agentYaml={agentYaml}
+     agentConfig={agentConfig}
      ...
    />
    ```
@@ -174,7 +174,7 @@ OPENAI_API_KEY=sk-...
    curl -X POST http://localhost:3000/api/agent \
      -H "Content-Type: application/json" \
      -d '{
-       "agentYaml": "version: \"1.0\"\n\nagent:\n  name: test\n  system: You are helpful.\n\nmodel:\n  provider: openai\n  name: gpt-4o-mini",
+       "agentConfig": "version: \"1.0\"\n\nagent:\n  name: test\n  system: You are helpful.\n\nmodel:\n  provider: openai\n  name: gpt-4o-mini",
        "messages": [{"role": "user", "content": "Hello!"}]
      }'
    ```

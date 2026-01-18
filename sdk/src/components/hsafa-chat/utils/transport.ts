@@ -3,7 +3,7 @@ import { DefaultChatTransport } from "ai";
 export function createHsafaTransport(
   baseUrl: string,
   agentName: string,
-  agentYaml: string,
+  agentConfig: string,
   chatId: string,
   templateParams?: Record<string, unknown>
 ) {
@@ -14,10 +14,10 @@ export function createHsafaTransport(
       const body = reqInit?.body ? JSON.parse(reqInit.body as string) : {};
       const mergedParams = templateParams && typeof templateParams === 'object' ? templateParams : {};
       
-      // Extract messages from body and merge with agentYaml
+      // Extract messages from body and merge with agentConfig
       const enhancedBody = {
         ...mergedParams,
-        agentYaml,
+        agentConfig,
         messages: body.messages || [],
         chatId,
       } as Record<string, unknown>;

@@ -7,7 +7,7 @@ export const ModelConfigSchema = z.object({
   maxOutputTokens: z.number().positive().optional().default(1000),
 });
 
-export const AgentConfigSchema = z.object({
+export const AgentDetailsSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
   system: z.string(),
@@ -73,9 +73,9 @@ export const McpConfigSchema = z.object({
   servers: z.array(McpServerSchema),
 });
 
-export const AgentYamlConfigSchema = z.object({
+export const AgentConfigSchema = z.object({
   version: z.string(),
-  agent: AgentConfigSchema,
+  agent: AgentDetailsSchema,
   model: ModelConfigSchema,
   loop: LoopConfigSchema.optional().default({
     maxSteps: 5,
@@ -88,9 +88,9 @@ export const AgentYamlConfigSchema = z.object({
   }),
 });
 
-export type AgentYamlConfig = z.infer<typeof AgentYamlConfigSchema>;
-export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
+export type ModelConfig = z.infer<typeof ModelConfigSchema>;
+export type AgentDetails = z.infer<typeof AgentDetailsSchema>;
 export type LoopConfig = z.infer<typeof LoopConfigSchema>;
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 export type ToolConfig = z.infer<typeof ToolSchema>;

@@ -9,8 +9,11 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.15",
+    "@ai-sdk/google": "^3.0.10",
     "@ai-sdk/openai": "^3.0.12",
     "@ai-sdk/react": "^3.0.41",
+    "@ai-sdk/xai": "^3.0.26",
     "@ant-design/x": "^2.1.0",
     "@ant-design/x-markdown": "^2.1.0",
     "@tabler/icons-react": "^3.21.0",

@@ -63,7 +63,7 @@ export type CustomToolUIRenderProps = {
 
 export interface HsafaChatProps {
   agentName: string;
-  agentYaml: string;
+  agentConfig: string;
   theme?: 'dark' | 'light';
   primaryColor?: string;
   primaryColorDark?: string;

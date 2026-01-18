@@ -22,11 +22,11 @@ export async function GET(
       );
     }
 
-    const agentYaml = loadAgentConfig(agentName);
+    const agentConfig = loadAgentConfig(agentName);
 
     return NextResponse.json({
       agentName,
-      agentYaml,
+      agentConfig,
     });
   } catch (error) {
     console.error('[Agent Config API Error]', error);

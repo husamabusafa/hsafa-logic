@@ -4,7 +4,7 @@ import { HsafaChat } from '@/sdk/src/components/HsafaChat';
 import { useAgentConfig } from '@/sdk/src/hooks/useAgentConfig';
 
 export default function Home() {
-  const { agentYaml, loading, error } = useAgentConfig('basic-chat');
+  const { agentConfig, loading, error } = useAgentConfig('basic-chat');
 
   if (loading) {
     return (
@@ -17,7 +17,7 @@ export default function Home() {
     );
   }
 
-  if (error || !agentYaml) {
+  if (error || !agentConfig) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-white">
         <div className="max-w-md text-center">
@@ -36,7 +36,7 @@ export default function Home() {
   return (
     <HsafaChat
       agentName="basic-chat"
-      agentYaml={agentYaml}
+      agentConfig={agentConfig}
       fullPageChat={true}
       theme="dark"
       title="HSAFA Agent"
