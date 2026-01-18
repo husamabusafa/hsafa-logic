@@ -40,7 +40,7 @@ export async function buildAgent(options: BuildAgentOptions): Promise<BuildAgent
     const agent = new ToolLoopAgent({
       model,
       instructions: config.agent.system,
-      stopWhen: stepCountIs(config.loop?.maxSteps ?? 5),
+      stopWhen: stepCountIs(config.loop?.maxSteps ?? 20),
       toolChoice: config.loop?.toolChoice ?? 'auto',
       ...modelSettings,
     });

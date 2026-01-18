@@ -3,27 +3,56 @@ import { buildAgent, AgentBuildError } from '@/lib/agent-builder/builder';
 
 export const runtime = 'edge';
 
-interface SimpleMessage {
+interface UIMessagePart {
+  type: string;
+  text?: string;
+  [key: string]: any;
+}
+
+interface IncomingMessage {
+  id?: string;
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content?: string;
+  parts?: UIMessagePart[];
 }
 
 interface UIMessage {
   id: string;
   role: 'system' | 'user' | 'assistant';
-  parts: Array<{ type: 'text'; text: string }>;
+  parts: Array<{ type: string; text?: string; [key: string]: any }>;
 }
 
 function generateId(): string {
   return crypto.randomUUID();
 }
 
-function convertToUIMessages(messages: SimpleMessage[]): UIMessage[] {
-  return messages.map((msg) => ({
-    id: generateId(),
-    role: msg.role,
-    parts: [{ type: 'text', text: msg.content }],
-  }));
+function normalizeToUIMessages(messages: IncomingMessage[]): UIMessage[] {
+  return messages.map((msg) => {
+    // If message already has properly formatted parts, use them
+    if (msg.parts && msg.parts.length > 0) {
+      return {
+        id: msg.id || generateId(),
+        role: msg.role,
+        parts: msg.parts,
+      };
+    }
+    
+    // If message has content string, convert to parts format
+    if (msg.content) {
+      return {
+        id: msg.id || generateId(),
+        role: msg.role,
+        parts: [{ type: 'text', text: msg.content }],
+      };
+    }
+    
+    // Fallback - create empty text part
+    return {
+      id: msg.id || generateId(),
+      role: msg.role,
+      parts: [{ type: 'text', text: '' }],
+    };
+  });
 }
 
 export async function POST(request: Request) {
@@ -45,9 +74,13 @@ export async function POST(request: Request) {
       );
     }
 
+    console.log('[Agent API] Received messages:', JSON.stringify(messages, null, 2));
+
     const { agent } = await buildAgent({ yamlConfig: agentYaml });
 
-    const uiMessages = convertToUIMessages(messages);
+    const uiMessages = normalizeToUIMessages(messages);
+    
+    console.log('[Agent API] Normalized messages:', JSON.stringify(uiMessages, null, 2));
 
     return createAgentUIStreamResponse({
       agent,
