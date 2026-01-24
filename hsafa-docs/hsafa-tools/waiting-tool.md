@@ -12,6 +12,19 @@ Pause agent execution for a specified duration. Useful for retry logic, rate lim
 - Poll status at intervals
 - Delay until specific time
 
+## Execution Property
+
+In agent config, the `execution` property can pre-configure wait duration (optional):
+
+```json
+{
+  "duration": 1000,               // Fixed milliseconds to wait
+  "reason": "string"              // Optional: why waiting
+}
+```
+
+**Note:** If `execution` is `null` or duration not specified, use input parameters.
+
 ## Input Schema
 
 ```json
@@ -25,46 +38,81 @@ Pause agent execution for a specified duration. Useful for retry logic, rate lim
 }
 ```
 
+## Agent Config Example
+
+```json
+{
+  "name": "waitBeforeRetry",
+  "description": "Wait before retrying operation",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "seconds": {"type": "number"},
+      "reason": {"type": "string"}
+    }
+  },
+  "executionType": "waiting",
+  "execution": null
+}
+```
+
+**Note:** Duration comes from input, not execution config.
+
 ## Examples
 
 ### Simple Delay
 ```json
+// Agent calls:
 {
   "seconds": 5,
   "reason": "Retry after failure"
 }
+
+// Waits 5 seconds
 ```
 
 ### Rate Limiting
 ```json
+// Agent calls:
 {
   "duration": 1000,
   "reason": "API rate limit cooldown"
 }
+
+// Waits 1 second
 ```
 
 ### Polling
 ```json
+// Agent calls:
 {
   "seconds": 30,
   "reason": "Check job status again"
 }
+
+// Waits 30 seconds
 ```
 
 ### Wait Until Time
 ```json
+// Agent calls:
 {
   "until": "2024-01-25T09:00:00Z",
   "reason": "Wait for business hours"
 }
+
+// Waits until specified time
 ```
 
 ### Exponential Backoff
 ```json
+// Agent calls:
 {
   "duration": 4000,              // 2^attempt * 1000
   "reason": "Exponential backoff attempt 2"
 }
+
+// Waits 4 seconds
 ```
 
 ## Response Format

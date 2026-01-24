@@ -11,16 +11,47 @@ Delegate tasks to other AI agents. Enables multi-agent systems where specialized
 - Chain multiple agents for complex workflows
 - Run agents in parallel
 
-## Input Schema
+## Execution Property
+
+In agent config, use the `execution` property to specify the target agent:
 
 ```json
 {
   "agentId": "string",              // Target agent ID
+  "timeout": 30000                  // Optional timeout in ms
+}
+```
+
+## Input Schema
+
+```json
+{
   "prompt": "string",               // Task/message to send
   "context": {},                    // Optional context data
-  "conversationHistory": [],        // Optional previous messages
-  "timeout": 30000,                 // Optional timeout in ms
-  "streaming": false                // Optional streaming response
+  "conversationHistory": []         // Optional previous messages
+}
+```
+
+## Agent Config Example
+
+```json
+{
+  "name": "analyzeFinancials",
+  "description": "Analyze financial data using specialized agent",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {"type": "string"},
+      "quarter": {"type": "string"},
+      "year": {"type": "number"}
+    },
+    "required": ["prompt"]
+  },
+  "executionType": "ai-agent",
+  "execution": {
+    "agentId": "finance-analyst",
+    "timeout": 30000
+  }
 }
 ```
 
@@ -28,20 +59,27 @@ Delegate tasks to other AI agents. Enables multi-agent systems where specialized
 
 ### Delegate to Specialist
 ```json
+// Agent calls:
 {
-  "agentId": "finance-analyst",
   "prompt": "Analyze Q4 2024 profitability",
   "context": {
     "quarter": "Q4",
     "year": 2024
   }
 }
+
+// Delegates to finance-analyst agent
 ```
 
 ### Support Escalation
 ```json
+// Agent config execution:
 {
-  "agentId": "tier2-support",
+  "agentId": "tier2-support"
+}
+
+// Agent calls:
+{
   "prompt": "Customer has authentication errors after password reset",
   "context": {
     "customerId": "CUST-123",
@@ -56,12 +94,10 @@ Delegate tasks to other AI agents. Enables multi-agent systems where specialized
 
 ### Parallel Execution
 ```json
-// Call multiple agents simultaneously
-[
-  {"agentId": "sentiment-analyzer", "prompt": "Analyze reviews"},
-  {"agentId": "trend-detector", "prompt": "Find trending topics"},
-  {"agentId": "issue-classifier", "prompt": "Categorize complaints"}
-]
+// Define multiple AI agent tools, agent calls them in parallel
+// Tool 1: sentiment-analyzer agent
+// Tool 2: trend-detector agent  
+// Tool 3: issue-classifier agent
 ```
 
 ## Response Format

@@ -11,7 +11,9 @@ Make HTTP requests to external APIs and services. Supports dynamic variable subs
 - Fetch or submit data to external services
 - Integrate with third-party platforms
 
-## Input Schema
+## Execution Property
+
+In agent config, use the `execution` property to configure the HTTP request:
 
 ```json
 {
@@ -20,8 +22,40 @@ Make HTTP requests to external APIs and services. Supports dynamic variable subs
   "headers": {},                // Optional headers with {{variable}} support
   "queryParams": {},            // Optional query parameters
   "body": {},                   // Optional request body
-  "timeout": 30000,             // Optional timeout in ms
-  "variables": {}               // Values for {{variable}} replacement
+  "timeout": 30000              // Optional timeout in ms
+}
+```
+
+## Input Schema
+
+```json
+{
+  "variables": {}               // Values for {{variable}} replacement in execution config
+  // ... any additional data for the request
+}
+```
+
+## Agent Config Example
+
+```json
+{
+  "name": "fetchUserData",
+  "description": "Fetch user data from API",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "userId": {"type": "string"}
+    },
+    "required": ["userId"]
+  },
+  "executionType": "request",
+  "execution": {
+    "url": "https://api.example.com/users/{{userId}}",
+    "method": "GET",
+    "headers": {
+      "Authorization": "Bearer {{apiKey}}"
+    }
+  }
 }
 ```
 
@@ -29,21 +63,20 @@ Make HTTP requests to external APIs and services. Supports dynamic variable subs
 
 ### GET Request
 ```json
+// Agent calls:
 {
-  "url": "https://api.example.com/users/{{userId}}",
-  "method": "GET",
-  "headers": {
-    "Authorization": "Bearer {{token}}"
-  },
-  "variables": {
-    "userId": "123",
-    "token": "abc123"
-  }
+  "userId": "123",
+  "variables": {"apiKey": "abc123"}
 }
+
+// Request sent:
+// GET https://api.example.com/users/123
+// Headers: Authorization: Bearer abc123
 ```
 
 ### POST Request
 ```json
+// Agent config execution:
 {
   "url": "https://api.crm.com/tickets",
   "method": "POST",
@@ -53,27 +86,32 @@ Make HTTP requests to external APIs and services. Supports dynamic variable subs
   "body": {
     "title": "{{title}}",
     "priority": "high"
-  },
-  "variables": {
-    "apiKey": "secret_key",
-    "title": "System Alert"
   }
+}
+
+// Agent calls:
+{
+  "title": "System Alert",
+  "variables": {"apiKey": "secret_key"}
 }
 ```
 
 ### Webhook
 ```json
+// Agent config execution:
 {
   "url": "{{webhookUrl}}",
   "method": "POST",
   "body": {
     "event": "order.completed",
     "orderId": "{{orderId}}"
-  },
-  "variables": {
-    "webhookUrl": "https://hooks.example.com/events",
-    "orderId": "ORD-123"
   }
+}
+
+// Agent calls:
+{
+  "orderId": "ORD-123",
+  "variables": {"webhookUrl": "https://hooks.example.com/events"}
 }
 ```
 

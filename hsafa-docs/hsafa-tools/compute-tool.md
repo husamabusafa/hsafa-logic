@@ -12,13 +12,22 @@ Perform safe logic and calculations on data. No external calls or arbitrary code
 - Perform calculations and aggregations
 - Calculate scores and rankings
 
+## Execution Property
+
+In agent config, use the `execution` property to pre-configure operation and expression:
+
+```json
+{
+  "operation": "string",          // Type of operation
+  "expression": "string"          // Optional: expression to evaluate
+}
+```
+
 ## Input Schema
 
 ```json
 {
-  "operation": "string",          // Type of operation (see below)
   "data": {},                     // Input data
-  "expression": "string",         // Optional: expression to evaluate
   "rules": [],                    // Optional: validation/decision rules
   "parameters": {}                // Optional: additional parameters
 }
@@ -32,21 +41,53 @@ Perform safe logic and calculations on data. No external calls or arbitrary code
 **Math:** `calculate`, `aggregate`, `round`  
 **Scoring:** `score`, `rank`, `normalize`
 
+## Agent Config Example
+
+```json
+{
+  "name": "calculateProfit",
+  "description": "Calculate profit margin",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "revenue": {"type": "number"},
+      "costs": {"type": "number"}
+    },
+    "required": ["revenue", "costs"]
+  },
+  "executionType": "compute",
+  "execution": {
+    "operation": "calculate",
+    "expression": "(revenue - costs) / revenue * 100"
+  }
+}
+```
+
 ## Examples
 
 ### Conditional Logic
 ```json
+// Agent config execution:
 {
   "operation": "if-then-else",
-  "data": {"amount": 5000, "userRole": "manager"},
   "expression": "amount > 10000 ? 'director-approval' : 'auto-approved'"
+}
+
+// Agent calls:
+{
+  "data": {"amount": 5000, "userRole": "manager"}
 }
 ```
 
 ### Score Calculation
 ```json
+// Agent config execution:
 {
-  "operation": "score",
+  "operation": "score"
+}
+
+// Agent calls:
+{
   "data": {"creditScore": 720, "income": 75000, "debtRatio": 0.35},
   "rules": [
     {"field": "creditScore", "weight": 0.4, "scoring": {">=700": 80, "<700": 40}},
@@ -57,8 +98,13 @@ Perform safe logic and calculations on data. No external calls or arbitrary code
 
 ### Validation
 ```json
+// Agent config execution:
 {
-  "operation": "validate-rules",
+  "operation": "validate-rules"
+}
+
+// Agent calls:
+{
   "data": {"age": 25, "email": "user@example.com"},
   "rules": [
     {"field": "age", "operator": ">=", "value": 18},
@@ -69,23 +115,37 @@ Perform safe logic and calculations on data. No external calls or arbitrary code
 
 ### Calculation
 ```json
+// Agent config execution:
 {
   "operation": "calculate",
-  "data": {"revenue": 1000000, "costs": 650000},
   "expression": "(revenue - costs) / revenue * 100"
 }
+
+// Agent calls:
+{
+  "data": {"revenue": 1000000, "costs": 650000}
+}
+
+// Returns: 35 (profit margin percentage)
 ```
 
 ### Aggregation
 ```json
+// Agent config execution:
 {
-  "operation": "aggregate",
+  "operation": "aggregate"
+}
+
+// Agent calls:
+{
   "data": [
     {"product": "A", "sales": 1000},
     {"product": "B", "sales": 1500}
   ],
   "parameters": {"operation": "sum", "field": "sales"}
 }
+
+// Returns: 2500
 ```
 
 ## Response Format

@@ -11,19 +11,52 @@ Generate images from text prompts using AI models (DALL-E, Stable Diffusion, etc
 - Design icons and UI elements
 - Turn text descriptions into images
 
+## Execution Property
+
+In agent config, use the `execution` property to pre-configure generation settings:
+
+```json
+{
+  "provider": "dall-e|stable-diffusion|midjourney",
+  "size": "1024x1024|landscape|portrait|square",
+  "quality": "standard|hd",
+  "style": "photorealistic|digital-art|anime|..."
+}
+```
+
 ## Input Schema
 
 ```json
 {
   "prompt": "string",              // What to generate
   "negativePrompt": "string",      // Optional: what to avoid
-  "provider": "dall-e|stable-diffusion|midjourney",
-  "size": "1024x1024|landscape|portrait|square",
-  "quality": "standard|hd",
-  "style": "photorealistic|digital-art|anime|...",
-  "numberOfImages": 1,
+  "numberOfImages": 1,              // Optional: how many
   "seed": 42,                       // Optional: for reproducibility
-  "outputFormat": "url|base64"
+  "outputFormat": "url|base64"     // Optional: response format
+}
+```
+
+## Agent Config Example
+
+```json
+{
+  "name": "createProductImage",
+  "description": "Generate product images from description",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {"type": "string"},
+      "negativePrompt": {"type": "string"}
+    },
+    "required": ["prompt"]
+  },
+  "executionType": "image-generator",
+  "execution": {
+    "provider": "dall-e",
+    "size": "1024x1024",
+    "quality": "hd",
+    "style": "photorealistic"
+  }
 }
 ```
 
@@ -31,29 +64,47 @@ Generate images from text prompts using AI models (DALL-E, Stable Diffusion, etc
 
 ### Product Photo
 ```json
+// Agent config execution:
 {
-  "prompt": "Modern smartphone on white surface, professional lighting",
-  "style": "photorealistic",
+  "provider": "dall-e",
   "size": "landscape",
-  "quality": "hd"
+  "quality": "hd",
+  "style": "photorealistic"
+}
+
+// Agent calls:
+{
+  "prompt": "Modern smartphone on white surface, professional lighting"
 }
 ```
 
 ### Icon
 ```json
+// Agent config execution:
 {
-  "prompt": "Flat rocket icon, minimal design, blue",
+  "provider": "dall-e",
   "size": "512x512",
   "style": "flat-design"
+}
+
+// Agent calls:
+{
+  "prompt": "Flat rocket icon, minimal design, blue"
 }
 ```
 
 ### Illustration
 ```json
+// Agent config execution:
+{
+  "provider": "stable-diffusion",
+  "style": "digital-art"
+}
+
+// Agent calls:
 {
   "prompt": "Abstract data network visualization, glowing blue lines",
-  "negativePrompt": "people, text, watermarks",
-  "style": "digital-art"
+  "negativePrompt": "people, text, watermarks"
 }
 ```
 

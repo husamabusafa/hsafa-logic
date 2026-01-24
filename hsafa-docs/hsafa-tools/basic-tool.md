@@ -361,33 +361,82 @@ const tools = {
 <HsafaChat agentId="my-agent" HsafaTools={tools} />
 ```
 
-## Tool Definition in Agent Config
+## Execution Property
+
+In agent config, use the `execution` property to configure the tool mode:
 
 ```json
 {
-  "name": "basicTool",
-  "description": "Execute frontend operations (UI display, function calls, etc.) with configurable response handling",
+  "mode": "no-execution|static|pass-through",
+  "output": {},      // For static mode only
+  "template": false  // For static mode with {{variables}}
+}
+```
+
+**Default:** If `execution` is `null`, uses **no-execution mode**.
+
+## Tool Definition in Agent Config
+
+### No Execution Mode (Default)
+```json
+{
+  "name": "getUserApproval",
+  "description": "Request user approval via UI",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "action": {
-        "type": "string",
-        "description": "Action to perform (e.g., showWeather, calculateDistance, logEvent)"
-      },
-      "mode": {
-        "type": "string",
-        "enum": ["no-execution", "static", "pass-through"],
-        "description": "Response handling mode (default: no-execution)"
-      }
+      "action": {"type": "string"},
+      "amount": {"type": "number"}
     },
     "required": ["action"]
+  },
+  "executionType": "basic",
+  "execution": null
+}
+```
+
+### Static Mode
+```json
+{
+  "name": "getStatus",
+  "description": "Get current status",
+  "inputSchema": {
+    "type": "object",
+    "properties": {}
+  },
+  "executionType": "basic",
+  "execution": {
+    "mode": "static",
+    "output": {"status": "ACTIVE", "ready": true}
   }
 }
 ```
 
-**Note:** No `execute` function in agent config. Execution happens:
-- **No-execution mode**: On frontend via HsafaTools/HsafaUI, response via `addToolResult`
-- **Static mode**: Returns configured output immediately
+### Pass-Through Mode
+```json
+{
+  "name": "displayNotification",
+  "description": "Display notification to user",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "action": {"type": "string"},
+      "message": {"type": "string"}
+    },
+    "required": ["action", "message"]
+  },
+  "executionType": "basic",
+  "execution": {
+    "mode": "pass-through"
+  }
+}
+```
+
+**Note:** 
+- No `execute` function in agent config (Hsafa Logic handles execution)
+- Use `executionType: "basic"` in agent config
+- **No-execution mode**: Frontend via HsafaTools/HsafaUI, response via `addToolResult`
+- **Static mode**: Returns `execution.output` immediately
 - **Pass-through mode**: Returns input immediately
 
 ## Best Practices
