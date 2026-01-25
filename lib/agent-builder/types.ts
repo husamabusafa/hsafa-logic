@@ -54,27 +54,65 @@ export const ComputeExecutionSchema = z.object({
 });
 
 export const ImageGeneratorExecutionSchema = z.object({
-  provider: z.enum(['dall-e', 'stable-diffusion', 'midjourney']),
+  provider: z.enum(['dall-e', 'stable-diffusion']),
   size: z.string().optional().default('1024x1024'),
   quality: z.enum(['standard', 'hd']).optional().default('standard'),
-  style: z.string().optional(),
   includeContext: z.boolean().optional().default(false),
 });
 
-export const ToolSchema = z.object({
-  name: z.string(),
-  description: z.string().optional(),
-  inputSchema: z.record(z.string(), z.unknown()).optional(),
-  executionType: z.enum(['basic', 'request', 'ai-agent', 'waiting', 'compute', 'image-generator']).optional().default('basic'),
-  execution: z.union([
-    BasicExecutionSchema,
-    RequestExecutionSchema,
-    AiAgentExecutionSchema,
-    WaitingExecutionSchema,
-    ComputeExecutionSchema,
-    ImageGeneratorExecutionSchema,
-  ]).nullable().optional(),
-});
+export const ToolSchema = z.preprocess(
+  (value) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const v = value as any;
+      if (v.executionType == null) v.executionType = 'basic';
+    }
+    return value;
+  },
+  z.discriminatedUnion('executionType', [
+    z.object({
+      name: z.string(),
+      description: z.string().optional(),
+      inputSchema: z.unknown(),
+      executionType: z.literal('basic'),
+      execution: BasicExecutionSchema.nullable().optional(),
+    }),
+    z.object({
+      name: z.string(),
+      description: z.string().optional(),
+      inputSchema: z.unknown(),
+      executionType: z.literal('request'),
+      execution: RequestExecutionSchema,
+    }),
+    z.object({
+      name: z.string(),
+      description: z.string().optional(),
+      inputSchema: z.unknown(),
+      executionType: z.literal('waiting'),
+      execution: WaitingExecutionSchema.nullable().optional(),
+    }),
+    z.object({
+      name: z.string(),
+      description: z.string().optional(),
+      inputSchema: z.unknown(),
+      executionType: z.literal('compute'),
+      execution: ComputeExecutionSchema,
+    }),
+    z.object({
+      name: z.string(),
+      description: z.string().optional(),
+      inputSchema: z.unknown().optional(),
+      executionType: z.literal('ai-agent'),
+      execution: AiAgentExecutionSchema,
+    }),
+    z.object({
+      name: z.string(),
+      description: z.string().optional(),
+      inputSchema: z.unknown().optional(),
+      executionType: z.literal('image-generator'),
+      execution: ImageGeneratorExecutionSchema,
+    }),
+  ])
+);
 
 export const McpServerSchema = z.object({
   name: z.string(),

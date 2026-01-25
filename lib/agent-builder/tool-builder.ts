@@ -12,10 +12,24 @@ function interpolateTemplate(template: Record<string, unknown>, variables: Recor
 
 export function buildTool(config: ToolConfig) {
   const executionType = config.executionType || 'basic';
-  const inputSchema = config.inputSchema || { type: 'object', properties: {} };
+  const inputSchema =
+    config.inputSchema ||
+    (executionType === 'ai-agent' || executionType === 'image-generator'
+      ? {
+          type: 'object',
+          properties: {
+            prompt: { type: 'string' },
+          },
+          required: ['prompt'],
+        }
+      : { type: 'object', properties: {} });
 
   const execution = config.execution;
-  const isNoExecution = executionType === 'basic' && (!execution || !('mode' in execution));
+  const isNoExecution =
+    executionType === 'basic' &&
+    (!execution ||
+      !('mode' in execution) ||
+      (execution as any).mode === 'no-execution');
 
   const toolConfig: any = {
     description: config.description,
@@ -76,7 +90,6 @@ function executeBasic(config: ToolConfig, input: any) {
     success: true,
     output: input,
     mode: 'no-execution',
-    pendingResult: true,
   };
 }
 
