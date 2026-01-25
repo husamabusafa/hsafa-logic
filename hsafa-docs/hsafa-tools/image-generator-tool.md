@@ -20,45 +20,62 @@ In agent config, use the `execution` property to pre-configure generation settin
   "provider": "dall-e|stable-diffusion|midjourney",
   "size": "1024x1024|landscape|portrait|square",
   "quality": "standard|hd",
-  "style": "photorealistic|digital-art|anime|..."
+  "style": "photorealistic|digital-art|anime|...",
+  "includeContext": false  // Optional: pass message context to model (default: false)
 }
 ```
 
-## Input Schema
+**Options:**
+- **`includeContext: false`** (default) - Model only receives the prompt
+- **`includeContext: true`** - Model receives message context for better understanding
 
-```json
-{
-  "prompt": "string",              // What to generate
-  "negativePrompt": "string",      // Optional: what to avoid
-  "numberOfImages": 1,              // Optional: how many
-  "seed": 42,                       // Optional: for reproducibility
-  "outputFormat": "url|base64"     // Optional: response format
-}
-```
+## Input
+
+**Note:** This tool has a default `prompt` inputSchema that is automatically provided. Do not add `inputSchema` manually.
+
+The default schema includes:
+- `prompt` (required) - What to generate
+- `negativePrompt` (optional) - What to avoid
+- `numberOfImages` (optional) - How many images
+- `seed` (optional) - For reproducibility
+- `outputFormat` (optional) - url or base64
 
 ## Agent Config Example
 
+### Without Context (Default)
 ```json
 {
   "name": "createProductImage",
   "description": "Generate product images from description",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "prompt": {"type": "string"},
-      "negativePrompt": {"type": "string"}
-    },
-    "required": ["prompt"]
-  },
   "executionType": "image-generator",
   "execution": {
     "provider": "dall-e",
     "size": "1024x1024",
     "quality": "hd",
-    "style": "photorealistic"
+    "style": "photorealistic",
+    "includeContext": false
   }
 }
 ```
+Model only sees the prompt.
+
+### With Context
+```json
+{
+  "name": "createContextualImage",
+  "description": "Generate images with conversation context",
+  "executionType": "image-generator",
+  "execution": {
+    "provider": "dall-e",
+    "size": "1024x1024",
+    "quality": "hd",
+    "includeContext": true
+  }
+}
+```
+Model sees previous messages for better understanding of what to generate.
+
+**Note:** Default `prompt` inputSchema is automatic - do not add manually.
 
 ## Examples
 
@@ -72,10 +89,11 @@ In agent config, use the `execution` property to pre-configure generation settin
   "style": "photorealistic"
 }
 
-// Agent calls:
+// Agent input:
 {
   "prompt": "Modern smartphone on white surface, professional lighting"
 }
+// Generates image with configured settings
 ```
 
 ### Icon
@@ -87,10 +105,11 @@ In agent config, use the `execution` property to pre-configure generation settin
   "style": "flat-design"
 }
 
-// Agent calls:
+// Agent input:
 {
   "prompt": "Flat rocket icon, minimal design, blue"
 }
+// Generates icon
 ```
 
 ### Illustration
@@ -101,11 +120,12 @@ In agent config, use the `execution` property to pre-configure generation settin
   "style": "digital-art"
 }
 
-// Agent calls:
+// Agent input:
 {
   "prompt": "Abstract data network visualization, glowing blue lines",
   "negativePrompt": "people, text, watermarks"
 }
+// Generates illustration
 ```
 
 ## Response Format

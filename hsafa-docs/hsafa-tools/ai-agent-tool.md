@@ -13,91 +13,106 @@ Delegate tasks to other AI agents. Enables multi-agent systems where specialized
 
 ## Execution Property
 
-In agent config, use the `execution` property to specify the target agent:
+In agent config, use the `execution` property to define the agent configuration:
 
 ```json
 {
-  "agentId": "string",              // Target agent ID
+  "agentConfig": {                  // Complete agent configuration
+    "name": "string",
+    "model": "string",
+    "systemPrompt": "string",
+    "tools": [],
+    "temperature": 0.7
+  },
+  "includeContext": false,          // Optional: pass message context to agent (default: false)
   "timeout": 30000                  // Optional timeout in ms
 }
 ```
 
-## Input Schema
+**Options:**
+- **`includeContext: false`** (default) - Agent only receives the prompt
+- **`includeContext: true`** - Agent receives full message history/context
 
-```json
-{
-  "prompt": "string",               // Task/message to send
-  "context": {},                    // Optional context data
-  "conversationHistory": []         // Optional previous messages
-}
-```
+**Note:** This tool has a default `prompt` inputSchema that is automatically provided. Do not add `inputSchema` manually.
 
 ## Agent Config Example
 
+### Without Context (Default)
 ```json
 {
   "name": "analyzeFinancials",
   "description": "Analyze financial data using specialized agent",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "prompt": {"type": "string"},
-      "quarter": {"type": "string"},
-      "year": {"type": "number"}
-    },
-    "required": ["prompt"]
-  },
   "executionType": "ai-agent",
   "execution": {
-    "agentId": "finance-analyst",
+    "agentConfig": {
+      "name": "finance-analyst",
+      "model": "gpt-4",
+      "systemPrompt": "You are a financial analyst specialized in profitability analysis. Analyze the data provided and give actionable insights.",
+      "tools": [],
+      "temperature": 0.3
+    },
+    "includeContext": false,
     "timeout": 30000
   }
 }
 ```
+Agent only sees the prompt, no previous messages.
+
+### With Context
+```json
+{
+  "name": "supportEscalation",
+  "description": "Escalate to specialized support agent",
+  "executionType": "ai-agent",
+  "execution": {
+    "agentConfig": {
+      "name": "tier2-support",
+      "model": "gpt-4",
+      "systemPrompt": "You are a Tier 2 support specialist.",
+      "tools": []
+    },
+    "includeContext": true
+  }
+}
+```
+Agent sees full conversation history for better context.
+
+**Note:** Default `prompt` inputSchema is automatic - do not add manually.
 
 ## Examples
 
 ### Delegate to Specialist
 ```json
-// Agent calls:
-{
-  "prompt": "Analyze Q4 2024 profitability",
-  "context": {
-    "quarter": "Q4",
-    "year": 2024
-  }
-}
+// Main agent decides to use the tool
+// The finance-analyst agent (defined in execution.agentConfig) receives:
+// "Analyze Q4 2024 profitability based on the data provided"
 
-// Delegates to finance-analyst agent
+// The inline agent executes with its systemPrompt and returns analysis
 ```
 
 ### Support Escalation
 ```json
 // Agent config execution:
 {
-  "agentId": "tier2-support"
+  "agentConfig": {
+    "name": "tier2-support",
+    "model": "gpt-4",
+    "systemPrompt": "You are a Tier 2 technical support specialist. Handle escalated issues with deep technical knowledge.",
+    "tools": ["checkSystemLogs", "resetUserSession"]
+  }
 }
 
-// Agent calls:
-{
-  "prompt": "Customer has authentication errors after password reset",
-  "context": {
-    "customerId": "CUST-123",
-    "attemptedSolutions": ["password-reset", "cache-clear"]
-  },
-  "conversationHistory": [
-    {"role": "user", "content": "I can't log in"},
-    {"role": "assistant", "content": "Let's try resetting your password"}
-  ]
-}
+// Main agent decides to escalate, tier2-support agent receives context from conversation
 ```
 
 ### Parallel Execution
 ```json
-// Define multiple AI agent tools, agent calls them in parallel
-// Tool 1: sentiment-analyzer agent
-// Tool 2: trend-detector agent  
-// Tool 3: issue-classifier agent
+// Define multiple AI agent tools with different agentConfigs
+// Tool 1: sentiment-analyzer (configured for sentiment analysis)
+// Tool 2: trend-detector (configured for trend detection)
+// Tool 3: issue-classifier (configured for issue classification)
+
+// Main agent can call all three in parallel
 ```
 
 ## Response Format

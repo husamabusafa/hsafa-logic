@@ -10,8 +10,8 @@ Tools are defined in the agent configuration JSON. Each tool has a name, standar
 {
   "name": "string",
   "description": "string",
-  "inputSchema": {},
-  "executionType": "basic|request|ai-agent|waiting|compute|image-generator",
+  "inputSchema": {},                // Optional for some execution types
+  "executionType": "basic|request|ai-agent|waiting|compute|image-generator",  // Optional, defaults to "basic"
   "execution": {}
 }
 ```
@@ -22,11 +22,13 @@ Tools are defined in the agent configuration JSON. Each tool has a name, standar
 
 - **`name`** (required) - Unique tool identifier
 - **`description`** (optional) - What the tool does, helps LLM decide when to use it
-- **`inputSchema`** (required) - JSON schema defining input parameters
+- **`inputSchema`** (optional) - JSON schema defining input parameters
+  - Required for: `basic`, `request`, `waiting`, `compute`
+  - Has default for: `ai-agent`, `image-generator` (automatic `prompt` schema, do not add manually)
 
 ### Hsafa Logic Properties
 
-- **`executionType`** (required) - Type of execution
+- **`executionType`** (optional) - Type of execution, defaults to `"basic"`
 - **`execution`** (optional) - Configuration specific to the execution type
 
 ## Execution Types
@@ -64,10 +66,13 @@ Delegate tasks to other AI agents.
 **Execution config:**
 ```json
 {
-  "agentId": "string",
-  "timeout": 30000
+  "agentConfig": {},        // Complete agent configuration (inline agent definition)
+  "includeContext": false,  // Optional: pass message context to agent (default: false)
+  "timeout": 30000          // Optional
 }
 ```
+
+**Note:** Has default `prompt` inputSchema (automatic, do not add manually).
 
 ### 4. `waiting`
 Pause execution for a duration.
@@ -99,9 +104,12 @@ Generate images from text prompts.
 {
   "provider": "dall-e|stable-diffusion",
   "size": "1024x1024",
-  "quality": "standard|hd"
+  "quality": "standard|hd",
+  "includeContext": false  // Optional: pass message context to model (default: false)
 }
 ```
+
+**Note:** Has default `prompt` inputSchema (automatic, do not add manually).
 
 ## Examples
 
@@ -169,20 +177,20 @@ Uses default no-execution mode, gets response from frontend.
 {
   "name": "analyzeFinancials",
   "description": "Analyze financial data using specialized agent",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "quarter": {"type": "string"},
-      "year": {"type": "number"}
-    },
-    "required": ["quarter", "year"]
-  },
   "executionType": "ai-agent",
   "execution": {
-    "agentId": "finance-analyst"
+    "agentConfig": {
+      "name": "finance-analyst",
+      "model": "gpt-4",
+      "systemPrompt": "You are a financial analyst specialized in profitability analysis.",
+      "tools": []
+    },
+    "includeContext": false
   }
 }
 ```
+
+**Note:** Default `prompt` inputSchema is automatic - do not add manually.
 
 ### Waiting Tool
 ```json
@@ -227,26 +235,24 @@ Duration specified in tool input, not execution config.
 {
   "name": "createProductImage",
   "description": "Generate product images from description",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "prompt": {"type": "string"}
-    },
-    "required": ["prompt"]
-  },
   "executionType": "image-generator",
   "execution": {
     "provider": "dall-e",
     "size": "1024x1024",
-    "quality": "hd"
+    "quality": "hd",
+    "includeContext": false
   }
 }
 ```
 
+**Note:** Default `prompt` inputSchema is automatic - do not add manually.
+
 ## Notes
 
+- **Default executionType** - If not specified, defaults to `"basic"`
 - **Standard Vercel AI SDK structure** - Compatible with `description`, `inputSchema`
 - **`execution` property** - Hsafa Logic extension for backend execution configuration
 - **Null execution** - Valid for basic tool (defaults to no-execution mode) and tools where config comes from input
+- **Default inputSchema** - AI Agent and Image Generator tools have automatic `prompt` inputSchema (do not add manually)
 - **Variable substitution** - Use `{{variableName}}` in execution config (e.g., URLs, headers)
-- **Type safety** - Use JSON schema for `inputSchema` validation
+- **Type safety** - Use JSON schema for `inputSchema` validation where applicable
