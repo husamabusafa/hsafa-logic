@@ -38,7 +38,14 @@ const agentConfig = {
         "required": ["action"]
       },
       "executionType": "basic",
-      "execution": null
+      "execution": {
+        "mode": "static",
+        "output": {
+          "approved": false,
+          "action": "",
+          "timestamp": ""
+        }
+      }
     }
   ],
   "runtime": {

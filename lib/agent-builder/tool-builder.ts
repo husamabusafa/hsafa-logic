@@ -73,23 +73,20 @@ function executeBasic(config: ToolConfig, input: any) {
     
     return {
       success: true,
-      output,
-      mode: 'static',
+      ...output,
     };
   }
   
   if (mode === 'pass-through') {
     return {
       success: true,
-      output: input,
-      mode: 'pass-through',
+      ...input,
     };
   }
   
   return {
     success: true,
-    output: input,
-    mode: 'no-execution',
+    ...input,
   };
 }
 
@@ -120,7 +117,7 @@ async function executeRequest(config: ToolConfig, input: any) {
   
   return {
     success: response.ok,
-    output: data,
+    ...data,
     status: response.status,
   };
 }
@@ -135,8 +132,7 @@ function interpolateString(template: string, variables: Record<string, any>): st
 async function executeAiAgent(config: ToolConfig, input: any) {
   return {
     success: false,
-    output: { error: 'AI Agent execution not yet implemented' },
-    mode: 'ai-agent',
+    error: 'AI Agent execution not yet implemented',
   };
 }
 
@@ -149,27 +145,22 @@ async function executeWaiting(config: ToolConfig, input: any) {
   
   return {
     success: true,
-    output: {
-      waited: duration,
-      reason,
-      timestamp: new Date().toISOString(),
-    },
-    mode: 'waiting',
+    waited: duration,
+    reason,
+    timestamp: new Date().toISOString(),
   };
 }
 
 async function executeCompute(config: ToolConfig, input: any) {
   return {
     success: false,
-    output: { error: 'Compute execution not yet implemented' },
-    mode: 'compute',
+    error: 'Compute execution not yet implemented',
   };
 }
 
 async function executeImageGenerator(config: ToolConfig, input: any) {
   return {
     success: false,
-    output: { error: 'Image generator execution not yet implemented' },
-    mode: 'image-generator',
+    error: 'Image generator execution not yet implemented',
   };
 }
