@@ -47,18 +47,8 @@ export function buildTool(config: ToolConfig) {
 }
 
 function executeBasic(config: ToolConfig, input: any) {
-  const execution = config.execution;
-  
-  if (!execution || !('mode' in execution)) {
-    return {
-      success: true,
-      output: input,
-      mode: 'no-execution',
-      pendingResult: true,
-    };
-  }
-
-  const mode = execution.mode || 'no-execution';
+  const execution = config.execution as any;
+  const mode = execution?.mode || 'no-execution';
 
   if (mode === 'static') {
     let output = execution.output || {};
