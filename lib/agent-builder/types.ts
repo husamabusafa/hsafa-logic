@@ -227,7 +227,7 @@ export const ToolSchema = z.preprocess(
 export const McpServerSchema = z.object({
   name: z.string(),
   url: z.string(),
-  transport: z.enum(['http', 'websocket']),
+  transport: z.enum(['http', 'sse']),
   headers: z.record(z.string(), z.string()).optional(),
   allowedTools: z.array(z.string()).optional(),
 });
