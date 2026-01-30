@@ -1,282 +1,285 @@
 ---
-title: JSON Agent Builder Server
-description: Design an API that builds ToolLoopAgent instances from JSON configs and streams responses.
+title: Distributed Agent Platform Architecture
+description: Building an Agent Builder + Distributed Agent Runtime with persistent memory and distributed tool execution.
 ---
 
-# JSON Agent Builder Server
+# 🧠 The Big Idea
 
-This document describes an architecture for a **server-side "agent builder" API** that:
+You are building an **Agent Builder + Distributed Agent Runtime**
 
-- Accepts an **agent configuration in JSON** (model, instructions, tools, MCP servers, loop control)
-- Builds a **`ToolLoopAgent`** dynamically at request time
-- Runs the agent and returns the output as a **streaming response**
-- Streams **text + tool calls + tool results** (and optionally reasoning, depending on provider/model) in a format your client can render.
+A system where:
 
-The goal is to make agent creation **dynamic**, **composable**, and **safe enough for production**.
+* Users **create agents** via config
+* Agents run **on your server**
+* Any client (web, mobile, node app) can:
+  * Start a run
+  * Watch it stream
+  * Refresh and reconnect
+* Agents can call **tools that run anywhere** (server, browser, other devices)
 
-## When this pattern makes sense
+This is like giving AI agents a **backend, memory, and a network of devices**.
 
-Use a JSON-driven agent builder when you want:
+---
 
-- **Runtime agent composition**
-  - e.g. “build a research agent for this tenant with these tools and these MCP connections”
-- **A single stable API surface**
-  - clients submit config + messages; the server handles orchestration
-- **A portable agent spec**
-  - configs can be stored in Git, a database, or a UI builder
+# 🏗️ System Architecture
 
-If you only have a small number of static agents, define them in TypeScript instead.
+## 1️⃣ Agent Builder (Control Plane)
 
-## High-level request/response contract
-
-Your API route accepts JSON with (at minimum):
-
-- `agentConfig`: string (the JSON configuration)
-- `messages`: UI messages or model messages (your server chooses)
-
-And returns a **streaming response**.
-
-At a high level:
-
-1. Parse JSON
-2. Validate + normalize
-3. Build tools (inline + registry + MCP)
-4. Create a `ToolLoopAgent`
-5. Stream the agent execution to the client
-6. Cleanup (close MCP clients, release resources)
-
-## JSON shape (proposed)
-
-A good JSON spec is:
-
-- **Strictly versioned** (`version`)
-- **Declarative** (describes intent, not implementation)
-- **Validatable** (schema-driven)
-- **Safe by default** (dangerous capabilities require explicit enablement)
-
-Example:
+Users send agent configs:
 
 ```json
 {
-  "version": "1.0",
-  "agent": {
-    "name": "support-agent",
-    "description": "Answers support questions and can call tools.",
-    "system": "You are a support agent.\n- Be concise.\n- If you use tools, explain what you're doing."
-  },
-  "model": {
-    "provider": "openai",
-    "name": "gpt-4o-mini",
-    "temperature": 0.2,
-    "maxOutputTokens": 1200
-  },
-  "loop": {
-    "maxSteps": 10,
-    "toolChoice": "auto"
-  },
-  "tools": [
-    {
-      "id": "ticket_lookup",
-      "type": "http",
-      "description": "Lookup a ticket by id.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          }
-        },
-        "required": ["id"]
-      },
-      "http": {
-        "method": "POST",
-        "url": "https://api.example.com/tickets/lookup",
-        "headers": {
-          "Authorization": "Bearer ${env.TICKETS_TOKEN}"
-        }
-      }
-    },
-    {
-      "id": "summarize",
-      "type": "frontend",
-      "description": "Summarize a long text into bullet points (frontend-only, no execution).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "text": {
-            "type": "string"
-          }
-        },
-        "required": ["text"]
-      },
-      "ui": {
-        "component": "summarizer",
-        "noExecution": true
-      }
-    }
-  ],
-  "mcp": {
-    "servers": [
-      {
-        "name": "github",
-        "url": "https://mcp.example.com/github",
-        "transport": "http",
-        "headers": {
-          "Authorization": "Bearer ${env.GITHUB_TOKEN}"
-        },
-        "allowedTools": ["search_issues", "get_issue"]
-      }
-    ]
-  }
+  "name": "research-agent",
+  "model": "gpt-5",
+  "systemPrompt": "...",
+  "tools": [...]
 }
 ```
 
-### Notes on the JSON design
+You:
 
-- The simplified format keeps the JSON easy to author while still mapping cleanly to `ToolLoopAgent`.
-- `agent.name` is useful for logging, caching, and client UI.
-- `model` should be **provider-agnostic** in JSON, but mapped to provider instances in server code.
-- `inputSchema` follows **JSON Schema** format.
-- `${env.X}` indicates environment interpolation (recommended to avoid secrets in configs).
+* Store config in **PostgreSQL**
+* Cache hot agents in **Redis or memory**
+* Reuse config when runs start
 
-## Tool sources
+---
 
-A “dynamic agent builder” is mostly a **tool builder**.
+## 2️⃣ Agent Runtime (Execution Plane)
 
-### Frontend tools
+When a user starts a run:
 
-Frontend tools are UI-only tools that don't execute any code on the server. They are safe by design and can be used for:
+1. Load agent config
+2. Load chat history
+3. Start the agent using **Vercel AI SDK Core**
+4. Stream output
+5. Handle tool calls
+6. Save everything
 
-- Form inputs and validation
-- Data visualization
-- User interaction components
-- Client-side calculations
+The SDK is only the **brain**.
+Your system is the **body + memory + network**.
 
-Frontend tools are defined with `type: "frontend"` and include a `ui` component specification.
+---
 
-### HTTP tools
+# 💾 Storage Layers
 
-HTTP tools allow the agent to make external API requests.
+## 🗄 PostgreSQL (Permanent Memory)
 
-Recommended policy:
+Stores long-term data:
 
-- **Allowlist-only domains**: Only allow requests to pre-approved domains
-- **Enforce timeouts**: Set reasonable timeout limits for HTTP requests
-- **Validate responses**: Ensure response structure matches expected schema
-- **Log all requests**: Track endpoint calls, durations, and errors
+### Tables
 
-### Registry tools
+**agents**
 
-Instead of defining tools inline, you can refer to:
+* id
+* config_json
 
-- `type: registry`
-- `ref: tools.myTool@1.2.3`
+**runs**
 
-This gives you:
+* id
+* agent_id
+* status (running / waiting_tool / done)
 
-- Code review and versioning
-- Stronger security posture
-- Better caching
+**messages**
 
-### MCP tools
+* id
+* run_id
+* role (user/assistant/tool)
+* content
+* type (chunk/final/tool_call/tool_result)
 
-MCP is a good fit when you want tools owned by other services.
+This lets any client reload full history.
 
-Workflow:
+---
 
-1. Create an MCP client from JSON transport settings
-2. Fetch tools from the MCP server (`discover` or `schemas` mode)
-3. Merge MCP tools into the agent’s toolset
-4. Close MCP clients when the stream finishes
+## ⚡ Redis (Live Memory)
 
-The AI SDK MCP docs cover best practices around transports and cleanup.
+Used for **realtime + streaming state**
 
-## Streaming responses
+### Redis Streams
 
-Your client already supports a rich streaming UI (text + reasoning + tool calls).
+Key per run:
 
-On the server side, prefer streaming the **agent execution** rather than waiting for a final answer.
+```
+run:{runId}:stream
+```
 
-Recommended approach:
+Stores:
 
-- Build a `ToolLoopAgent`
-- Return a UI streaming response using `createAgentUIStreamResponse()`
+* text chunks
+* tool call events
+* tool results
+* status updates
 
-This produces a stream that can include:
+This allows:
+✅ Resume after refresh
+✅ Multiple clients watching same run
+✅ No lost streaming data
 
-- Text deltas
-- Tool call events
-- Tool result events
-- Step boundaries / metadata
-- Optional reasoning deltas (model/provider dependent)
+---
 
-### Abort handling
+# 🌊 Streaming Flow
 
-Forward the request abort signal so clients can stop generation cleanly.
+### Agent → Redis
 
-Also do cleanup on abort (close MCP clients, cancel fetches, etc.).
+While model streams:
 
-## Validation + normalization
+```
+XADD run:123:stream chunk "Hello"
+XADD run:123:stream chunk " world"
+```
 
-Treat JSON as an **untrusted input format**, even if you control the caller.
+### Client → Server (SSE)
 
-Recommended pipeline:
+Client subscribes:
 
-- Parse JSON to a JS object
-- Validate against a schema (e.g., using Zod)
-- Normalize defaults (e.g. `loop.maxSteps`, `model.temperature`)
-- Enforce global constraints:
-  - Max tools
-  - Max steps
-  - Disallow server-side code execution
-  - Require approval for external HTTP tools
+```
+GET /runs/123/stream
+```
 
-## Execution policy (important)
+Server reads Redis stream and pushes events.
 
-A dynamic agent builder needs an explicit stance on:
+If page refreshes:
 
-- **Which tools are allowed** (frontend, HTTP, registry)
-- **When HTTP tools require approval**
-- **Which domains can be accessed** by HTTP tools
-- **No server-side code execution** is permitted
+* Client reconnects
+* Server continues from last event ID
+* Stream resumes seamlessly
 
-Common policies:
+---
 
-- **Frontend-only by default**: Only frontend tools can run without approval
-- **HTTP allowlist**: Only approved domains can be accessed via HTTP tools
-- **Tenant-scoped allowlists**: Each tenant has a permitted tool + domain list
-- **Approval required**: HTTP tools need explicit user approval
+# 🛠 Tool System (Distributed Execution)
 
-## Operational concerns
+This is the powerful part.
 
-### Caching
+Agents can call tools that run:
 
-If you expect repeated configs, cache the “compiled” agent artifacts:
+| Location    | Example                  |
+| ----------- | ------------------------ |
+| Server      | DB queries, APIs         |
+| Browser     | Local files, camera      |
+| Node client | Company internal systems |
 
-- Parsed + validated config
-- Resolved tool definitions
-- Prepared MCP tool adapters (when applicable)
+---
 
-### Observability
+## 🔄 Tool Call Lifecycle
 
-At minimum, log:
+### 1️⃣ Agent requests tool
 
-- Agent id + request id
-- Model/provider
-- Tool calls + durations + errors
-- Step count and finish reason
+SDK emits a tool call → you intercept
 
-### Secrets
+You store event and publish:
 
-Do not allow secrets to be embedded directly in JSON.
+```json
+{
+  "type": "tool_call",
+  "callId": "abc123",
+  "tool": "scanFiles",
+  "args": {...},
+  "targetClient": "deviceA"
+}
+```
 
-- Use environment interpolation (`${env.X}`)
-- Or use a server-side secret store keyed by tenant
+Saved in:
 
-## Recommended next steps
+* PostgreSQL (history)
+* Redis Stream (live)
+* Redis PubSub (notify device)
 
-- Define the JSON schema formally (versioned, using Zod or JSON Schema)
-- Decide on a tool security model (frontend + HTTP + registry)
-- Choose a streaming protocol that matches your client (UI message streams)
-- Implement a minimal end-to-end path:
-  - JSON -> validate -> build `ToolLoopAgent` -> stream response -> cleanup
+---
+
+### 2️⃣ Target Client Executes Tool
+
+Client connected via WebSocket receives the request, runs the tool locally, and sends back:
+
+```json
+{
+  "type": "tool_result",
+  "callId": "abc123",
+  "result": {...}
+}
+```
+
+---
+
+### 3️⃣ Server Resumes Agent
+
+You feed result back into the model:
+
+```
+assistant ← tool result
+```
+
+Agent continues streaming as if nothing happened.
+
+All watchers see this live via Redis stream.
+
+---
+
+# 🧠 Role of Vercel AI SDK (Core Only)
+
+You DO NOT use:
+❌ `useChat` 
+❌ AI SDK UI helpers
+
+You ONLY use:
+
+| Function             | Purpose                                |
+| -------------------- | -------------------------------------- |
+| `streamText`         | Stream model output                    |
+| Tool calling support | Let model decide when tools are needed |
+
+You handle:
+
+* Tool execution
+* Message storage
+* Streaming infra
+* Run lifecycle
+
+SDK = **decision engine only**
+
+---
+
+# 🔌 Client Types Supported
+
+Because everything goes through your API:
+
+| Client           | Works? | How              |
+| ---------------- | ------ | ---------------- |
+| Vite / React     | ✅      | SSE + WebSockets |
+| Mobile app       | ✅      | HTTP + WS        |
+| Node app         | ✅      | HTTP + WS        |
+| Multiple devices | ✅      | Shared runId     |
+
+---
+
+# 🧭 Run Lifecycle
+
+Each run moves through states:
+
+```
+queued → running → waiting_tool → running → completed
+```
+
+Stored in DB so system can recover if server restarts.
+
+---
+
+# 🧰 Final Tool Stack
+
+| Purpose          | Technology                |
+| ---------------- | ------------------------- |
+| AI Agent Brain   | **Vercel AI SDK (Core)**  |
+| API Server       | Node.js (Fastify/Express) |
+| Database         | PostgreSQL                |
+| ORM              | Prisma or Drizzle         |
+| Live Streaming   | **Redis Streams**         |
+| Tool Messaging   | **Redis Pub/Sub**         |
+| Client Streaming | SSE                       |
+| Device Tool Link | WebSockets                |
+
+---
+
+# 🏁 What You're Building (In One Sentence)
+
+You're building a **distributed, persistent, multi-device AI agent runtime** where agents have memory, can stream across sessions, and can use tools running anywhere.
+
+That's startup-level infrastructure, not just an app 💪
