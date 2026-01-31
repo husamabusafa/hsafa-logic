@@ -3,67 +3,12 @@ import { convertToModelMessages } from 'ai';
 import { Prisma } from '@prisma/client';
 import { redis } from '../lib/redis.js';
 import { prisma } from '../lib/db.js';
+import { createEmitEvent, loadRunMessages, toSSEEvent, handleRunError, type EmitEventFn } from '../lib/run-events.js';
 import { buildAgent, AgentBuildError } from '../agent-builder/builder.js';
 import { closeMCPClients, type MCPClientWrapper } from '../agent-builder/mcp-resolver.js';
 import type { AgentConfig } from '../agent-builder/types.js';
 
 export const runsRouter: ExpressRouter = Router();
-
-async function createEmitEvent(runId: string) {
-  const streamKey = `run:${runId}:stream`;
-  const notifyChannel = `run:${runId}:notify`;
-
-  const last = await prisma.runEvent.findFirst({
-    where: { runId },
-    orderBy: { seq: 'desc' },
-    select: { seq: true },
-  });
-
-  let seq = last?.seq ? Number(last.seq) : 0;
-
-  const emitEvent = async (type: string, payload: Record<string, unknown>) => {
-    seq += 1;
-    const ts = new Date().toISOString();
-
-    // Write to Redis Stream
-    await redis.xadd(streamKey, '*', 'type', type, 'ts', ts, 'payload', JSON.stringify(payload));
-
-    // Notify subscribers
-    await redis.publish(notifyChannel, JSON.stringify({ type, seq }));
-
-    // Persist to Postgres
-    await prisma.runEvent.create({
-      data: {
-        runId,
-        seq: BigInt(seq),
-        type,
-        payload: payload as Prisma.InputJsonValue,
-      },
-    });
-  };
-
-  return { emitEvent };
-}
-
-async function loadRunMessages(runId: string): Promise<unknown[]> {
-  const events = await prisma.runEvent.findMany({
-    where: {
-      runId,
-      type: { in: ['message.user', 'message.assistant', 'message.tool'] },
-    },
-    orderBy: { seq: 'asc' },
-  });
-
-  const messages: unknown[] = [];
-  for (const evt of events) {
-    const payload = evt.payload as any;
-    const message = payload?.message;
-    if (message && typeof message === 'object') {
-      messages.push(message);
-    }
-  }
-  return messages;
-}
 
 // POST /api/runs - Create a new run and start agent execution
 runsRouter.post('/', async (req: Request, res: Response) => {
@@ -128,20 +73,7 @@ runsRouter.post('/', async (req: Request, res: Response) => {
       }
 
       executeAgentRun(runId, agentVersion.configJson as AgentConfig, initialMessages, emitEvent).catch(
-        async (error) => {
-          console.error(`[Run ${runId}] Background execution error:`, error);
-          await prisma.run.update({
-            where: { id: runId },
-            data: {
-              status: 'failed',
-              errorMessage: error instanceof Error ? error.message : String(error),
-              completedAt: new Date(),
-            },
-          });
-          await emitEvent('run.failed', {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+        (error) => handleRunError(runId, error, emitEvent)
       );
     }
 
@@ -187,20 +119,9 @@ runsRouter.post('/:runId/messages', async (req: Request, res: Response) => {
 
     const history = await loadRunMessages(runId);
 
-    executeAgentRun(runId, agentVersion.configJson as AgentConfig, history, emitEvent).catch(async (error) => {
-      console.error(`[Run ${runId}] Background execution error:`, error);
-      await prisma.run.update({
-        where: { id: runId },
-        data: {
-          status: 'failed',
-          errorMessage: error instanceof Error ? error.message : String(error),
-          completedAt: new Date(),
-        },
-      });
-      await emitEvent('run.failed', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
+    executeAgentRun(runId, agentVersion.configJson as AgentConfig, history, emitEvent).catch(
+      (error) => handleRunError(runId, error, emitEvent)
+    );
 
     return res.status(202).json({ success: true });
   } catch (error) {
@@ -491,19 +412,7 @@ runsRouter.get('/:runId/stream', async (req: Request, res: Response) => {
         for (const [id, fields] of messages) {
           if (!isActive) break;
 
-          // Convert fields array to map: [k1, v1, k2, v2] -> { k1: v1, k2: v2 }
-          const fieldMap: Record<string, string> = {};
-          for (let i = 0; i < fields.length; i += 2) {
-            fieldMap[fields[i]] = fields[i + 1];
-          }
-
-          const event = {
-            id,
-            type: fieldMap.type,
-            ts: fieldMap.ts,
-            data: fieldMap.payload ? JSON.parse(fieldMap.payload) : {},
-          };
-
+          const event = toSSEEvent(id, fields);
           res.write(`id: ${id}\n`);
           res.write(`event: hsafa\n`);
           res.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -528,19 +437,7 @@ runsRouter.get('/:runId/stream', async (req: Request, res: Response) => {
           for (const [id, fields] of messages) {
             if (!isActive) break;
 
-            // Convert fields array to map
-            const fieldMap: Record<string, string> = {};
-            for (let i = 0; i < fields.length; i += 2) {
-              fieldMap[fields[i]] = fields[i + 1];
-            }
-
-            const event = {
-              id,
-              type: fieldMap.type,
-              ts: fieldMap.ts,
-              data: fieldMap.payload ? JSON.parse(fieldMap.payload) : {},
-            };
-
+            const event = toSSEEvent(id, fields);
             res.write(`id: ${id}\n`);
             res.write(`event: hsafa\n`);
             res.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -686,20 +583,9 @@ runsRouter.post('/:runId/tool-results', async (req: Request, res: Response) => {
 
       if (agentVersion) {
         const history = await loadRunMessages(runId);
-        executeAgentRun(runId, agentVersion.configJson as AgentConfig, history, emitEvent).catch(async (error) => {
-          console.error(`[Run ${runId}] Background resume error:`, error);
-          await prisma.run.update({
-            where: { id: runId },
-            data: {
-              status: 'failed',
-              errorMessage: error instanceof Error ? error.message : String(error),
-              completedAt: new Date(),
-            },
-          });
-          await emitEvent('run.failed', {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
+        executeAgentRun(runId, agentVersion.configJson as AgentConfig, history, emitEvent).catch(
+          (error) => handleRunError(runId, error, emitEvent)
+        );
       }
     }
 
