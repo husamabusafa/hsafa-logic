@@ -38,34 +38,17 @@ enum ToolResultSource {
   browser
 }
 
-model Tenant {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  agents  Agent[]
-  runs    Run[]
-  devices Device[]
-
-  @@unique([name])
-  @@map("tenants")
-}
-
 model Agent {
   id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String?  @map("tenant_id") @db.Uuid
-  name        String
+  name        String   @unique
   description String?
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tenant   Tenant?        @relation(fields: [tenantId], references: [id])
   versions AgentVersion[]
   runs     Run[]
 
-  @@unique([tenantId, name])
-  @@index([tenantId, createdAt])
+  @@index([createdAt])
   @@map("agents")
 }
 
@@ -89,7 +72,6 @@ model AgentVersion {
 
 model Run {
   id             String    @id @default(uuid()) @db.Uuid
-  tenantId       String?   @map("tenant_id") @db.Uuid
   agentId        String    @map("agent_id") @db.Uuid
   agentVersionId String    @map("agent_version_id") @db.Uuid
   status         RunStatus
@@ -99,14 +81,13 @@ model Run {
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tenant       Tenant?       @relation(fields: [tenantId], references: [id])
   agent        Agent         @relation(fields: [agentId], references: [id])
   agentVersion AgentVersion  @relation(fields: [agentVersionId], references: [id])
   events       RunEvent[]
   toolCalls    ToolCall[]
   toolResults  ToolResult[]
 
-  @@index([tenantId, createdAt])
+  @@index([createdAt])
   @@index([status, updatedAt])
   @@index([agentId, createdAt])
   @@map("runs")
@@ -167,33 +148,18 @@ model ToolResult {
   @@map("tool_results")
 }
 
+// Device table - auto-created on first interaction
+// No pre-registration needed, devices appear when they first interact
 model Device {
-  id           String   @id @default(uuid()) @db.Uuid
-  tenantId     String?  @map("tenant_id") @db.Uuid
-  deviceKey    String   @map("device_key")
-  displayName  String?  @map("display_name")
-  capabilities Json     @default(dbgenerated("'{}'::jsonb")) @db.JsonB
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id           String    @id @default(uuid()) @db.Uuid
+  deviceKey    String    @unique @map("device_key")  // Stable ID from token (sub claim)
+  displayName  String?   @map("display_name")  // From token (name claim)
+  capabilities Json      @default(dbgenerated("'{}'::jsonb")) @db.JsonB
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   lastSeenAt   DateTime? @map("last_seen_at") @db.Timestamptz(6)
 
-  tenant   Tenant?         @relation(fields: [tenantId], references: [id])
-  sessions DeviceSession[]
   toolCalls ToolCall[]
 
-  @@unique([tenantId, deviceKey])
-  @@index([tenantId, createdAt])
+  @@index([createdAt])
   @@map("devices")
-}
-
-model DeviceSession {
-  id             String   @id @default(uuid()) @db.Uuid
-  deviceId       String   @map("device_id") @db.Uuid
-  connectedAt    DateTime @default(now()) @map("connected_at") @db.Timestamptz(6)
-  disconnectedAt DateTime? @map("disconnected_at") @db.Timestamptz(6)
-  connectionMeta Json     @default(dbgenerated("'{}'::jsonb")) @map("connection_meta") @db.JsonB
-
-  device Device @relation(fields: [deviceId], references: [id])
-
-  @@index([deviceId, connectedAt])
-  @@map("device_sessions")
 }
