@@ -8,9 +8,23 @@ export type { XMarkdownRendererProps } from "./components/XMarkdownRenderer";
 export * from "./hooks/useAutoScroll";
 export * from "./hooks/useFileUploadHook";
 
-// Headless hooks for custom UI development
+// NEW: Gateway hook - simple integration with Hsafa Gateway
+export { useHsafaGateway } from "./hooks/useHsafaGateway";
+export type { 
+  UseHsafaGatewayConfig, 
+  HsafaGatewayAPI,
+  AgentConfig,
+  GatewayMessage,
+  ToolCall,
+  ToolResult,
+} from "./hooks/useHsafaGateway";
+
+// Headless hooks for custom UI development (legacy - direct AI SDK)
 export { useHsafaAgent } from "./hooks/useHsafaAgent";
 export type { UseHsafaAgentConfig, HsafaAgentAPI } from "./hooks/useHsafaAgent";
+
+export { useHsafaAction } from "./hooks/useHsafaAction";
+export { useHsafaComponent } from "./hooks/useHsafaComponent";
 
 export { useChatStorage } from "./hooks/useChatStorage";
 export type { 

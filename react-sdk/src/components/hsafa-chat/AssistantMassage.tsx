@@ -15,16 +15,39 @@ type ThemeColors = {
   successColor: string;
 };
 
+type MessagePart = {
+  type: string;
+  text?: string;
+  toolName?: string;
+  toolCallId?: string;
+  input?: unknown;
+  output?: unknown;
+  status?: string;
+  state?: string;
+  startDate?: number;
+  endDate?: number;
+};
+
+type ToolUIProps = {
+  toolName: string;
+  toolCallId: string;
+  input: unknown;
+  output: unknown;
+  status?: string;
+  addToolResult?: (payload: unknown) => void;
+  theme?: 'light' | 'dark';
+};
+
 interface AssistantMassageProps {
-  parts: any[];
+  parts: MessagePart[];
   messageId: string;
   openReasoningIds: Set<string>;
   toggleReasoning: (id: string) => void;
   resolvedColors: ThemeColors;
-  HsafaUI?: Record<string, React.ComponentType<any>>;
+  HsafaUI?: Record<string, React.ComponentType<unknown>>;
   onUIError?: (toolCallId: string, toolName: string, error: Error) => void;
   onUISuccess?: (toolCallId: string, toolName: string) => void;
-  addToolResult?: (payload: any) => void;
+  addToolResult?: (payload: unknown) => void;
   dir?: 'rtl' | 'ltr';
   t?: (k: string) => string;
   theme?: 'light' | 'dark';
@@ -85,7 +108,7 @@ export function AssistantMassage({ parts, messageId, openReasoningIds, toggleRea
   const isRTL = dir === 'rtl';
   const groups: Array<
     { type: 'reasoning'; texts: string[]; startDate?: number; endDate?: number; isCompleted?: boolean } |
-    { type: 'tool'; toolName?: string; status?: string; input?: any; output?: any; startDate?: number; endDate?: number; toolCallId?: string } |
+    { type: 'tool'; toolName?: string; status?: string; input?: unknown; output?: unknown; startDate?: number; endDate?: number; toolCallId?: string } |
     { type: 'text'; text: string; startDate?: number; endDate?: number }
   > = [];
 
@@ -137,7 +160,8 @@ export function AssistantMassage({ parts, messageId, openReasoningIds, toggleRea
     // Tool calls: support both "tool-*" and "dynamic-tool"
     const isDynamicTool = it.type === 'dynamic-tool';
     const isPrefixedTool = typeof it.type === 'string' && it.type.startsWith('tool-');
-    if (isDynamicTool || isPrefixedTool || it.type === 'tool-call') {
+    const isToolResult = it.type === 'tool-result';
+    if (isDynamicTool || isPrefixedTool || it.type === 'tool-call' || isToolResult) {
       if (currentReasonings.length) {
         groups.push({ 
           type: 'reasoning', 
@@ -169,7 +193,7 @@ export function AssistantMassage({ parts, messageId, openReasoningIds, toggleRea
           startDate: it.startDate,
           endDate: it.endDate,
           toolCallId: it.toolCallId,
-        } as any);
+        });
       } else {
         groups.push({
           type: 'tool',
@@ -298,14 +322,14 @@ export function AssistantMassage({ parts, messageId, openReasoningIds, toggleRea
         if (g.toolName === 'requestInput') {
           return <div key={itemId} style={{ display: 'block', position: 'relative' }}>
             <div 
-              data-get-from-user-host={(g as any).toolCallId || itemId}
+              data-get-from-user-host={g.toolCallId || itemId}
               style={{ width: '100%' }}
             />
           </div>
         }
         
         // Check if a UI component exists for this tool name
-        const UIByToolName = HsafaUI?.[g.toolName || ''];
+        const UIByToolName = (HsafaUI?.[g.toolName || ''] as unknown as React.ComponentType<ToolUIProps> | undefined);
         if (UIByToolName) {
           return (
             <div key={itemId} style={{ 

@@ -22,5 +22,7 @@ export type {
   MessageEditorAPI 
 } from './useMessageEditor';
 
-export { useFileUpload } from './useFileUploadHook';
+export * from "./useAutoScroll";
+export * from "./useFileUploadHook";
+export * from "./useHsafaGateway";
 export { useAutoScroll } from './useAutoScroll';

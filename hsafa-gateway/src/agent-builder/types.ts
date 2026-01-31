@@ -170,6 +170,8 @@ export const ImageGeneratorExecutionSchema = z.object({
   includeContext: z.boolean().optional().default(false),
 });
 
+export const ToolExecutionTargetSchema = z.enum(['server', 'device', 'browser', 'external']).optional();
+
 export const ToolSchema = z.preprocess(
   (value) => {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -221,7 +223,11 @@ export const ToolSchema = z.preprocess(
       executionType: z.literal('image-generator'),
       execution: ImageGeneratorExecutionSchema,
     }),
-  ])
+  ]).and(
+    z.object({
+      executionTarget: ToolExecutionTargetSchema,
+    })
+  )
 );
 
 export const McpServerSchema = z.object({

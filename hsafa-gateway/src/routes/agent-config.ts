@@ -1,7 +1,7 @@
-import { Router } from 'express';
+import { Router, type Router as ExpressRouter } from 'express';
 import { loadAgentConfig, agentConfigExists } from '../utils/load-agent-config.js';
 
-export const agentConfigRouter = Router();
+export const agentConfigRouter: ExpressRouter = Router();
 
 agentConfigRouter.get('/:agentName', async (req, res) => {
   try {

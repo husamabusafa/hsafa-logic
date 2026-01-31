@@ -6,19 +6,36 @@ import { Pencil } from "lucide-react";
 import { IconWrapper } from "../IconWrapper";
 import type { ThemeColors } from "../../utils/chat-theme";
 
+type MessagePart = {
+  type: string;
+  text?: string;
+  image?: string | URL;
+  data?: string | URL;
+  url?: string;
+  mediaType?: string;
+  name?: string;
+  size?: number;
+};
+
+type RenderMessage = {
+  id: string;
+  role: 'user' | 'assistant' | 'tool';
+  parts?: MessagePart[];
+};
+
 interface MessageListProps {
-  chatMessages: any[];
+  chatMessages: RenderMessage[];
   isLoading: boolean;
   openReasoningIds: Set<string>;
   toggleReasoning: (id: string) => void;
   resolvedColors: ThemeColors;
   t: (k: string) => string;
-  onUserMessageClick: (message: any, id: string, text: string, attachments?: Attachment[]) => void;
-  HsafaUI?: Record<string, React.ComponentType<any>>;
+  onUserMessageClick: (message: RenderMessage, id: string, text: string, attachments?: Attachment[]) => void;
+  HsafaUI?: Record<string, React.ComponentType<unknown>>;
   onUIError?: (toolCallId: string, toolName: string, error: Error) => void;
   onUISuccess?: (toolCallId: string, toolName: string) => void;
-  addToolResult?: (payload: any) => void;
-  editableMessageIcon?: React.ComponentType<any>;
+  addToolResult?: (payload: unknown) => void;
+  editableMessageIcon?: React.ComponentType<unknown>;
   fullPage?: boolean;
   dir?: 'rtl' | 'ltr';
   theme?: 'light' | 'dark';
@@ -62,17 +79,17 @@ export function MessageList({
         direction: dir,
        
       }}>
-        {chatMessages.map((m: any, i: number) => {
+        {chatMessages.map((m) => {
         const messageParts = Array.isArray(m.parts) ? m.parts : [];
         const messageText = messageParts
-          .filter((p: any) => p.type === 'text')
-          .map((p: any) => (p && typeof p.text === 'string' ? p.text : ''))
+          .filter((p) => p.type === 'text')
+          .map((p) => (p && typeof p.text === 'string' ? p.text : ''))
           .join('\n');
 
         // Extract file and image attachments from message parts
         const messageAttachments: Attachment[] = messageParts
-          .filter((p: any) => p.type === 'file' || p.type === 'image')
-          .map((p: any) => {
+          .filter((p) => p.type === 'file' || p.type === 'image')
+          .map((p) => {
             if (p.type === 'image') {
               const imgUrl = typeof p.image === 'string' ? p.image : p.image?.toString?.() || '';
               return {
@@ -83,10 +100,13 @@ export function MessageList({
                 size: p.size || 0
               };
             } else {
+              const fileUrl = typeof p.data === 'string'
+                ? p.data
+                : (p.data?.toString?.() || p.url || '');
               return {
-                id: p.url || `${m.id}-file-${Date.now()}`,
+                id: fileUrl || `${m.id}-file-${Date.now()}`,
                 name: p.name || 'file',
-                url: p.url || '',
+                url: fileUrl || '',
                 mimeType: p.mediaType || 'application/octet-stream',
                 size: p.size || 0
               };

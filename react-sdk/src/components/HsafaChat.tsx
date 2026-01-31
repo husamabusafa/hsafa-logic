@@ -4,6 +4,7 @@ import { ChatHeader } from "./hsafa-chat/ChatHeader";
 import { useFileUpload } from "../hooks/useFileUploadHook";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { useHsafaAgent } from "../hooks/useHsafaAgent";
+import { useHsafaGateway, type GatewayMessage } from "../hooks/useHsafaGateway";
 import { useChatStorage } from "../hooks/useChatStorage";
 import { HsafaChatProps } from "../types/chat";
 import { MessageList } from "./hsafa-chat";
@@ -16,10 +17,17 @@ import { ConfirmEditModal } from "./hsafa-chat/ConfirmEditModal";
 import { useHsafa } from "../providers/HsafaProvider";
 import { FloatingChatButton } from "./FloatingChatButton";
 import CursorController from "./web-controler/CursorController";
+import { createBuiltInTools } from "./hsafa-chat/utils/builtInTools";
+import { createBuiltInUI } from "./hsafa-chat/utils/builtInUI";
 
 export function HsafaChat({
   agentName,
-  agentConfig,
+  agentConfig = '',
+  agentId,
+  gatewayUrl,
+  runId: providedRunId,
+  senderId,
+  senderName,
   theme,
   primaryColor,
   primaryColorDark,
@@ -199,13 +207,47 @@ export function HsafaChat({
     return dict[key] || en[key] || key;
   };
 
-  // Use the agent hook for all agent-related logic
-  const agent = useHsafaAgent({
+  // Determine which mode to use
+  const isGatewayMode = Boolean(gatewayUrl && agentId);
+
+  // Built-in tools and UI (shared between modes)
+  const builtInTools = useMemo(() => createBuiltInTools(), []);
+  const builtInUI = useMemo(() => createBuiltInUI(), []);
+  const allTools = useMemo(() => ({ ...builtInTools, ...HsafaTools }), [builtInTools, HsafaTools]);
+  const allUI = useMemo(() => ({ ...builtInUI, ...HsafaUI }), [builtInUI, HsafaUI]);
+
+  // Form state refs (shared between modes)
+  const formHostRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const formStateRef = useRef<Map<string, { submitted?: boolean; skipped?: boolean; values?: Record<string, unknown> }>>(new Map());
+
+  // Input state (managed here for gateway mode, managed by useHsafaAgent for legacy mode)
+  const [gatewayInput, setGatewayInput] = useState('');
+
+  // Chat ID state for gateway mode
+  const [gatewayChatId, setGatewayChatId] = useState(() => 
+    currentChat || `chat_${Date.now()}_${Math.random().toString(36).slice(2)}`
+  );
+
+  // Callbacks
+  const onStartCallback = useCallback((message: unknown) => {
+    if (onStart) onStart(message);
+  }, [onStart]);
+
+  const onFinishCallback = useCallback((message: unknown) => {
+    if (onFinish) onFinish(message);
+  }, [onFinish]);
+
+  const onErrorCallback = useCallback((error: Error) => {
+    console.error('Chat error:', error);
+  }, []);
+
+  // Legacy mode: useHsafaAgent hook
+  const legacyAgent = useHsafaAgent({
     agentName,
-    agentConfig,
+    agentConfig: isGatewayMode ? '' : agentConfig, // Only use if not gateway mode
     baseUrl: effectiveBaseUrl,
-    tools: HsafaTools,
-    uiComponents: HsafaUI,
+    tools: HsafaTools as Record<string, (input: unknown) => unknown>,
+    uiComponents: HsafaUI as Record<string, React.ComponentType<unknown>>,
     templateParams,
     controlledChatId: currentChat,
     onChatIdChange: currentChat === undefined
@@ -213,42 +255,102 @@ export function HsafaChat({
           if (onChatChanged) onChatChanged(id);
         }
       : undefined,
-    onStart: useCallback((message: any) => {
-      if (onStart) onStart(message);
-    }, [onStart]),
-    onFinish: useCallback((message: any) => {
-      if (onFinish) onFinish(message);
-    }, [onFinish]),
-    onError: useCallback((error: Error) => {
-      console.error('Chat error:', error);
-    }, []),
+    onStart: onStartCallback,
+    onFinish: onFinishCallback,
+    onError: onErrorCallback,
     initialMessages,
     onMessagesChange,
   });
 
-  // Destructure what we need from agent
-  const {
-    input,
-    setInput,
-    messages: chatMessages,
-    isLoading,
-    status,
-    error: chatError,
-    sendMessage,
-    stop,
-    setMessages,
-    notifyMessagesChange,
-    chatId: internalChatId,
-    setChatId: setInternalChatId,
-    tools: allTools,
-    uiComponents: allUI,
-    formHostRef,
-    formStateRef,
-    cleanupForms: cleanupAllForms,
-    onUISuccess: handleUISuccess,
-    onUIError: handleUIError,
-    chatApi,
-  } = agent;
+  // Gateway mode: useHsafaGateway hook
+  const gatewayAgent = useHsafaGateway({
+    gatewayUrl: gatewayUrl || '',
+    agentId: isGatewayMode ? agentId : undefined,
+    runId: providedRunId,
+    senderId,
+    senderName,
+    initialMessages: isGatewayMode ? (initialMessages as GatewayMessage[]) : undefined,
+    tools: HsafaTools as Record<string, (args: unknown) => Promise<unknown> | unknown>,
+    onComplete: (text) => onFinishCallback({ text }),
+    onError: onErrorCallback,
+    onMessagesChange: isGatewayMode ? (msgs) => {
+      if (onMessagesChange) onMessagesChange(msgs as unknown[], gatewayChatId);
+    } : undefined,
+    persistRun: isGatewayMode, // Auto-persist run in gateway mode
+  });
+
+  // Unified interface - select based on mode
+  const input = isGatewayMode ? gatewayInput : legacyAgent.input;
+  const setInput = isGatewayMode ? setGatewayInput : legacyAgent.setInput;
+  const chatMessages = isGatewayMode ? (gatewayAgent.messages as unknown[]) : legacyAgent.messages;
+  const isLoading = isGatewayMode ? gatewayAgent.isStreaming : legacyAgent.isLoading;
+  const status = isGatewayMode ? gatewayAgent.status : legacyAgent.status;
+  const chatError = isGatewayMode ? gatewayAgent.error : legacyAgent.error;
+  const stop = isGatewayMode ? gatewayAgent.stop : legacyAgent.stop;
+  const setMessages = useMemo(() => isGatewayMode 
+    ? (msgs: unknown[]) => gatewayAgent.setMessages(msgs as GatewayMessage[])
+    : legacyAgent.setMessages
+  , [isGatewayMode, gatewayAgent, legacyAgent.setMessages]);
+  const internalChatId = isGatewayMode ? gatewayChatId : legacyAgent.chatId;
+  const setInternalChatId = isGatewayMode ? setGatewayChatId : legacyAgent.setChatId;
+  const chatApi = isGatewayMode ? gatewayAgent : legacyAgent.chatApi;
+
+  // Gateway mode sendMessage adapter
+  const sendMessage = useCallback(async (options?: { text?: string; files?: unknown[] }) => {
+    if (isGatewayMode) {
+      const text = options?.text ?? gatewayInput;
+      const files = (options?.files || []) as Array<{ url: string; mediaType: string; name?: string }>;
+      await gatewayAgent.sendMessage(text, files.length > 0 ? files : undefined);
+      if (!options?.text) setGatewayInput('');
+      onStartCallback({ role: 'user', content: text });
+    } else {
+      await legacyAgent.sendMessage(options);
+    }
+  }, [isGatewayMode, gatewayInput, gatewayAgent, legacyAgent, onStartCallback]);
+
+  // Notify messages change
+  const notifyMessagesChange = useCallback(() => {
+    if (onMessagesChange) {
+      onMessagesChange(chatMessages, internalChatId);
+    }
+  }, [onMessagesChange, chatMessages, internalChatId]);
+
+  // Cleanup forms
+  const cleanupAllForms = useCallback(() => {
+    if (isGatewayMode) {
+      formHostRef.current.forEach((el) => { try { el.remove(); } catch { /* ignore cleanup errors */ } });
+      formHostRef.current.clear();
+      formStateRef.current.clear();
+    } else {
+      legacyAgent.cleanupForms();
+    }
+  }, [isGatewayMode, legacyAgent]);
+
+  // UI tool handlers
+  const handleUISuccess = useCallback((toolCallId: string, toolName: string) => {
+    if (isGatewayMode) {
+      gatewayAgent.addToolResult({
+        tool: toolName,
+        toolCallId,
+        output: { status: 'ok', rendered: true, component: toolName },
+      });
+    } else {
+      legacyAgent.onUISuccess(toolCallId, toolName);
+    }
+  }, [isGatewayMode, gatewayAgent, legacyAgent]);
+
+  const handleUIError = useCallback((toolCallId: string, toolName: string, error: Error) => {
+    if (isGatewayMode) {
+      gatewayAgent.addToolResult({
+        tool: toolName,
+        toolCallId,
+        state: 'output-error',
+        errorText: error?.message || String(error),
+      });
+    } else {
+      legacyAgent.onUIError(toolCallId, toolName, error);
+    }
+  }, [isGatewayMode, gatewayAgent, legacyAgent]);
 
   // Use controlled chatId if provided, otherwise use internal state
   const chatId = currentChat !== undefined ? currentChat : internalChatId;

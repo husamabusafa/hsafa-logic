@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { HsafaChat } from './HsafaChat';
 import { HsafaProvider } from '../providers/HsafaProvider';
+import { useHsafaAction, useHsafaComponent } from '../index';
 
 const meta: Meta<typeof HsafaChat> = {
   title: 'AI Agent/HsafaChat',
@@ -103,11 +104,11 @@ export const MockedActionsAndUI: Story = {
       // Register sample action and UI component
       const Registrar = () => {
         // Action that logs and sets window title
-        useHsafaAction('SetTitle', (params) => {
+        useHsafaAction('SetTitle', (params: any) => {
           try { document.title = String(params?.title ?? 'Hsafa'); } catch {}
         });
         // UI component to render a callout
-        useHsafaComponent('Callout', ({ tone = 'info', title = 'Note', body = '' }) => {
+        useHsafaComponent('Callout', ({ tone = 'info', title = 'Note', body = '' }: any) => {
           const colors: Record<string, string> = { info: '#2563EB', success: '#059669', warning: '#D97706', danger: '#DC2626' };
           const c = colors[String(tone)] || colors.info;
           return (
