@@ -1,34 +1,7 @@
 /**
  * useHsafaGateway - Simple hook for connecting to Hsafa Gateway
  * 
- * This hook handles:
- * - Creating/registering agents
- * - Starting runs
- * - Streaming events via SSE
- * - Executing browser tools and sending results back
- * 
- * @example
- * ```tsx
- * function Chat() {
- *   const { messages, sendMessage, isStreaming, status } = useHsafaGateway({
- *     gatewayUrl: 'http://localhost:3001',
- *     agentConfig: myAgentConfig,
- *     tools: {
- *       showNotification: async (args) => {
- *         alert(args.message);
- *         return { shown: true };
- *       }
- *     }
- *   });
- * 
- *   return (
- *     <div>
- *       {messages.map(m => <div key={m.id}>{m.content}</div>)}
- *       <button onClick={() => sendMessage('Hello!')}>Send</button>
- *     </div>
- *   );
- * }
- * ```
+ * Handles agent connection, run lifecycle, SSE streaming, and browser tools.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -85,6 +58,13 @@ export interface ToolResult {
   result: unknown;
 }
 
+export interface RunInfo {
+  id: string;
+  status: string;
+  createdAt: string;
+  completedAt: string | null;
+}
+
 export interface StreamEvent {
   id: string;
   type: string;
@@ -93,69 +73,46 @@ export interface StreamEvent {
 }
 
 export interface UseHsafaGatewayConfig {
-  /** Gateway URL (e.g., 'http://localhost:3001') */
+  /** Gateway URL */
   gatewayUrl: string;
-  /** Agent ID (for existing agents) - use this OR agentConfig */
+  /** Agent ID (required for existing agents) */
   agentId?: string;
-  /** Agent configuration object (for registering new agents) - use this OR agentId */
+  /** Agent configuration (for registering new agents) */
   agentConfig?: AgentConfig;
-  /** Optional existing runId to attach to */
+  /** Attach to existing run */
   runId?: string;
-  /** Optional sender identity for user messages */
+  /** Sender identity */
   senderId?: string;
-  /** Optional sender name for user messages */
   senderName?: string;
-  /** Initial messages to restore */
-  initialMessages?: GatewayMessage[];
-  /** Browser-side tools that execute on the client */
+  /** Browser-side tools */
   tools?: Record<string, (args: unknown) => Promise<unknown> | unknown>;
-  /** Called when agent requests a tool with UI (return result via addToolResult) */
+  /** Called for UI tools */
   onToolCall?: (toolCall: ToolCall, addResult: (result: unknown) => void) => void;
-  /** Called when run completes */
+  /** Called on completion */
   onComplete?: (text: string) => void;
   /** Called on error */
   onError?: (error: Error) => void;
-  /** Called when messages change (for persistence) */
-  onMessagesChange?: (messages: GatewayMessage[]) => void;
-  /** Persist runId to localStorage for reconnection on page refresh */
-  persistRun?: boolean;
-  /** Storage key prefix for persisting run (default: 'hsafa-run') */
-  storageKey?: string;
 }
 
 export interface HsafaGatewayAPI {
-  /** All messages in the conversation */
   messages: GatewayMessage[];
-  /** Set messages (for restoring from storage) */
-  setMessages: (messages: GatewayMessage[]) => void;
-  /** Whether currently streaming */
   isStreaming: boolean;
-  /** Current status */
   status: 'idle' | 'registering' | 'running' | 'streaming' | 'waiting_tool' | 'completed' | 'error';
-  /** Current run ID */
   runId: string | null;
-  /** Agent ID */
   agentId: string | null;
-  /** Create a new run and attach */
-  createRun: () => Promise<string>;
-  /** Attach to an existing run (starts streaming and loads history) */
-  attachToRun: (runId: string) => Promise<void>;
-  /** Load messages from an existing run */
-  loadRunHistory: (runId: string) => Promise<GatewayMessage[]>;
-  /** Send a message to start/continue the conversation */
-  sendMessage: (text: string, files?: Array<{ url: string; mediaType: string; name?: string }>) => Promise<void>;
-  /** Add a tool result (for UI tools); supports legacy UI payload objects */
-  addToolResult: (payload: unknown) => Promise<void>;
-  /** Stop the current run */
-  stop: () => void;
-  /** Clear messages and start fresh */
-  reset: () => void;
-  /** Any error that occurred */
-  error: Error | null;
-  /** Pending tool calls waiting for results */
-  pendingToolCalls: ToolCall[];
-  /** Whether ready to send messages */
   isReady: boolean;
+  error: Error | null;
+  pendingToolCalls: ToolCall[];
+  /** Load list of runs for current agent from PostgreSQL */
+  loadRuns: () => Promise<RunInfo[]>;
+  /** Delete a run from PostgreSQL */
+  deleteRun: (runId: string) => Promise<boolean>;
+  createRun: () => Promise<string>;
+  attachToRun: (runId: string) => Promise<void>;
+  sendMessage: (text: string, files?: Array<{ url: string; mediaType: string; name?: string }>) => Promise<void>;
+  addToolResult: (payload: unknown) => Promise<void>;
+  stop: () => void;
+  reset: () => void;
 }
 
 // ============ Hook Implementation ============
@@ -168,24 +125,14 @@ export function useHsafaGateway(config: UseHsafaGatewayConfig): HsafaGatewayAPI 
     runId: providedRunId,
     senderId,
     senderName,
-    initialMessages,
     tools = {},
     onToolCall,
     onComplete,
     onError,
-    onMessagesChange,
-    persistRun = false,
-    storageKey = 'hsafa-run',
   } = config;
 
-  // Helper to get storage key for this agent
-  const getStorageKey = useCallback(() => {
-    const id = providedAgentId || agentConfig?.agent?.name || 'default';
-    return `${storageKey}:${id}`;
-  }, [storageKey, providedAgentId, agentConfig?.agent?.name]);
-
   // State
-  const [messages, setMessagesInternal] = useState<GatewayMessage[]>(initialMessages || []);
+  const [messages, setMessages] = useState<GatewayMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [status, setStatus] = useState<HsafaGatewayAPI['status']>(providedAgentId ? 'idle' : 'registering');
   const [runId, setRunId] = useState<string | null>(providedRunId || null);
@@ -195,20 +142,7 @@ export function useHsafaGateway(config: UseHsafaGatewayConfig): HsafaGatewayAPI 
   const [pendingToolCalls, setPendingToolCalls] = useState<ToolCall[]>([]);
   const [isReady, setIsReady] = useState(!!providedAgentId);
 
-  // Wrapped setMessages that notifies changes
-  const setMessages = useCallback((newMessages: GatewayMessage[] | ((prev: GatewayMessage[]) => GatewayMessage[])) => {
-    setMessagesInternal(prev => {
-      const updated = typeof newMessages === 'function' ? newMessages(prev) : newMessages;
-      // Notify on next tick to avoid state update during render
-      if (onMessagesChange) {
-        setTimeout(() => onMessagesChange(updated), 0);
-      }
-      return updated;
-    });
-  }, [onMessagesChange]);
-
   // Refs
-  const abortControllerRef = useRef<AbortController | null>(null);
   const currentTextRef = useRef<string>('');
   const currentReasoningRef = useRef<string>('');
   const draftAssistantIdRef = useRef<string | null>(null);
@@ -403,27 +337,91 @@ export function useHsafaGateway(config: UseHsafaGatewayConfig): HsafaGatewayAPI 
         const msg = maybeMessage as GatewayMessage | undefined;
         if (!msg || typeof msg !== 'object' || typeof msg.id !== 'string') break;
 
-        if (
-          type === 'message.assistant' &&
-          msg.role === 'assistant' &&
-          draftAssistantIdRef.current &&
-          Array.isArray(msg.parts) &&
-          msg.parts.some(p => p && typeof p === 'object' && (p as { type?: unknown }).type === 'text')
-        ) {
+        // If we have a draft assistant and this is the final message.assistant,
+        // finalize the draft: keep streamed text, and merge tool-call parts if present.
+        if (type === 'message.assistant' && draftAssistantIdRef.current) {
           const draftId = draftAssistantIdRef.current;
           draftAssistantIdRef.current = null;
+
+          setMessages(prev => prev.map(m => {
+            if (m.id !== draftId) return m;
+
+            const draftParts = Array.isArray(m.parts) ? m.parts : [];
+            const finalParts = Array.isArray(msg.parts) ? msg.parts : [];
+
+            const draftReasoning = draftParts.find(p => {
+              const t = (p as { type?: unknown }).type;
+              return typeof t === 'string' && t === 'reasoning';
+            });
+            const draftText = draftParts.find(p => {
+              const t = (p as { type?: unknown }).type;
+              return typeof t === 'string' && t === 'text';
+            });
+
+            const hasToolCall = finalParts.some(p => {
+              const t = (p as { type?: unknown }).type;
+              return typeof t === 'string' && t === 'tool-call';
+            });
+            const hasText = finalParts.some(p => {
+              const t = (p as { type?: unknown }).type;
+              return typeof t === 'string' && t === 'text';
+            });
+
+            let parts: GatewayMessagePart[] = finalParts;
+
+            if (hasToolCall) {
+              const merged: GatewayMessagePart[] = [];
+              const reasoningText = draftReasoning && typeof (draftReasoning as Record<string, unknown>).text === 'string'
+                ? ((draftReasoning as Record<string, unknown>).text as string)
+                : '';
+              if (reasoningText) merged.push({ type: 'reasoning', text: reasoningText });
+
+              const draftTextValue = draftText && typeof (draftText as Record<string, unknown>).text === 'string'
+                ? ((draftText as Record<string, unknown>).text as string)
+                : '';
+              const textToUse = currentTextRef.current || draftTextValue;
+              if (textToUse) merged.push({ type: 'text', text: textToUse });
+
+              merged.push(...finalParts.filter(p => {
+                const t = (p as { type?: unknown }).type;
+                return t !== 'text' && t !== 'reasoning';
+              }));
+
+              parts = merged;
+            } else if (hasText && currentTextRef.current) {
+              // Prefer the accumulated streamed text
+              parts = finalParts.map(p => {
+                const t = (p as { type?: unknown }).type;
+                if (t === 'text') return { ...p, text: currentTextRef.current };
+                return p;
+              });
+              const reasoningText = draftReasoning && typeof (draftReasoning as Record<string, unknown>).text === 'string'
+                ? ((draftReasoning as Record<string, unknown>).text as string)
+                : '';
+              if (reasoningText && !parts.some(p => {
+                const t = (p as { type?: unknown }).type;
+                return typeof t === 'string' && t === 'reasoning';
+              })) {
+                parts = [{ type: 'reasoning', text: reasoningText }, ...parts];
+              }
+            } else if (finalParts.length === 0) {
+              // Nothing in final: keep draft parts
+              parts = draftParts;
+            }
+
+            return { ...m, id: msg.id, parts };
+          }));
+
           currentTextRef.current = '';
           currentReasoningRef.current = '';
-          setMessages(prev => {
-            const idx = prev.findIndex(m => m.id === draftId);
-            if (idx === -1) return [...prev, msg];
-            const updated = [...prev];
-            updated[idx] = msg;
-            return updated;
-          });
-        } else {
-          upsertMessageById(msg);
+          break;
         }
+
+        // Skip if we already have this message (prevents duplicates from history + stream)
+        setMessages(prev => {
+          if (prev.some(m => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
         break;
       }
 
@@ -504,7 +502,7 @@ export function useHsafaGateway(config: UseHsafaGatewayConfig): HsafaGatewayAPI 
           break;
         }
     }
-  }, [agentConfig?.tools, tools, onToolCall, addToolResult, executeBrowserTool, sendToolResult, runId, onComplete, onError, setMessages, ensureDraftAssistant, upsertMessageById]);
+  }, [agentConfig?.tools, tools, onToolCall, addToolResult, executeBrowserTool, sendToolResult, runId, onComplete, onError, ensureDraftAssistant]);
 
   // Start SSE stream for a run
   const startStream = useCallback((currentRunId: string) => {
@@ -516,9 +514,11 @@ export function useHsafaGateway(config: UseHsafaGatewayConfig): HsafaGatewayAPI 
     const eventSource = new EventSource(`${gatewayUrl}/api/runs/${currentRunId}/stream`);
     eventSourceRef.current = eventSource;
     attachedRunIdRef.current = currentRunId;
+    const streamRunId = currentRunId;
 
     eventSource.addEventListener('hsafa', (e) => {
       try {
+        if (attachedRunIdRef.current !== streamRunId) return;
         const event: StreamEvent = JSON.parse(e.data);
         processEvent(event);
       } catch (err) {
@@ -533,62 +533,97 @@ export function useHsafaGateway(config: UseHsafaGatewayConfig): HsafaGatewayAPI 
     };
   }, [gatewayUrl, processEvent]);
 
-  // Load messages from an existing run
-  const loadRunHistory = useCallback(async (targetRunId: string): Promise<GatewayMessage[]> => {
+  // Load messages for a run (authoritative source of truth)
+  const loadRunMessages = useCallback(async (targetRunId: string): Promise<GatewayMessage[]> => {
     try {
-      const response = await fetch(`${gatewayUrl}/api/runs/${targetRunId}/events`);
+      const response = await fetch(`${gatewayUrl}/api/runs/${targetRunId}/messages`);
       if (!response.ok) {
-        console.warn('Failed to load run history:', response.statusText);
+        console.warn('Failed to load run messages:', response.statusText);
         return [];
       }
       const data = await response.json();
-      const events = Array.isArray(data?.events) ? data.events : [];
-      
-      const loadedMessages: GatewayMessage[] = [];
-      for (const evt of events) {
-        if (!evt || typeof evt !== 'object') continue;
-        const evtType = evt.type;
-        if (evtType !== 'message.user' && evtType !== 'message.assistant' && evtType !== 'message.tool') continue;
-        const payload = evt.payload as { message?: unknown } | null | undefined;
-        const msg = payload?.message as GatewayMessage | undefined;
-        if (msg && typeof msg === 'object' && typeof msg.id === 'string') {
-          loadedMessages.push(msg);
-        }
-      }
-      return loadedMessages;
+      const msgs = Array.isArray(data?.messages) ? data.messages : [];
+      return msgs.filter((m: unknown): m is GatewayMessage => {
+        if (!m || typeof m !== 'object') return false;
+        const mm = m as { id?: unknown; role?: unknown; parts?: unknown };
+        return typeof mm.id === 'string' && (mm.role === 'user' || mm.role === 'assistant' || mm.role === 'tool') && Array.isArray(mm.parts);
+      });
     } catch (err) {
-      console.error('Error loading run history:', err);
+      console.error('Error loading run messages:', err);
       return [];
     }
   }, [gatewayUrl]);
 
-  const attachToRun = useCallback(async (newRunId: string) => {
-    setRunId(newRunId);
-    // Persist runId if enabled
-    if (persistRun) {
-      try {
-        localStorage.setItem(getStorageKey(), newRunId);
-      } catch { /* ignore storage errors */ }
-    }
-    // Load existing messages
-    const history = await loadRunHistory(newRunId);
-    if (history.length > 0) {
-      setMessages(history);
-    }
-    // Start streaming
-    startStream(newRunId);
-  }, [startStream, loadRunHistory, persistRun, getStorageKey, setMessages]);
-
-  // Auto-reconnect to persisted run on mount
-  useEffect(() => {
-    if (!persistRun || !isReady || providedRunId) return;
+  // Load runs list from PostgreSQL
+  const loadRuns = useCallback(async (): Promise<RunInfo[]> => {
+    if (!agentId) return [];
     try {
-      const storedRunId = localStorage.getItem(getStorageKey());
-      if (storedRunId && !attachedRunIdRef.current) {
-        attachToRun(storedRunId);
+      const response = await fetch(`${gatewayUrl}/api/runs?agentId=${agentId}`);
+      if (!response.ok) {
+        console.warn('Failed to load runs:', response.statusText);
+        return [];
       }
-    } catch { /* ignore storage errors */ }
-  }, [persistRun, isReady, providedRunId, getStorageKey, attachToRun]);
+      const data = await response.json();
+      return Array.isArray(data?.runs) ? data.runs : [];
+    } catch (err) {
+      console.error('Error loading runs:', err);
+      return [];
+    }
+  }, [gatewayUrl, agentId]);
+
+  // Delete a run from PostgreSQL
+  const deleteRun = useCallback(async (targetRunId: string): Promise<boolean> => {
+    try {
+      const response = await fetch(`${gatewayUrl}/api/runs/${targetRunId}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        console.warn('Failed to delete run:', response.statusText);
+        return false;
+      }
+      // If we deleted the current run, reset state
+      if (targetRunId === runId) {
+        setMessages([]);
+        setRunId(null);
+        attachedRunIdRef.current = null;
+      }
+      return true;
+    } catch (err) {
+      console.error('Error deleting run:', err);
+      return false;
+    }
+  }, [gatewayUrl, runId]);
+
+  const attachToRun = useCallback(async (newRunId: string) => {
+    if (!newRunId) {
+      console.warn('attachToRun called with empty runId');
+      return;
+    }
+
+    // Stop any existing stream immediately to avoid mixing runs while we load
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    setIsStreaming(false);
+    
+    // Clear previous messages when attaching to a new run
+    setMessages([]);
+    setRunId(newRunId);
+    attachedRunIdRef.current = newRunId;
+
+    // Reset streaming/draft refs for this run
+    currentTextRef.current = '';
+    currentReasoningRef.current = '';
+    draftAssistantIdRef.current = null;
+    
+    // Load existing messages for this run from PostgreSQL
+    const history = await loadRunMessages(newRunId);
+    setMessages(history);
+
+    // Start streaming live updates
+    startStream(newRunId);
+  }, [startStream, loadRunMessages]);
 
   useEffect(() => {
     if (!providedRunId) return;
@@ -619,16 +654,19 @@ export function useHsafaGateway(config: UseHsafaGatewayConfig): HsafaGatewayAPI 
       throw new Error('Failed to create run: missing runId');
     }
 
+    // Clear messages for new run
+    setMessages([]);
     setRunId(data.runId);
-    // Persist runId if enabled
-    if (persistRun) {
-      try {
-        localStorage.setItem(getStorageKey(), data.runId);
-      } catch { /* ignore storage errors */ }
-    }
+    attachedRunIdRef.current = data.runId;
+
+    // Reset streaming/draft refs for this run
+    currentTextRef.current = '';
+    currentReasoningRef.current = '';
+    draftAssistantIdRef.current = null;
+
     startStream(data.runId);
     return data.runId;
-  }, [agentId, agentVersionId, gatewayUrl, isReady, startStream, persistRun, getStorageKey]);
+  }, [agentId, agentVersionId, gatewayUrl, isReady, startStream]);
 
   // Send message
   const sendMessage = useCallback(async (text: string, files?: Array<{ url: string; mediaType: string; name?: string }>) => {
@@ -704,10 +742,6 @@ export function useHsafaGateway(config: UseHsafaGatewayConfig): HsafaGatewayAPI 
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
     setIsStreaming(false);
     setStatus('idle');
   }, []);
@@ -722,7 +756,8 @@ export function useHsafaGateway(config: UseHsafaGatewayConfig): HsafaGatewayAPI 
     currentTextRef.current = '';
     currentReasoningRef.current = '';
     draftAssistantIdRef.current = null;
-  }, [stop, setMessages]);
+    attachedRunIdRef.current = null;
+  }, [stop]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -735,20 +770,20 @@ export function useHsafaGateway(config: UseHsafaGatewayConfig): HsafaGatewayAPI 
 
   return {
     messages,
-    setMessages,
     isStreaming,
     status,
     runId,
     agentId,
+    isReady,
+    error,
+    pendingToolCalls,
+    loadRuns,
+    deleteRun,
     createRun,
     attachToRun,
-    loadRunHistory,
     sendMessage,
     addToolResult,
     stop,
     reset,
-    error,
-    pendingToolCalls,
-    isReady,
   };
 }

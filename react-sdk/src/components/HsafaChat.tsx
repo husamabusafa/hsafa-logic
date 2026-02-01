@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
+ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from "react-dom";
 import { ChatHeader } from "./hsafa-chat/ChatHeader";
 import { useFileUpload } from "../hooks/useFileUploadHook";
@@ -11,6 +11,7 @@ import { MessageList } from "./hsafa-chat";
 import { ChatInput } from "./hsafa-chat";
 import { PresetPrompts } from "./hsafa-chat";
 import { createChatStorage, ChatMeta } from "../utils/chat-storage";
+import type { Attachment } from '../types/chat';
 import { ChatHistoryModal } from "./hsafa-chat/ChatHistoryModal";
 import { ChatHistorySidebar } from "./hsafa-chat/ChatHistorySidebar";
 import { ConfirmEditModal } from "./hsafa-chat/ConfirmEditModal";
@@ -269,14 +270,9 @@ export function HsafaChat({
     runId: providedRunId,
     senderId,
     senderName,
-    initialMessages: isGatewayMode ? (initialMessages as GatewayMessage[]) : undefined,
     tools: HsafaTools as Record<string, (args: unknown) => Promise<unknown> | unknown>,
     onComplete: (text) => onFinishCallback({ text }),
     onError: onErrorCallback,
-    onMessagesChange: isGatewayMode ? (msgs) => {
-      if (onMessagesChange) onMessagesChange(msgs as unknown[], gatewayChatId);
-    } : undefined,
-    persistRun: isGatewayMode, // Auto-persist run in gateway mode
   });
 
   // Unified interface - select based on mode
@@ -287,10 +283,11 @@ export function HsafaChat({
   const status = isGatewayMode ? gatewayAgent.status : legacyAgent.status;
   const chatError = isGatewayMode ? gatewayAgent.error : legacyAgent.error;
   const stop = isGatewayMode ? gatewayAgent.stop : legacyAgent.stop;
+  // Gateway mode doesn't support setMessages - use reset instead
   const setMessages = useMemo(() => isGatewayMode 
-    ? (msgs: unknown[]) => gatewayAgent.setMessages(msgs as GatewayMessage[])
+    ? () => { /* gateway mode uses reset() instead */ }
     : legacyAgent.setMessages
-  , [isGatewayMode, gatewayAgent, legacyAgent.setMessages]);
+  , [isGatewayMode, legacyAgent.setMessages]);
   const internalChatId = isGatewayMode ? gatewayChatId : legacyAgent.chatId;
   const setInternalChatId = isGatewayMode ? setGatewayChatId : legacyAgent.setChatId;
   const chatApi = isGatewayMode ? gatewayAgent : legacyAgent.chatApi;
@@ -418,13 +415,13 @@ export function HsafaChat({
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Use chat storage hook for automatic persistence
+  // Use chat storage hook for automatic persistence (disabled in gateway mode)
   const chatStorage = useChatStorage({
     agentId: agentName,
     chatId,
     messages: chatMessages,
     isLoading,
-    autoSave: true,
+    autoSave: !isGatewayMode, // Gateway mode handles persistence server-side
     autoRestore: false, // We handle restore manually to set chatId
   });
   
@@ -433,27 +430,85 @@ export function HsafaChat({
 
   const [chatHistory, setChatHistory] = useState<ChatMeta[]>([]);
   
-  // Load chat history after hydration
-  useEffect(() => {
-    try {
-      const history = storage.loadChatsIndex();
-      setChatHistory(history);
-    } catch {
-      setChatHistory([]);
-    }
-  }, [storage, historyRefreshKey]);
+  // Load chat history - gateway mode uses API, legacy uses localStorage
+  const loadRunsRef = useRef(gatewayAgent.loadRuns);
+  loadRunsRef.current = gatewayAgent.loadRuns;
   
-  // On mount: restore last opened chat and its messages (uncontrolled only)
+  useEffect(() => {
+    if (isGatewayMode) {
+      // Gateway mode: load runs from PostgreSQL via API
+      loadRunsRef.current().then(runs => {
+        const history: ChatMeta[] = runs.map(run => ({
+          id: run.id,
+          title: `Run ${run.id.slice(0, 8)}`,
+          createdAt: new Date(run.createdAt).getTime(),
+          updatedAt: run.completedAt ? new Date(run.completedAt).getTime() : new Date(run.createdAt).getTime(),
+        }));
+        setChatHistory(history);
+      }).catch(() => setChatHistory([]));
+    } else {
+      // Legacy mode: load from localStorage
+      try {
+        const history = storage.loadChatsIndex();
+        setChatHistory(history);
+      } catch {
+        setChatHistory([]);
+      }
+    }
+  }, [isGatewayMode, storage, historyRefreshKey]);
+  
+  // On mount: restore last opened run/chat
   const restoredOnMountRef = useRef<boolean>(false);
   const lastLoadedChatRef = useRef<string | null>(null);
   
+  // Gateway mode: simple localStorage for current runId only
+  const CURRENT_RUN_KEY = `hsafa-current-run:${agentId || agentName}`;
+  
+  // Store gateway methods in refs to avoid dependency issues
+  const attachToRunRef = useRef(gatewayAgent.attachToRun);
+  attachToRunRef.current = gatewayAgent.attachToRun;
+  const resetRef = useRef(gatewayAgent.reset);
+  resetRef.current = gatewayAgent.reset;
+  const deleteRunRef = useRef(gatewayAgent.deleteRun);
+  deleteRunRef.current = gatewayAgent.deleteRun;
+  
+  // Gateway mode: restore saved runId when agent becomes ready
+  useEffect(() => {
+    if (!isGatewayMode) return;
+    if (!gatewayAgent.isReady) return;
+    if (restoredOnMountRef.current) return;
+    
+    restoredOnMountRef.current = true;
+    try {
+      const savedRunId = localStorage.getItem(CURRENT_RUN_KEY);
+      if (savedRunId) {
+        attachToRunRef.current(savedRunId);
+        setGatewayChatId(savedRunId);
+      }
+    } catch { /* ignore */ }
+  }, [isGatewayMode, gatewayAgent.isReady, CURRENT_RUN_KEY]);
+
+  // Gateway mode: refresh chat list when a new run is created
+  const prevRunIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isGatewayMode) return;
+    const currentRunId = gatewayAgent.runId;
+    // If runId changed from null to a value, a new run was created
+    if (currentRunId && prevRunIdRef.current === null) {
+      setHistoryRefreshKey((v) => v + 1);
+      try { localStorage.setItem(CURRENT_RUN_KEY, currentRunId); } catch { /* ignore */ }
+    }
+    prevRunIdRef.current = currentRunId;
+  }, [isGatewayMode, gatewayAgent.runId, CURRENT_RUN_KEY]);
+  
   useEffect(() => {
     if (restoredOnMountRef.current) return;
+    if (isGatewayMode) return; // Handled above
     if (currentChat !== undefined) {
       // Controlled mode: restore messages for the provided chatId without changing chatId
       try {
         const saved = storage.loadChat(currentChat);
-        const msgs = (saved && Array.isArray((saved as any).messages)) ? (saved as any).messages : [];
+        const msgs = saved && Array.isArray(saved.messages) ? saved.messages : [];
         if (msgs.length > 0) { try { setMessages(msgs); } catch { /* ignore */ } }
         lastLoadedChatRef.current = currentChat;
       } catch { /* ignore */ }
@@ -466,14 +521,14 @@ export function HsafaChat({
       if (savedId) {
         setChatId(savedId);
         const saved = storage.loadChat(savedId);
-        const msgs = (saved && Array.isArray((saved as any).messages)) ? (saved as any).messages : [];
+        const msgs = saved && Array.isArray(saved.messages) ? saved.messages : [];
         try { setMessages(msgs); } catch { /* ignore */ }
         lastLoadedChatRef.current = savedId;
       }
     } catch { /* ignore */ }
     restoredOnMountRef.current = true;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentChat]);
+  }, [currentChat, isGatewayMode]);
 
   // In controlled mode: reload messages when currentChat changes (for switching)
   useEffect(() => {
@@ -484,18 +539,27 @@ export function HsafaChat({
     // Chat switched: load new chat's messages
     try {
       const saved = storage.loadChat(currentChat);
-      const msgs = (saved && Array.isArray((saved as any).messages)) ? (saved as any).messages : [];
+      const msgs = saved && Array.isArray(saved.messages) ? saved.messages : [];
       try { setMessages(msgs); } catch { /* ignore */ }
       lastLoadedChatRef.current = currentChat;
       try { storage.setCurrentChatId(currentChat); } catch { /* ignore */ }
     } catch { /* ignore */ }
   }, [currentChat, storage, setMessages]);
 
-  // After restore: persist current chatId so it is used on next reload
+  // After restore: persist current chatId/runId so it is used on next reload
   useEffect(() => {
     if (!restoredOnMountRef.current) return;
-    try { storage.setCurrentChatId(chatId); } catch { /* ignore */ }
-  }, [chatId, storage]);
+    if (isGatewayMode) {
+      // Gateway mode: save current runId to localStorage (one value only)
+      try {
+        if (gatewayAgent.runId) {
+          localStorage.setItem(CURRENT_RUN_KEY, gatewayAgent.runId);
+        }
+      } catch { /* ignore */ }
+    } else {
+      try { storage.setCurrentChatId(chatId); } catch { /* ignore */ }
+    }
+  }, [isGatewayMode, gatewayAgent.runId, chatId, storage, CURRENT_RUN_KEY]);
 
   // Reflect streaming/open state via provider
   useEffect(() => {
@@ -559,22 +623,74 @@ export function HsafaChat({
     setInput('');
     clearAttachments();
     setUploadError(null);
+    
+    if (isGatewayMode) {
+      // Gateway mode: reset the agent (clears messages, runId)
+      resetRef.current();
+      // Clear the current run from localStorage
+      try { localStorage.removeItem(CURRENT_RUN_KEY); } catch { /* ignore */ }
+      setGatewayChatId(`chat_${Date.now()}`);
+      return;
+    }
+    
+    // Legacy mode
     try { setMessages([]); } catch { /* ignore */ }
     const newId = `chat_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    // Reset the loaded chat ref so the new chat is tracked
     lastLoadedChatRef.current = newId;
-    // Use storage hook to mark a new chat session; actual metadata is created on first send
     try {
       chatStorage.createNewChat(() => {
         setChatId(newId);
         try { storage.setCurrentChatId(newId); } catch { /* ignore */ }
       });
     } catch {
-      // Fallback: still set id to avoid being stuck
       setChatId(newId);
       try { storage.setCurrentChatId(newId); } catch { /* ignore */ }
     }
-  }, [isLoading, clearAttachments, storage, setMessages, setChatId, cleanupAllForms, chatStorage]);
+  }, [isLoading, isGatewayMode, CURRENT_RUN_KEY, clearAttachments, storage, setMessages, setChatId, cleanupAllForms, chatStorage]);
+
+  const handleHistorySelect = useCallback((id: string, closeHistory: boolean) => {
+    if (!id) return;
+    if (closeHistory) setHistoryOpen(false);
+    cleanupAllForms();
+
+    if (isGatewayMode) {
+      if (id !== gatewayAgent.runId) {
+        attachToRunRef.current(id);
+        setGatewayChatId(id);
+        try { localStorage.setItem(CURRENT_RUN_KEY, id); } catch { /* ignore */ }
+      }
+      return;
+    }
+
+    if (id !== chatId) {
+      setChatId(id);
+      if (currentChat === undefined) {
+        try { storage.setCurrentChatId(id); } catch { /* ignore */ }
+        try {
+          const saved = storage.loadChat(id);
+          const msgs = saved && Array.isArray(saved.messages) ? saved.messages : [];
+          try { setMessages(msgs); } catch { /* ignore */ }
+        } catch { /* ignore */ }
+      }
+    }
+  }, [CURRENT_RUN_KEY, chatId, cleanupAllForms, currentChat, gatewayAgent.runId, isGatewayMode, setChatId, setGatewayChatId, setMessages, storage]);
+
+  const handleHistoryDelete = useCallback(async (id: string) => {
+    try {
+      if (isGatewayMode) {
+        await deleteRunRef.current(id);
+        if (id === gatewayAgent.runId) {
+          handleNewChat();
+        }
+      } else {
+        storage.deleteChat(id);
+        if (id === chatId) {
+          handleNewChat();
+        }
+      }
+      setHistoryRefreshKey((v) => v + 1);
+    } catch { /* ignore */ }
+  }, [chatId, gatewayAgent.runId, handleNewChat, isGatewayMode, storage]);
 
   const handleToggleHistory = useCallback(() => {
     setHistoryOpen(v => !v);
@@ -606,7 +722,7 @@ export function HsafaChat({
     // Reset height to initial value first
     textarea.style.height = '24px';
     // Force reflow
-    textarea.offsetHeight;
+    void textarea.offsetHeight;
     // Then calculate proper height
     textarea.style.height = 'auto';
     const newHeight = Math.min(textarea.scrollHeight, 200); // max height of 200px
@@ -719,33 +835,8 @@ export function HsafaChat({
           resolvedColors={resolvedColors as any}
           dir={effectiveDir}
           t={t}
-          onChatSelect={(id) => {
-            if (id && id !== chatId) {
-              cleanupAllForms();
-              setChatId(id);
-              if (currentChat === undefined) {
-                try {
-                  storage.setCurrentChatId(id);
-                } catch { /* ignore */ }
-                try {
-                  const saved = storage.loadChat(id);
-                  const msgs = saved && Array.isArray((saved as any).messages) ? (saved as any).messages : [];
-                  try {
-                    setMessages(msgs);
-                  } catch { /* ignore */ }
-                } catch { /* ignore */ }
-              }
-            }
-          }}
-          onChatDelete={(id) => {
-            try {
-              storage.deleteChat(id);
-              setHistoryRefreshKey((v) => v + 1);
-              if (id === chatId) {
-                handleNewChat();
-              }
-            } catch { /* ignore */ }
-          }}
+          onChatSelect={(id) => handleHistorySelect(id, false)}
+          onChatDelete={handleHistoryDelete}
           onNewChat={handleNewChat}
           onClose={() => setHistoryOpen(false)}
         />
@@ -766,7 +857,7 @@ export function HsafaChat({
             alignItems: 'center',
             justifyContent: 'space-between',
             padding: '12px 20px',
-            // No border for cleaner look, or very subtle
+            // No border top for cleaner look, or very subtle
             // borderBottom: `1px solid ${resolvedColors.borderColor}`,
             backgroundColor: resolvedColors.backgroundColor,
             minHeight: '60px',
@@ -901,7 +992,7 @@ export function HsafaChat({
                     <PresetPrompts
                       prompts={presetPrompts}
                       onSelect={(prompt) => setInput(prompt)}
-                      resolvedColors={resolvedColors as any}
+                      resolvedColors={resolvedColors}
                       disabled={isLoading}
                       dir={effectiveDir}
                       t={t}
@@ -1070,34 +1161,8 @@ export function HsafaChat({
           onSearchChange={setHistorySearch}
           dir={effectiveDir}
           t={t}
-          onChatSelect={(id) => {
-            setHistoryOpen(false);
-            if (id && id !== chatId) {
-              cleanupAllForms();
-              setChatId(id);
-              if (currentChat === undefined) {
-                try {
-                  storage.setCurrentChatId(id);
-                } catch { /* ignore */ }
-                try {
-                  const saved = storage.loadChat(id);
-                  const msgs = saved && Array.isArray((saved as any).messages) ? (saved as any).messages : [];
-                  try {
-                    setMessages(msgs);
-                  } catch { /* ignore */ }
-                } catch { /* ignore */ }
-              }
-            }
-          }}
-          onChatDelete={(id) => {
-            try {
-              storage.deleteChat(id);
-              setHistoryRefreshKey((v) => v + 1);
-              if (id === chatId) {
-                handleNewChat();
-              }
-            } catch { /* ignore */ }
-          }}
+          onChatSelect={(id) => handleHistorySelect(id, true)}
+          onChatDelete={handleHistoryDelete}
           loadChatsIndex={() => chatHistory}
           historyPopupRef={historyPopupRef}
         />
@@ -1346,32 +1411,8 @@ export function HsafaChat({
         onSearchChange={setHistorySearch}
         dir={effectiveDir}
         t={t}
-        onChatSelect={(id) => {
-          setHistoryOpen(false);
-          if (id && id !== chatId) {
-            cleanupAllForms();
-            setChatId(id);
-            // In controlled mode, messages will be loaded by the effect above
-            // In uncontrolled mode, load messages here
-            if (currentChat === undefined) {
-              try { storage.setCurrentChatId(id); } catch { /* ignore */ }
-              try {
-                const saved = storage.loadChat(id);
-                const msgs = (saved && Array.isArray((saved as any).messages)) ? (saved as any).messages : [];
-                try { setMessages(msgs); } catch { /* ignore */ }
-              } catch { /* ignore */ }
-            }
-          }
-        }}
-        onChatDelete={(id) => {
-          try {
-            storage.deleteChat(id);
-            setHistoryRefreshKey((v) => v + 1);
-            if (id === chatId) {
-              handleNewChat();
-            }
-          } catch { /* ignore */ }
-        }}
+        onChatSelect={(id) => handleHistorySelect(id, true)}
+        onChatDelete={handleHistoryDelete}
         loadChatsIndex={() => storage.loadChatsIndex()}
         historyPopupRef={historyPopupRef}
       />

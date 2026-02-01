@@ -10,6 +10,38 @@ import type { AgentConfig } from '../agent-builder/types.js';
 
 export const runsRouter: ExpressRouter = Router();
 
+// GET /api/runs - List runs for an agent
+runsRouter.get('/', async (req: Request, res: Response) => {
+  try {
+    const { agentId, limit = '50', offset = '0' } = req.query;
+
+    if (!agentId || typeof agentId !== 'string') {
+      return res.status(400).json({ error: 'Missing required query param: agentId' });
+    }
+
+    const runs = await prisma.run.findMany({
+      where: { agentId },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(parseInt(limit as string) || 50, 100),
+      skip: parseInt(offset as string) || 0,
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        completedAt: true,
+      },
+    });
+
+    res.json({ runs });
+  } catch (error) {
+    console.error('List runs error:', error);
+    res.status(500).json({
+      error: 'Failed to list runs',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 // POST /api/runs - Create a new run and start agent execution
 runsRouter.post('/', async (req: Request, res: Response) => {
   const { agentId, agentVersionId: providedVersionId, initialMessages, metadata } = req.body;
@@ -132,6 +164,24 @@ runsRouter.post('/:runId/messages', async (req: Request, res: Response) => {
     });
   }
 });
+
+ runsRouter.get('/:runId/messages', async (req: Request, res: Response) => {
+   try {
+     const { runId } = req.params;
+
+     const run = await prisma.run.findUnique({ where: { id: runId } });
+     if (!run) return res.status(404).json({ error: 'Run not found' });
+
+     const messages = await loadRunMessages(runId);
+     return res.json({ messages });
+   } catch (error) {
+     console.error('Get run messages error:', error);
+     return res.status(500).json({
+       error: 'Failed to fetch messages',
+       message: error instanceof Error ? error.message : 'Unknown error',
+     });
+   }
+ });
 
 // Background agent execution using fullStream
 async function executeAgentRun(
@@ -376,7 +426,7 @@ runsRouter.get('/:runId/stream', async (req: Request, res: Response) => {
   const since = req.query.since as string | undefined;
   const lastEventId = req.headers['last-event-id'] as string | undefined;
 
-  const startId = since || lastEventId || '0-0';
+  const startId = since || lastEventId || '$';
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -405,7 +455,12 @@ runsRouter.get('/:runId/stream', async (req: Request, res: Response) => {
     res.write(`: Connected to run ${runId}\n\n`);
 
     let lastSeenId = startId;
-    const existingEvents = await redis.xread('STREAMS', streamKey, startId);
+    if (startId === '$') {
+      const last = await redis.xrevrange(streamKey, '+', '-', 'COUNT', 1);
+      lastSeenId = Array.isArray(last) && last.length > 0 ? last[0][0] : '0-0';
+    }
+
+    const existingEvents = startId === '$' ? null : await redis.xread('STREAMS', streamKey, startId);
     
     if (existingEvents && existingEvents.length > 0) {
       for (const [, messages] of existingEvents) {
@@ -484,7 +539,13 @@ runsRouter.get('/:runId/events', async (req: Request, res: Response) => {
       orderBy: { seq: 'asc' },
     });
 
-    res.json({ events });
+    // Convert BigInt seq to number for JSON serialization
+    const serializedEvents = events.map(e => ({
+      ...e,
+      seq: Number(e.seq),
+    }));
+
+    res.json({ events: serializedEvents });
   } catch (error) {
     console.error('Get events error:', error);
     res.status(500).json({
@@ -515,6 +576,37 @@ runsRouter.get('/:runId', async (req: Request, res: Response) => {
     console.error('Get run error:', error);
     res.status(500).json({
       error: 'Failed to fetch run',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// DELETE /api/runs/:runId - Delete a run and its events
+runsRouter.delete('/:runId', async (req: Request, res: Response) => {
+  try {
+    const { runId } = req.params;
+
+    const run = await prisma.run.findUnique({ where: { id: runId } });
+    if (!run) {
+      return res.status(404).json({ error: 'Run not found' });
+    }
+
+    // Delete related records first (no cascade in schema)
+    await prisma.toolResult.deleteMany({ where: { runId } });
+    await prisma.toolCall.deleteMany({ where: { runId } });
+    await prisma.runEvent.deleteMany({ where: { runId } });
+    await prisma.run.delete({ where: { id: runId } });
+
+    // Clean up Redis stream
+    try {
+      await redis.del(`run:${runId}:stream`);
+    } catch { /* ignore redis errors */ }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete run error:', error);
+    res.status(500).json({
+      error: 'Failed to delete run',
       message: error instanceof Error ? error.message : 'Unknown error',
     });
   }
