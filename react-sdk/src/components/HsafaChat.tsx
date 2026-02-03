@@ -11,7 +11,6 @@ import { PresetPrompts } from "./hsafa-chat";
 import { ChatMeta } from "../utils/chat-storage";
 import { ChatHistoryModal } from "./hsafa-chat/ChatHistoryModal";
 import { ChatHistorySidebar } from "./hsafa-chat/ChatHistorySidebar";
-import { ConfirmEditModal } from "./hsafa-chat/ConfirmEditModal";
 import { useHsafa } from "../providers/HsafaProvider";
 import { FloatingChatButton } from "./FloatingChatButton";
 import CursorController from "./web-controler/CursorController";
@@ -55,7 +54,6 @@ export function HsafaChat({
   HsafaTools = {},
   HsafaUI = {},
   componentAboveInput,
-  editProcessContent,
   presetPrompts,
   onStart,
   onFinish,
@@ -127,9 +125,6 @@ export function HsafaChat({
       'input.removeFile': 'Remove file',
       'messages.empty': emptyStateMessage || 'Start by sending a message to the agent.',
       'general.agent': title || 'Agent',
-      'editor.cancel': 'Cancel',
-      'editor.saveAndRegenerate': 'Save & Regenerate',
-      'editor.clickToEdit': 'Click to edit',
       'prompts.suggested': 'Suggested Prompts',
       'prompts.showMore': 'Show more',
       'prompts.showLess': 'Show less',
@@ -138,10 +133,6 @@ export function HsafaChat({
       'history.untitledChat': 'Untitled chat',
       'history.deleteChat': 'Delete chat',
       'history.newChat': 'New chat',
-      'editModal.title': 'Edit Message',
-      'editModal.content': 'This will remove this message and all messages after it, and place its content in the input field for editing. Do you want to continue?',
-      'editModal.submit': 'Edit',
-      'editModal.cancel': 'Cancel',
       'assistant.thinking': 'Thinking',
       'assistant.finishThinking': 'Finish Thinking',
       'tool.inputting': 'Inputting',
@@ -152,7 +143,6 @@ export function HsafaChat({
       'error.tryAgain': 'Please try again.',
       'error.refresh': 'Refresh',
       'error.failedSend': 'Failed to send message. Please try again.',
-      'error.failedEdit': 'Failed to edit message. Please try again.',
     };
 
     const ar: Record<string, string> = {
@@ -170,9 +160,6 @@ export function HsafaChat({
       'input.removeFile': 'إزالة الملف',
       'messages.empty': emptyStateMessage || 'ابدأ بإرسال رسالة إلى الوكيل.',
       'general.agent': title || 'الوكيل',
-      'editor.cancel': 'إلغاء',
-      'editor.saveAndRegenerate': 'حفظ وإعادة التوليد',
-      'editor.clickToEdit': 'انقر للتعديل',
       'prompts.suggested': 'اقتراحات جاهزة',
       'prompts.showMore': 'عرض المزيد',
       'prompts.showLess': 'عرض أقل',
@@ -181,10 +168,6 @@ export function HsafaChat({
       'history.untitledChat': 'محادثة بدون عنوان',
       'history.deleteChat': 'حذف المحادثة',
       'history.newChat': 'محادثة جديدة',
-      'editModal.title': 'تعديل الرسالة',
-      'editModal.content': 'سيؤدي هذا إلى حذف هذه الرسالة وكل الرسائل التي بعدها، ثم وضع محتواها في حقل الإدخال للتعديل. هل تريد المتابعة؟',
-      'editModal.submit': 'تعديل',
-      'editModal.cancel': 'إلغاء',
       'assistant.thinking': 'جارٍ التفكير',
       'assistant.finishThinking': 'انتهى التفكير',
       'tool.inputting': 'جارٍ الإدخال',
@@ -195,7 +178,6 @@ export function HsafaChat({
       'error.tryAgain': 'يرجى المحاولة مرة أخرى.',
       'error.refresh': 'تحديث',
       'error.failedSend': 'تعذر إرسال الرسالة. يرجى المحاولة مرة أخرى.',
-      'error.failedEdit': 'تعذر تعديل الرسالة. يرجى المحاولة مرة أخرى.',
     };
 
     const dict = isArabic ? ar : en;
@@ -269,12 +251,6 @@ export function HsafaChat({
     onStartCallback({ role: 'user', content: text });
   }, [hasValidGatewayConfig, gatewayInput, gatewayAgent, onStartCallback]);
 
-  // Notify messages change
-  const notifyMessagesChange = useCallback(() => {
-    if (onMessagesChange) {
-      onMessagesChange(chatMessages, internalChatId);
-    }
-  }, [onMessagesChange, chatMessages, internalChatId]);
 
   // Cleanup forms
   const cleanupAllForms = useCallback(() => {
@@ -313,7 +289,6 @@ export function HsafaChat({
     handleRemoveAttachment,
     handleFileSelection,
     clearAttachments,
-    setAttachments,
   } = useFileUpload(effectiveBaseUrl);
 
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -333,8 +308,6 @@ export function HsafaChat({
   const historyBtnRef = useRef<HTMLButtonElement>(null);
   const historyPopupRef = useRef<HTMLDivElement>(null);
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set());
-  const [isConfirmEditOpen, setIsConfirmEditOpen] = useState(false);
-  const [messageToEdit, setMessageToEdit] = useState<{ id: string; text: string; attachments: any[] } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useAutoScroll<HTMLDivElement>(isLoading);
   
@@ -556,37 +529,6 @@ export function HsafaChat({
   }, [input]);
 
 
-  const handleUserMessageClick = useCallback((message: any, id: string, text: string, attachments?: any[]) => {
-    setMessageToEdit({ id, text, attachments: attachments || [] });
-    setIsConfirmEditOpen(true);
-  }, []);
-
-  const handleConfirmEdit = useCallback(() => {
-    if (!messageToEdit || isLoading) return;
-    
-    try {
-      // Set the message content in the main input
-      setInput(messageToEdit.text);
-      
-      // Set the message attachments in the main input
-      setAttachments(messageToEdit.attachments);
-      
-      // Close modal and reset state
-      setIsConfirmEditOpen(false);
-      setMessageToEdit(null);
-      
-      // Notify about messages change after edit
-      notifyMessagesChange();
-    } catch (error) {
-      console.error('Failed to edit message:', error);
-      setUploadError(t('error.failedEdit'));
-    }
-  }, [messageToEdit, isLoading, setAttachments, notifyMessagesChange, t, setInput]);
-
-  const handleCancelEdit = useCallback(() => {
-    setIsConfirmEditOpen(false);
-    setMessageToEdit(null);
-  }, []);
 
   // Inject custom CSS with theme-aware variables
   const cssVariablesAndCustomStyles = `
@@ -846,14 +788,12 @@ export function HsafaChat({
                   }
                   resolvedColors={resolvedColors as any}
                   t={t}
-                  onUserMessageClick={handleUserMessageClick}
                   HsafaUI={allUI}
                   onUIError={handleUIError}
                   onUISuccess={handleUISuccess}
                   addToolResult={(payload: any) =>
                     (chatApi as any)?.addToolResult?.(payload)
                   }
-                  editableMessageIcon={editProcessContent?.message_icon}
                   fullPage={true}
                   dir={effectiveDir}
                   theme={effectiveTheme}
@@ -985,18 +925,6 @@ export function HsafaChat({
           historyPopupRef={historyPopupRef}
         />
       )}
-
-      {/* Confirm Edit Modal */}
-      <ConfirmEditModal
-        isOpen={isConfirmEditOpen}
-        resolvedColors={resolvedColors as any}
-        t={t}
-        editProcessContent={editProcessContent}
-        onConfirm={handleConfirmEdit}
-        onCancel={handleCancelEdit}
-        dir={effectiveDir}
-        lang={effectiveLang}
-      />
 
       {/* Animations */}
       <style>
@@ -1166,12 +1094,10 @@ export function HsafaChat({
             }
             resolvedColors={resolvedColors as any}
             t={t}
-            onUserMessageClick={handleUserMessageClick}
             HsafaUI={allUI}
             onUIError={handleUIError}
             onUISuccess={handleUISuccess}
             addToolResult={(payload: any) => (chatApi as any)?.addToolResult?.(payload)}
-            editableMessageIcon={editProcessContent?.message_icon}
             dir={effectiveDir}
             theme={effectiveTheme}
           />
@@ -1233,18 +1159,6 @@ export function HsafaChat({
         onChatDelete={handleHistoryDelete}
         loadChatsIndex={() => chatHistory}
         historyPopupRef={historyPopupRef}
-      />
-
-      {/* Confirm Edit Modal */}
-      <ConfirmEditModal
-        isOpen={isConfirmEditOpen}
-        resolvedColors={resolvedColors as any}
-        t={t}
-        dir={effectiveDir}
-        lang={effectiveLang}
-        onConfirm={handleConfirmEdit}
-        onCancel={handleCancelEdit}
-        editProcessContent={editProcessContent}
       />
 
       {/* Animations */}

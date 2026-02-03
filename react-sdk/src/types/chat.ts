@@ -123,7 +123,6 @@ export interface HsafaChatProps {
   
   // Customization props
   componentAboveInput?: React.ComponentType<any>;
-  editProcessContent?: EditProcessContent;
   presetPrompts?: Array<{ label: string; prompt: string }>;
   
   // Message lifecycle callbacks
@@ -139,15 +138,6 @@ export interface HsafaChatProps {
   // Full page chat mode (centered, modern UI like ChatGPT)
   fullPageChat?: boolean;
 }
-
-export type EditProcessContent = {
-  title?: string;
-  content?: string | React.ComponentType<any>;
-  submit_button_label?: string;
-  cancel_button_label?: string;
-  icon?: React.ComponentType<any>; // Icon shown in the modal header
-  message_icon?: React.ComponentType<any>; // Icon shown in the editable message
-};
 
 export type { Attachment as DefaultAttachment };
 

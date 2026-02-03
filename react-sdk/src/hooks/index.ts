@@ -13,12 +13,6 @@ export type {
   SavedChat 
 } from './useChatStorage';
 
-export { useMessageEditor } from './useMessageEditor';
-export type { 
-  UseMessageEditorConfig, 
-  MessageEditorAPI 
-} from './useMessageEditor';
-
 export * from "./useAutoScroll";
 export * from "./useFileUploadHook";
 export * from "./useHsafaGateway";

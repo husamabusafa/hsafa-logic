@@ -8,6 +8,16 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum EntityType {
+  human
+  agent
+  system
+}
+
 enum RunStatus {
   queued
   running
@@ -19,8 +29,7 @@ enum RunStatus {
 
 enum ToolExecutionTarget {
   server
-  device
-  browser
+  client
   external
 }
 
@@ -34,9 +43,113 @@ enum ToolCallStatus {
 
 enum ToolResultSource {
   server
-  device
-  browser
+  client
 }
+
+enum PlanStatus {
+  active
+  paused
+  completed
+  canceled
+}
+
+// =============================================================================
+// ENTITY - Unified identity (Human, Agent, System)
+// =============================================================================
+
+model Entity {
+  id          String     @id @default(uuid()) @db.Uuid
+  type        EntityType
+  externalId  String?    @unique @map("external_id") // Your app's user ID, or agent name, or system key
+  displayName String?    @map("display_name")
+  metadata    Json?      @db.JsonB
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // For Agent Entities - link to agent config
+  agentId String? @unique @map("agent_id") @db.Uuid
+  agent   Agent?  @relation(fields: [agentId], references: [id])
+
+  // Relationships
+  nexusMemberships NexusMembership[]
+  messages         NexusMessage[]
+  runs             Run[]              // Runs triggered by this entity
+  clients          Client[]
+  memories         Memory[]
+  plans            Plan[]
+  goals            Goal[]
+
+  @@index([type])
+  @@index([externalId])
+  @@map("entities")
+}
+
+// =============================================================================
+// NEXUS - Shared context space (timeline of events/messages)
+// =============================================================================
+
+model Nexus {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String?
+  description String?
+  isPrivate   Boolean  @default(false) @map("is_private")
+  metadata    Json?    @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships NexusMembership[]
+  messages    NexusMessage[]
+  runs        Run[]
+
+  @@index([createdAt])
+  @@map("nexuses")
+}
+
+model NexusMembership {
+  id        String   @id @default(uuid()) @db.Uuid
+  nexusId   String   @map("nexus_id") @db.Uuid
+  entityId  String   @map("entity_id") @db.Uuid
+  role      String?  // optional: admin, member, observer, etc.
+  joinedAt  DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
+
+  nexus  Nexus  @relation(fields: [nexusId], references: [id], onDelete: Cascade)
+  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([nexusId, entityId])
+  @@index([entityId])
+  @@map("nexus_memberships")
+}
+
+// =============================================================================
+// NEXUS TIMELINE - Messages/events in a Nexus
+// =============================================================================
+
+model NexusMessage {
+  id        String   @id @default(uuid()) @db.Uuid
+  nexusId   String   @map("nexus_id") @db.Uuid
+  entityId  String   @map("entity_id") @db.Uuid
+  role      String   // user, assistant, system, tool
+  content   String?  @db.Text
+  metadata  Json?    @db.JsonB
+  seq       BigInt   // ordering within nexus
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  nexus  Nexus  @relation(fields: [nexusId], references: [id], onDelete: Cascade)
+  entity Entity @relation(fields: [entityId], references: [id])
+
+  // If this message was produced by a Run
+  runId String? @map("run_id") @db.Uuid
+  run   Run?    @relation(fields: [runId], references: [id])
+
+  @@unique([nexusId, seq])
+  @@index([nexusId, createdAt])
+  @@index([entityId])
+  @@map("nexus_messages")
+}
+
+// =============================================================================
+// AGENT - Agent configuration (separate from Entity identity)
+// =============================================================================
 
 model Agent {
   id          String   @id @default(uuid()) @db.Uuid
@@ -46,7 +159,7 @@ model Agent {
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   versions AgentVersion[]
-  runs     Run[]
+  entity   Entity?
 
   @@index([createdAt])
   @@map("agents")
@@ -61,7 +174,7 @@ model AgentVersion {
   metadata   Json?    @map("metadata") @db.JsonB
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  agent Agent @relation(fields: [agentId], references: [id])
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
   runs  Run[]
 
   @@unique([agentId, version])
@@ -70,65 +183,87 @@ model AgentVersion {
   @@map("agent_versions")
 }
 
-model Run {
-  id             String    @id @default(uuid()) @db.Uuid
-  agentId        String    @map("agent_id") @db.Uuid
-  agentVersionId String    @map("agent_version_id") @db.Uuid
-  status         RunStatus
-  startedAt      DateTime? @map("started_at") @db.Timestamptz(6)
-  completedAt    DateTime? @map("completed_at") @db.Timestamptz(6)
-  errorMessage   String?   @map("error_message")
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+// =============================================================================
+// RUN - One execution of an Agent Entity in a Nexus
+// =============================================================================
 
-  agent        Agent         @relation(fields: [agentId], references: [id])
-  agentVersion AgentVersion  @relation(fields: [agentVersionId], references: [id])
+model Run {
+  id              String    @id @default(uuid()) @db.Uuid
+  nexusId         String    @map("nexus_id") @db.Uuid
+  agentEntityId   String    @map("agent_entity_id") @db.Uuid
+  agentVersionId  String    @map("agent_version_id") @db.Uuid
+  triggeredById   String?   @map("triggered_by_id") @db.Uuid // Entity that triggered this run
+  parentRunId     String?   @map("parent_run_id") @db.Uuid   // For cross-nexus runs
+  status          RunStatus
+  startedAt       DateTime? @map("started_at") @db.Timestamptz(6)
+  completedAt     DateTime? @map("completed_at") @db.Timestamptz(6)
+  errorMessage    String?   @map("error_message")
+  metadata        Json?     @db.JsonB
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  nexus        Nexus        @relation(fields: [nexusId], references: [id])
+  agentEntity  Entity       @relation(fields: [agentEntityId], references: [id])
+  agentVersion AgentVersion @relation(fields: [agentVersionId], references: [id])
+  parentRun    Run?         @relation("RunHierarchy", fields: [parentRunId], references: [id])
+  childRuns    Run[]        @relation("RunHierarchy")
+
   events       RunEvent[]
   toolCalls    ToolCall[]
   toolResults  ToolResult[]
+  messages     NexusMessage[]
 
-  @@index([createdAt])
+  @@index([nexusId, createdAt])
+  @@index([agentEntityId, createdAt])
   @@index([status, updatedAt])
-  @@index([agentId, createdAt])
+  @@index([parentRunId])
   @@map("runs")
 }
+
+// =============================================================================
+// RUN EVENTS - Streaming events within a Run (Steps, deltas, etc.)
+// =============================================================================
 
 model RunEvent {
   id        String   @id @default(uuid()) @db.Uuid
   runId     String   @map("run_id") @db.Uuid
   seq       BigInt
-  type      String
+  type      String   // text.delta, tool.call, tool.result, step.start, step.end, etc.
   payload   Json     @db.JsonB
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  run Run @relation(fields: [runId], references: [id])
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@unique([runId, seq])
   @@index([runId, createdAt])
   @@map("run_events")
 }
 
-model ToolCall {
-  id             String              @id @default(uuid()) @db.Uuid
-  runId          String              @map("run_id") @db.Uuid
-  seq            BigInt
-  callId         String              @map("call_id")
-  toolName       String              @map("tool_name")
-  args           Json                @db.JsonB
-  executionTarget ToolExecutionTarget @map("execution_target")
-  targetDeviceId String?             @map("target_device_id") @db.Uuid
-  status         ToolCallStatus
-  requestedAt    DateTime            @default(now()) @map("requested_at") @db.Timestamptz(6)
-  completedAt    DateTime?           @map("completed_at") @db.Timestamptz(6)
-  errorMessage   String?             @map("error_message")
+// =============================================================================
+// TOOL CALLS & RESULTS
+// =============================================================================
 
-  run          Run        @relation(fields: [runId], references: [id])
-  targetDevice Device?    @relation(fields: [targetDeviceId], references: [id])
+model ToolCall {
+  id              String              @id @default(uuid()) @db.Uuid
+  runId           String              @map("run_id") @db.Uuid
+  seq             BigInt
+  callId          String              @map("call_id")
+  toolName        String              @map("tool_name")
+  args            Json                @db.JsonB
+  executionTarget ToolExecutionTarget @map("execution_target")
+  targetClientId  String?             @map("target_client_id") @db.Uuid
+  status          ToolCallStatus
+  requestedAt     DateTime            @default(now()) @map("requested_at") @db.Timestamptz(6)
+  completedAt     DateTime?           @map("completed_at") @db.Timestamptz(6)
+  errorMessage    String?             @map("error_message")
+
+  run          Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  targetClient Client?  @relation(fields: [targetClientId], references: [id])
   result       ToolResult?
 
   @@unique([runId, callId])
   @@index([runId, seq])
-  @@index([targetDeviceId, status])
+  @@index([targetClientId, status])
   @@map("tool_calls")
 }
 
@@ -138,28 +273,103 @@ model ToolResult {
   callId    String           @map("call_id")
   result    Json             @db.JsonB
   source    ToolResultSource
+  clientId  String?          @map("client_id") @db.Uuid
   createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  run      Run      @relation(fields: [runId], references: [id])
+  run      Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
   toolCall ToolCall @relation(fields: [runId, callId], references: [runId, callId])
+  client   Client?  @relation(fields: [clientId], references: [id])
 
   @@unique([runId, callId])
   @@index([runId, createdAt])
   @@map("tool_results")
 }
 
-// Device table - auto-created on first interaction
-// No pre-registration needed, devices appear when they first interact
-model Device {
+// =============================================================================
+// CLIENT - Connection points (web, mobile, node backend, etc.)
+// =============================================================================
+
+model Client {
   id           String    @id @default(uuid()) @db.Uuid
-  deviceKey    String    @unique @map("device_key")  // Stable ID from token (sub claim)
-  displayName  String?   @map("display_name")  // From token (name claim)
+  entityId     String    @map("entity_id") @db.Uuid
+  clientKey    String    @unique @map("client_key") // Stable ID from token
+  clientType   String?   @map("client_type")        // web, mobile, node, device
+  displayName  String?   @map("display_name")
   capabilities Json      @default(dbgenerated("'{}'::jsonb")) @db.JsonB
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   lastSeenAt   DateTime? @map("last_seen_at") @db.Timestamptz(6)
 
-  toolCalls ToolCall[]
+  entity      Entity       @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  toolCalls   ToolCall[]
+  toolResults ToolResult[]
 
-  @@index([createdAt])
-  @@map("devices")
+  @@index([entityId])
+  @@index([clientType])
+  @@map("clients")
+}
+
+// =============================================================================
+// MEMORY - Long-term agent memory (persists across Runs and Nexuses)
+// =============================================================================
+
+model Memory {
+  id        String   @id @default(uuid()) @db.Uuid
+  entityId  String   @map("entity_id") @db.Uuid // Agent Entity that owns this memory
+  topic     String?  // Categorization key
+  content   String   @db.Text
+  metadata  Json?    @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@index([entityId, topic])
+  @@index([entityId, createdAt])
+  @@map("memories")
+}
+
+// =============================================================================
+// PLAN - Agent scheduled executions
+// =============================================================================
+
+model Plan {
+  id           String     @id @default(uuid()) @db.Uuid
+  entityId     String     @map("entity_id") @db.Uuid // Agent Entity
+  name         String?
+  schedule     String     // Cron expression or ISO timestamp
+  instruction  String?    @db.Text // What to do when triggered
+  targetNexusId String?   @map("target_nexus_id") @db.Uuid
+  status       PlanStatus @default(active)
+  lastRunAt    DateTime?  @map("last_run_at") @db.Timestamptz(6)
+  nextRunAt    DateTime?  @map("next_run_at") @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@index([entityId, status])
+  @@index([nextRunAt, status])
+  @@map("plans")
+}
+
+// =============================================================================
+// GOAL - Agent objectives (short-term and long-term)
+// =============================================================================
+
+model Goal {
+  id          String   @id @default(uuid()) @db.Uuid
+  entityId    String   @map("entity_id") @db.Uuid // Agent Entity
+  description String   @db.Text
+  priority    Int      @default(0)
+  isLongTerm  Boolean  @default(false) @map("is_long_term")
+  isCompleted Boolean  @default(false) @map("is_completed")
+  metadata    Json?    @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@index([entityId, isCompleted])
+  @@index([entityId, priority])
+  @@map("goals")
 }

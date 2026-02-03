@@ -140,7 +140,7 @@ Recommended minimal modules:
   - Calls `POST /api/runs`
   - Returns `{ runId, streamUrl, status }`
 
-- `hsafa.runs.appendMessage(runId, { message, senderId?, senderName? })`
+- `hsafa.runs.appendMessage(runId, { message, entityId?, entityName? })`
   - Calls `POST /api/runs/:runId/messages`
 
 - `hsafa.runs.get(runId)`

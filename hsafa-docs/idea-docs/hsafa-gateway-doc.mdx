@@ -1,16 +1,16 @@
 ---
 title: Distributed Agent Platform Architecture
-description: Building an Agent Builder + Distributed Agent Runtime with persistent memory and distributed tool execution.
+description: Building an Agent Builder + Distributed Agent Runtime (gateway) that scales into an agentic network (Nexuses + Entities) with persistent memory and distributed tool execution.
 ---
 
 # 🧠 The Big Idea
 
-You are building an **Agent Builder + Distributed Agent Runtime**
+You are building an **Agent Builder + Distributed Agent Runtime** that can grow into an **agentic system network**.
 
 A system where:
 
 * Users **create agents** via config
-* Agents run **on your server**
+* Agents run **on your server** (the gateway is the runtime)
 * Any client (web, mobile, node app) can:
   * Start a run
   * Watch it stream
@@ -19,7 +19,78 @@ A system where:
 
 This is like giving AI agents a **backend, memory, and a network of devices**.
 
+The update: instead of thinking only in “one agent ↔ one chat”, the platform’s native model becomes **many Entities collaborating inside shared contexts** (Nexuses).
+
 ---
+
+# 🕸️ Agentic Network Model (Nexuses + Entities)
+
+## Core primitives
+
+### Nexus
+
+A **Nexus** is a shared context space (a timeline of events/messages) where participants collaborate.
+
+- A Nexus can contain any number of participants.
+- Nexuses can be public (many participants) or private (small, scoped contexts like “Manager Nexus”).
+
+### Entity
+
+An **Entity** is anything that can participate in a Nexus.
+
+- **Human Entity** (a user from your app)
+- **Agent Entity** (an AI agent)
+- **System Entity** (a service/backend/integration/device)
+
+An Agent Entity can belong to multiple Nexuses.
+
+### Client
+
+A **Client** is a connection point where streams are delivered and responses are received.
+
+- Examples: web browser, mobile app, Node.js backend, IoT device
+- A Client is **not** an Entity — it is a delivery channel
+
+One Entity can connect from **multiple Clients** simultaneously. For example, a single Human Entity (user) might be logged in on both web and mobile at the same time. Both Clients receive the same stream; both can send messages as that Entity.
+
+### Run (Agent execution)
+
+A **Run** is one execution of **one Agent Entity** in response to a trigger that occurred inside a specific Nexus.
+
+- A single Nexus event may trigger multiple Runs (one per Agent Entity in that Nexus).
+- Each Agent decides whether to respond (an Agent may do work and then emit no user-visible message).
+
+### Step (inside a Run)
+
+Inside a Run, execution is a multi-step reasoning-and-acting loop:
+
+- **Run** = a complete multi-step AI interaction
+- **Step** = a single LLM call within that Run
+
+This distinction matters because the gateway streams **partial outputs** (text deltas, tool calls, tool results) while the Run is still in progress.
+
+## Triggers (what starts a Run)
+
+An Agent Entity can be triggered in several ways:
+
+* A Human Entity message inside a Nexus
+* Its own scheduled Plan (proactive execution)
+* Another Agent Entity inside a Nexus
+* A System Entity event inside a Nexus
+
+## Scheduling and long-term behavior
+
+Each Agent Entity maintains:
+
+* **Plan**: schedules future executions (cron-like). Example: “send a reminder at 6 PM”.
+* **Goals**: short-term and long-term objectives that influence decisions over time.
+
+The key design choice: **Plans and Goals are first-class state**, not just prompt text.
+
+---
+
+<details>
+<summary>Architecture (later)</summary>
 
 # 🏗️ System Architecture
 
@@ -44,7 +115,7 @@ Users send agent configs:
 
 You:
 
-* Store config in **PostgreSQL**
+* Store config in **durable storage**
 * Reuse config when runs start
 
 ---
@@ -55,493 +126,114 @@ When a user starts a run:
 
 1. Load agent config
 2. Load chat history
-3. Start the agent using **Vercel AI SDK Core**
+3. Start the agent engine (the reasoning + tool loop)
 4. Stream output
 5. Handle tool calls
 6. Save everything
 
-The SDK is only the **brain**.
 Your system is the **body + memory + network**.
 
----
+In the Nexus model, the gateway runtime expands slightly:
 
-# 💾 Storage Layers
-
-## 🗄 PostgreSQL (Permanent Memory)
-
-Stores long-term data:
-
-### Tables
-
-**agents**
-
-* id
-* name
-* description
-
-**agent_versions**
-
-* id
-* agent_id
-* version
-* config_json
-* config_hash
-
-**runs**
-
-* id
-* agent_id
-* agent_version_id
-* status (queued / running / waiting_tool / completed / failed / canceled)
-
-**run_events**
-
-* id
-* run_id
-* seq
-* type
-* payload
-
-**tool_calls**
-
-* run_id
-* call_id
-* tool_name
-* args
-* execution_target (server/device/browser/external)
-* status
-
-**tool_results**
-
-* run_id
-* call_id
-* result
-* source (server/device/browser)
-
-**devices**
-
-* id
-* device_key
-* capabilities
-* last_seen_at
-
-This lets any client reload full history.
+1. A message/event is written to a Nexus timeline.
+2. The gateway triggers Runs for Agent Entities that belong to that Nexus.
+3. Each Run streams events (text/tool-calls/tool-results) and may append new messages/events back into the Nexus.
 
 ---
 
-## ⚡ Redis (Live Memory)
+</details>
 
-Used for **realtime + streaming state**
+# 🔁 Example scenario: Leave Request (Cross-Nexus)
 
-### Redis Streams
+A Human Entity asks an Agent Entity (in the Employee Nexus) to send a leave request to their manager.
 
-Key per run:
+1. The Human posts a message in the **Employee Nexus**.
+2. All Agent Entities in that Nexus are triggered; only the relevant Agent chooses to respond.
+3. During the same Run, the Agent calls a tool that triggers a **new Run** of itself inside a different Nexus: the **Manager Nexus**.
+4. The Manager Nexus is private and contains only the Manager (Human Entity) and the Agent.
+5. The Agent asks the Manager for approval.
+6. The Manager replies; that reply becomes a new event in the Manager Nexus, triggering the Agent again there.
+7. The Agent then triggers another Run back in the Employee Nexus to deliver the final decision.
 
-```
-run:{runId}:stream
-```
+While waiting, if the employee asks for status, the Agent can:
 
-Stores:
-
-* text chunks
-* tool call events
-* tool results
-* status updates
-
-This allows:
-✅ Resume after refresh
-✅ Multiple clients watching same run
-✅ No lost streaming data
+* Read the Manager Nexus timeline.
+* Summarize progress back in the Employee Nexus.
 
 ---
 
-# 🌊 Streaming Flow
+# 🧰 Tool Visibility and Interaction
 
-### Agent → Redis
+## Tool call visibility modes
 
-While model streams:
+When an Agent calls a tool, it can decide **who can see and interact with that tool call**:
 
-```
-XADD run:123:stream * type "text.delta" ts "2026-01-30T12:00:00.000Z" payload "{\"delta\":\"Hello\"}"
-XADD run:123:stream * type "text.delta" ts "2026-01-30T12:00:00.000Z" payload "{\"delta\":\" world\"}"
-```
+### 1. Entity-visible tools
 
-### Client → Server (SSE)
+The Agent can mark a tool call as visible to **any Entity** in the Nexus (or specific Entities). This allows:
 
-Client subscribes:
+- Entities to see the tool call and its parameters
+- Entities to provide a response (output) to the tool
+- Collaborative workflows where multiple participants interact with the same tool execution
 
-```
-GET /api/runs/123/stream
-```
+**Use case**: A form tool that a specific user needs to fill out, or a confirmation tool that requires approval.
 
-Server reads Redis stream and pushes events.
+### 2. Main Tools (internal)
 
-If page refreshes:
-
-* Client reconnects
-* Server continues from last event ID
-* Stream resumes seamlessly
+**Main Tools** are internal tools that **no Entity should see or interact with**. These are the Agent's private capabilities for managing its own state and reasoning.
 
 ---
 
-# 🛠 Tool System (Distributed Execution)
+# 🧰 Main Tools every Agent Entity should have
 
-This is the powerful part.
+These are internal tools that Entities do not see or interact with:
 
-Agents can call tools that run:
+1. **Plan management tools**
 
-| Location    | Example                  |
-| ----------- | ------------------------ |
-| Server      | DB queries, APIs         |
-| Browser     | Local files, camera      |
-| Node client | Company internal systems |
+   * Update its schedule (Plan)
+   * Read its scheduled actions
 
----
+2. **Goal management tools**
 
-## 🔄 Tool Call Lifecycle
+   * Update its Goals
+   * Read its Goals
 
-### 1️⃣ Agent requests tool
+3. **Memory tools**
 
-Runtime emits a tool call → you persist + broadcast
+   * Store long-term facts, user preferences, learnings
+   * Retrieve memories by topic or Entity
+   * Memory persists across Runs and Nexuses
 
-You store event and publish:
+4. **Nexus awareness tools**
 
-```json
-{
-  "type": "tool.call",
-  "toolCallId": "abc123",
-  "toolName": "scanFiles",
-  "args": {"...": "..."},
-  "executionTarget": "device"
-}
-```
+   * Read the list of Nexuses it belongs to
+   * Read messages/events from a specific Nexus
 
-Saved in:
+5. **Entity awareness tools**
 
-* PostgreSQL (history)
-* Redis Stream (live)
+   * List Entities in a Nexus
+   * Look up Entity info (who is this person, what are their preferences)
 
-### 2️⃣ Target Client Executes Tool
+6. **Cross-Nexus execution tool**
 
-Any client watching the run stream can execute the tool and submit the result back to the gateway.
+   * Run itself as a new execution inside a specific Nexus
+   * Include instructions about what it should do there
+   * Include context about where the run originated
+   * This also enables agent-to-agent collaboration: create a private Nexus between two agents, then run there to communicate
 
-Tool results can be submitted via HTTP:
+7. **Nexus management tools**
 
-```json
-POST /api/runs/:runId/tool-results
-{
-  "callId": "abc123",
-  "result": {"...": "..."},
-  "source": "device"
-}
-```
+   * Create Nexuses
+   * Delete Nexuses
 
-Or via WebSocket (device runtime):
+8. **Time awareness tools**
 
-```json
-{
-  "type": "tool.result",
-  "data": {
-    "runId": "...",
-    "callId": "abc123",
-    "result": {"...": "..."}
-  }
-}
-```
+   * Get current time
+   * Understand how long ago events happened
+   * Reason about deadlines and urgency
 
-### 3️⃣ Server Resumes Agent
+9. **Self-reflection tools**
 
-You feed result back into the model:
-
-```
-assistant ← tool result
-```
-
-Agent continues streaming as if nothing happened.
-
-All watchers see this live via Redis stream.
-
----
-
-# 🧠 Role of Vercel AI SDK (Core Only)
-
-You DO NOT use:
-❌ `useChat` 
-❌ AI SDK UI helpers
-
-You ONLY use:
-
-| Function             | Purpose                                |
-| -------------------- | -------------------------------------- |
-| `ToolLoopAgent`      | Runs the tool loop + model decisions   |
-| `agent.stream(...)`  | Streams parts (text + tools + steps)   |
-| Tool calling support | Let model decide when tools are needed |
-
-You handle:
-
-* Tool execution
-* Message storage
-* Streaming infra
-* Run lifecycle
-
-SDK = **decision engine only**
-
----
-
-# 🗄️ PostgreSQL Schema (Current)
-
-This describes the current schema as implemented in `hsafa-gateway/prisma/schema.prisma`:
-
-- Persistent agent configs + versioning
-- Persistent run state + resume
-- Durable event log (can always rebuild UI from it)
-- Distributed tool calls + results
-- Device registry
-
-## Core Types
-
-- `uuid` ids everywhere
-- `jsonb` for agent config and tool payloads
-- `timestamptz` for all timestamps
-
-## Tables
-
-### `agents`
-
-- **Purpose**: logical agent identity (stable).
-
-Columns:
-
-- `id uuid pk`
-- `name text not null`
-- `description text null`
-- `created_at timestamptz not null default now()`
-- `updated_at timestamptz not null default now()`
-
-Indexes/constraints:
-
-- Unique: `(name)`
-
-### `agent_versions`
-
-- **Purpose**: immutable snapshots of agent configs.
-
-Columns:
-
-- `id uuid pk`
-- `agent_id uuid not null fk -> agents(id)`
-- `version text not null` (semver or timestamp-based)
-- `config_json jsonb not null`
-- `config_hash text not null` (sha256 for idempotent publish)
-- `metadata jsonb null`
-- `created_at timestamptz not null default now()`
-
-Indexes/constraints:
-
-- Unique: `(agent_id, version)`
-- Unique: `(agent_id, config_hash)`
-
-### `runs`
-
-- **Purpose**: a single execution instance.
-
-Columns:
-
-- `id uuid pk`
-- `agent_id uuid not null`
-- `agent_version_id uuid not null`
-- `status text not null` (`queued|running|waiting_tool|completed|failed|canceled`)
-- `started_at timestamptz null`
-- `completed_at timestamptz null`
-- `error_message text null`
-- `created_at timestamptz not null default now()`
-- `updated_at timestamptz not null default now()`
-
-Indexes:
-
-- `(status, updated_at desc)`
-- `(agent_id, created_at desc)`
-
-### `run_events`
-
-- **Purpose**: canonical event log for UI + recovery.
-
-Columns:
-
-- `id uuid pk`
-- `run_id uuid not null fk -> runs(id)`
-- `seq bigint not null` (monotonic per run)
-- `type text not null`
-- `payload jsonb not null`
-- `created_at timestamptz not null default now()`
-
-Indexes/constraints:
-
-- Unique: `(run_id, seq)`
-- Index: `(run_id, created_at)`
-
-### `tool_calls`
-
-- **Purpose**: tool invocation state.
-
-Columns:
-
-- `id uuid pk`
-- `run_id uuid not null fk -> runs(id)`
-- `seq bigint not null` (step index)
-- `call_id text not null` (provided by runtime; unique per run)
-- `tool_name text not null`
-- `args jsonb not null`
-- `execution_target text not null` (`server|device|browser|external`)
-- `target_device_id uuid null`
-- `status text not null` (`requested|dispatched|completed|failed|expired`)
-- `requested_at timestamptz not null default now()`
-- `completed_at timestamptz null`
-- `error_message text null`
-
-Indexes/constraints:
-
-- Unique: `(run_id, call_id)`
-- Index: `(run_id, seq)`
-- Index: `(target_device_id, status)`
-
-### `tool_results`
-
-- **Purpose**: tool result storage.
-
-Columns:
-
-- `id uuid pk`
-- `run_id uuid not null fk -> runs(id)`
-- `call_id text not null`
-- `result jsonb not null`
-- `source text not null` (`server|device|browser`)
-- `created_at timestamptz not null default now()`
-
-Indexes/constraints:
-
-- Unique: `(run_id, call_id)`
-
-### `devices`
-
-- **Purpose**: device registry.
-
-Columns:
-
-- `id uuid pk`
-- `device_key text not null` (unique identifier)
-- `display_name text null`
-- `capabilities jsonb not null`
-- `created_at timestamptz not null default now()`
-- `last_seen_at timestamptz null`
-
-Indexes/constraints:
-
-- Unique: `(device_key)`
-
----
-
-# ⚡ Redis Schema (Current)
-
-Redis is for:
-
-- Stream replay (SSE reconnect)
-- Fast fanout to many watchers
-- Device presence (online/offline)
-
-## Key Naming Convention
-
-- `run:{runId}:stream` (Redis Stream)
-- `run:{runId}:notify` (Pub/Sub)
-- `device:{deviceId}:presence` (String or Hash, TTL)
-
-## Redis Streams
-
-### `run:{runId}:stream`
-
-- **Type**: Redis Stream
-- **Purpose**: replayable event stream for SSE and “multiple watchers”.
-
-Entry format (recommended):
-
-- Field: `type` (string)
-- Field: `ts` (ISO string or unix ms)
-- Field: `payload` (JSON string)
-
-Example:
-
-```
-XADD run:123:stream * type "text.delta" ts "2026-01-30T12:00:00.000Z" payload "{\"delta\":\"Hello\"}"
-```
-
-Retention:
-
-- Use `XTRIM run:{runId}:stream MAXLEN ~ 10000` (or time-based trim)
-- Optional: keep full history in Postgres; Redis is just a hot window.
-
----
-
-# 🧬 Event & Message Protocol (Current)
-
-Gateway SSE events use a single envelope:
-
-```json
-{
-  "id": "1738400000000-0",
-  "type": "text.delta",
-  "ts": "2026-01-30T12:00:00.000Z",
-  "data": {}
-}
-```
-
-## Event Types (examples from current runtime)
-
-- `run.created`
-- `run.started`
-- `run.waiting_tool`
-- `text.delta`
-- `message.user`
-- `message.assistant`
-- `message.tool`
-- `tool.call`
-- `tool.result`
-- `run.completed`
-- `run.failed`
-
-## SSE Contract
-
-- Endpoint: `GET /api/runs/:runId/stream`
-- Client reconnect:
-  - sends `Last-Event-ID: <redisStreamId>`
-  - or `?since=<redisStreamId>`
-
-Server behavior:
-
-- Read Redis stream with `XREAD` starting at the provided id.
-- For each entry, emit:
-
-```
-id: <redisStreamId>
-event: hsafa
-data: {"id":"<redisStreamId>","type":"text.delta","ts":"...","data":{}}
-
-```
-
----
-
-# 🔌 API Surface (Gateway, Current)
-
-Current endpoints:
-
-- `POST /api/agents` (create agent + create version if config changed)
-- `GET  /api/runs?agentId=...` (list runs)
-- `POST /api/runs` (create run)
-- `POST /api/runs/:runId/messages` (append user message and start/resume run)
-- `GET  /api/runs/:runId` (run state)
-- `GET  /api/runs/:runId/events` (Postgres event history)
-- `GET  /api/runs/:runId/stream` (SSE from Redis)
-- `POST /api/runs/:runId/tool-results` (submit tool result)
-- `GET  /api/agent-config/:agentName` (legacy)
-- `WS   /devices/connect` (device registration + tool results)
-
----
+   * Read its own past Runs
+   * Summarize what it learned or did wrong
+   * Track patterns in its behavior

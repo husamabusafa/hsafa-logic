@@ -29,12 +29,6 @@ export type {
   SavedChat 
 } from "./hooks/useChatStorage";
 
-export { useMessageEditor } from "./hooks/useMessageEditor";
-export type { 
-  UseMessageEditorConfig, 
-  MessageEditorAPI 
-} from "./hooks/useMessageEditor";
-
 // Export types
 export type { ButtonProps } from "./components/Button";
 
@@ -50,8 +44,7 @@ export type {
   CustomToolUIRenderProps,
   Attachment,
   HsafaTool,
-  ChatMessage,
-  EditProcessContent
+  ChatMessage
 } from "./types/chat";
 
 // Component Registry

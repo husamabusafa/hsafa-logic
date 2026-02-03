@@ -2,8 +2,6 @@ import React from "react";
 import { AssistantMassage } from "./AssistantMassage";
 import { Attachment } from "../../types/chat";
 import { AttachmentDisplay } from "../AttachmentDisplay";
-import { Pencil } from "lucide-react";
-import { IconWrapper } from "../IconWrapper";
 import type { ThemeColors } from "../../utils/chat-theme";
 
 type MessagePart = {
@@ -30,12 +28,10 @@ interface MessageListProps {
   toggleReasoning: (id: string) => void;
   resolvedColors: ThemeColors;
   t: (k: string) => string;
-  onUserMessageClick: (message: RenderMessage, id: string, text: string, attachments?: Attachment[]) => void;
   HsafaUI?: Record<string, React.ComponentType<unknown>>;
   onUIError?: (toolCallId: string, toolName: string, error: Error) => void;
   onUISuccess?: (toolCallId: string, toolName: string) => void;
   addToolResult?: (payload: unknown) => void;
-  editableMessageIcon?: React.ComponentType<unknown>;
   fullPage?: boolean;
   dir?: 'rtl' | 'ltr';
   theme?: 'light' | 'dark';
@@ -48,12 +44,10 @@ export function MessageList({
   toggleReasoning, 
   resolvedColors, 
   t, 
-  onUserMessageClick,
   HsafaUI,
   onUIError,
   onUISuccess,
   addToolResult,
-  editableMessageIcon,
   fullPage,
   dir,
   theme = 'dark'
@@ -118,8 +112,6 @@ export function MessageList({
             {m.role === 'user' ? (
               <div style={{ maxWidth: fullPage ? '80%' : '100%' }}>
                 <div
-                  title={t('editor.clickToEdit')}
-                  onClick={() => onUserMessageClick(m, m.id, messageText, messageAttachments)}
                   style={{
                     maxWidth: fullPage ? '100%' : '720px',
                     borderRadius: fullPage ? '20px' : '16px',
@@ -127,36 +119,20 @@ export function MessageList({
                     fontSize: '15px',
                     lineHeight: '1.6',
                     whiteSpace: 'pre-wrap',
-                    cursor: 'pointer',
-                    transition: 'background-color 0.2s',
                     backgroundColor: fullPage ? resolvedColors.inputBackground : resolvedColors.accentColor,
                     color: resolvedColors.textColor,
                     marginBottom: '16px',
                     marginTop: '16px',
-                    position: 'relative',
                     border: fullPage ? `1px solid ${resolvedColors.borderColor}` : 'none',
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = resolvedColors.hoverBackground)}
-                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = fullPage ? resolvedColors.inputBackground : resolvedColors.accentColor)}
                 >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                    <div style={{ flex: 1 }}>
-                      {messageText}
-                      {messageAttachments.length > 0 && (
-                        <AttachmentDisplay
-                          attachments={messageAttachments}
-                          resolvedColors={resolvedColors}
-                        />
-                      )}
-                    </div>
-                    <div style={{ 
-                      flexShrink: 0,
-                      opacity: 0.5,
-                      transition: 'opacity 0.2s'
-                    }}>
-                      <IconWrapper IconComponent={editableMessageIcon || Pencil} size="14" strokeWidth="2" />
-                    </div>
-                  </div>
+                  {messageText}
+                  {messageAttachments.length > 0 && (
+                    <AttachmentDisplay
+                      attachments={messageAttachments}
+                      resolvedColors={resolvedColors}
+                    />
+                  )}
                 </div>
               </div>
             ) : (
