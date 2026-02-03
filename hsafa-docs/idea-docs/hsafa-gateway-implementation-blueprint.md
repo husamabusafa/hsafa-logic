@@ -24,7 +24,7 @@ Build an **Agent Builder + Distributed Agent Runtime (Gateway)** that supports:
   - Refresh/reconnect without losing progress
 - Distributed tools:
   - Server tools
-  - Client/device tools (human-in-the-loop + device execution)
+  - Client tools (human-in-the-loop + client-side execution)
   - External tools (via MCP servers)
 - Persistence:
   - Nexus timeline stored in Postgres
@@ -105,7 +105,7 @@ Your `schema.prisma` already contains the *right high-level* tables:
 - `Nexus`
 - `NexusMembership`
 - `NexusMessage` (timeline)
-- `Agent` + `AgentVersion` (control-plane config)
+- `Agent` (agent config with `configJson`)
 - `Run`
 - `RunEvent`
 - `ToolCall` + `ToolResult`
@@ -119,22 +119,21 @@ Your `schema.prisma` already contains the *right high-level* tables:
 The current `hsafa-gateway/src` code is partly from the older “agent ↔ run” model and needs alignment:
 
 - **Run fields mismatch**
-  - Schema: `Run(nexusId, agentEntityId, agentVersionId, triggeredById, parentRunId, ...)`
-  - Current code uses: `Run(agentId, agentVersionId, ...)`
+  - Schema: `Run(nexusId, agentEntityId, agentId, triggeredById, parentRunId, ...)`
+  - Current code uses: `Run(agentId, ...)`
 - **ToolExecutionTarget mismatch**
   - Schema enum: `server | client | external`
   - Current code/tool config uses: `server | device | browser | external`
-- **Device model mismatch**
+- **Client model mismatch**
   - `src/lib/websocket.ts` uses `prisma.device.upsert(...)`
-  - Schema has **no** `Device` model; it has `Client`
+  - Schema has `Client` model; code should use `Client`
 
 ### Recommendation
 
-- Use **`Client`** as the unified “device/browser/mobile/node” connection model.
+- Use **`Client`** as the unified connection model for all surfaces (web, mobile, node).
 - Make tool execution target be **`server | client | external`** (schema), and encode client subtype in:
-  - `Client.clientType` (e.g. `web`, `mobile`, `node`, `device`)
+  - `Client.clientType` (e.g. `web`, `mobile`, `node`)
   - plus `Client.capabilities` JSON
-- If you still want separate “Device” as a concept, add a `Device` table and map it to `Client` explicitly. Otherwise, delete the `Device` concept and standardize on `Client`.
 
 ---
 
@@ -145,13 +144,15 @@ The current `hsafa-gateway/src` code is partly from the older “agent ↔ run�
 Responsible for:
 
 - Accepting agent configs
-- Storing versions (`AgentVersion`)
+- Storing config in `Agent.configJson`
 - Validating config schema
-- Optional: publishing “agent updated” event
+- Optional: publishing "agent updated" event
 
 Current code already supports this:
 
-- `POST /api/agents` creates/returns `agentId` + `agentVersionId` using config hashing.
+- `POST /api/agents` creates/returns `agentId` using config hashing.
+
+**Note:** Agent versioning is handled via Git. Users store configs in their repo and use the CLI to deploy.
 
 ### 5.2 Execution Plane (Gateway Runtime)
 
@@ -176,7 +177,7 @@ Responsible for:
 4. For each Agent Entity, gateway creates a `Run`:
    - `nexusId = the nexus`
    - `agentEntityId = that agent entity`
-   - `agentVersionId = latest or pinned`
+   - `agentId = agent config`
    - `triggeredById = human entity`
    - `status = queued`
 5. Gateway executes each Run (async background)
@@ -192,114 +193,455 @@ Responsible for:
 
 ---
 
-## 7) API Surface (proposed)
+## 7) API Surface (Nexus-Centric Design)
 
-Your current gateway API is run-centric. The Nexus model needs a Nexus-centric API.
+The API is **Nexus-centric**: you subscribe to a Nexus to see all activity, send messages to a Nexus, and respond to tools via the Nexus.
 
-### 7.1 Entities
+All endpoints are available via **REST API**, **SDKs** (React, React Native, Node), and **CLI**.
 
-- `POST /api/entities`
-  - Create or upsert human/system entity
-- `GET /api/entities/:entityId`
-- `POST /api/entities/agents`
-  - Create an Agent Entity (type=agent) linked to `Agent`
+---
 
-### 7.2 Clients (connections)
+### 7.1 Agents (Control Plane)
 
-- `POST /api/clients/register`
-  - Body:
-    - `entityId`
-    - `clientKey` (stable)
-    - `clientType` (`web|mobile|node|device`)
-    - `capabilities` (json)
+Agents are config definitions. An Agent Entity is created when you want an agent to participate in Nexuses.
 
-This returns `clientId`.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/agents` | Create/upsert agent config → returns `agentId` |
+| `GET` | `/api/agents` | List all agents |
+| `GET` | `/api/agents/:agentId` | Get agent details |
+| `DELETE` | `/api/agents/:agentId` | Delete agent (soft delete) |
+
+---
+
+### 7.2 Entities
+
+Entities are identities (human, agent, system) that can participate in Nexuses.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/entities` | Create entity (human/system) |
+| `POST` | `/api/entities/agent` | Create Agent Entity (links to an Agent) |
+| `GET` | `/api/entities` | List entities (filter by type) |
+| `GET` | `/api/entities/:entityId` | Get entity details |
+| `PATCH` | `/api/entities/:entityId` | Update entity (displayName, metadata) |
+| `DELETE` | `/api/entities/:entityId` | Delete entity |
+
+**Create Entity request:**
+```json
+{
+  "type": "human",
+  "externalId": "user-123",
+  "displayName": "John Doe",
+  "metadata": {}
+}
+```
+
+**Create Agent Entity request:**
+```json
+{
+  "agentId": "uuid",
+  "displayName": "Assistant",
+  "metadata": {}
+}
+```
+
+---
 
 ### 7.3 Nexuses
 
-- `POST /api/nexuses`
-- `GET /api/nexuses/:nexusId`
-- `POST /api/nexuses/:nexusId/members`
-  - add Entity membership
-- `GET /api/nexuses/:nexusId/messages?afterSeq=&limit=`
-- `POST /api/nexuses/:nexusId/messages`
-  - append a message/event
+Nexuses are shared context spaces. This is the **primary interaction point**.
 
-**Important**: `POST /api/nexuses/:nexusId/messages` is the canonical entry point that triggers Runs.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/nexuses` | Create a Nexus |
+| `GET` | `/api/nexuses` | List Nexuses (for current entity) |
+| `GET` | `/api/nexuses/:nexusId` | Get Nexus details |
+| `PATCH` | `/api/nexuses/:nexusId` | Update Nexus (name, visibility) |
+| `DELETE` | `/api/nexuses/:nexusId` | Delete Nexus |
 
-### 7.4 Runs
+**Create Nexus request:**
+```json
+{
+  "name": "Project Chat",
+  "visibility": "private",
+  "metadata": {}
+}
+```
 
-Keep these (they already exist and are useful for debugging/history):
+---
 
-- `GET /api/runs?agentEntityId=&nexusId=&limit=&offset=`
-- `GET /api/runs/:runId`
-- `GET /api/runs/:runId/events`
-- `GET /api/runs/:runId/stream` (SSE)
-- `POST /api/runs/:runId/tool-results`
+### 7.4 Nexus Membership
 
-Optional:
+Manage who can participate in a Nexus.
 
-- `POST /api/runs/:runId/cancel`
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/nexuses/:nexusId/members` | Add entity to Nexus |
+| `GET` | `/api/nexuses/:nexusId/members` | List Nexus members |
+| `DELETE` | `/api/nexuses/:nexusId/members/:entityId` | Remove entity from Nexus |
+| `PATCH` | `/api/nexuses/:nexusId/members/:entityId` | Update membership (role, permissions) |
+
+**Add member request:**
+```json
+{
+  "entityId": "uuid",
+  "role": "member",
+  "permissions": { "canWrite": true, "canInvite": false }
+}
+```
+
+---
+
+### 7.5 Nexus Messages
+
+Send and read messages in a Nexus. Posting a message **triggers Agent Runs**.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/nexuses/:nexusId/messages` | Send message (triggers agents) |
+| `GET` | `/api/nexuses/:nexusId/messages` | Get message history |
+
+**Send message request:**
+```json
+{
+  "content": "Hello, can you help me?",
+  "entityId": "uuid",
+  "metadata": {}
+}
+```
+
+**Query params for GET:**
+- `afterSeq` - get messages after this sequence number
+- `beforeSeq` - get messages before this sequence number
+- `limit` - max messages to return (default 50)
+
+---
+
+### 7.6 Nexus Streaming (Primary)
+
+**Subscribe to a Nexus** to receive all real-time events (messages, runs, tool calls).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/nexuses/:nexusId/stream` | SSE stream of all Nexus activity |
+
+**Query params:**
+- `entityId` - required, identifies the subscribing entity
+- `afterSeq` - resume from sequence number (reconnect support)
+
+**Events streamed:**
+- `nexus.message` - new message in the Nexus
+- `run.created` - agent run started
+- `run.started` - agent is executing
+- `run.waiting_tool` - agent waiting for tool response
+- `run.completed` - agent finished
+- `run.failed` - agent errored
+- `text.delta` - streaming text from agent
+- `tool.call` - agent called a tool (any member can respond)
+- `tool.result` - tool result received
+
+---
+
+### 7.7 Tool Responses
+
+Respond to tool calls via the Nexus. You must be a member of the Nexus.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/nexuses/:nexusId/tool-results` | Submit tool result |
+
+**Request:**
+```json
+{
+  "toolCallId": "uuid",
+  "entityId": "uuid",
+  "result": { ... },
+  "error": null
+}
+```
+
+---
+
+### 7.8 Runs (for debugging/history)
+
+Runs are created automatically when agents are triggered. These endpoints are for inspection.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/runs` | List runs (filter by nexusId, agentEntityId) |
+| `GET` | `/api/runs/:runId` | Get run details |
+| `GET` | `/api/runs/:runId/events` | Get all run events |
+| `GET` | `/api/runs/:runId/stream` | SSE stream for specific run |
+| `POST` | `/api/runs/:runId/cancel` | Cancel a running execution |
+
+---
+
+### 7.9 Clients (Connection Management)
+
+Clients are connection surfaces (browser, mobile, node backend).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/clients/register` | Register a client connection |
+| `GET` | `/api/clients` | List clients for an entity |
+| `DELETE` | `/api/clients/:clientId` | Disconnect/remove client |
+
+**Register client request:**
+```json
+{
+  "entityId": "uuid",
+  "clientKey": "stable-key",
+  "clientType": "web",
+  "displayName": "Chrome Browser",
+  "capabilities": { "canExecuteTools": true }
+}
+```
+
+**WebSocket connection:**
+- `WS /api/clients/connect` - persistent connection for tool execution
+
+---
+
+### 7.10 Summary: SDK Operations
+
+Every SDK (React, React Native, Node) should expose:
+
+**Agents:**
+- `createAgent(config)` / `deleteAgent(agentId)`
+- `listAgents()` / `getAgent(agentId)`
+
+**Entities:**
+- `createEntity({ type, externalId, displayName })` / `deleteEntity(entityId)`
+- `createAgentEntity({ agentId, displayName })` / `listEntities()`
+
+**Nexuses:**
+- `createNexus({ name, visibility })` / `deleteNexus(nexusId)`
+- `listNexuses()` / `getNexus(nexusId)`
+- `addMember(nexusId, entityId)` / `removeMember(nexusId, entityId)`
+- `listMembers(nexusId)`
+
+**Messaging:**
+- `sendMessage(nexusId, { content, entityId })`
+- `getMessages(nexusId, { afterSeq, limit })`
+
+**Streaming:**
+- `subscribeToNexus(nexusId, entityId, callbacks)` - returns unsubscribe function
+- Callbacks: `onMessage`, `onTextDelta`, `onToolCall`, `onRunStart`, `onRunEnd`, `onError`
+
+**Tool responses:**
+- `submitToolResult(nexusId, { toolCallId, entityId, result })`
 
 ---
 
 ## 8) Streaming & Reconnect Strategy
 
-### 8.1 What the React SDK expects today
+### 8.1 Nexus-Level Streaming (Primary)
 
-Your `react-sdk/src/hooks/useHsafaGateway.ts` connects to:
+The primary streaming model is **Nexus-level**: subscribe to a Nexus to see all activity.
 
-- `GET {gatewayUrl}/api/runs/:runId/stream`
-- It expects:
-  - SSE event name: `hsafa`
-  - Event JSON: `{ id, type, ts, data }`
+**Endpoint:** `GET /api/nexuses/:nexusId/stream?entityId=X&afterSeq=Y`
 
-This is **custom**, and it works.
+**Why Nexus-level?**
+- See all agent activity in a context (multiple agents can be in one Nexus)
+- See messages from all participants
+- Single subscription for everything happening in that context
 
-### 8.2 How this maps to Vercel AI SDK streaming docs
+**Event envelope:**
+```json
+{
+  "id": "redis-stream-id",
+  "seq": 42,
+  "type": "text.delta",
+  "ts": "2024-01-01T00:00:00Z",
+  "runId": "uuid",
+  "agentEntityId": "uuid",
+  "data": { "delta": "Hello" }
+}
+```
 
-Vercel AI SDK describes a standardized UI message stream protocol with header:
+### 8.2 Run-Level Streaming (Secondary)
 
-- `x-vercel-ai-ui-message-stream: v1`
+For debugging or specific use cases, you can also stream a single run:
 
-You have two paths:
+**Endpoint:** `GET /api/runs/:runId/stream?since=X`
 
-- **Path A (recommended short-term): keep current custom run stream**
-  - It’s already integrated with your React SDK.
-  - You still use AI SDK internally for model + tool loop.
+This is useful for:
+- Admin/debug dashboards
+- Attaching to a specific run after the fact
+- Inspecting historical runs
 
-- **Path B (optional, later): provide an AI-SDK-compatible stream endpoint**
-  - Add `POST /api/chat` that returns `toUIMessageStreamResponse()`.
-  - This would integrate with `@ai-sdk/react` `useChat()` directly.
-  - This requires changing the React SDK transport.
+### 8.3 Reconnect Support
 
-This blueprint assumes **Path A** now.
+Both streams support reconnection:
 
-### 8.3 RunEvent types (canonical)
+- **Nexus stream:** pass `afterSeq` (sequence number) to resume
+- **Run stream:** pass `since` (Redis stream ID) to resume
+- SSE `Last-Event-ID` header also works
 
-Use these as your stable event contract:
+### 8.4 Event Types (Canonical)
 
-- `run.created`
-- `run.started`
-- `run.waiting_tool`
-- `run.completed`
-- `run.failed`
-- `step.start`
-- `step.finish`
-- `text.delta`
-- `reasoning.start`
-- `reasoning.delta`
-- `tool.input.start`
-- `tool.input.delta`
-- `tool.call`
-- `tool.result`
-- `stream.finish`
-- `stream.error`
-- `message.user`
-- `message.assistant`
-- `message.tool`
+**Nexus-level events:**
+- `nexus.message` - new message in the Nexus
+- `nexus.member.joined` - entity joined
+- `nexus.member.left` - entity left
 
-This matches the current gateway runtime streaming approach in `src/routes/runs.ts`.
+**Run lifecycle:**
+- `run.created` - run was created
+- `run.started` - run is executing
+- `run.waiting_tool` - waiting for tool response
+- `run.completed` - run finished successfully
+- `run.failed` - run errored
+
+**Streaming content:**
+- `text.delta` - incremental text from agent
+- `reasoning.delta` - incremental reasoning (if enabled)
+- `step.start` / `step.finish` - LLM call boundaries
+
+**Tool events:**
+- `tool.call` - agent called a tool (any Nexus member can respond)
+- `tool.result` - tool result received
+
+**Message events:**
+- `message.user` - user message written to timeline
+- `message.assistant` - assistant message written to timeline
+- `message.tool` - tool message written to timeline
+
+---
+
+## 8.5) CLI Interface
+
+The CLI provides the same capabilities as the SDKs. All management operations are available.
+
+### Installation
+
+```bash
+npm install -g @hsafa/cli
+# or
+pnpm add -g @hsafa/cli
+```
+
+### Configuration
+
+```bash
+hsafa config set gateway-url http://localhost:3001
+hsafa config set api-key <your-key>
+```
+
+### Agent Commands
+
+```bash
+# Create/update agent from config file
+hsafa agent create --config ./agent.json
+hsafa agent create --config ./agent.yaml
+
+# List agents
+hsafa agent list
+
+# Get agent details
+hsafa agent get <agentId>
+
+# Delete agent
+hsafa agent delete <agentId>
+```
+
+### Entity Commands
+
+```bash
+# Create human entity
+hsafa entity create --type human --external-id user-123 --name "John Doe"
+
+# Create agent entity (from existing agent)
+hsafa entity create-agent --agent-id <agentId> --name "Assistant"
+
+# List entities
+hsafa entity list
+hsafa entity list --type agent
+
+# Delete entity
+hsafa entity delete <entityId>
+```
+
+### Nexus Commands
+
+```bash
+# Create nexus
+hsafa nexus create --name "Project Chat" --visibility private
+
+# List nexuses
+hsafa nexus list
+
+# Get nexus details
+hsafa nexus get <nexusId>
+
+# Delete nexus
+hsafa nexus delete <nexusId>
+
+# Manage members
+hsafa nexus add-member <nexusId> <entityId>
+hsafa nexus remove-member <nexusId> <entityId>
+hsafa nexus list-members <nexusId>
+```
+
+### Messaging Commands
+
+```bash
+# Send message to nexus
+hsafa message send <nexusId> --entity <entityId> --content "Hello!"
+
+# Get message history
+hsafa message list <nexusId> --limit 50
+```
+
+### Streaming Commands
+
+```bash
+# Subscribe to nexus (interactive mode)
+hsafa stream nexus <nexusId> --entity <entityId>
+
+# Subscribe to specific run
+hsafa stream run <runId>
+
+# Watch mode with formatted output
+hsafa stream nexus <nexusId> --entity <entityId> --format pretty
+```
+
+### Tool Response Commands
+
+```bash
+# Submit tool result (any Nexus member can respond to tool calls)
+hsafa tool respond <nexusId> --call-id <toolCallId> --entity <entityId> --result '{"approved": true}'
+```
+
+### Quick Start Example
+
+```bash
+# 1. Create an agent
+hsafa agent create --config ./my-agent.json
+# Returns: agentId=abc123
+
+# 2. Create entities
+hsafa entity create --type human --external-id me --name "Me"
+# Returns: entityId=user-xyz
+
+hsafa entity create-agent --agent-id abc123 --name "My Assistant"
+# Returns: entityId=agent-xyz
+
+# 3. Create a nexus and add members
+hsafa nexus create --name "My Chat"
+# Returns: nexusId=nexus-xyz
+
+hsafa nexus add-member nexus-xyz user-xyz
+hsafa nexus add-member nexus-xyz agent-xyz
+
+# 4. Subscribe to the nexus (in one terminal)
+hsafa stream nexus nexus-xyz --entity user-xyz --format pretty
+
+# 5. Send a message (in another terminal)
+hsafa message send nexus-xyz --entity user-xyz --content "Hello, assistant!"
+
+# The agent will respond, and you'll see it in the stream
+```
 
 ---
 
@@ -310,7 +652,7 @@ This matches the current gateway runtime streaming approach in `src/routes/runs.
 To execute a Run, the runner must load:
 
 - `Run`
-- `AgentVersion.configJson`
+- `Agent.configJson`
 - **Context messages**:
   - In the Nexus model: load recent `NexusMessage` for `run.nexusId`
   - Also include any run-specific tool messages/results
@@ -374,7 +716,7 @@ Add `visibility` to tool calls (in `ToolCall` metadata):
   - only stored as Run events
 - `entity-visible`
   - written into the Nexus timeline as an assistant tool-call part
-  - optionally targeted to specific Entities
+  - any Nexus member can see and respond
 
 ### 10.2 Execution target
 
@@ -479,9 +821,8 @@ Even for MVP, define:
   - create `Nexus` and memberships
   - create `Run` with `nexusId` + `agentEntityId`
 - Standardize ToolExecutionTarget:
-  - map current `browser/device` to `client`
-  - keep `external` and `server`
-- Fix WebSocket “device” to use `Client` model
+  - use `server | client | external`
+- Fix WebSocket connection to use `Client` model
 
 ### Phase 2 — Nexus APIs + Triggering
 

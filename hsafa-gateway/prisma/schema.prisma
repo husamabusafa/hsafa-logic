@@ -155,32 +155,16 @@ model Agent {
   id          String   @id @default(uuid()) @db.Uuid
   name        String   @unique
   description String?
+  configJson  Json     @map("config_json") @db.JsonB
+  configHash  String?  @map("config_hash") // For deduplication
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  versions AgentVersion[]
-  entity   Entity?
+  entity Entity?
+  runs   Run[]
 
   @@index([createdAt])
   @@map("agents")
-}
-
-model AgentVersion {
-  id         String   @id @default(uuid()) @db.Uuid
-  agentId    String   @map("agent_id") @db.Uuid
-  version    String
-  configJson Json     @map("config_json") @db.JsonB
-  configHash String   @map("config_hash")
-  metadata   Json?    @map("metadata") @db.JsonB
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-
-  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  runs  Run[]
-
-  @@unique([agentId, version])
-  @@unique([agentId, configHash])
-  @@index([agentId, createdAt])
-  @@map("agent_versions")
 }
 
 // =============================================================================
@@ -188,25 +172,25 @@ model AgentVersion {
 // =============================================================================
 
 model Run {
-  id              String    @id @default(uuid()) @db.Uuid
-  nexusId         String    @map("nexus_id") @db.Uuid
-  agentEntityId   String    @map("agent_entity_id") @db.Uuid
-  agentVersionId  String    @map("agent_version_id") @db.Uuid
-  triggeredById   String?   @map("triggered_by_id") @db.Uuid // Entity that triggered this run
-  parentRunId     String?   @map("parent_run_id") @db.Uuid   // For cross-nexus runs
-  status          RunStatus
-  startedAt       DateTime? @map("started_at") @db.Timestamptz(6)
-  completedAt     DateTime? @map("completed_at") @db.Timestamptz(6)
-  errorMessage    String?   @map("error_message")
-  metadata        Json?     @db.JsonB
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id            String    @id @default(uuid()) @db.Uuid
+  nexusId       String    @map("nexus_id") @db.Uuid
+  agentEntityId String    @map("agent_entity_id") @db.Uuid
+  agentId       String    @map("agent_id") @db.Uuid
+  triggeredById String?   @map("triggered_by_id") @db.Uuid // Entity that triggered this run
+  parentRunId   String?   @map("parent_run_id") @db.Uuid   // For cross-nexus runs
+  status        RunStatus
+  startedAt     DateTime? @map("started_at") @db.Timestamptz(6)
+  completedAt   DateTime? @map("completed_at") @db.Timestamptz(6)
+  errorMessage  String?   @map("error_message")
+  metadata      Json?     @db.JsonB
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  nexus        Nexus        @relation(fields: [nexusId], references: [id])
-  agentEntity  Entity       @relation(fields: [agentEntityId], references: [id])
-  agentVersion AgentVersion @relation(fields: [agentVersionId], references: [id])
-  parentRun    Run?         @relation("RunHierarchy", fields: [parentRunId], references: [id])
-  childRuns    Run[]        @relation("RunHierarchy")
+  nexus       Nexus  @relation(fields: [nexusId], references: [id])
+  agentEntity Entity @relation(fields: [agentEntityId], references: [id])
+  agent       Agent  @relation(fields: [agentId], references: [id])
+  parentRun   Run?   @relation("RunHierarchy", fields: [parentRunId], references: [id])
+  childRuns   Run[]  @relation("RunHierarchy")
 
   events       RunEvent[]
   toolCalls    ToolCall[]
