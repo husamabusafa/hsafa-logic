@@ -14,6 +14,8 @@ import {
   WrenchIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  AlertCircleIcon,
+  PlayIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -166,17 +168,22 @@ function formatDuration(ms: number): string {
 function ToolStatusIcon({
   isRunning,
   isComplete,
+  isError,
 }: {
   isRunning: boolean;
   isComplete: boolean;
+  isError?: boolean;
 }): ReactNode {
   if (isRunning) {
-    return <LoaderIcon className="size-3 animate-spin" />;
+    return <LoaderIcon className="size-3.5 animate-spin text-blue-500" />;
+  }
+  if (isError) {
+    return <AlertCircleIcon className="size-3.5 text-red-500" />;
   }
   if (isComplete) {
-    return <CheckIcon className="size-3 text-emerald-500" />;
+    return <CheckIcon className="size-3.5 text-emerald-500" />;
   }
-  return <WrenchIcon className="size-3" />;
+  return <WrenchIcon className="size-3.5 text-muted-foreground" />;
 }
 
 interface ToolCallUIProps {
@@ -187,24 +194,67 @@ interface ToolCallUIProps {
   status: { type: string; reason?: string };
 }
 
-function ToolCallUI({ toolName, args, status }: ToolCallUIProps) {
+function ToolCallUI({ toolName, args, result, status }: ToolCallUIProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const isRunning = status.type === "running";
   const isComplete = status.type === "complete";
+  const isError = status.type === "incomplete" && status.reason === "error";
   const duration = useToolDuration(isRunning);
+
+  const hasArgs = args && Object.keys(args).length > 0;
+  const hasResult = result !== undefined && result !== null;
 
   return (
     <div
       className={cn(
-        "my-1.5 flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5 text-muted-foreground text-xs",
-        isRunning && "animate-pulse"
+        "my-2 rounded-lg border overflow-hidden",
+        isRunning && "border-blue-500/50 bg-blue-500/5",
+        isComplete && "border-emerald-500/50 bg-emerald-500/5",
+        isError && "border-red-500/50 bg-red-500/5",
+        !isRunning && !isComplete && !isError && "border-border/60 bg-muted/30"
       )}
     >
-      <ToolStatusIcon isRunning={isRunning} isComplete={isComplete} />
-      <span className="flex-1 truncate">
-        {isRunning ? "Running" : "Completed"} {toolName}
-      </span>
-      {duration !== null && (
-        <span className="text-muted-foreground/60">{formatDuration(duration)}</span>
+      {/* Header */}
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
+      >
+        <ToolStatusIcon isRunning={isRunning} isComplete={isComplete} isError={isError} />
+        <span className="font-medium flex-1 text-left">
+          {toolName}
+        </span>
+        {duration !== null && (
+          <span className="text-muted-foreground/60">{formatDuration(duration)}</span>
+        )}
+        {(hasArgs || hasResult) && (
+          isExpanded ? (
+            <ChevronUpIcon className="size-3 text-muted-foreground" />
+          ) : (
+            <ChevronDownIcon className="size-3 text-muted-foreground" />
+          )
+        )}
+      </button>
+
+      {/* Expandable content */}
+      {isExpanded && (hasArgs || hasResult) && (
+        <div className="border-t border-border/50 px-3 py-2 space-y-2">
+          {hasArgs && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Input</div>
+              <pre className="text-xs bg-muted/50 rounded p-2 overflow-x-auto">
+                {JSON.stringify(args, null, 2)}
+              </pre>
+            </div>
+          )}
+          {hasResult && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Output</div>
+              <pre className="text-xs bg-muted/50 rounded p-2 overflow-x-auto">
+                {JSON.stringify(result, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

@@ -216,10 +216,17 @@ export async function executeRun(runId: string): Promise<void> {
           const input = 'input' in part ? part.input : {};
 
           const toolConfig = config.tools?.find((t) => t.name === part.toolName);
-          const executionTarget =
-            toolConfig && typeof (toolConfig as any).executionTarget === 'string'
-              ? ((toolConfig as any).executionTarget as 'server' | 'client' | 'external')
-              : 'server';
+          
+          // Derive executionTarget from execution mode:
+          // - null/undefined (no-execution) → client
+          // - static/pass-through → server
+          let executionTarget: 'server' | 'client' | 'external' = 'server';
+          if (toolConfig?.executionType === 'basic') {
+            const execution = (toolConfig as any).execution;
+            if (execution == null || execution?.mode === 'no-execution') {
+              executionTarget = 'client';
+            }
+          }
 
           await emitEvent('tool.call', {
             toolCallId: part.toolCallId,

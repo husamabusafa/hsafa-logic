@@ -73,9 +73,15 @@ function parseHsafaEvent(raw) {
 export function useSmartSpaceMessages(client, input) {
     const smartSpaceId = input.smartSpaceId;
     const limit = input.limit ?? 50;
+    const toolExecutor = input.toolExecutor;
     const [messages, setMessages] = useState([]);
     const [streamingMessages, setStreamingMessages] = useState([]);
     const [streamingToolCalls, setStreamingToolCalls] = useState([]);
+    const [pendingToolCalls, setPendingToolCalls] = useState([]);
+    const toolExecutorRef = useRef(toolExecutor);
+    useEffect(() => {
+        toolExecutorRef.current = toolExecutor;
+    }, [toolExecutor]);
     const [isLoading, setIsLoading] = useState(false);
     const [isConnected, setIsConnected] = useState(false);
     const [error, setError] = useState(null);
@@ -106,6 +112,7 @@ export function useSmartSpaceMessages(client, input) {
         setMessages([]);
         setStreamingMessages([]);
         setStreamingToolCalls([]);
+        setPendingToolCalls([]);
         setLastSeq(null);
         setError(null);
         setIsConnected(false);
@@ -310,6 +317,59 @@ export function useSmartSpaceMessages(client, input) {
                         isStreaming: true,
                     });
                 }
+                else if (parsed.type === 'tool.call') {
+                    // A tool call is ready for execution (args fully streamed)
+                    if (!runId)
+                        return;
+                    const data = payload.data;
+                    const toolCallId = typeof data?.toolCallId === 'string' ? data.toolCallId : null;
+                    const toolName = typeof data?.toolName === 'string' ? data.toolName : null;
+                    const args = data?.args ?? {};
+                    const executionTarget = typeof data?.executionTarget === 'string' ? data.executionTarget : 'server';
+                    if (!toolCallId || !toolName)
+                        return;
+                    // Only handle client-side tools
+                    if (executionTarget === 'client') {
+                        const pending = {
+                            runId,
+                            toolCallId,
+                            toolName,
+                            args,
+                            argsText: JSON.stringify(args),
+                            status: 'pending',
+                        };
+                        setPendingToolCalls((prev) => {
+                            // Don't add duplicates
+                            if (prev.some((p) => p.toolCallId === toolCallId))
+                                return prev;
+                            return [...prev, pending];
+                        });
+                        // Auto-execute if toolExecutor is provided
+                        if (toolExecutorRef.current) {
+                            setPendingToolCalls((prev) => prev.map((p) => (p.toolCallId === toolCallId ? { ...p, status: 'executing' } : p)));
+                            toolExecutorRef.current(toolName, args)
+                                .then((result) => {
+                                setPendingToolCalls((prev) => prev.map((p) => (p.toolCallId === toolCallId ? { ...p, status: 'completed', result } : p)));
+                                // Submit result to gateway
+                                client.submitToolResult({ runId, callId: toolCallId, result }).catch(() => { });
+                            })
+                                .catch((err) => {
+                                const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+                                setPendingToolCalls((prev) => prev.map((p) => (p.toolCallId === toolCallId ? { ...p, status: 'error', error: errorMsg } : p)));
+                                // Submit error result to gateway
+                                client.submitToolResult({ runId, callId: toolCallId, result: { error: errorMsg } }).catch(() => { });
+                            });
+                        }
+                    }
+                }
+                else if (parsed.type === 'tool.result') {
+                    // A tool result was received - remove from pending
+                    const data = payload.data;
+                    const toolCallId = typeof data?.toolCallId === 'string' ? data.toolCallId : null;
+                    if (toolCallId) {
+                        setPendingToolCalls((prev) => prev.filter((p) => p.toolCallId !== toolCallId));
+                    }
+                }
                 else if (parsed.type === 'run.completed' || parsed.type === 'run.failed') {
                     // Run finished - mark streaming complete, will be replaced by persisted message
                     if (!runId)
@@ -349,6 +409,17 @@ export function useSmartSpaceMessages(client, input) {
             throw e;
         }
     }, [client, smartSpaceId]);
-    return { messages, streamingMessages, streamingToolCalls, isLoading, isConnected, error, sendMessage, refresh, lastSeq };
+    const submitToolResult = useCallback(async (toolCallId, result) => {
+        const pending = pendingToolCalls.find((p) => p.toolCallId === toolCallId);
+        if (!pending)
+            return;
+        setPendingToolCalls((prev) => prev.map((p) => (p.toolCallId === toolCallId ? { ...p, status: 'completed', result } : p)));
+        await client.submitToolResult({
+            runId: pending.runId,
+            callId: toolCallId,
+            result,
+        });
+    }, [client, pendingToolCalls]);
+    return { messages, streamingMessages, streamingToolCalls, pendingToolCalls, isLoading, isConnected, error, sendMessage, submitToolResult, refresh, lastSeq };
 }
 //# sourceMappingURL=hooks.js.map

@@ -87,3 +87,14 @@ export interface RunStreamPartEvent {
   toolName?: string;
   args?: unknown;
 }
+
+export interface PendingToolCall {
+  runId: string;
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+  argsText: string;
+  status: 'pending' | 'executing' | 'completed' | 'error';
+  result?: unknown;
+  error?: string;
+}

@@ -17,7 +17,12 @@ async function main() {
       description: 'A simple demo agent for testing',
       system: `You are a helpful assistant. Keep responses concise.
 
-You have access to a displayNotification tool. Use it when the user asks you to show a notification, alert, or message to them. Always use it when asked to demonstrate tools.`,
+You have access to these tools:
+1. clientTestTool - A client-side tool that executes in the browser and returns example data. Use when asked to test tools or get client data.
+2. getSystemStatus - Returns current system health status. Use when asked about system status.
+3. displayNotification - Shows a notification to the user. Use when asked to show notifications or alerts.
+
+Use these tools when the user asks about them or requests related functionality.`,
     },
     model: {
       provider: 'openai',
@@ -30,9 +35,51 @@ You have access to a displayNotification tool. Use it when the user asks you to 
       toolChoice: 'auto',
     },
     tools: [
+      // 1. NO-EXECUTION MODE: Runs on CLIENT (execution is null/undefined)
+      {
+        name: 'clientTestTool',
+        description: 'A client-side test tool that executes on the browser and returns data. Use this when asked to test client tools or get example data from the client.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            message: { type: 'string', description: 'A message to send to the client' },
+            data: { type: 'object', description: 'Optional data to pass to the client' },
+          },
+          required: ['message'],
+        },
+        executionType: 'basic',
+        execution: null, // no-execution → runs on client
+      },
+      // 2. STATIC MODE: Runs on SERVER (has execution config)
+      {
+        name: 'getSystemStatus',
+        description: 'Get the current system status. Returns a fixed status response. Use this when asked about system status or health.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            component: { type: 'string', description: 'Optional component name to check' },
+          },
+        },
+        executionType: 'basic',
+        execution: {
+          mode: 'static',
+          output: {
+            status: 'healthy',
+            uptime: '99.9%',
+            services: {
+              database: 'online',
+              cache: 'online',
+              api: 'online',
+            },
+            lastChecked: '2024-01-01T00:00:00Z',
+            message: 'All systems operational',
+          },
+        },
+      },
+      // 3. PASS-THROUGH MODE: Runs on SERVER (has execution config)
       {
         name: 'displayNotification',
-        description: 'Display a notification message to the user. Use this when asked to show notifications or alerts.',
+        description: 'Display a notification message to the user. The notification will be shown in the UI. Use this when asked to show notifications, alerts, or messages.',
         inputSchema: {
           type: 'object',
           properties: {

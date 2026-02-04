@@ -128,6 +128,13 @@ export interface HsafaClient {
     content: string;
     metadata?: JsonValue;
   }): Promise<{ message: SmartSpaceMessageRecord; runs: Array<{ runId: string; agentEntityId: string }> }>;
+
+  submitToolResult(input: {
+    runId: string;
+    callId: string;
+    result: unknown;
+    clientId?: string;
+  }): Promise<{ success: boolean }>;
 }
 
 export function createHsafaClient(options: CreateHsafaClientOptions = {}): HsafaClient {
@@ -264,6 +271,22 @@ export function createHsafaClient(options: CreateHsafaClientOptions = {}): Hsafa
             entityId: input.entityId,
             content: input.content,
             metadata: input.metadata ?? null,
+          },
+        }
+      );
+    },
+
+    async submitToolResult(input) {
+      return fetchJson<{ success: boolean }>(
+        fetchFn,
+        `${apiBaseUrl}/runs/${input.runId}/tool-results`,
+        {
+          method: 'POST',
+          json: {
+            callId: input.callId,
+            result: input.result,
+            source: 'client',
+            clientId: input.clientId ?? null,
           },
         }
       );

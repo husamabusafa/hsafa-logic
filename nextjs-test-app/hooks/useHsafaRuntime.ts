@@ -12,10 +12,14 @@ import {
   useSmartSpaceMembers,
   smartSpaceMessageToText,
   smartSpaceStreamPartsToText,
+  extractMessageParts,
   type HsafaClient,
   type SmartSpaceMessageRecord,
   type SmartSpace,
+  type PendingToolCall,
 } from "@hsafa/react-sdk";
+
+export type ToolExecutor = (toolName: string, args: unknown) => Promise<unknown>;
 
 export interface UseHsafaRuntimeOptions {
   client: HsafaClient;
@@ -24,14 +28,47 @@ export interface UseHsafaRuntimeOptions {
   smartSpaces?: SmartSpace[];
   onSwitchThread?: (smartSpaceId: string) => void;
   onNewThread?: () => void;
+  toolExecutor?: ToolExecutor;
 }
 
-function convertSmartSpaceMessage(msg: SmartSpaceMessageRecord): ThreadMessageLike {
-  const text = smartSpaceMessageToText(msg);
+type ContentPart = 
+  | { type: "text"; text: string }
+  | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown> };
+
+function convertSmartSpaceMessage(msg: SmartSpaceMessageRecord): ThreadMessageLike | null {
+  // Skip tool role messages - they only contain tool-results which are handled internally
+  if (msg.role === "tool") {
+    return null;
+  }
+
+  const parts = extractMessageParts(msg);
+  
+  // Convert parts to ThreadMessageLike content
+  const content: ContentPart[] = [];
+  
+  for (const part of parts) {
+    if (part.type === "text") {
+      content.push({ type: "text", text: part.text });
+    } else if (part.type === "tool-call") {
+      content.push({
+        type: "tool-call",
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        args: part.args as Record<string, unknown>,
+      });
+    }
+  }
+
+  // If no content, add empty text
+  if (content.length === 0) {
+    const text = smartSpaceMessageToText(msg);
+    content.push({ type: "text", text });
+  }
+
   return {
     id: msg.id,
     role: msg.role === "user" ? "user" : "assistant",
-    content: [{ type: "text", text }],
+    content: content as ThreadMessageLike["content"],
     createdAt: new Date(msg.createdAt),
     metadata: { custom: { entityId: msg.entityId } },
   };
@@ -45,6 +82,7 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions) {
     smartSpaces = [],
     onSwitchThread,
     onNewThread,
+    toolExecutor,
   } = options;
 
   const { membersById } = useSmartSpaceMembers(client, { smartSpaceId });
@@ -52,13 +90,18 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions) {
   const {
     messages: rawMessages,
     streamingMessages,
+    streamingToolCalls,
+    pendingToolCalls,
     sendMessage,
-  } = useSmartSpaceMessages(client, { smartSpaceId, limit: 100 });
+    submitToolResult,
+  } = useSmartSpaceMessages(client, { smartSpaceId, limit: 100, toolExecutor });
 
   const isRunning = streamingMessages.some((sm) => sm.isStreaming);
 
   const convertedMessages = useMemo<ThreadMessageLike[]>(() => {
-    const persisted = rawMessages.map(convertSmartSpaceMessage);
+    const persisted = rawMessages
+      .map(convertSmartSpaceMessage)
+      .filter((m): m is ThreadMessageLike => m !== null);
 
     // Only show streaming messages that are still actively streaming
     // Once isStreaming is false, the message is completed and waiting to be
@@ -67,15 +110,48 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions) {
 
     const streaming = activeStreaming.map((sm): ThreadMessageLike => {
       const text = smartSpaceStreamPartsToText(sm.parts);
+      
+      // Include streaming tool calls in the message content
+      const content: ContentPart[] = [];
+      if (text) {
+        content.push({ type: "text", text });
+      }
+      
+      // Add tool calls that belong to this run
+      for (const tc of streamingToolCalls) {
+        if (tc.runId === sm.runId) {
+          try {
+            const args = tc.argsText ? JSON.parse(tc.argsText) : {};
+            content.push({
+              type: "tool-call",
+              toolCallId: tc.toolCallId,
+              toolName: tc.toolName,
+              args,
+            });
+          } catch {
+            content.push({
+              type: "tool-call",
+              toolCallId: tc.toolCallId,
+              toolName: tc.toolName,
+              args: {},
+            });
+          }
+        }
+      }
+      
+      if (content.length === 0) {
+        content.push({ type: "text", text: "" });
+      }
+      
       return {
         id: sm.id,
         role: "assistant",
-        content: [{ type: "text", text }],
+        content: content as ThreadMessageLike["content"],
       };
     });
 
     return [...persisted, ...streaming];
-  }, [rawMessages, streamingMessages]);
+  }, [rawMessages, streamingMessages, streamingToolCalls]);
 
   const onNew = async (message: AppendMessage) => {
     const firstPart = message.content[0];
@@ -119,5 +195,5 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions) {
     adapters: threadListAdapter ? { threadList: threadListAdapter } : undefined,
   });
 
-  return { runtime, membersById };
+  return { runtime, membersById, pendingToolCalls, submitToolResult };
 }
