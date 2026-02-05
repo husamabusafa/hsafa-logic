@@ -11,7 +11,7 @@ import { type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { useMembers } from "@/hooks/useMembersContext";
+import { useMembers } from "@hsafa/ui-sdk";
 import { ToolFallback } from "./tool-fallback";
 
 export function Thread() {

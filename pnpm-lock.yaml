@@ -84,6 +84,9 @@ importers:
       '@hsafa/react-sdk':
         specifier: workspace:*
         version: link:../react-sdk
+      '@hsafa/ui-sdk':
+        specifier: workspace:*
+        version: link:../ui-sdk
       '@radix-ui/react-avatar':
         specifier: ^1.1.11
         version: 1.1.11(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -151,6 +154,24 @@ importers:
 
   react-sdk:
     devDependencies:
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.8
+      react:
+        specifier: ^19.0.0
+        version: 19.2.3
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  ui-sdk:
+    devDependencies:
+      '@assistant-ui/react':
+        specifier: ^0.10.25
+        version: 0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3))
+      '@hsafa/react-sdk':
+        specifier: workspace:*
+        version: link:../react-sdk
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.8

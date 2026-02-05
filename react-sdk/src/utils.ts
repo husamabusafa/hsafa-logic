@@ -64,7 +64,7 @@ export function smartSpaceStreamPartsToText(parts: SmartSpaceStreamMessage['part
   const texts: string[] = [];
   for (const p of parts) {
     if (!p || typeof p !== 'object') continue;
-    if (p.type === 'text') texts.push(p.text);
+    if (p.type === 'text') texts.push(String((p as any).text ?? ''));
   }
   return texts.join('');
 }

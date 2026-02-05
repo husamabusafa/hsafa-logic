@@ -4,101 +4,11 @@ import { prisma } from './db.js';
 import { createEmitEvent, handleRunError, type EmitEventFn } from './run-events.js';
 import { buildAgent, AgentBuildError } from '../agent-builder/builder.js';
 import { closeMCPClients, type MCPClientWrapper } from '../agent-builder/mcp-resolver.js';
+import { getToolExecutionTarget } from '../agent-builder/tool-builder.js';
 import type { AgentConfig } from '../agent-builder/types.js';
 import { emitSmartSpaceEvent } from './smartspace-events.js';
 import { createSmartSpaceMessage } from './smartspace-db.js';
-
-function toUiMessageFromSmartSpaceMessage(m: {
-  id: string;
-  role: string;
-  content: string | null;
-  metadata: Prisma.JsonValue | null;
-}) {
-  const meta = (m.metadata ?? null) as Record<string, unknown> | null;
-  const ui = meta && typeof meta === 'object' ? (meta as any).uiMessage : null;
-  if (ui && typeof ui === 'object') {
-    return ui;
-  }
-
-  return {
-    id: m.id,
-    role: m.role,
-    parts: [{ type: 'text', text: m.content ?? '' }],
-  };
-}
-
-function toAiSdkUiMessages(rawUiMessages: Array<{ id?: string; role?: string; parts?: unknown }>) {
-  const toolResultsById = new Map<string, unknown>();
-  for (const m of rawUiMessages) {
-    if (m?.role !== 'tool') continue;
-    const parts = Array.isArray(m.parts) ? (m.parts as any[]) : [];
-    for (const p of parts) {
-      if (!p || typeof p !== 'object') continue;
-      if (p.type === 'tool-result' && typeof p.toolCallId === 'string') {
-        toolResultsById.set(p.toolCallId, (p as any).output);
-      }
-    }
-  }
-
-  const out: Array<{ role: 'system' | 'user' | 'assistant'; parts: any[] }> = [];
-
-  for (const m of rawUiMessages) {
-    const role = m?.role;
-    if (role !== 'system' && role !== 'user' && role !== 'assistant') continue;
-
-    const partsIn = Array.isArray(m.parts) ? (m.parts as any[]) : [];
-    const partsOut: any[] = [];
-
-    for (const p of partsIn) {
-      if (!p || typeof p !== 'object') continue;
-
-      if (p.type === 'text' && typeof p.text === 'string') {
-        partsOut.push({ type: 'text', text: p.text });
-        continue;
-      }
-
-      if (p.type === 'reasoning' && typeof p.text === 'string') {
-        partsOut.push({ type: 'reasoning', text: p.text });
-        continue;
-      }
-
-      // Stored in DB for UI, but needs to be mapped to AI SDK's tool invocation part.
-      if (p.type === 'tool-call' && typeof p.toolCallId === 'string' && typeof p.toolName === 'string') {
-        const input = 'input' in p ? (p as any).input : 'args' in p ? (p as any).args : {};
-        const output = toolResultsById.get(p.toolCallId);
-
-        if (output !== undefined) {
-          partsOut.push({
-            type: 'dynamic-tool',
-            toolName: p.toolName,
-            toolCallId: p.toolCallId,
-            state: 'output-available',
-            input,
-            output,
-          });
-        } else {
-          partsOut.push({
-            type: 'dynamic-tool',
-            toolName: p.toolName,
-            toolCallId: p.toolCallId,
-            state: 'input-available',
-            input,
-          });
-        }
-
-        continue;
-      }
-    }
-
-    if (partsOut.length === 0) {
-      partsOut.push({ type: 'text', text: '' });
-    }
-
-    out.push({ role, parts: partsOut });
-  }
-
-  return out;
-}
+import { toUiMessageFromSmartSpaceMessage, toAiSdkUiMessages } from './message-converters.js';
 
 export async function executeRun(runId: string): Promise<void> {
   const run = await prisma.run.findUnique({
@@ -220,17 +130,7 @@ export async function executeRun(runId: string): Promise<void> {
           const input = 'input' in part ? part.input : {};
 
           const toolConfig = config.tools?.find((t) => t.name === part.toolName);
-          
-          // Derive executionTarget from execution mode:
-          // - null/undefined (no-execution) → client
-          // - static/pass-through → server
-          let executionTarget: 'server' | 'client' | 'external' = 'server';
-          if (toolConfig?.executionType === 'basic') {
-            const execution = (toolConfig as any).execution;
-            if (execution == null || execution?.mode === 'no-execution') {
-              executionTarget = 'client';
-            }
-          }
+          const executionTarget = getToolExecutionTarget(toolConfig);
 
           const assistantToolCallMessage = {
             id: `msg-${Date.now()}-assistant-toolcall`,

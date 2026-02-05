@@ -1,12 +1,10 @@
 "use client";
 
 import { useMemo } from "react";
-import {
-  useExternalStoreRuntime,
-  type ThreadMessageLike,
-  type AppendMessage,
-  type ExternalStoreThreadListAdapter,
-} from "@assistant-ui/react";
+import { useExternalStoreRuntime } from "@assistant-ui/react";
+import type { ThreadMessageLike } from "@assistant-ui/react";
+import type { AppendMessage } from "@assistant-ui/react";
+import type { AssistantRuntime } from "@assistant-ui/react";
 import {
   useSmartSpaceMessages,
   useSmartSpaceMembers,
@@ -16,7 +14,9 @@ import {
   type HsafaClient,
   type SmartSpaceMessageRecord,
   type SmartSpace,
+  type Entity,
   type PendingToolCall,
+  type StreamingToolCall,
 } from "@hsafa/react-sdk";
 
 export type ToolExecutor = (toolName: string, args: unknown) => Promise<unknown>;
@@ -31,7 +31,7 @@ export interface UseHsafaRuntimeOptions {
   toolExecutor?: ToolExecutor;
 }
 
-type ContentPart = 
+type ContentPart =
   | { type: "text"; text: string }
   | {
       type: "tool-call";
@@ -46,16 +46,13 @@ function convertSmartSpaceMessage(
   msg: SmartSpaceMessageRecord,
   toolResultsById: Map<string, unknown>
 ): ThreadMessageLike | null {
-  // Skip tool role messages - they only contain tool-results which are handled internally
   if (msg.role === "tool") {
     return null;
   }
 
   const parts = extractMessageParts(msg);
-  
-  // Convert parts to ThreadMessageLike content
   const content: ContentPart[] = [];
-  
+
   for (const part of parts) {
     if (part.type === "text") {
       content.push({ type: "text", text: part.text });
@@ -72,7 +69,6 @@ function convertSmartSpaceMessage(
     }
   }
 
-  // If no content, add empty text
   if (content.length === 0) {
     const text = smartSpaceMessageToText(msg);
     content.push({ type: "text", text });
@@ -87,7 +83,15 @@ function convertSmartSpaceMessage(
   };
 }
 
-export function useHsafaRuntime(options: UseHsafaRuntimeOptions) {
+export interface UseHsafaRuntimeReturn {
+  runtime: AssistantRuntime;
+  membersById: Record<string, Entity>;
+  pendingToolCalls: PendingToolCall[];
+  submitToolResult: (toolCallId: string, result: unknown) => Promise<void>;
+  streamingToolCalls: StreamingToolCall[];
+}
+
+export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntimeReturn {
   const {
     client,
     entityId,
@@ -127,57 +131,53 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions) {
       .map((m) => convertSmartSpaceMessage(m, toolResultsById))
       .filter((m): m is ThreadMessageLike => m !== null);
 
-    // Only show streaming messages that are still actively streaming
-    // Once isStreaming is false, the message is completed and waiting to be
-    // replaced by the persisted version - don't show duplicates
     const activeStreaming = streamingMessages.filter((sm) => sm.isStreaming);
 
-    const streaming = activeStreaming.map((sm): ThreadMessageLike => {
-      const text = smartSpaceStreamPartsToText(sm.parts);
-      
-      // Include streaming tool calls in the message content
-      const content: ContentPart[] = [];
-      if (text) {
-        content.push({ type: "text", text });
-      }
-      
-      // Add tool calls that belong to this run
-      console.log('[useHsafaRuntime] streamingToolCalls:', streamingToolCalls.length, streamingToolCalls.map(tc => ({ runId: tc.runId, argsText: tc.argsText?.substring(0, 30) })));
-      for (const tc of streamingToolCalls) {
-        if (tc.runId === sm.runId) {
-          try {
-            const args = tc.argsText ? JSON.parse(tc.argsText) : {};
-            content.push({
-              type: "tool-call",
-              toolCallId: tc.toolCallId,
-              toolName: tc.toolName,
-              args,
-              argsText: tc.argsText,
-              result: toolResultsById.get(tc.toolCallId),
-            });
-          } catch {
-            content.push({
-              type: "tool-call",
-              toolCallId: tc.toolCallId,
-              toolName: tc.toolName,
-              args: {},
-              argsText: tc.argsText,
-              result: toolResultsById.get(tc.toolCallId),
-            });
+    const streaming = activeStreaming
+      .map((sm): ThreadMessageLike | null => {
+        const text = smartSpaceStreamPartsToText(sm.parts);
+        const content: ContentPart[] = [];
+
+        if (text) {
+          content.push({ type: "text", text });
+        }
+
+        for (const tc of streamingToolCalls) {
+          if (tc.runId === sm.runId) {
+            try {
+              const args = tc.argsText ? JSON.parse(tc.argsText) : {};
+              content.push({
+                type: "tool-call",
+                toolCallId: tc.toolCallId,
+                toolName: tc.toolName,
+                args,
+                argsText: tc.argsText,
+                result: toolResultsById.get(tc.toolCallId),
+              });
+            } catch {
+              content.push({
+                type: "tool-call",
+                toolCallId: tc.toolCallId,
+                toolName: tc.toolName,
+                args: {},
+                argsText: tc.argsText,
+                result: toolResultsById.get(tc.toolCallId),
+              });
+            }
           }
         }
-      }
-      
-      if (content.length === 0) {
-        content.push({ type: "text", text: "" });
-      }
-      
-      return {
-        id: sm.id,
-        role: "assistant",
-        content: content as ThreadMessageLike["content"],
-      };
-    });
+
+        if (content.length === 0) return null;
+
+        return {
+          id: sm.id,
+          role: "assistant",
+          content: content as ThreadMessageLike["content"],
+          createdAt: new Date(),
+          metadata: { custom: { entityId: sm.entityId } },
+        };
+      })
+      .filter((m): m is ThreadMessageLike => m !== null);
 
     return [...persisted, ...streaming];
   }, [rawMessages, streamingMessages, streamingToolCalls]);
@@ -191,9 +191,7 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions) {
     await sendMessage({ entityId, content: text });
   };
 
-  const threadListAdapter = useMemo<
-    ExternalStoreThreadListAdapter | undefined
-  >(() => {
+  const threadListAdapter = useMemo(() => {
     if (!onSwitchThread) return undefined;
 
     const threads = smartSpaces.map((ss) => ({
@@ -207,7 +205,7 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions) {
       threadId: smartSpaceId ?? undefined,
       threads,
       archivedThreads: [],
-      onSwitchToThread: (threadId) => {
+      onSwitchToThread: (threadId: string) => {
         onSwitchThread(threadId);
       },
       onSwitchToNewThread: () => {
@@ -224,5 +222,11 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions) {
     adapters: threadListAdapter ? { threadList: threadListAdapter } : undefined,
   });
 
-  return { runtime, membersById, pendingToolCalls, submitToolResult, streamingToolCalls };
+  return {
+    runtime,
+    membersById,
+    pendingToolCalls,
+    submitToolResult,
+    streamingToolCalls,
+  };
 }

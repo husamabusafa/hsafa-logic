@@ -1,0 +1,35 @@
+{
+  "name": "@hsafa/ui-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Hsafa UI SDK - Assistant UI integration",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "tsc -w",
+    "build": "tsc",
+    "type-check": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "@assistant-ui/react": ">=0.10.0",
+    "@hsafa/react-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@assistant-ui/react": "^0.10.25",
+    "@hsafa/react-sdk": "workspace:*",
+    "react": "^19.0.0",
+    "typescript": "^5"
+  }
+}

@@ -3,7 +3,7 @@
 import { ChevronDownIcon, CheckIcon, LoaderIcon, XCircleIcon, WrenchIcon } from "lucide-react";
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { useStreamingToolCalls } from "@/hooks/useStreamingToolCalls";
+import { useStreamingToolCalls } from "@hsafa/ui-sdk";
 
 /**
  * Parse partial/incomplete JSON into a valid object.
@@ -90,7 +90,6 @@ export function ToolFallback({ toolName, toolCallId, argsText: providedArgsText,
   const streamingArgsText = toolCallId ? getArgsText(toolCallId) : undefined;
   const argsText = streamingArgsText ?? providedArgsText;
   
-  console.log('[ToolFallback] render:', { toolName, toolCallId, streamingArgsText: streamingArgsText?.substring(0, 30), providedArgsText: providedArgsText?.substring(0, 30), status });
   const [isExpanded, setIsExpanded] = useState(false);
   const isRunning = status.type === "running";
   const isComplete = status.type === "complete";

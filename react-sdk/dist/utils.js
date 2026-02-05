@@ -61,7 +61,7 @@ export function smartSpaceStreamPartsToText(parts) {
         if (!p || typeof p !== 'object')
             continue;
         if (p.type === 'text')
-            texts.push(p.text);
+            texts.push(String(p.text ?? ''));
     }
     return texts.join('');
 }

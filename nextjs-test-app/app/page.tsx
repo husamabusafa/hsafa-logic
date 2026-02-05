@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { AssistantRuntimeProvider } from "@assistant-ui/react";
+import { useState, useCallback, useEffect } from "react";
 import { MenuIcon, PanelLeftIcon } from "lucide-react";
 import { useHsafaClient, useSmartSpaces } from "@hsafa/react-sdk";
+import { HsafaProvider, type ToolExecutor } from "@hsafa/ui-sdk";
 
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
@@ -15,9 +15,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { useHsafaRuntime, type ToolExecutor } from "@/hooks/useHsafaRuntime";
-import { MembersProvider } from "@/hooks/useMembersContext";
-import { StreamingToolCallsProvider } from "@/hooks/useStreamingToolCalls";
 import { cn } from "@/lib/utils";
 
 const GATEWAY_URL = "http://localhost:3001";
@@ -179,10 +176,15 @@ function Header({
 }
 
 export default function Home() {
+  const [mounted, setMounted] = useState(false);
   const client = useHsafaClient({ gatewayUrl: GATEWAY_URL });
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const { smartSpaces, refresh } = useSmartSpaces(client, {
     entityId: DEMO_USER_ENTITY_ID,
@@ -200,30 +202,39 @@ export default function Home() {
     return { error: `Unknown client tool: ${toolName}` };
   }, []);
 
-  const { runtime, membersById, streamingToolCalls } = useHsafaRuntime({
-    client,
-    entityId: DEMO_USER_ENTITY_ID,
-    smartSpaceId: effectiveSmartSpaceId,
-    smartSpaces,
-    onSwitchThread: setSelectedSpaceId,
-    onNewThread: async () => {
-      const created = await client.createSmartSpace({
-        name: `Chat ${new Date().toLocaleString()}`,
-        isPrivate: true,
-      });
-      await client.addSmartSpaceMember({
-        smartSpaceId: created.id,
-        entityId: DEMO_USER_ENTITY_ID,
-        role: "member",
-      });
-      await refresh();
-      setSelectedSpaceId(created.id);
-    },
-    toolExecutor,
-  });
+  const handleNewThread = useCallback(async () => {
+    const created = await client.createSmartSpace({
+      name: `Chat ${new Date().toLocaleString()}`,
+      isPrivate: true,
+    });
+    await client.addSmartSpaceMember({
+      smartSpaceId: created.id,
+      entityId: DEMO_USER_ENTITY_ID,
+      role: "member",
+    });
+    await refresh();
+    setSelectedSpaceId(created.id);
+  }, [client, refresh]);
+
+  if (!mounted) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-background">
+        <span className="text-muted-foreground">Loading...</span>
+      </div>
+    );
+  }
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
+    <HsafaProvider
+      gatewayUrl={GATEWAY_URL}
+      entityId={DEMO_USER_ENTITY_ID}
+      smartSpaceId={effectiveSmartSpaceId}
+      smartSpaces={smartSpaces}
+      onSwitchThread={setSelectedSpaceId}
+      onNewThread={handleNewThread}
+      toolExecutor={toolExecutor}
+      client={client}
+    >
       <div className="flex h-full w-full bg-background">
         <DesktopSidebar collapsed={sidebarCollapsed} />
         <MobileSidebar open={mobileMenuOpen} onOpenChange={setMobileMenuOpen} />
@@ -235,17 +246,10 @@ export default function Home() {
             onMobileMenuOpen={() => setMobileMenuOpen(true)}
           />
           <main className="flex-1 overflow-hidden">
-            <MembersProvider
-              membersById={membersById}
-              currentEntityId={DEMO_USER_ENTITY_ID}
-            >
-              <StreamingToolCallsProvider streamingToolCalls={streamingToolCalls}>
-                <Thread />
-              </StreamingToolCallsProvider>
-            </MembersProvider>
+            <Thread />
           </main>
         </div>
       </div>
-    </AssistantRuntimeProvider>
+    </HsafaProvider>
   );
 }

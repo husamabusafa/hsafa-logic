@@ -1,6 +1,7 @@
 packages:
   - hsafa-gateway
   - react-sdk
+  - ui-sdk
   - nextjs-test-app
   - hsafa-docs
   - vercel-ai-sdk-docs

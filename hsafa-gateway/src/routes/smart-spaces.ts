@@ -246,6 +246,7 @@ smartSpacesRouter.post('/:smartSpaceId/messages', async (req, res) => {
     };
 
     await emitSmartSpaceEvent(smartSpaceId, 'smartSpace.message', { message: uiMessage });
+    await emitSmartSpaceEvent(smartSpaceId, 'message.user', { message: uiMessage });
 
     const agentMembers = await prisma.smartSpaceMembership.findMany({
       where: { smartSpaceId },

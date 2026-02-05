@@ -7,6 +7,29 @@ import { executeCompute } from './tools/compute';
 import { executeAiAgent } from './tools/ai-agent';
 import { executeImageGenerator } from './tools/image-generator';
 
+/**
+ * Determines the execution target for a tool based on its configuration.
+ * - 'client': Tool has no server-side execution (no-execution mode or missing execution)
+ * - 'server': Tool executes on server (static, pass-through, request, etc.)
+ * - 'external': Reserved for future use (external services)
+ */
+export function getToolExecutionTarget(
+  toolConfig: ToolConfig | undefined
+): 'server' | 'client' | 'external' {
+  if (!toolConfig) return 'client';
+
+  if (toolConfig.executionType === 'basic') {
+    const execution = toolConfig.execution ?? null;
+    if (isNoExecutionBasic(execution)) {
+      return 'client';
+    }
+    return 'server';
+  }
+
+  // All other execution types (request, compute, ai-agent, image-generator, waiting) run on server
+  return 'server';
+}
+
 const defaultPromptSchema = {
   type: 'object',
   properties: {
