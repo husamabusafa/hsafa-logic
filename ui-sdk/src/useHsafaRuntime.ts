@@ -71,6 +71,9 @@ function convertSmartSpaceMessage(
 
   if (content.length === 0) {
     const text = smartSpaceMessageToText(msg);
+    if (!text || text.trim().length === 0) {
+      return null; // Skip empty messages
+    }
     content.push({ type: "text", text });
   }
 

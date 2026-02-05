@@ -10,9 +10,25 @@ import { ArrowUpIcon, SquareIcon } from "lucide-react";
 import { type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { useMembers } from "@hsafa/ui-sdk";
 import { ToolFallback } from "./tool-fallback";
+
+function StreamingCaret() {
+  return (
+    <span className="inline-block size-2 ml-1 rounded-full bg-foreground/50 animate-pulse" />
+  );
+}
+
+function TextWithCaret({ text, status }: { text: string; status: { type: string } }) {
+  const isStreaming = status.type === "running";
+  
+  return (
+    <div className="border border-border rounded-lg px-3 py-2">
+      <span className="whitespace-pre-wrap">{text}</span>
+      {isStreaming && <StreamingCaret />}
+    </div>
+  );
+}
 
 export function Thread() {
   return (
@@ -117,12 +133,10 @@ function AssistantMessage() {
           {senderName}
         </div>
       )}
-      <div className="text-sm border border-border rounded-lg px-3 py-2">
-        <MessagePrimitive.Content
+      <div className="text-sm">
+        <MessagePrimitive.Parts
           components={{
-            Text: ({ text }: { text: string }) => (
-              <span className="whitespace-pre-wrap">{text}</span>
-            ),
+            Text: TextWithCaret,
             tools: {
               Fallback: ToolFallback,
             },

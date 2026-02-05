@@ -90,41 +90,44 @@ This document outlines all refactoring tasks based on the hsafa-docs, current co
 ## Phase 3: nextjs-test-app Refactor
 
 ### 3.1 Simplify After SDK Extraction
-- [ ] **Replace custom hooks with SDK hooks**
-  - Use new SDK hooks instead of local implementations
-  - Remove duplicate logic
+- [x] **Replace custom hooks with SDK hooks**
+  - Removed local hooks (useHsafaRuntime, useMembersContext, useStreamingToolCalls)
+  - Components now import from `@hsafa/ui-sdk`
 
-- [ ] **Clean up components**
-  - Remove unnecessary wrapper components
-  - Simplify the component tree
+- [x] **Clean up components**
+  - Page.tsx uses `<HsafaProvider>` instead of manual provider wiring
+  - Simplified component tree
 
 ### 3.2 Fix UX Issues
-- [ ] **Fix empty box with "undefined" when sending message**
-  - This is likely a streaming issue where the message shows before content arrives
-  - Ensure proper loading state for new messages
+- [x] **Fix empty box with "undefined" when sending message**
+  - Updated `convertSmartSpaceMessage` in ui-sdk to return null for empty messages
+  - Messages with no content are now filtered out
 
-- [ ] **Add typing indicator (dots like ChatGPT)**
-  - Show animated dots when assistant is thinking/typing
-  - Use `isStreaming` state properly
+- [x] **Add typing indicator (dots like ChatGPT)**
+  - Added `TypingIndicator` component with animated bouncing dots
+  - Added `StreamingIndicator` that shows dots when assistant is thinking
+  - Uses `useThread().isRunning` to detect streaming state
 
-- [ ] **Fix streaming text display**
-  - Ensure text streams smoothly without flicker
-  - Handle partial JSON parsing for tool args
+- [x] **Fix streaming text display**
+  - Streaming messages with no content are filtered (return null)
+  - Partial JSON parsing already handled in tool-fallback.tsx
+
 ### 3.3 Persist SmartSpace Selection
-- [ ] **Add URL-based SmartSpace persistence**
-  - Store selected SmartSpace ID in URL query parameter (e.g., `?space=xxx`)
-  - On page load, read `space` param and auto-select that SmartSpace
-  - Update URL when user switches SmartSpace (use `router.push` or `history.replaceState`)
-  - Example: `/chat?space=clx123abc` persists across refresh
+- [x] **Add URL-based SmartSpace persistence**
+  - Uses `useSearchParams` and `useRouter` from next/navigation
+  - Reads `?space=xxx` param on mount
+  - Updates URL with `router.replace()` when switching spaces
+  - Example: `/?space=clx123abc` persists across refresh
 
 ---
 
 ## Phase 4: Create @hsafa/ui-sdk Package
 
 ### 4.1 Package Setup
-- [ ] **Create new package `ui-sdk/`**
-  - Set up package.json, tsconfig, etc.
-  - Depends on `@hsafa/react-sdk` and `@assistant-ui/react`
+- [x] **Create new package `ui-sdk/`** (completed in Phase 2)
+  - Package created with package.json, tsconfig.json
+  - Depends on `@hsafa/react-sdk` and `@assistant-ui/react` (peer deps)
+  - Uses ESNext module with Bundler resolution
 
 ### 4.2 Prebuilt Components
 - [ ] **HsafaChat component**

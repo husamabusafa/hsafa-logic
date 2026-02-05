@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { MenuIcon, PanelLeftIcon } from "lucide-react";
 import { useHsafaClient, useSmartSpaces } from "@hsafa/react-sdk";
 import { HsafaProvider, type ToolExecutor } from "@hsafa/ui-sdk";
@@ -177,6 +178,8 @@ function Header({
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const client = useHsafaClient({ gatewayUrl: GATEWAY_URL });
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -186,10 +189,24 @@ export default function Home() {
     setMounted(true);
   }, []);
 
+  // Read space ID from URL on mount
+  useEffect(() => {
+    const spaceFromUrl = searchParams.get("space");
+    if (spaceFromUrl && !selectedSpaceId) {
+      setSelectedSpaceId(spaceFromUrl);
+    }
+  }, [searchParams, selectedSpaceId]);
+
   const { smartSpaces, refresh } = useSmartSpaces(client, {
     entityId: DEMO_USER_ENTITY_ID,
   });
   const effectiveSmartSpaceId = selectedSpaceId ?? smartSpaces[0]?.id ?? null;
+
+  // Update URL when space changes
+  const handleSwitchSpace = useCallback((spaceId: string) => {
+    setSelectedSpaceId(spaceId);
+    router.replace(`?space=${spaceId}`, { scroll: false });
+  }, [router]);
 
   // Tool executor that routes to client-side tool handlers
   const toolExecutor: ToolExecutor = useCallback(async (toolName, args) => {
@@ -213,8 +230,8 @@ export default function Home() {
       role: "member",
     });
     await refresh();
-    setSelectedSpaceId(created.id);
-  }, [client, refresh]);
+    handleSwitchSpace(created.id);
+  }, [client, refresh, handleSwitchSpace]);
 
   if (!mounted) {
     return (
@@ -230,7 +247,7 @@ export default function Home() {
       entityId={DEMO_USER_ENTITY_ID}
       smartSpaceId={effectiveSmartSpaceId}
       smartSpaces={smartSpaces}
-      onSwitchThread={setSelectedSpaceId}
+      onSwitchThread={handleSwitchSpace}
       onNewThread={handleNewThread}
       toolExecutor={toolExecutor}
       client={client}
