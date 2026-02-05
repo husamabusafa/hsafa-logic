@@ -57,16 +57,6 @@ export interface SmartSpaceStreamMessage {
     parts: Array<{
         type: 'text';
         text: string;
-    } | {
-        type: 'tool-call';
-        toolCallId: string;
-        toolName: string;
-        args: unknown;
-    } | {
-        type: 'tool-result';
-        toolCallId: string;
-        toolName: string;
-        result: unknown;
     }>;
 }
 export interface RunCreatedEvent {
@@ -78,24 +68,6 @@ export interface RunCreatedEvent {
 export interface RunStatusEvent {
     runId: string;
     status: string;
-    error?: string;
-}
-export interface RunStreamPartEvent {
-    runId: string;
-    type: string;
-    textDelta?: string;
-    toolCallId?: string;
-    toolName?: string;
-    args?: unknown;
-}
-export interface PendingToolCall {
-    runId: string;
-    toolCallId: string;
-    toolName: string;
-    args: unknown;
-    argsText: string;
-    status: 'pending' | 'executing' | 'completed' | 'error';
-    result?: unknown;
     error?: string;
 }
 //# sourceMappingURL=types.d.ts.map

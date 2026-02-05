@@ -11,7 +11,6 @@ import { type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { useMembers } from "@hsafa/ui-sdk";
-import { ToolFallback } from "./tool-fallback";
 
 function StreamingCaret() {
   return (
@@ -137,9 +136,6 @@ function AssistantMessage() {
         <MessagePrimitive.Parts
           components={{
             Text: TextWithCaret,
-            tools: {
-              Fallback: ToolFallback,
-            },
           }}
         />
       </div>

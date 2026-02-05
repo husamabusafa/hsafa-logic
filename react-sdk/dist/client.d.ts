@@ -75,14 +75,6 @@ export interface HsafaClient {
             agentEntityId: string;
         }>;
     }>;
-    submitToolResult(input: {
-        runId: string;
-        callId: string;
-        result: unknown;
-        clientId?: string;
-    }): Promise<{
-        success: boolean;
-    }>;
 }
 export declare function createHsafaClient(options?: CreateHsafaClientOptions): HsafaClient;
 //# sourceMappingURL=client.d.ts.map

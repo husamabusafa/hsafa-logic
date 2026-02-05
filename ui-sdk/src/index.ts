@@ -1,13 +1,6 @@
 export { HsafaProvider, type HsafaProviderProps } from "./HsafaProvider";
-export { useHsafaRuntime, type UseHsafaRuntimeOptions, type ToolExecutor, type UseHsafaRuntimeReturn } from "./useHsafaRuntime";
-export {
-  MembersProvider,
-  useMembers,
-  StreamingToolCallsProvider,
-  useStreamingToolCalls,
-  PendingToolCallsProvider,
-  usePendingToolCalls,
-} from "./contexts";
+export { useHsafaRuntime, type UseHsafaRuntimeOptions, type UseHsafaRuntimeReturn } from "./useHsafaRuntime";
+export { MembersProvider, useMembers } from "./contexts";
 
 // Re-export commonly used types from react-sdk for convenience
 export type {
@@ -15,6 +8,4 @@ export type {
   Entity,
   SmartSpace,
   SmartSpaceMessageRecord,
-  StreamingToolCall,
-  PendingToolCall,
 } from "@hsafa/react-sdk";

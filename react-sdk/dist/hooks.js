@@ -73,15 +73,8 @@ function parseHsafaEvent(raw) {
 export function useSmartSpaceMessages(client, input) {
     const smartSpaceId = input.smartSpaceId;
     const limit = input.limit ?? 50;
-    const toolExecutor = input.toolExecutor;
     const [messages, setMessages] = useState([]);
     const [streamingMessages, setStreamingMessages] = useState([]);
-    const [streamingToolCalls, setStreamingToolCalls] = useState([]);
-    const [pendingToolCalls, setPendingToolCalls] = useState([]);
-    const toolExecutorRef = useRef(toolExecutor);
-    useEffect(() => {
-        toolExecutorRef.current = toolExecutor;
-    }, [toolExecutor]);
     const [isLoading, setIsLoading] = useState(false);
     const [isConnected, setIsConnected] = useState(false);
     const [error, setError] = useState(null);
@@ -111,8 +104,6 @@ export function useSmartSpaceMessages(client, input) {
     useEffect(() => {
         setMessages([]);
         setStreamingMessages([]);
-        setStreamingToolCalls([]);
-        setPendingToolCalls([]);
         setLastSeq(null);
         setError(null);
         setIsConnected(false);
@@ -170,7 +161,6 @@ export function useSmartSpaceMessages(client, input) {
                 const upsertStreamingMessage = (input) => {
                     setStreamingMessages((prev) => {
                         const idx = prev.findIndex((m) => m.runId === input.runId);
-                        // Can't create a placeholder without agentEntityId.
                         if (idx === -1 && !input.agentEntityId)
                             return prev;
                         const base = idx === -1
@@ -203,33 +193,7 @@ export function useSmartSpaceMessages(client, input) {
                         return [...prev.slice(0, idx), next, ...prev.slice(idx + 1)];
                     });
                 };
-                const upsertStreamingToolCall = (input) => {
-                    setStreamingToolCalls((prev) => {
-                        const idx = prev.findIndex((t) => t.toolCallId === input.toolCallId);
-                        const base = idx === -1
-                            ? {
-                                id: `toolcall-${input.toolCallId}`,
-                                runId: input.runId,
-                                toolCallId: input.toolCallId,
-                                toolName: input.toolName ?? 'tool',
-                                argsText: '',
-                                isStreaming: true,
-                            }
-                            : prev[idx];
-                        const next = {
-                            ...base,
-                            toolName: input.toolName ?? base.toolName,
-                            argsText: input.appendDelta ? base.argsText + input.appendDelta : base.argsText,
-                            isStreaming: input.isStreaming ?? base.isStreaming,
-                        };
-                        if (idx === -1)
-                            return [...prev, next];
-                        return [...prev.slice(0, idx), next, ...prev.slice(idx + 1)];
-                    });
-                };
                 if (parsed.type === 'smartSpace.message') {
-                    // A complete message was posted - fetch any new messages after the last *message* seq.
-                    // Note: Redis stream seq is not the same as SmartSpaceMessage.seq.
                     const currentLastSeq = lastSeqRef.current;
                     client
                         .listSmartSpaceMessages({
@@ -251,8 +215,6 @@ export function useSmartSpaceMessages(client, input) {
                         });
                         const newest = newMsgs[newMsgs.length - 1];
                         setLastSeq(newest.seq);
-                        // Only remove streaming messages when the final assistant text message is persisted.
-                        // Tool-call and tool-result messages are also persisted mid-run and should not kill streaming UI.
                         const persistedAssistantTextRunIds = new Set();
                         for (const m of newMsgs) {
                             const rid = m.runId;
@@ -267,45 +229,15 @@ export function useSmartSpaceMessages(client, input) {
                         if (persistedAssistantTextRunIds.size > 0) {
                             setStreamingMessages((prev) => prev.filter((sm) => !persistedAssistantTextRunIds.has(sm.runId)));
                         }
-                        // Remove streaming tool calls if their toolCallId is now persisted in the DB
-                        const persistedToolCallIds = new Set();
-                        for (const m of newMsgs) {
-                            const uiMessage = m.metadata?.uiMessage;
-                            const parts = uiMessage?.parts;
-                            if (!Array.isArray(parts))
-                                continue;
-                            for (const p of parts) {
-                                if (p && typeof p === 'object' && p.type === 'tool-call' && typeof p.toolCallId === 'string') {
-                                    persistedToolCallIds.add(p.toolCallId);
-                                }
-                            }
-                        }
-                        if (persistedToolCallIds.size > 0) {
-                            setStreamingToolCalls((prev) => prev.filter((t) => !persistedToolCallIds.has(t.toolCallId)));
-                        }
                     })
                         .catch(() => { });
                 }
-                else if (parsed.type === 'run.created') {
-                    // A run started - create streaming message placeholder
+                else if (parsed.type === 'run.created' || parsed.type === 'run.started') {
                     if (!runId)
                         return;
                     upsertStreamingMessage({ runId, agentEntityId, isStreaming: true });
-                }
-                else if (parsed.type === 'run.started') {
-                    // Runs can be restarted (e.g., after client tool results). Ensure placeholder exists.
-                    if (!runId)
-                        return;
-                    upsertStreamingMessage({ runId, agentEntityId, isStreaming: true });
-                }
-                else if (parsed.type === 'run.waiting_tool') {
-                    // The run is paused waiting for a tool result.
-                    if (!runId)
-                        return;
-                    upsertStreamingMessage({ runId, agentEntityId, isStreaming: false });
                 }
                 else if (parsed.type === 'text.delta') {
-                    // Streaming content update for a run
                     if (!runId)
                         return;
                     const data = payload.data;
@@ -314,99 +246,7 @@ export function useSmartSpaceMessages(client, input) {
                         return;
                     upsertStreamingMessage({ runId, agentEntityId, appendTextDelta: delta, isStreaming: true });
                 }
-                else if (parsed.type === 'tool.input.start') {
-                    if (!runId)
-                        return;
-                    const data = payload.data;
-                    const toolCallId = typeof data?.toolCallId === 'string' ? data.toolCallId : null;
-                    const toolName = typeof data?.toolName === 'string' ? data.toolName : null;
-                    if (!toolCallId || !toolName)
-                        return;
-                    // Ensure we have a streaming message container so tool UI can show while args stream.
-                    upsertStreamingMessage({ runId, agentEntityId, isStreaming: true });
-                    upsertStreamingToolCall({ runId, toolCallId, toolName, isStreaming: true });
-                }
-                else if (parsed.type === 'tool.input.delta') {
-                    if (!runId)
-                        return;
-                    const data = payload.data;
-                    const toolCallId = typeof data?.toolCallId === 'string' ? data.toolCallId : null;
-                    const delta = typeof data?.delta === 'string' ? data.delta : null;
-                    if (!toolCallId || !delta)
-                        return;
-                    // Ensure we have a streaming message container so tool UI can show while args stream.
-                    upsertStreamingMessage({ runId, agentEntityId, isStreaming: true });
-                    upsertStreamingToolCall({
-                        runId,
-                        toolCallId,
-                        toolName: undefined,
-                        appendDelta: delta,
-                        isStreaming: true,
-                    });
-                }
-                else if (parsed.type === 'tool.call') {
-                    // A tool call is ready for execution (args fully streamed)
-                    if (!runId)
-                        return;
-                    const data = payload.data;
-                    const toolCallId = typeof data?.toolCallId === 'string' ? data.toolCallId : null;
-                    const toolName = typeof data?.toolName === 'string' ? data.toolName : null;
-                    const args = data?.args ?? {};
-                    const executionTarget = typeof data?.executionTarget === 'string' ? data.executionTarget : 'server';
-                    if (!toolCallId || !toolName)
-                        return;
-                    // Mark tool input streaming complete and ensure argsText is populated.
-                    upsertStreamingToolCall({
-                        runId,
-                        toolCallId,
-                        toolName,
-                        appendDelta: '',
-                        isStreaming: false,
-                    });
-                    // Only handle client-side tools
-                    if (executionTarget === 'client') {
-                        const pending = {
-                            runId,
-                            toolCallId,
-                            toolName,
-                            args,
-                            argsText: JSON.stringify(args),
-                            status: 'pending',
-                        };
-                        setPendingToolCalls((prev) => {
-                            // Don't add duplicates
-                            if (prev.some((p) => p.toolCallId === toolCallId))
-                                return prev;
-                            return [...prev, pending];
-                        });
-                        // Auto-execute if toolExecutor is provided
-                        if (toolExecutorRef.current) {
-                            setPendingToolCalls((prev) => prev.map((p) => (p.toolCallId === toolCallId ? { ...p, status: 'executing' } : p)));
-                            toolExecutorRef.current(toolName, args)
-                                .then((result) => {
-                                setPendingToolCalls((prev) => prev.map((p) => (p.toolCallId === toolCallId ? { ...p, status: 'completed', result } : p)));
-                                // Submit result to gateway
-                                client.submitToolResult({ runId, callId: toolCallId, result }).catch(() => { });
-                            })
-                                .catch((err) => {
-                                const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-                                setPendingToolCalls((prev) => prev.map((p) => (p.toolCallId === toolCallId ? { ...p, status: 'error', error: errorMsg } : p)));
-                                // Submit error result to gateway
-                                client.submitToolResult({ runId, callId: toolCallId, result: { error: errorMsg } }).catch(() => { });
-                            });
-                        }
-                    }
-                }
-                else if (parsed.type === 'tool.result') {
-                    // A tool result was received - remove from pending
-                    const data = payload.data;
-                    const toolCallId = typeof data?.toolCallId === 'string' ? data.toolCallId : null;
-                    if (toolCallId) {
-                        setPendingToolCalls((prev) => prev.filter((p) => p.toolCallId !== toolCallId));
-                    }
-                }
                 else if (parsed.type === 'run.completed' || parsed.type === 'run.failed') {
-                    // Run finished - mark streaming complete, will be replaced by persisted message
                     if (!runId)
                         return;
                     upsertStreamingMessage({ runId, agentEntityId, isStreaming: false });
@@ -444,17 +284,6 @@ export function useSmartSpaceMessages(client, input) {
             throw e;
         }
     }, [client, smartSpaceId]);
-    const submitToolResult = useCallback(async (toolCallId, result) => {
-        const pending = pendingToolCalls.find((p) => p.toolCallId === toolCallId);
-        if (!pending)
-            return;
-        setPendingToolCalls((prev) => prev.map((p) => (p.toolCallId === toolCallId ? { ...p, status: 'completed', result } : p)));
-        await client.submitToolResult({
-            runId: pending.runId,
-            callId: toolCallId,
-            result,
-        });
-    }, [client, pendingToolCalls]);
-    return { messages, streamingMessages, streamingToolCalls, pendingToolCalls, isLoading, isConnected, error, sendMessage, submitToolResult, refresh, lastSeq };
+    return { messages, streamingMessages, isLoading, isConnected, error, sendMessage, refresh, lastSeq };
 }
 //# sourceMappingURL=hooks.js.map

@@ -3,8 +3,6 @@ import { convertToModelMessages } from 'ai';
 import { prisma } from './db.js';
 import { createEmitEvent, handleRunError, type EmitEventFn } from './run-events.js';
 import { buildAgent, AgentBuildError } from '../agent-builder/builder.js';
-import { closeMCPClients, type MCPClientWrapper } from '../agent-builder/mcp-resolver.js';
-import { getToolExecutionTarget } from '../agent-builder/tool-builder.js';
 import type { AgentConfig } from '../agent-builder/types.js';
 import { emitSmartSpaceEvent } from './smartspace-events.js';
 import { createSmartSpaceMessage } from './smartspace-db.js';
@@ -42,8 +40,6 @@ export async function executeRun(runId: string): Promise<void> {
     }
   };
 
-  let mcpClients: MCPClientWrapper[] | undefined;
-
   try {
     if (run.status === 'completed' || run.status === 'failed' || run.status === 'canceled') {
       return;
@@ -71,7 +67,6 @@ export async function executeRun(runId: string): Promise<void> {
     const config = agent.configJson as unknown as AgentConfig;
 
     const built = await buildAgent({ config });
-    mcpClients = built.mcpClients;
 
     const messages = await prisma.smartSpaceMessage.findMany({
       where: { smartSpaceId: run.smartSpaceId },
@@ -103,199 +98,6 @@ export async function executeRun(runId: string): Promise<void> {
         case 'text-delta':
           await emitEvent('text.delta', { delta: part.text });
           break;
-
-        case 'reasoning-start':
-          await emitEvent('reasoning.start', {});
-          break;
-
-        case 'reasoning-delta':
-          await emitEvent('reasoning.delta', { delta: part.text });
-          break;
-
-        case 'tool-input-start':
-          await emitEvent('tool.input.start', {
-            toolCallId: part.id,
-            toolName: part.toolName,
-          });
-          break;
-
-        case 'tool-input-delta':
-          await emitEvent('tool.input.delta', {
-            toolCallId: part.id,
-            delta: part.delta,
-          });
-          break;
-
-        case 'tool-call': {
-          const input = 'input' in part ? part.input : {};
-
-          const toolConfig = config.tools?.find((t) => t.name === part.toolName);
-          const executionTarget = getToolExecutionTarget(toolConfig);
-
-          const assistantToolCallMessage = {
-            id: `msg-${Date.now()}-assistant-toolcall`,
-            role: 'assistant',
-            parts: [
-              {
-                type: 'tool-call',
-                toolCallId: part.toolCallId,
-                toolName: part.toolName,
-                input,
-                state: 'input-available',
-              },
-            ],
-          };
-
-          let targetClientId: string | null = null;
-          if (executionTarget === 'client' && run.triggeredById) {
-            const targetClient = await prisma.client.findFirst({
-              where: { entityId: run.triggeredById },
-              orderBy: [{ lastSeenAt: 'desc' }, { createdAt: 'desc' }],
-              select: { id: true },
-            });
-            targetClientId = targetClient?.id ?? null;
-          }
-
-          // Persist tool call before emitting tool.call so client can safely submit results.
-          await prisma.toolCall.create({
-            data: {
-              runId,
-              seq: BigInt(stepIndex),
-              callId: part.toolCallId,
-              toolName: part.toolName,
-              args: input as Prisma.InputJsonValue,
-              executionTarget,
-              targetClientId,
-              status: 'requested',
-            },
-          });
-
-          // Always persist tool call message so it's visible in UI
-          await createSmartSpaceMessage({
-            smartSpaceId: run.smartSpaceId,
-            entityId: run.agentEntityId,
-            role: 'assistant',
-            content: null,
-            metadata: { uiMessage: assistantToolCallMessage } as unknown as Prisma.InputJsonValue,
-            runId,
-          });
-
-          await emitSmartSpaceEvent(
-            run.smartSpaceId,
-            'smartSpace.message',
-            { message: assistantToolCallMessage },
-            { runId, agentEntityId: run.agentEntityId }
-          );
-
-          // Emit tool.call after persistence so client submissions won't race toolCall creation.
-          await emitEvent('tool.call', {
-            toolCallId: part.toolCallId,
-            toolName: part.toolName,
-            args: input,
-            executionTarget,
-          });
-
-          await emitEvent('message.assistant', {
-            message: assistantToolCallMessage,
-          });
-
-          if (executionTarget !== 'server') {
-            await prisma.run.update({
-              where: { id: runId },
-              data: { status: 'waiting_tool' },
-            });
-
-            await emitEvent('run.waiting_tool', {
-              status: 'waiting_tool',
-              toolCallId: part.toolCallId,
-              toolName: part.toolName,
-              executionTarget,
-              targetClientId,
-            });
-
-            if (executionTarget === 'client' && targetClientId) {
-              const { dispatchToolCallToClient } = await import('./websocket.js');
-              await dispatchToolCallToClient(targetClientId, {
-                runId,
-                callId: part.toolCallId,
-                toolName: part.toolName,
-                args: input as Record<string, unknown>,
-              });
-
-              await prisma.toolCall.update({
-                where: { runId_callId: { runId, callId: part.toolCallId } },
-                data: { status: 'dispatched' },
-              });
-            }
-
-            return;
-          }
-
-          break;
-        }
-
-        case 'tool-result': {
-          const output = 'output' in part ? part.output : null;
-
-          await emitEvent('tool.result', {
-            toolCallId: part.toolCallId,
-            toolName: part.toolName,
-            result: output,
-          });
-
-          const toolResultMessage = {
-            id: `msg-${Date.now()}-tool-${part.toolCallId}`,
-            role: 'tool',
-            parts: [
-              {
-                type: 'tool-result',
-                toolCallId: part.toolCallId,
-                toolName: part.toolName,
-                output,
-                state: 'output-available',
-              },
-            ],
-          };
-
-          await emitEvent('message.tool', { message: toolResultMessage });
-
-          // Persist tool result message so conversation history is complete
-          await createSmartSpaceMessage({
-            smartSpaceId: run.smartSpaceId,
-            entityId: run.agentEntityId,
-            role: 'tool',
-            content: null,
-            metadata: { uiMessage: toolResultMessage } as unknown as Prisma.InputJsonValue,
-            runId,
-          });
-
-          await emitSmartSpaceEvent(
-            run.smartSpaceId,
-            'smartSpace.message',
-            { message: toolResultMessage },
-            { runId, agentEntityId: run.agentEntityId }
-          );
-
-          await prisma.toolCall.update({
-            where: { runId_callId: { runId, callId: part.toolCallId } },
-            data: { status: 'completed', completedAt: new Date() },
-          });
-
-          await prisma.toolResult.upsert({
-            where: { runId_callId: { runId, callId: part.toolCallId } },
-            create: {
-              runId,
-              callId: part.toolCallId,
-              result: (output ?? {}) as Prisma.InputJsonValue,
-              source: 'server',
-            },
-            update: {
-              result: (output ?? {}) as Prisma.InputJsonValue,
-            },
-          });
-
-          break;
-        }
 
         case 'finish-step':
           await emitEvent('step.finish', {
@@ -365,10 +167,6 @@ export async function executeRun(runId: string): Promise<void> {
       });
     } catch {
       // ignore
-    }
-  } finally {
-    if (mcpClients && mcpClients.length > 0) {
-      await closeMCPClients(mcpClients);
     }
   }
 }

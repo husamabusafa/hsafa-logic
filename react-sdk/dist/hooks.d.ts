@@ -1,5 +1,5 @@
 import { type HsafaClient } from './client.js';
-import type { Entity, SmartSpace, SmartSpaceMessageRecord, SmartSpaceStreamMessage, PendingToolCall } from './types.js';
+import type { Entity, SmartSpace, SmartSpaceMessageRecord, SmartSpaceStreamMessage } from './types.js';
 export declare function useHsafaClient(input?: {
     gatewayUrl?: string;
 }): HsafaClient;
@@ -30,24 +30,12 @@ interface StreamingMessage {
     parts: SmartSpaceStreamMessage['parts'];
     isStreaming: boolean;
 }
-export interface StreamingToolCall {
-    id: string;
-    runId: string;
-    toolCallId: string;
-    toolName: string;
-    argsText: string;
-    isStreaming: boolean;
-}
-export type ToolExecutor = (toolName: string, args: unknown) => Promise<unknown>;
 export declare function useSmartSpaceMessages(client: HsafaClient, input: {
     smartSpaceId: string | null;
     limit?: number;
-    toolExecutor?: ToolExecutor;
 }): {
     messages: SmartSpaceMessageRecord[];
     streamingMessages: StreamingMessage[];
-    streamingToolCalls: StreamingToolCall[];
-    pendingToolCalls: PendingToolCall[];
     isLoading: boolean;
     isConnected: boolean;
     error: unknown;
@@ -55,7 +43,6 @@ export declare function useSmartSpaceMessages(client: HsafaClient, input: {
         entityId: string;
         content: string;
     }) => Promise<void>;
-    submitToolResult: (toolCallId: string, result: unknown) => Promise<void>;
     refresh: () => Promise<void>;
     lastSeq: string | null;
 };

@@ -151,17 +151,6 @@ export function createHsafaClient(options = {}) {
                 },
             });
         },
-        async submitToolResult(input) {
-            return fetchJson(fetchFn, `${apiBaseUrl}/runs/${input.runId}/tool-results`, {
-                method: 'POST',
-                json: {
-                    callId: input.callId,
-                    result: input.result,
-                    source: 'client',
-                    clientId: input.clientId ?? null,
-                },
-            });
-        },
     };
 }
 //# sourceMappingURL=client.js.map

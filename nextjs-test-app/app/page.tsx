@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { MenuIcon, PanelLeftIcon } from "lucide-react";
 import { useHsafaClient, useSmartSpaces } from "@hsafa/react-sdk";
-import { HsafaProvider, type ToolExecutor } from "@hsafa/ui-sdk";
+import { HsafaProvider } from "@hsafa/ui-sdk";
 
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
@@ -20,66 +20,6 @@ import { cn } from "@/lib/utils";
 
 const GATEWAY_URL = "http://localhost:3001";
 const DEMO_USER_ENTITY_ID = "b04623f4-4c18-43cc-8010-0f18d05b5004";
-
-// Client-side tool handlers
-const clientTools: Record<string, (args: unknown) => Promise<unknown>> = {
-  // Test tool that logs and returns example data
-  clientTestTool: async (args) => {
-    const typedArgs = args as { message?: string; data?: unknown };
-    console.log("[clientTestTool] Executing with args:", typedArgs);
-    
-    // Simulate some async work
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    
-    const result = {
-      success: true,
-      receivedMessage: typedArgs.message || "No message provided",
-      timestamp: new Date().toISOString(),
-      exampleData: {
-        items: ["item1", "item2", "item3"],
-        count: 3,
-        metadata: {
-          source: "client",
-          version: "1.0.0",
-        },
-      },
-    };
-    
-    console.log("[clientTestTool] Returning result:", result);
-    return result;
-  },
-  
-  // Get browser info tool
-  getBrowserInfo: async () => {
-    console.log("[getBrowserInfo] Gathering browser information...");
-    
-    const info = {
-      userAgent: navigator.userAgent,
-      language: navigator.language,
-      platform: navigator.platform,
-      screenWidth: window.screen.width,
-      screenHeight: window.screen.height,
-      windowWidth: window.innerWidth,
-      windowHeight: window.innerHeight,
-      timestamp: new Date().toISOString(),
-    };
-    
-    console.log("[getBrowserInfo] Browser info:", info);
-    return info;
-  },
-  
-  // Get current time tool
-  getCurrentTime: async () => {
-    const now = new Date();
-    console.log("[getCurrentTime] Current time requested");
-    return {
-      iso: now.toISOString(),
-      local: now.toLocaleString(),
-      unix: now.getTime(),
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    };
-  },
-};
 
 function Logo() {
   return (
@@ -176,7 +116,7 @@ function Header({
   );
 }
 
-export default function Home() {
+function HomeContent() {
   const [mounted, setMounted] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -208,17 +148,6 @@ export default function Home() {
     router.replace(`?space=${spaceId}`, { scroll: false });
   }, [router]);
 
-  // Tool executor that routes to client-side tool handlers
-  const toolExecutor: ToolExecutor = useCallback(async (toolName, args) => {
-    const handler = clientTools[toolName];
-    if (handler) {
-      return handler(args);
-    }
-    // Unknown tool - return error
-    console.warn(`[toolExecutor] Unknown client tool: ${toolName}`);
-    return { error: `Unknown client tool: ${toolName}` };
-  }, []);
-
   const handleNewThread = useCallback(async () => {
     const created = await client.createSmartSpace({
       name: `Chat ${new Date().toLocaleString()}`,
@@ -249,7 +178,6 @@ export default function Home() {
       smartSpaces={smartSpaces}
       onSwitchThread={handleSwitchSpace}
       onNewThread={handleNewThread}
-      toolExecutor={toolExecutor}
       client={client}
     >
       <div className="flex h-full w-full bg-background">
@@ -268,5 +196,17 @@ export default function Home() {
         </div>
       </div>
     </HsafaProvider>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-full w-full items-center justify-center bg-background">
+        <span className="text-muted-foreground">Loading...</span>
+      </div>
+    }>
+      <HomeContent />
+    </Suspense>
   );
 }
