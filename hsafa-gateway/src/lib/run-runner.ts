@@ -236,7 +236,7 @@ export async function executeRun(runId: string): Promise<void> {
       parts: finalParts.length > 0 ? finalParts : [{ type: 'text', text: finalText }],
     };
 
-    await createSmartSpaceMessage({
+    const dbMessage = await createSmartSpaceMessage({
       smartSpaceId: run.smartSpaceId,
       entityId: run.agentEntityId,
       role: 'assistant',
@@ -245,14 +245,17 @@ export async function executeRun(runId: string): Promise<void> {
       runId,
     });
 
+    // Use DB record ID so SSE event message IDs match messages.list() results
+    const emittedMessage = { ...assistantMessage, id: dbMessage.id };
+
     await emitSmartSpaceEvent(
       run.smartSpaceId,
       'smartSpace.message',
-      { message: assistantMessage },
+      { message: emittedMessage },
       { runId, agentEntityId: run.agentEntityId }
     );
 
-    await emitEvent('message.assistant', { message: assistantMessage });
+    await emitEvent('message.assistant', { message: emittedMessage });
     
     // Emit finish with full message
     await emitEvent('finish', { messageId, message: assistantMessage });

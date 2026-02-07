@@ -129,22 +129,25 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
   const [streamingMessages, setStreamingMessages] = useState<StreamingMessage[]>([]);
   const [membersById, setMembersById] = useState<Record<string, Entity>>({});
   const streamRef = useRef<HsafaStream | null>(null);
-  const maxSeqRef = useRef<string>('0');
+  // Signals that initial messages have been loaded, so SSE can safely subscribe.
+  const [messagesLoaded, setMessagesLoaded] = useState(false);
 
   // Load initial messages
   useEffect(() => {
     if (!smartSpaceId) {
       setRawMessages([]);
       setStreamingMessages([]);
+      setMessagesLoaded(false);
       return;
     }
 
+    setMessagesLoaded(false);
     client.messages.list(smartSpaceId, { limit: 100 }).then(({ messages }) => {
       setRawMessages(messages);
-      if (messages.length > 0) {
-        maxSeqRef.current = messages[messages.length - 1].seq;
-      }
-    }).catch(() => {});
+      setMessagesLoaded(true);
+    }).catch(() => {
+      setMessagesLoaded(true);
+    });
   }, [client, smartSpaceId]);
 
   // Load members
@@ -165,152 +168,217 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
     }).catch(() => {});
   }, [client, smartSpaceId]);
 
-  // Subscribe to SSE
+  // Subscribe to SSE — deferred until initial messages are loaded.
+  // First reconstructs streaming state for active runs, THEN connects SSE
+  // so text-delta events append to pre-populated entries instead of creating new ones.
   useEffect(() => {
-    if (!smartSpaceId) return;
+    if (!smartSpaceId || !messagesLoaded) return;
 
-    const afterSeq = maxSeqRef.current !== '0' ? parseInt(maxSeqRef.current) : undefined;
-    const stream = client.spaces.subscribe(smartSpaceId, { afterSeq });
-    streamRef.current = stream;
+    let cancelled = false;
 
-    stream.on('smartSpace.message', (event: StreamEvent) => {
-      const raw = event.data?.message as Record<string, unknown> | undefined;
-      if (!raw || !raw.id) return;
-
-      // The gateway emits UI-formatted messages with `parts` array,
-      // but SmartSpaceMessage uses `content`. Normalise here.
-      let content = raw.content as string | undefined;
-      if (!content && Array.isArray(raw.parts)) {
-        content = (raw.parts as Array<{ type: string; text?: string }>)
-          .filter((p) => p.type === 'text' && p.text)
-          .map((p) => p.text)
-          .join('\n');
-      }
-
-      const msg: SmartSpaceMessage = {
-        id: raw.id as string,
-        smartSpaceId: event.smartSpaceId || (raw.smartSpaceId as string) || '',
-        entityId: (raw.entityId as string) || event.entityId || null,
-        seq: (raw.seq as string) || String(event.seq || '0'),
-        role: (raw.role as string) || 'user',
-        content: content || null,
-        createdAt: (raw.createdAt as string) || new Date().toISOString(),
-      };
-
-      if (!msg.content?.trim()) return;
-
-      setRawMessages((prev) => {
-        if (prev.some((m) => m.id === msg.id)) return prev;
-        return [...prev, msg];
-      });
-    });
-
-    stream.on('run.created', (event: StreamEvent) => {
-      const runId = (event.data.runId as string) || event.runId || '';
-      const entityId = (event.data.agentEntityId as string) || event.entityId || '';
-      if (!runId) return;
-
-      setStreamingMessages((prev) => {
-        if (prev.some((sm) => sm.id === runId)) return prev;
-        return [...prev, {
-          id: runId,
-          entityId,
-          text: '',
-          toolCalls: [],
-          isStreaming: true,
-        }];
-      });
-    });
-
-    stream.on('text-delta', (event: StreamEvent) => {
-      const runId = event.runId || (event.data.runId as string);
-      const delta = (event.data.delta as string) || (event.data.text as string) || '';
-      if (!runId || !delta) return;
-
-      setStreamingMessages((prev) =>
-        prev.map((sm) =>
-          sm.id === runId ? { ...sm, text: sm.text + delta } : sm
-        )
-      );
-    });
-
-    stream.on('tool-input-available', (event: StreamEvent) => {
-      const runId = event.runId || (event.data.runId as string);
-      if (!runId) return;
-
-      const tc = {
-        toolCallId: (event.data.toolCallId as string) || '',
-        toolName: (event.data.toolName as string) || '',
-        argsText: typeof event.data.input === 'string' ? event.data.input : JSON.stringify(event.data.input ?? {}),
-        args: (typeof event.data.input === 'object' && event.data.input !== null ? event.data.input : undefined) as Record<string, unknown> | undefined,
-        result: undefined as unknown,
-        status: 'running' as const,
-      };
-
-      setStreamingMessages((prev) =>
-        prev.map((sm) =>
-          sm.id === runId ? { ...sm, toolCalls: [...sm.toolCalls, tc] } : sm
-        )
-      );
-    });
-
-    stream.on('tool-output-available', (event: StreamEvent) => {
-      const runId = event.runId || (event.data.runId as string);
-      const toolCallId = (event.data.toolCallId as string) || '';
-      if (!runId || !toolCallId) return;
-
-      setStreamingMessages((prev) =>
-        prev.map((sm) =>
-          sm.id === runId
-            ? {
-                ...sm,
-                toolCalls: sm.toolCalls.map((tc) =>
-                  tc.toolCallId === toolCallId
-                    ? { ...tc, result: event.data.output, status: 'complete' as const }
-                    : tc
-                ),
+    const init = async () => {
+      // Step 1: Reconstruct streaming state for any in-progress runs so a
+      // page refresh mid-stream shows the accumulated text immediately.
+      try {
+        const { runs } = await client.runs.list({ smartSpaceId, status: 'running' });
+        for (const run of runs) {
+          if (cancelled) return;
+          try {
+            const { events } = await client.runs.getEvents(run.id);
+            let text = '';
+            for (const ev of events) {
+              if (ev.type === 'text-delta') {
+                text += (ev.payload?.delta as string) || '';
               }
-            : sm
-        )
-      );
-    });
+            }
+            if (text) {
+              setStreamingMessages((prev) => {
+                if (prev.some((sm) => sm.id === run.id)) return prev;
+                return [...prev, {
+                  id: run.id,
+                  entityId: run.agentEntityId,
+                  text,
+                  toolCalls: [],
+                  isStreaming: true,
+                }];
+              });
+            }
+          } catch { /* run may have completed between list and getEvents */ }
+        }
+      } catch { /* failed to list runs — proceed without reconstruction */ }
 
-    stream.on('run.completed', (event: StreamEvent) => {
-      const runId = event.runId || (event.data.runId as string);
-      if (!runId) return;
-      setStreamingMessages((prev) =>
-        prev.map((sm) =>
-          sm.id === runId ? { ...sm, isStreaming: false } : sm
-        )
-      );
-    });
+      if (cancelled) return;
 
-    stream.on('run.failed', (event: StreamEvent) => {
-      const runId = event.runId || (event.data.runId as string);
-      if (!runId) return;
-      setStreamingMessages((prev) =>
-        prev.map((sm) =>
-          sm.id === runId ? { ...sm, isStreaming: false } : sm
-        )
-      );
-    });
+      // Step 2: Now subscribe to SSE — text-delta events will append to
+      // the pre-populated entries created in step 1.
+      const stream = client.spaces.subscribe(smartSpaceId);
+      streamRef.current = stream;
 
-    stream.on('run.canceled', (event: StreamEvent) => {
-      const runId = event.runId || (event.data.runId as string);
-      if (!runId) return;
-      setStreamingMessages((prev) =>
-        prev.map((sm) =>
-          sm.id === runId ? { ...sm, isStreaming: false } : sm
-        )
-      );
-    });
+      // Catch-up: re-fetch messages to cover the window between
+      // the initial messages.list() and SSE connection establishment.
+      client.messages.list(smartSpaceId, { limit: 100 }).then(({ messages: fresh }: { messages: SmartSpaceMessage[] }) => {
+        setRawMessages((prev) => {
+          const freshIds = new Set(fresh.map((m) => m.id));
+          const sseOnly = prev.filter((m) => !freshIds.has(m.id));
+          return [...fresh, ...sseOnly];
+        });
+      }).catch(() => {});
+
+      stream.on('smartSpace.message', (event: StreamEvent) => {
+        const raw = event.data?.message as Record<string, unknown> | undefined;
+        if (!raw || !raw.id) return;
+
+        // The gateway emits UI-formatted messages with `parts` array,
+        // but SmartSpaceMessage uses `content`. Normalise here.
+        let content = raw.content as string | undefined;
+        if (!content && Array.isArray(raw.parts)) {
+          content = (raw.parts as Array<{ type: string; text?: string }>)
+            .filter((p) => p.type === 'text' && p.text)
+            .map((p) => p.text)
+            .join('\n');
+        }
+
+        const msg: SmartSpaceMessage = {
+          id: raw.id as string,
+          smartSpaceId: event.smartSpaceId || (raw.smartSpaceId as string) || '',
+          entityId: (raw.entityId as string) || event.entityId || null,
+          seq: (raw.seq as string) || String(event.seq || '0'),
+          role: (raw.role as string) || 'user',
+          content: content || null,
+          createdAt: (raw.createdAt as string) || new Date().toISOString(),
+        };
+
+        if (!msg.content?.trim()) return;
+
+        setRawMessages((prev) => {
+          if (prev.some((m) => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
+      });
+
+      stream.on('run.created', (event: StreamEvent) => {
+        const runId = (event.data.runId as string) || event.runId || '';
+        const entityId = (event.data.agentEntityId as string) || event.entityId || '';
+        if (!runId) return;
+
+        setStreamingMessages((prev) => {
+          if (prev.some((sm) => sm.id === runId)) return prev;
+          return [...prev, {
+            id: runId,
+            entityId,
+            text: '',
+            toolCalls: [],
+            isStreaming: true,
+          }];
+        });
+      });
+
+      stream.on('text-delta', (event: StreamEvent) => {
+        const runId = event.runId || (event.data.runId as string);
+        const delta = (event.data.delta as string) || (event.data.text as string) || '';
+        if (!runId || !delta) return;
+
+        setStreamingMessages((prev) => {
+          const exists = prev.some((sm) => sm.id === runId);
+          if (!exists) {
+            // Missed run.created (e.g. page refresh mid-stream) — create entry on the fly
+            return [...prev, {
+              id: runId,
+              entityId: event.entityId || '',
+              text: delta,
+              toolCalls: [],
+              isStreaming: true,
+            }];
+          }
+          return prev.map((sm) =>
+            sm.id === runId ? { ...sm, text: sm.text + delta } : sm
+          );
+        });
+      });
+
+      stream.on('tool-input-available', (event: StreamEvent) => {
+        const runId = event.runId || (event.data.runId as string);
+        if (!runId) return;
+
+        const tc = {
+          toolCallId: (event.data.toolCallId as string) || '',
+          toolName: (event.data.toolName as string) || '',
+          argsText: typeof event.data.input === 'string' ? event.data.input : JSON.stringify(event.data.input ?? {}),
+          args: (typeof event.data.input === 'object' && event.data.input !== null ? event.data.input : undefined) as Record<string, unknown> | undefined,
+          result: undefined as unknown,
+          status: 'running' as const,
+        };
+
+        setStreamingMessages((prev) =>
+          prev.map((sm) =>
+            sm.id === runId ? { ...sm, toolCalls: [...sm.toolCalls, tc] } : sm
+          )
+        );
+      });
+
+      stream.on('tool-output-available', (event: StreamEvent) => {
+        const runId = event.runId || (event.data.runId as string);
+        const toolCallId = (event.data.toolCallId as string) || '';
+        if (!runId || !toolCallId) return;
+
+        setStreamingMessages((prev) =>
+          prev.map((sm) =>
+            sm.id === runId
+              ? {
+                  ...sm,
+                  toolCalls: sm.toolCalls.map((tc) =>
+                    tc.toolCallId === toolCallId
+                      ? { ...tc, result: event.data.output, status: 'complete' as const }
+                      : tc
+                  ),
+                }
+              : sm
+          )
+        );
+      });
+
+      stream.on('run.completed', (event: StreamEvent) => {
+        const runId = event.runId || (event.data.runId as string);
+        if (!runId) return;
+        setStreamingMessages((prev) =>
+          prev.map((sm) =>
+            sm.id === runId ? { ...sm, isStreaming: false } : sm
+          )
+        );
+      });
+
+      stream.on('run.failed', (event: StreamEvent) => {
+        const runId = event.runId || (event.data.runId as string);
+        if (!runId) return;
+        setStreamingMessages((prev) =>
+          prev.map((sm) =>
+            sm.id === runId ? { ...sm, isStreaming: false } : sm
+          )
+        );
+      });
+
+      stream.on('run.canceled', (event: StreamEvent) => {
+        const runId = event.runId || (event.data.runId as string);
+        if (!runId) return;
+        setStreamingMessages((prev) =>
+          prev.map((sm) =>
+            sm.id === runId ? { ...sm, isStreaming: false } : sm
+          )
+        );
+      });
+    };
+
+    init();
 
     return () => {
-      stream.close();
-      streamRef.current = null;
+      cancelled = true;
+      if (streamRef.current) {
+        streamRef.current.close();
+        streamRef.current = null;
+      }
       setStreamingMessages([]);
     };
-  }, [client, smartSpaceId]);
+  }, [client, smartSpaceId, messagesLoaded]);
 
   // Build final message list
   const isRunning = streamingMessages.some((sm) => sm.isStreaming);

@@ -15,10 +15,30 @@ entitiesRouter.post('/', requireSpaceAdmin(), async (req, res) => {
       return res.status(400).json({ error: 'Invalid type (must be human|system)' });
     }
 
+    const extId = typeof externalId === 'string' ? externalId : null;
+
+    // If externalId provided, upsert to avoid unique-constraint errors on re-registration
+    if (extId) {
+      const entity = await prisma.entity.upsert({
+        where: { externalId: extId },
+        create: {
+          type,
+          externalId: extId,
+          displayName: typeof displayName === 'string' ? displayName : null,
+          metadata: (metadata ?? null) as Prisma.InputJsonValue,
+        },
+        update: {
+          displayName: typeof displayName === 'string' ? displayName : undefined,
+          metadata: metadata !== undefined ? ((metadata ?? null) as Prisma.InputJsonValue) : undefined,
+        },
+      });
+      return res.status(200).json({ entity });
+    }
+
     const entity = await prisma.entity.create({
       data: {
         type,
-        externalId: typeof externalId === 'string' ? externalId : null,
+        externalId: null,
         displayName: typeof displayName === 'string' ? displayName : null,
         metadata: (metadata ?? null) as Prisma.InputJsonValue,
       },
@@ -47,17 +67,22 @@ entitiesRouter.post('/agent', requireSpaceAdmin(), async (req, res) => {
       return res.status(404).json({ error: 'Agent not found' });
     }
 
-    const entity = await prisma.entity.create({
-      data: {
+    const entity = await prisma.entity.upsert({
+      where: { agentId },
+      create: {
         type: 'agent',
         agentId,
         externalId: typeof externalId === 'string' ? externalId : null,
         displayName: typeof displayName === 'string' ? displayName : null,
         metadata: (metadata ?? null) as Prisma.InputJsonValue,
       },
+      update: {
+        displayName: typeof displayName === 'string' ? displayName : undefined,
+        metadata: metadata !== undefined ? ((metadata ?? null) as Prisma.InputJsonValue) : undefined,
+      },
     });
 
-    return res.status(201).json({ entity });
+    return res.status(200).json({ entity });
   } catch (error) {
     console.error('[POST /api/entities/agent] Error:', error);
     return res.status(500).json({
