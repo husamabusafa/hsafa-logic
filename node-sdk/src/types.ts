@@ -280,3 +280,36 @@ export interface HsafaStream {
   off(event: string, handler: StreamEventHandler): void;
   close(): void;
 }
+
+// =============================================================================
+// Convenience Method Types
+// =============================================================================
+
+export interface SendAndWaitOptions extends SendMessageParams {
+  timeout?: number;
+}
+
+export interface SendAndWaitResponse {
+  text: string;
+  toolCalls: Array<{
+    id: string;
+    name: string;
+    input: unknown;
+    output?: unknown;
+  }>;
+  run?: Run;
+}
+
+export interface CreateSpaceSetupParams {
+  name: string;
+  visibility?: 'public' | 'private';
+  agents?: Array<{ agentId: string; displayName?: string }>;
+  humans?: Array<{ externalId: string; displayName?: string; metadata?: Record<string, unknown> }>;
+  systems?: Array<{ displayName?: string; metadata?: Record<string, unknown> }>;
+}
+
+export interface CreateSpaceSetupResult {
+  smartSpace: SmartSpace;
+  entities: Entity[];
+  memberships: Membership[];
+}

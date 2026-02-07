@@ -1,27 +1,32 @@
 {
   "name": "@hsafa/react-sdk",
   "version": "0.1.0",
+  "description": "React SDK for Hsafa — hooks and providers for building chat UIs and admin panels",
   "type": "module",
-  "private": true,
-  "description": "Hsafa React SDK (hooks-only)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "import": "./dist/index.js"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
-    "dev": "tsc -w",
     "build": "tsc",
-    "type-check": "tsc --noEmit"
+    "dev": "tsc --watch"
   },
   "peerDependencies": {
-    "react": "^18.0.0 || ^19.0.0"
+    "react": "^18.0.0 || ^19.0.0",
+    "@assistant-ui/react": ">=0.7.0"
+  },
+  "peerDependenciesMeta": {
+    "@assistant-ui/react": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

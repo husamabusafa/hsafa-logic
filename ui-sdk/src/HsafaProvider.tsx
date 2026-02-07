@@ -2,11 +2,14 @@
 
 import { type ReactNode } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import { useHsafaClient, type HsafaClient, type SmartSpace } from "@hsafa/react-sdk";
-import { useHsafaRuntime } from "./useHsafaRuntime";
+import {
+  HsafaProvider as HsafaSdkProvider,
+  type SmartSpace,
+} from "@hsafa/react-sdk";
+import { useHsafaChatRuntime } from "./useHsafaRuntime";
 import { MembersProvider } from "./contexts";
 
-export interface HsafaProviderProps {
+export interface HsafaChatProviderProps {
   children: ReactNode;
   gatewayUrl: string;
   entityId: string;
@@ -14,26 +17,23 @@ export interface HsafaProviderProps {
   smartSpaces?: SmartSpace[];
   onSwitchThread?: (smartSpaceId: string) => void;
   onNewThread?: () => void;
-  client?: HsafaClient;
+  adminKey?: string;
+  secretKey?: string;
+  publicKey?: string;
+  jwt?: string;
 }
 
-export function HsafaProvider({
+function HsafaChatProviderInner({
   children,
-  gatewayUrl,
   entityId,
   smartSpaceId,
   smartSpaces = [],
   onSwitchThread,
   onNewThread,
-  client: externalClient,
-}: HsafaProviderProps) {
-  const defaultClient = useHsafaClient({ gatewayUrl });
-  const client = externalClient ?? defaultClient;
-
-  const { runtime, membersById } = useHsafaRuntime({
-    client,
-    entityId,
+}: Omit<HsafaChatProviderProps, "gatewayUrl" | "adminKey" | "secretKey" | "publicKey" | "jwt">) {
+  const { runtime, membersById } = useHsafaChatRuntime({
     smartSpaceId,
+    entityId,
     smartSpaces,
     onSwitchThread,
     onNewThread,
@@ -45,5 +45,29 @@ export function HsafaProvider({
         {children}
       </MembersProvider>
     </AssistantRuntimeProvider>
+  );
+}
+
+export function HsafaChatProvider({
+  children,
+  gatewayUrl,
+  adminKey,
+  secretKey,
+  publicKey,
+  jwt,
+  ...innerProps
+}: HsafaChatProviderProps) {
+  return (
+    <HsafaSdkProvider
+      gatewayUrl={gatewayUrl}
+      adminKey={adminKey}
+      secretKey={secretKey}
+      publicKey={publicKey}
+      jwt={jwt}
+    >
+      <HsafaChatProviderInner {...innerProps}>
+        {children}
+      </HsafaChatProviderInner>
+    </HsafaSdkProvider>
   );
 }

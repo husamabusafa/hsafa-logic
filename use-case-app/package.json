@@ -1,23 +1,19 @@
 {
-  "name": "@hsafa/nextjs-test-app",
+  "name": "@hsafa/use-case-app",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --port 3003",
+    "dev": "next dev --port 3005",
     "build": "next build",
-    "start": "next start --port 3002"
+    "start": "next start --port 3005"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.10.25",
+    "@hsafa/node": "workspace:*",
     "@hsafa/react-sdk": "workspace:*",
     "@hsafa/ui": "workspace:*",
-    "@radix-ui/react-avatar": "^1.1.11",
-    "@radix-ui/react-collapsible": "^1.1.12",
-    "@radix-ui/react-dialog": "^1.1.15",
-    "@radix-ui/react-dropdown-menu": "^2.1.15",
     "@radix-ui/react-slot": "^1.2.4",
-    "@radix-ui/react-tooltip": "^1.2.8",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.563.0",

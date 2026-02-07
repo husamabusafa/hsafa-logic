@@ -17,3 +17,13 @@ export function generatePublicKey(): string {
 export function generateSecretKey(): string {
   return generateKey('sk');
 }
+
+/** Generate a gateway admin key (gk_...) */
+export function generateAdminKey(): string {
+  return `gk_${randomBytes(32).toString('hex')}`;
+}
+
+/** Generate a JWT signing secret (base64url, 48 bytes) */
+export function generateJwtSecret(): string {
+  return randomBytes(48).toString('base64url');
+}

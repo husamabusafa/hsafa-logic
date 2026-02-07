@@ -1,8 +1,10 @@
 packages:
   - hsafa-gateway
+  - node-sdk
   - react-sdk
   - ui-sdk
   - nextjs-test-app
+  - use-case-app
   - hsafa-docs
   - vercel-ai-sdk-docs
 ignoredBuiltDependencies:

@@ -1,272 +1,305 @@
+import { HttpClient } from './http.js';
+import { SSEStream } from './sse.js';
 import type {
+  HsafaClientOptions,
+  Agent,
   Entity,
   SmartSpace,
-  SmartSpaceMembership,
-  SmartSpaceMessageRecord,
-  JsonValue,
+  SmartSpaceMessage,
+  Membership,
+  Run,
+  RunEvent,
+  Client as ClientRecord,
+  HsafaStream,
+  CreateAgentParams,
+  CreateEntityParams,
+  CreateAgentEntityParams,
+  UpdateEntityParams,
+  CreateSmartSpaceParams,
+  UpdateSmartSpaceParams,
+  AddMemberParams,
+  UpdateMemberParams,
+  SendMessageParams,
+  ListMessagesParams,
+  CreateRunParams,
+  SubmitToolResultParams,
+  SubmitRunToolResultParams,
+  RegisterClientParams,
+  ListParams,
+  ListRunsParams,
+  ListEntitiesParams,
+  SubscribeOptions,
 } from './types.js';
 
-export interface CreateHsafaClientOptions {
-  gatewayUrl?: string;
-  fetchFn?: typeof fetch;
-}
+// =============================================================================
+// Resource Classes
+// =============================================================================
 
-export class HsafaHttpError extends Error {
-  status: number;
-  url: string;
-  body: unknown;
+class AgentsResource {
+  constructor(private http: HttpClient) {}
 
-  constructor(input: { status: number; url: string; body: unknown; message?: string }) {
-    super(input.message ?? `HTTP ${input.status}`);
-    this.status = input.status;
-    this.url = input.url;
-    this.body = input.body;
+  async create(params: CreateAgentParams): Promise<{ agentId: string; configHash: string; created: boolean }> {
+    return this.http.post('/api/agents', params);
   }
-}
 
-function normalizeGatewayUrl(gatewayUrl?: string): string {
-  const raw = (gatewayUrl ?? '').trim();
-  if (!raw) return '';
-  return raw.endsWith('/') ? raw.slice(0, -1) : raw;
-}
-
-async function fetchJson<T>(
-  fetchFn: typeof fetch,
-  url: string,
-  init: RequestInit & { json?: unknown } = {}
-): Promise<T> {
-  const { json, headers, ...rest } = init;
-
-  const res = await fetchFn(url, {
-    ...rest,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(headers ?? {}),
-    },
-    body: json !== undefined ? JSON.stringify(json) : rest.body,
-  });
-
-  const text = await res.text();
-  const body = text ? safeJsonParse(text) : null;
-
-  if (!res.ok) {
-    throw new HsafaHttpError({
-      status: res.status,
-      url,
-      body,
-      message: (body as any)?.error || (body as any)?.message || res.statusText,
+  async list(params?: ListParams): Promise<{ agents: Agent[] }> {
+    return this.http.get('/api/agents', {
+      limit: params?.limit,
+      offset: params?.offset,
     });
   }
 
-  return body as T;
-}
+  async get(agentId: string): Promise<{ agent: Agent }> {
+    return this.http.get(`/api/agents/${agentId}`);
+  }
 
-function safeJsonParse(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
+  async delete(agentId: string): Promise<{ success: boolean }> {
+    return this.http.delete(`/api/agents/${agentId}`);
   }
 }
 
-export interface HsafaClient {
-  gatewayUrl: string;
-  apiBaseUrl: string;
+class EntitiesResource {
+  constructor(private http: HttpClient) {}
 
-  listEntities(input?: {
-    type?: 'human' | 'agent' | 'system';
-    limit?: number;
-    offset?: number;
-  }): Promise<Entity[]>;
+  async create(params: CreateEntityParams): Promise<{ entity: Entity }> {
+    return this.http.post('/api/entities', params);
+  }
 
-  getEntity(input: { entityId: string }): Promise<Entity>;
+  async createAgent(params: CreateAgentEntityParams): Promise<{ entity: Entity }> {
+    return this.http.post('/api/entities/agent', params);
+  }
 
-  createHumanEntity(input: {
-    externalId?: string;
-    displayName?: string;
-    metadata?: JsonValue;
-  }): Promise<Entity>;
+  async list(params?: ListEntitiesParams): Promise<{ entities: Entity[] }> {
+    return this.http.get('/api/entities', {
+      type: params?.type,
+      limit: params?.limit,
+      offset: params?.offset,
+    });
+  }
 
-  createAgentEntity(input: {
-    agentId: string;
-    externalId?: string;
-    displayName?: string;
-    metadata?: JsonValue;
-  }): Promise<Entity>;
+  async get(entityId: string): Promise<{ entity: Entity }> {
+    return this.http.get(`/api/entities/${entityId}`);
+  }
 
-  createSmartSpace(input: {
-    name?: string;
-    description?: string;
-    isPrivate?: boolean;
-    metadata?: JsonValue;
-  }): Promise<SmartSpace>;
+  async update(entityId: string, params: UpdateEntityParams): Promise<{ entity: Entity }> {
+    return this.http.patch(`/api/entities/${entityId}`, params);
+  }
 
-  listSmartSpaceMembers(input: { smartSpaceId: string }): Promise<Array<SmartSpaceMembership & { entity?: Entity }>>;
+  async delete(entityId: string): Promise<{ success: boolean }> {
+    return this.http.delete(`/api/entities/${entityId}`);
+  }
 
-  addSmartSpaceMember(input: {
-    smartSpaceId: string;
-    entityId: string;
-    role?: string;
-  }): Promise<SmartSpaceMembership>;
+  subscribe(entityId: string): HsafaStream {
+    const baseUrl = this.http.getBaseUrl();
+    const headers = this.http.getAuthHeaders();
+    const url = `${baseUrl}/api/entities/${entityId}/stream`;
 
-  listSmartSpaces(input?: {
-    entityId?: string;
-    limit?: number;
-    offset?: number;
-  }): Promise<SmartSpace[]>;
-
-  listSmartSpaceMessages(input: {
-    smartSpaceId: string;
-    afterSeq?: string;
-    beforeSeq?: string;
-    limit?: number;
-  }): Promise<SmartSpaceMessageRecord[]>;
-
-  sendSmartSpaceMessage(input: {
-    smartSpaceId: string;
-    entityId: string;
-    content: string;
-    metadata?: JsonValue;
-  }): Promise<{ message: SmartSpaceMessageRecord; runs: Array<{ runId: string; agentEntityId: string }> }>;
+    return new SSEStream({
+      url,
+      headers,
+      reconnect: true,
+    });
+  }
 }
 
-export function createHsafaClient(options: CreateHsafaClientOptions = {}): HsafaClient {
-  const gatewayUrl = normalizeGatewayUrl(options.gatewayUrl);
-  const apiBaseUrl = `${gatewayUrl}/api`;
-  const fetchFn = options.fetchFn ?? fetch;
+class SpacesResource {
+  constructor(private http: HttpClient) {}
 
-  return {
-    gatewayUrl,
-    apiBaseUrl,
+  async create(params: CreateSmartSpaceParams): Promise<{ smartSpace: SmartSpace }> {
+    return this.http.post('/api/smart-spaces', params);
+  }
 
-    async listEntities(input = {}) {
-      const params = new URLSearchParams();
-      if (input.type) params.set('type', input.type);
-      if (input.limit != null) params.set('limit', String(input.limit));
-      if (input.offset != null) params.set('offset', String(input.offset));
+  async list(params?: ListParams & { entityId?: string }): Promise<{ smartSpaces: SmartSpace[] }> {
+    return this.http.get('/api/smart-spaces', {
+      entityId: params?.entityId,
+      limit: params?.limit,
+      offset: params?.offset,
+    });
+  }
 
-      const qs = params.toString();
-      const res = await fetchJson<{ entities: Entity[] }>(
-        fetchFn,
-        `${apiBaseUrl}/entities${qs ? `?${qs}` : ''}`,
-        { method: 'GET' }
-      );
-      return res.entities;
-    },
+  async get(smartSpaceId: string): Promise<{ smartSpace: SmartSpace }> {
+    return this.http.get(`/api/smart-spaces/${smartSpaceId}`);
+  }
 
-    async getEntity(input) {
-      const res = await fetchJson<{ entity: Entity }>(fetchFn, `${apiBaseUrl}/entities/${input.entityId}`, {
-        method: 'GET',
-      });
-      return res.entity;
-    },
+  async update(smartSpaceId: string, params: UpdateSmartSpaceParams): Promise<{ smartSpace: SmartSpace }> {
+    return this.http.patch(`/api/smart-spaces/${smartSpaceId}`, params);
+  }
 
-    async createHumanEntity(input) {
-      const res = await fetchJson<{ entity: Entity }>(fetchFn, `${apiBaseUrl}/entities`, {
-        method: 'POST',
-        json: {
-          type: 'human',
-          externalId: input.externalId,
-          displayName: input.displayName,
-          metadata: input.metadata ?? null,
-        },
-      });
-      return res.entity;
-    },
+  async delete(smartSpaceId: string): Promise<{ success: boolean }> {
+    return this.http.delete(`/api/smart-spaces/${smartSpaceId}`);
+  }
 
-    async createAgentEntity(input) {
-      const res = await fetchJson<{ entity: Entity }>(fetchFn, `${apiBaseUrl}/entities/agent`, {
-        method: 'POST',
-        json: {
-          agentId: input.agentId,
-          externalId: input.externalId,
-          displayName: input.displayName,
-          metadata: input.metadata ?? null,
-        },
-      });
-      return res.entity;
-    },
+  async addMember(smartSpaceId: string, params: AddMemberParams): Promise<{ membership: Membership }> {
+    return this.http.post(`/api/smart-spaces/${smartSpaceId}/members`, params);
+  }
 
-    async createSmartSpace(input) {
-      const res = await fetchJson<{ smartSpace: SmartSpace }>(fetchFn, `${apiBaseUrl}/smart-spaces`, {
-        method: 'POST',
-        json: {
-          name: input.name,
-          description: input.description,
-          isPrivate: input.isPrivate,
-          metadata: input.metadata ?? null,
-        },
-      });
-      return res.smartSpace;
-    },
+  async listMembers(smartSpaceId: string): Promise<{ members: Membership[] }> {
+    return this.http.get(`/api/smart-spaces/${smartSpaceId}/members`);
+  }
 
-    async listSmartSpaceMembers(input) {
-      const res = await fetchJson<{ members: Array<SmartSpaceMembership & { entity?: Entity }> }>(
-        fetchFn,
-        `${apiBaseUrl}/smart-spaces/${input.smartSpaceId}/members`,
-        { method: 'GET' }
-      );
-      return res.members;
-    },
+  async updateMember(smartSpaceId: string, entityId: string, params: UpdateMemberParams): Promise<{ membership: Membership }> {
+    return this.http.patch(`/api/smart-spaces/${smartSpaceId}/members/${entityId}`, params);
+  }
 
-    async addSmartSpaceMember(input) {
-      const res = await fetchJson<{ membership: SmartSpaceMembership }>(
-        fetchFn,
-        `${apiBaseUrl}/smart-spaces/${input.smartSpaceId}/members`,
-        {
-          method: 'POST',
-          json: {
-            entityId: input.entityId,
-            role: input.role,
-          },
-        }
-      );
-      return res.membership;
-    },
+  async removeMember(smartSpaceId: string, entityId: string): Promise<{ success: boolean }> {
+    return this.http.delete(`/api/smart-spaces/${smartSpaceId}/members/${entityId}`);
+  }
 
-    async listSmartSpaces(input = {}) {
-      const params = new URLSearchParams();
-      if (input.entityId) params.set('entityId', input.entityId);
-      if (input.limit != null) params.set('limit', String(input.limit));
-      if (input.offset != null) params.set('offset', String(input.offset));
+  subscribe(smartSpaceId: string, options?: SubscribeOptions): HsafaStream {
+    const baseUrl = this.http.getBaseUrl();
+    const headers = this.http.getAuthHeaders();
+    const params = new URLSearchParams();
 
-      const qs = params.toString();
-      const res = await fetchJson<{ smartSpaces: SmartSpace[] }>(
-        fetchFn,
-        `${apiBaseUrl}/smart-spaces${qs ? `?${qs}` : ''}`,
-        { method: 'GET' }
-      );
-      return res.smartSpaces;
-    },
+    if (options?.afterSeq !== undefined) {
+      params.set('afterSeq', String(options.afterSeq));
+    }
+    if (options?.since) {
+      params.set('since', options.since);
+    }
 
-    async listSmartSpaceMessages(input) {
-      const params = new URLSearchParams();
-      if (input.afterSeq) params.set('afterSeq', input.afterSeq);
-      if (input.beforeSeq) params.set('beforeSeq', input.beforeSeq);
-      if (input.limit != null) params.set('limit', String(input.limit));
+    const queryStr = params.toString();
+    const url = `${baseUrl}/api/smart-spaces/${smartSpaceId}/stream${queryStr ? `?${queryStr}` : ''}`;
 
-      const qs = params.toString();
-      const res = await fetchJson<{ messages: SmartSpaceMessageRecord[] }>(
-        fetchFn,
-        `${apiBaseUrl}/smart-spaces/${input.smartSpaceId}/messages${qs ? `?${qs}` : ''}`,
-        { method: 'GET' }
-      );
-      return res.messages;
-    },
+    return new SSEStream({
+      url,
+      headers,
+      reconnect: true,
+    });
+  }
+}
 
-    async sendSmartSpaceMessage(input) {
-      return fetchJson<{ message: SmartSpaceMessageRecord; runs: Array<{ runId: string; agentEntityId: string }> }>(
-        fetchFn,
-        `${apiBaseUrl}/smart-spaces/${input.smartSpaceId}/messages`,
-        {
-          method: 'POST',
-          json: {
-            entityId: input.entityId,
-            content: input.content,
-            metadata: input.metadata ?? null,
-          },
-        }
-      );
-    },
-  };
+class MessagesResource {
+  constructor(private http: HttpClient) {}
+
+  async send(smartSpaceId: string, params: SendMessageParams): Promise<{
+    message: SmartSpaceMessage;
+    runs: Array<{ runId: string; agentEntityId: string }>;
+  }> {
+    return this.http.post(`/api/smart-spaces/${smartSpaceId}/messages`, params);
+  }
+
+  async list(smartSpaceId: string, params?: ListMessagesParams): Promise<{ messages: SmartSpaceMessage[] }> {
+    return this.http.get(`/api/smart-spaces/${smartSpaceId}/messages`, {
+      afterSeq: params?.afterSeq,
+      beforeSeq: params?.beforeSeq,
+      limit: params?.limit,
+    });
+  }
+}
+
+class RunsResource {
+  constructor(private http: HttpClient) {}
+
+  async list(params?: ListRunsParams): Promise<{ runs: Run[] }> {
+    return this.http.get('/api/runs', {
+      smartSpaceId: params?.smartSpaceId,
+      agentEntityId: params?.agentEntityId,
+      agentId: params?.agentId,
+      status: params?.status,
+      limit: params?.limit,
+      offset: params?.offset,
+    });
+  }
+
+  async get(runId: string): Promise<{ run: Run }> {
+    return this.http.get(`/api/runs/${runId}`);
+  }
+
+  async create(params: CreateRunParams): Promise<{ runId: string; status: string; streamUrl: string }> {
+    return this.http.post('/api/runs', params);
+  }
+
+  async cancel(runId: string): Promise<{ success: boolean; status: string }> {
+    return this.http.post(`/api/runs/${runId}/cancel`);
+  }
+
+  async delete(runId: string): Promise<{ success: boolean }> {
+    return this.http.delete(`/api/runs/${runId}`);
+  }
+
+  async getEvents(runId: string): Promise<{ events: RunEvent[] }> {
+    return this.http.get(`/api/runs/${runId}/events`);
+  }
+
+  subscribe(runId: string, options?: { since?: string }): HsafaStream {
+    const baseUrl = this.http.getBaseUrl();
+    const headers = this.http.getAuthHeaders();
+    const params = new URLSearchParams();
+
+    if (options?.since) {
+      params.set('since', options.since);
+    }
+
+    const queryStr = params.toString();
+    const url = `${baseUrl}/api/runs/${runId}/stream${queryStr ? `?${queryStr}` : ''}`;
+
+    return new SSEStream({
+      url,
+      headers,
+      reconnect: true,
+    });
+  }
+}
+
+class ToolsResource {
+  constructor(private http: HttpClient) {}
+
+  async submitResult(smartSpaceId: string, params: SubmitToolResultParams): Promise<{ success: boolean }> {
+    return this.http.post(`/api/smart-spaces/${smartSpaceId}/tool-results`, params);
+  }
+
+  async submitRunResult(runId: string, params: SubmitRunToolResultParams): Promise<{ success: boolean }> {
+    return this.http.post(`/api/runs/${runId}/tool-results`, params);
+  }
+}
+
+class ClientsResource {
+  constructor(private http: HttpClient) {}
+
+  async register(params: RegisterClientParams): Promise<{ client: ClientRecord }> {
+    return this.http.post('/api/clients/register', params);
+  }
+
+  async list(entityId: string): Promise<{ clients: ClientRecord[] }> {
+    return this.http.get('/api/clients', { entityId });
+  }
+
+  async delete(clientId: string): Promise<{ success: boolean }> {
+    return this.http.delete(`/api/clients/${clientId}`);
+  }
+}
+
+// =============================================================================
+// Main Client
+// =============================================================================
+
+export class HsafaClient {
+  private http: HttpClient;
+
+  readonly agents: AgentsResource;
+  readonly entities: EntitiesResource;
+  readonly spaces: SpacesResource;
+  readonly messages: MessagesResource;
+  readonly runs: RunsResource;
+  readonly tools: ToolsResource;
+  readonly clients: ClientsResource;
+
+  constructor(options: HsafaClientOptions) {
+    this.http = new HttpClient(options);
+    this.agents = new AgentsResource(this.http);
+    this.entities = new EntitiesResource(this.http);
+    this.spaces = new SpacesResource(this.http);
+    this.messages = new MessagesResource(this.http);
+    this.runs = new RunsResource(this.http);
+    this.tools = new ToolsResource(this.http);
+    this.clients = new ClientsResource(this.http);
+  }
+
+  updateOptions(options: Partial<HsafaClientOptions>): void {
+    this.http.updateOptions(options);
+  }
+
+  getOptions(): HsafaClientOptions {
+    return this.http.getOptions();
+  }
 }
