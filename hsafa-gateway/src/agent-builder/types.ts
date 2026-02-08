@@ -124,12 +124,6 @@ export const LoopConfigSchema = z.object({
   toolChoice: z.enum(['auto', 'required', 'none']).optional().default('auto'),
 });
 
-export const RuntimeConfigSchema = z.object({
-  response: z.object({
-    type: z.enum(['ui-message-stream', 'text-stream']).default('ui-message-stream'),
-  }),
-});
-
 export const BasicExecutionSchema = z.object({
   mode: z.enum(['no-execution', 'static', 'pass-through']).default('no-execution'),
   output: z.record(z.string(), z.unknown()).optional(),
@@ -268,9 +262,6 @@ export const AgentConfigSchema = z.object({
   }),
   tools: z.array(ToolSchema).optional().default([]),
   mcp: McpConfigSchema.optional(),
-  runtime: RuntimeConfigSchema.optional().default({
-    response: { type: 'ui-message-stream' },
-  }),
 });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
@@ -278,7 +269,6 @@ export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 export type ReasoningConfig = z.infer<typeof ReasoningConfigSchema>;
 export type AgentDetails = z.infer<typeof AgentDetailsSchema>;
 export type LoopConfig = z.infer<typeof LoopConfigSchema>;
-export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 export type ToolConfig = z.infer<typeof ToolSchema>;
 export type BasicExecution = z.infer<typeof BasicExecutionSchema>;
 export type RequestExecution = z.infer<typeof RequestExecutionSchema>;

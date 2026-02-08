@@ -29,11 +29,6 @@ const AGENT_CONFIG = {
     maxSteps: 10,
     toolChoice: "auto",
   },
-  runtime: {
-    response: {
-      type: "ui-message-stream",
-    },
-  },
 };
 
 let cachedAgentEntityId: string | null = null;
