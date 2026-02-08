@@ -151,7 +151,6 @@ function HomeContent() {
   const handleNewThread = useCallback(async () => {
     const created = await client.createSmartSpace({
       name: `Chat ${new Date().toLocaleString()}`,
-      isPrivate: true,
     });
     await client.addSmartSpaceMember({
       smartSpaceId: created.id,

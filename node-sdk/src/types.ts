@@ -37,7 +37,6 @@ export interface SmartSpace {
   id: string;
   name?: string | null;
   description?: string | null;
-  isPrivate: boolean;
   metadata?: Record<string, unknown> | null;
   createdAt: string;
 }
@@ -177,16 +176,12 @@ export interface UpdateEntityParams {
 export interface CreateSmartSpaceParams {
   name?: string;
   description?: string;
-  visibility?: 'public' | 'private';
-  isPrivate?: boolean;
   metadata?: Record<string, unknown>;
 }
 
 export interface UpdateSmartSpaceParams {
   name?: string;
   description?: string;
-  visibility?: 'public' | 'private';
-  isPrivate?: boolean;
   metadata?: Record<string, unknown>;
 }
 
@@ -299,7 +294,6 @@ export interface SendAndWaitResponse {
 
 export interface CreateSpaceSetupParams {
   name: string;
-  visibility?: 'public' | 'private';
   agents?: Array<{ agentId: string; displayName?: string }>;
   humans?: Array<{ externalId: string; displayName?: string; metadata?: Record<string, unknown> }>;
   systems?: Array<{ displayName?: string; metadata?: Record<string, unknown> }>;

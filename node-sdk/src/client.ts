@@ -34,7 +34,6 @@ class SetupResource {
     // 1. Create the SmartSpace
     const { smartSpace } = await this.spaces.create({
       name: params.name,
-      visibility: params.visibility,
     });
 
     const createdEntities: Entity[] = [];

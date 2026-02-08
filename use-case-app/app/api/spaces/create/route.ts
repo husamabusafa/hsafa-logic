@@ -32,7 +32,6 @@ export async function POST(request: Request) {
     // 1. Create the SmartSpace
     const { smartSpace } = await hsafaClient.spaces.create({
       name: name || `Chat ${new Date().toLocaleTimeString()}`,
-      visibility: "private",
     });
 
     // 2. Add user as admin

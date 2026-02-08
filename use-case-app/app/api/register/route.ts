@@ -127,7 +127,6 @@ export async function POST(request: Request) {
     // 4. Create a SmartSpace for this user + agent
     const { smartSpace } = await hsafaClient.spaces.create({
       name: `${name}'s Chat`,
-      visibility: "private",
     });
 
     // 5. Add human as admin

@@ -92,6 +92,7 @@ export async function executeRun(runId: string): Promise<void> {
 
     const built = await buildAgent({ config });
 
+    // Load messages WITH entity info so we can tag sender identity
     const messages = await prisma.smartSpaceMessage.findMany({
       where: { smartSpaceId: run.smartSpaceId },
       orderBy: { seq: 'asc' },
@@ -101,11 +102,92 @@ export async function executeRun(runId: string): Promise<void> {
         role: true,
         content: true,
         metadata: true,
+        entityId: true,
+        entity: { select: { displayName: true, type: true } },
       },
     });
 
-    const uiMessages = messages.map(toUiMessageFromSmartSpaceMessage);
-    const aiSdkUiMessages = toAiSdkUiMessages(uiMessages as any);
+    // Load space members + triggering entity for run context
+    const [spaceMembers, smartSpace, triggeredByEntity] = await Promise.all([
+      prisma.smartSpaceMembership.findMany({
+        where: { smartSpaceId: run.smartSpaceId },
+        include: { entity: { select: { id: true, displayName: true, type: true } } },
+      }),
+      prisma.smartSpace.findUnique({
+        where: { id: run.smartSpaceId },
+        select: { name: true },
+      }),
+      run.triggeredById
+        ? prisma.entity.findUnique({
+            where: { id: run.triggeredById },
+            select: { displayName: true, type: true },
+          })
+        : null,
+    ]);
+
+    // Build entity lookup for tagging messages
+    const entityMap = new Map<string, { displayName: string | null; type: string }>();
+    for (const m of messages) {
+      if (m.entityId && m.entity) {
+        entityMap.set(m.entityId, m.entity);
+      }
+    }
+
+    // Build run context system message
+    const contextParts: string[] = [];
+
+    if (smartSpace?.name) {
+      contextParts.push(`You are operating in SmartSpace "${smartSpace.name}".`);
+    }
+
+    if (triggeredByEntity) {
+      const name = triggeredByEntity.displayName || 'Unknown';
+      contextParts.push(`This run was triggered by a message from ${name} (${triggeredByEntity.type}).`);
+    }
+
+    if (spaceMembers.length > 0) {
+      const memberList = spaceMembers
+        .map((m) => `${m.entity.displayName || 'Unknown'} (${m.entity.type})`)
+        .join(', ');
+      contextParts.push(`Members of this space: ${memberList}.`);
+    }
+
+    // Tag messages with sender identity
+    // - user/system messages: always tagged
+    // - assistant messages from OTHER agents: tagged so this agent can tell them apart
+    // - assistant messages from THIS agent: not tagged (the agent knows those are its own)
+    const taggedUiMessages = messages.map((m) => {
+      const base = toUiMessageFromSmartSpaceMessage(m);
+      const isOwnMessage = m.entityId === run.agentEntityId;
+      const shouldTag =
+        (m.role === 'user' || m.role === 'system' || (m.role === 'assistant' && !isOwnMessage))
+        && m.entity?.displayName;
+
+      if (shouldTag) {
+        const senderTag = `[${m.entity!.displayName}]`;
+        if (Array.isArray(base.parts)) {
+          const parts = base.parts.map((p: any, i: number) => {
+            if (i === 0 && p.type === 'text' && typeof p.text === 'string') {
+              return { ...p, text: `${senderTag} ${p.text}` };
+            }
+            return p;
+          });
+          return { ...base, parts };
+        }
+      }
+      return base;
+    });
+
+    const aiSdkUiMessages = toAiSdkUiMessages(taggedUiMessages as any);
+
+    // Prepend run context as a system message if we have context
+    if (contextParts.length > 0) {
+      aiSdkUiMessages.unshift({
+        role: 'system',
+        parts: [{ type: 'text', text: contextParts.join('\n') }],
+      });
+    }
+
     const modelMessages = await convertToModelMessages(aiSdkUiMessages as any);
 
     const streamResult = await built.agent.stream({ messages: modelMessages });
