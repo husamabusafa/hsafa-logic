@@ -15,10 +15,10 @@ import { ThreadList } from "@/components/assistant-ui/thread-list";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
-import type { RegisterResult } from "@/components/register-form";
+import type { AuthSession } from "@/components/register-form";
 
 interface ChatPageProps {
-  session: RegisterResult;
+  session: AuthSession;
   onLogout: () => void;
 }
 
@@ -26,7 +26,7 @@ export function ChatPage({ session, onLogout }: ChatPageProps) {
   return (
     <HsafaProvider
       gatewayUrl="http://localhost:3001"
-      secretKey={session.secretKey}
+      secretKey={session.user.secretKey}
     >
       <ChatPageInner session={session} onLogout={onLogout} />
     </HsafaProvider>
@@ -41,9 +41,9 @@ function ChatPageInner({
 
   // Read initial space from URL, fall back to session default
   const [selectedSpaceId, setSelectedSpaceId] = useState<string>(() => {
-    if (typeof window === "undefined") return session.smartSpaceId;
+    if (typeof window === "undefined") return session.user.smartSpaceId;
     const params = new URLSearchParams(window.location.search);
-    return params.get("space") || session.smartSpaceId;
+    return params.get("space") || session.user.smartSpaceId;
   });
 
   // Keep URL in sync with selected space
@@ -55,10 +55,19 @@ function ChatPageInner({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [spaces, setSpaces] = useState([
     {
-      id: session.smartSpaceId,
-      name: `${session.displayName}'s Chat`,
+      id: session.user.smartSpaceId,
+      name: `${session.user.name}'s Chat`,
     },
   ]);
+
+  // Fetch all spaces the user is a member of
+  useEffect(() => {
+    client.spaces.list().then(({ smartSpaces }) => {
+      if (smartSpaces && smartSpaces.length > 0) {
+        setSpaces(smartSpaces.map((s: any) => ({ id: s.id, name: s.name || "Untitled" })));
+      }
+    }).catch(() => {});
+  }, [client]);
 
   const handleSwitchSpace = useCallback((spaceId: string) => {
     setSelectedSpaceId(spaceId);
@@ -73,13 +82,13 @@ function ChatPageInner({
 
       // Add user as member
       await client.spaces.addMember(smartSpace.id, {
-        entityId: session.entityId,
+        entityId: session.user.entityId,
         role: "admin",
       });
 
       // Add agent as member
       await client.spaces.addMember(smartSpace.id, {
-        entityId: session.agentEntityId,
+        entityId: session.user.agentEntityId,
         role: "member",
       });
 
@@ -91,13 +100,13 @@ function ChatPageInner({
     } catch (err) {
       console.error("Failed to create new space:", err);
     }
-  }, [client, session.entityId, session.agentEntityId]);
+  }, [client, session.user.entityId, session.user.agentEntityId]);
 
   return (
     <HsafaChatProvider
       gatewayUrl="http://localhost:3001"
-      secretKey={session.secretKey}
-      entityId={session.entityId}
+      secretKey={session.user.secretKey}
+      entityId={session.user.entityId}
       smartSpaceId={selectedSpaceId}
       smartSpaces={spaces.map((s) => ({ id: s.id, name: s.name }) as SmartSpace)}
       onSwitchThread={handleSwitchSpace}
@@ -125,10 +134,10 @@ function ChatPageInner({
           <div className="border-t border-border p-3">
             <div className="flex items-center gap-2 rounded-lg px-2 py-1.5">
               <div className="flex size-7 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
-                {session.displayName.charAt(0).toUpperCase()}
+                {session.user.name.charAt(0).toUpperCase()}
               </div>
               <span className="flex-1 truncate text-xs text-muted-foreground">
-                {session.displayName}
+                {session.user.name}
               </span>
               <Button
                 variant="ghost"

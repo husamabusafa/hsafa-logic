@@ -1,64 +1,58 @@
-import { HsafaClient } from "@hsafa/node";
-
-const GATEWAY_URL = process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
-const ADMIN_KEY = process.env.HSAFA_ADMIN_KEY || "gk_default_admin_key";
+import bcrypt from "bcryptjs";
+import { prisma } from "@/lib/db";
+import { signToken } from "@/lib/auth";
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { email } = body as { email: string };
+    const { email, password } = body as { email: string; password: string };
 
-    if (!email) {
+    if (!email || !password) {
       return Response.json(
-        { error: "Email is required" },
+        { error: "Email and password are required" },
         { status: 400 }
       );
     }
 
-    const client = new HsafaClient({
-      gatewayUrl: GATEWAY_URL,
-      adminKey: ADMIN_KEY,
-    });
-
-    // 1. Find the human entity by externalId (email)
-    const { entities } = await client.entities.list({ type: "human" });
-    const entity = entities.find((e) => e.externalId === email);
-
-    if (!entity) {
+    // 1. Find user in local database
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
       return Response.json(
-        { error: "No account found with that email" },
-        { status: 404 }
+        { error: "Invalid email or password" },
+        { status: 401 }
       );
     }
 
-    // 2. Find spaces this entity is a member of
-    const { smartSpaces } = await client.spaces.list({
-      entityId: entity.id,
-    });
-
-    if (smartSpaces.length === 0) {
+    // 2. Verify password
+    const valid = await bcrypt.compare(password, user.passwordHash);
+    if (!valid) {
       return Response.json(
-        { error: "No spaces found for this account" },
-        { status: 404 }
+        { error: "Invalid email or password" },
+        { status: 401 }
       );
     }
 
-    // 3. Use the first space (the one created during registration)
-    const space = smartSpaces[0];
-
-    // 4. Find the agent entity in this space
-    const { members } = await client.spaces.listMembers(space.id);
-    const agentMember = members.find(
-      (m) => m.entity && m.entity.type === "agent"
-    );
+    // 3. Generate JWT
+    const token = await signToken({
+      sub: user.id,
+      email: user.email,
+      name: user.name,
+      entityId: user.hsafaEntityId || "",
+      agentEntityId: user.agentEntityId || "",
+    });
 
     return Response.json({
-      entityId: entity.id,
-      smartSpaceId: space.id,
-      secretKey: space.secretKey,
-      publicKey: space.publicKey,
-      agentEntityId: agentMember?.entityId || "",
-      displayName: entity.displayName || email,
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        entityId: user.hsafaEntityId || "",
+        smartSpaceId: user.hsafaSpaceId || "",
+        secretKey: user.hsafaSecretKey || "",
+        publicKey: user.hsafaPublicKey || "",
+        agentEntityId: user.agentEntityId || "",
+      },
     });
   } catch (error) {
     console.error("Login error:", error);

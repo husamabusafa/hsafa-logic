@@ -10,23 +10,31 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export interface RegisterResult {
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
   entityId: string;
   smartSpaceId: string;
   secretKey: string;
   publicKey: string;
   agentEntityId: string;
-  displayName: string;
+}
+
+export interface AuthSession {
+  token: string;
+  user: AuthUser;
 }
 
 interface AuthFormProps {
-  onAuth: (result: RegisterResult) => void;
+  onAuth: (session: AuthSession) => void;
 }
 
 export function AuthForm({ onAuth }: AuthFormProps) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,7 +47,7 @@ export function AuthForm({ onAuth }: AuthFormProps) {
 
     try {
       const endpoint = isLogin ? "/api/login" : "/api/register";
-      const payload = isLogin ? { email } : { name, email };
+      const payload = isLogin ? { email, password } : { name, email, password };
 
       const res = await fetch(endpoint, {
         method: "POST",
@@ -53,7 +61,7 @@ export function AuthForm({ onAuth }: AuthFormProps) {
         throw new Error(data.error || (isLogin ? "Login failed" : "Registration failed"));
       }
 
-      onAuth(data as RegisterResult);
+      onAuth(data as AuthSession);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -130,6 +138,30 @@ export function AuthForm({ onAuth }: AuthFormProps) {
               />
             </div>
 
+            <div className="space-y-2">
+              <label
+                htmlFor="password"
+                className="text-sm font-medium text-foreground"
+              >
+                Password
+              </label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={isLogin ? "Enter your password" : "Min 6 characters"}
+                required
+                minLength={6}
+                className={cn(
+                  "flex h-10 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm",
+                  "placeholder:text-muted-foreground",
+                  "focus:outline-none focus:ring-2 focus:ring-ring/30 focus:border-ring",
+                  "transition-colors"
+                )}
+              />
+            </div>
+
             {error && (
               <div className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {error}
@@ -138,7 +170,7 @@ export function AuthForm({ onAuth }: AuthFormProps) {
 
             <Button
               type="submit"
-              disabled={isLoading || !email || (!isLogin && !name)}
+              disabled={isLoading || !email || !password || (!isLogin && !name)}
               className="w-full h-10"
             >
               {isLoading ? (
@@ -165,6 +197,7 @@ export function AuthForm({ onAuth }: AuthFormProps) {
               onClick={() => {
                 setMode(isLogin ? "register" : "login");
                 setError(null);
+                setPassword("");
               }}
               className="font-medium text-primary hover:underline"
             >

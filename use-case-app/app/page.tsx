@@ -1,40 +1,72 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { AuthForm, type RegisterResult } from "@/components/register-form";
+import { AuthForm, type AuthSession } from "@/components/register-form";
 import { ChatPage } from "@/components/chat-page";
 
+const TOKEN_KEY = "hsafa-usecase-token";
 const SESSION_KEY = "hsafa-usecase-session";
 
-function getStoredSession(): RegisterResult | null {
+function getStoredToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+function getStoredSession(): AuthSession | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as RegisterResult;
+    return JSON.parse(raw) as AuthSession;
   } catch {
     return null;
   }
 }
 
-function storeSession(session: RegisterResult) {
+function storeSession(session: AuthSession) {
+  localStorage.setItem(TOKEN_KEY, session.token);
   localStorage.setItem(SESSION_KEY, JSON.stringify(session));
 }
 
 function clearSession() {
+  localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(SESSION_KEY);
 }
 
 export default function Home() {
-  const [session, setSession] = useState<RegisterResult | null>(null);
-  const [mounted, setMounted] = useState(false);
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [loading, setLoading] = useState(true);
 
+  // On mount, verify stored token with /api/me
   useEffect(() => {
-    setMounted(true);
-    setSession(getStoredSession());
+    const token = getStoredToken();
+    const cached = getStoredSession();
+
+    if (!token || !cached) {
+      setLoading(false);
+      return;
+    }
+
+    fetch("/api/me", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Invalid token");
+        return res.json();
+      })
+      .then((data) => {
+        // Refresh session with latest user data from DB
+        const refreshed: AuthSession = { token, user: data.user };
+        storeSession(refreshed);
+        setSession(refreshed);
+      })
+      .catch(() => {
+        clearSession();
+      })
+      .finally(() => setLoading(false));
   }, []);
 
-  const handleRegister = (result: RegisterResult) => {
+  const handleAuth = (result: AuthSession) => {
     storeSession(result);
     setSession(result);
   };
@@ -44,7 +76,7 @@ export default function Home() {
     setSession(null);
   };
 
-  if (!mounted) {
+  if (loading) {
     return (
       <div className="flex h-dvh w-full items-center justify-center bg-background">
         <span className="text-muted-foreground text-sm">Loading...</span>
@@ -53,7 +85,7 @@ export default function Home() {
   }
 
   if (!session) {
-    return <AuthForm onAuth={handleRegister} />;
+    return <AuthForm onAuth={handleAuth} />;
   }
 
   return <ChatPage session={session} onLogout={handleLogout} />;
