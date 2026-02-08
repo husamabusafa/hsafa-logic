@@ -180,7 +180,7 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       // Step 1: Reconstruct streaming state for any in-progress runs so a
       // page refresh mid-stream shows the accumulated text immediately.
       try {
-        const { runs } = await client.runs.list({ smartSpaceId, status: 'running' });
+        const { runs } = await client.spaces.listRuns(smartSpaceId, { status: 'running' });
         for (const run of runs) {
           if (cancelled) return;
           try {

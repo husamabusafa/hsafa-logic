@@ -145,6 +145,14 @@ class SpacesResource {
     return this.http.delete(`/api/smart-spaces/${smartSpaceId}/members/${entityId}`);
   }
 
+  async listRuns(smartSpaceId: string, params?: { status?: string; limit?: number; offset?: number }): Promise<{ runs: Run[] }> {
+    return this.http.get(`/api/smart-spaces/${smartSpaceId}/runs`, {
+      status: params?.status,
+      limit: params?.limit,
+      offset: params?.offset,
+    });
+  }
+
   subscribe(smartSpaceId: string, options?: SubscribeOptions): HsafaStream {
     const baseUrl = this.http.getBaseUrl();
     const headers = this.http.getAuthHeaders();

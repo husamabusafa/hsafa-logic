@@ -492,6 +492,45 @@ smartSpacesRouter.get('/:smartSpaceId/stream', requireAuth(), requireMembership(
 });
 
 /**
+ * List runs for a SmartSpace.
+ * Accessible with either secret key or public key + JWT (membership required).
+ * Used by browser clients to reconstruct streaming state on page refresh.
+ */
+smartSpacesRouter.get('/:smartSpaceId/runs', requireAuth(), requireMembership(), async (req, res) => {
+  try {
+    const { smartSpaceId } = req.params;
+    const { status, limit = '20', offset = '0' } = req.query;
+
+    const where: Prisma.RunWhereInput = { smartSpaceId };
+    if (typeof status === 'string') (where as any).status = status;
+
+    const runs = await prisma.run.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(parseInt(limit as string) || 20, 100),
+      skip: parseInt(offset as string) || 0,
+      select: {
+        id: true,
+        status: true,
+        smartSpaceId: true,
+        agentEntityId: true,
+        agentId: true,
+        createdAt: true,
+        completedAt: true,
+      },
+    });
+
+    return res.json({ runs });
+  } catch (error) {
+    console.error('[GET /api/smart-spaces/:smartSpaceId/runs] Error:', error);
+    return res.status(500).json({
+      error: 'Failed to list runs',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+/**
  * Submit a tool result from an external client (Node.js, browser, etc.)
  * 
  * Flow:
