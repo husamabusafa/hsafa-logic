@@ -1,13 +1,12 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   MenuIcon,
   PanelLeftIcon,
   LogOutIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { HsafaProvider, useHsafaClient, type SmartSpace } from "@hsafa/react-sdk";
 import { HsafaChatProvider } from "@hsafa/ui";
 
 import { Thread } from "@/components/assistant-ui/thread";
@@ -26,99 +25,52 @@ interface ChatPageProps {
 }
 
 export function ChatPage({ session, onLogout }: ChatPageProps) {
-  return (
-    <HsafaProvider
-      gatewayUrl={GATEWAY_URL}
-      publicKey={PUBLIC_KEY}
-      jwt={session.token}
-    >
-      <ChatPageInner session={session} onLogout={onLogout} />
-    </HsafaProvider>
-  );
-}
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("hsafa-sidebar-collapsed") === "true";
+  });
 
-function ChatPageInner({
-  session,
-  onLogout,
-}: ChatPageProps) {
-  const client = useHsafaClient();
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("hsafa-sidebar-collapsed", String(next));
+      return next;
+    });
+  }, []);
 
   // Read initial space from URL, fall back to session default
-  const [selectedSpaceId, setSelectedSpaceId] = useState<string>(() => {
+  const initialSpaceId = useMemo(() => {
     if (typeof window === "undefined") return session.user.smartSpaceId;
     const params = new URLSearchParams(window.location.search);
     return params.get("space") || session.user.smartSpaceId;
-  });
+  }, [session.user.smartSpaceId]);
 
   // Keep URL in sync with selected space
-  useEffect(() => {
+  const handleSpaceChange = useCallback((spaceId: string) => {
     const url = new URL(window.location.href);
-    url.searchParams.set("space", selectedSpaceId);
+    url.searchParams.set("space", spaceId);
     window.history.replaceState({}, "", url.toString());
-  }, [selectedSpaceId]);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [spaces, setSpaces] = useState([
-    {
-      id: session.user.smartSpaceId,
-      name: `${session.user.name}'s Chat`,
-    },
-  ]);
-
-  // Fetch all spaces the user is a member of (works with public key + JWT)
-  useEffect(() => {
-    client.spaces.list().then(({ smartSpaces }) => {
-      if (smartSpaces && smartSpaces.length > 0) {
-        setSpaces(smartSpaces.map((s: any) => ({ id: s.id, name: s.name || "Untitled" })));
-      }
-    }).catch((err) => {
-      console.error("Failed to list spaces (auth or network issue?):", err);
-    });
-  }, [client]);
-
-  const handleSwitchSpace = useCallback((spaceId: string) => {
-    setSelectedSpaceId(spaceId);
   }, []);
 
   // Create new space via server-side API route (requires secret key)
-  const handleNewThread = useCallback(async () => {
-    try {
-      const res = await fetch("/api/spaces/create", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.token}`,
-        },
-        body: JSON.stringify({
-          name: `Chat ${new Date().toLocaleTimeString()}`,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to create space");
-      }
-
-      const { smartSpace } = await res.json();
-
-      setSelectedSpaceId(smartSpace.id);
-
-      // Re-fetch full spaces list from gateway to stay in sync
-      client.spaces.list().then(({ smartSpaces }) => {
-        if (smartSpaces && smartSpaces.length > 0) {
-          setSpaces(smartSpaces.map((s: any) => ({ id: s.id, name: s.name || "Untitled" })));
-        }
-      }).catch((err) => {
-        console.error("Failed to refresh spaces list:", err);
-        // Fallback: append locally
-        setSpaces((prev) => [
-          ...prev,
-          { id: smartSpace.id, name: smartSpace.name || "Untitled" },
-        ]);
-      });
-    } catch (err) {
-      console.error("Failed to create new space:", err);
+  const handleCreateSpace = useCallback(async () => {
+    const res = await fetch("/api/spaces/create", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.token}`,
+      },
+      body: JSON.stringify({
+        name: `Chat ${new Date().toLocaleTimeString()}`,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "Failed to create space");
     }
-  }, [client, session.token]);
+    const { smartSpace } = await res.json();
+    return smartSpace.id as string;
+  }, [session.token]);
 
   return (
     <HsafaChatProvider
@@ -126,10 +78,9 @@ function ChatPageInner({
       publicKey={PUBLIC_KEY}
       jwt={session.token}
       entityId={session.user.entityId}
-      smartSpaceId={selectedSpaceId}
-      smartSpaces={spaces.map((s) => ({ id: s.id, name: s.name }) as SmartSpace)}
-      onSwitchThread={handleSwitchSpace}
-      onNewThread={handleNewThread}
+      defaultSpaceId={initialSpaceId}
+      onCreateSpace={handleCreateSpace}
+      onSpaceChange={handleSpaceChange}
     >
       <div className="flex h-dvh w-full bg-background">
         {/* Desktop Sidebar */}
@@ -178,7 +129,7 @@ function ChatPageInner({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              onClick={toggleSidebar}
               className="hidden md:flex size-9"
             >
               {sidebarCollapsed ? (

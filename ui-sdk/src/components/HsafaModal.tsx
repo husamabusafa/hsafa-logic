@@ -21,6 +21,8 @@ export function HsafaModal({
   smartSpaces,
   onSwitchThread,
   onNewThread,
+  defaultSpaceId,
+  onCreateSpace,
   secretKey,
   publicKey,
   jwt,
@@ -41,6 +43,8 @@ export function HsafaModal({
       smartSpaces={smartSpaces}
       onSwitchThread={onSwitchThread}
       onNewThread={onNewThread}
+      defaultSpaceId={defaultSpaceId}
+      onCreateSpace={onCreateSpace}
       secretKey={secretKey}
       publicKey={publicKey}
       jwt={jwt}
