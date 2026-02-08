@@ -5,6 +5,10 @@ export { HsafaChatProvider, type HsafaChatProviderProps } from "./HsafaProvider"
 export { HsafaChat, type HsafaChatProps } from "./components/HsafaChat";
 export { HsafaThread, type HsafaThreadProps } from "./components/HsafaThread";
 export { HsafaModal, type HsafaModalProps } from "./components/HsafaModal";
+export {
+  ReasoningPart,
+  type ReasoningPartProps,
+} from "./components/HsafaReasoning";
 
 // Runtime bridge
 export {

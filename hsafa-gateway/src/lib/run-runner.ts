@@ -191,6 +191,7 @@ export async function executeRun(runId: string): Promise<void> {
     const messageId = `msg-${runId}-${Date.now()}`;
     let textId: string | null = null;
     let reasoningId: string | null = null;
+    let accumulatedReasoning = ''; // Manual accumulator — fallback for streamResult.reasoningText
     const toolArgsAccumulator = new Map<string, string>(); // toolCallId -> accumulated args text
     const toolParts: Array<{ type: string; [key: string]: unknown }> = [];
 
@@ -202,7 +203,7 @@ export async function executeRun(runId: string): Promise<void> {
 
       // Text streaming
       if (t === 'text-delta') {
-        const delta = (part as any).text || (part as any).textDelta || '';
+        const delta = (part as any).textDelta || (part as any).text || '';
         if (!delta) continue;
         if (!textId) {
           textId = `text-${messageId}-${Date.now()}`;
@@ -210,14 +211,15 @@ export async function executeRun(runId: string): Promise<void> {
         }
         await emitEvent('text-delta', { id: textId, delta });
       }
-      // Reasoning streaming
-      else if (t === 'reasoning') {
-        const delta = (part as any).text || '';
+      // Reasoning streaming (AI SDK v6 uses 'reasoning-delta' in fullStream)
+      else if (t === 'reasoning' || t === 'reasoning-delta') {
+        const delta = (part as any).textDelta || (part as any).text || (part as any).delta || '';
         if (!delta) continue;
         if (!reasoningId) {
           reasoningId = `reasoning-${messageId}-${Date.now()}`;
           await emitEvent('reasoning-start', { id: reasoningId });
         }
+        accumulatedReasoning += delta;
         await emitEvent('reasoning-delta', { id: reasoningId, delta });
       }
       // Tool call streaming start
@@ -287,14 +289,14 @@ export async function executeRun(runId: string): Promise<void> {
       }
     }
 
-    // Use AI SDK's built-in accumulation (no manual tracking needed)
+    // Use AI SDK's built-in accumulation + manual fallback for reasoning
     const finalText = await streamResult.text;
-    const finalReasoning = await streamResult.reasoning;
+    const finalReasoningText = (await streamResult.reasoningText) || accumulatedReasoning || undefined;
 
     // Build final message using SDK values + tool parts
     const finalParts: Array<{ type: string; [key: string]: unknown }> = [];
-    if (finalReasoning) {
-      finalParts.push({ type: 'reasoning', text: finalReasoning });
+    if (finalReasoningText) {
+      finalParts.push({ type: 'reasoning', text: finalReasoningText });
     }
     if (finalText) {
       finalParts.push({ type: 'text', text: finalText });

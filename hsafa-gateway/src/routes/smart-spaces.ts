@@ -12,13 +12,14 @@ export const smartSpacesRouter: ExpressRouter = Router();
 
 smartSpacesRouter.post('/', requireSecretKey(), async (req, res) => {
   try {
-    const { name, description, metadata } = req.body;
+    const { name, description, metadata, showAgentReasoning } = req.body;
 
     const smartSpace = await prisma.smartSpace.create({
       data: {
         name: typeof name === 'string' ? name : null,
         description: typeof description === 'string' ? description : null,
         metadata: (metadata ?? null) as Prisma.InputJsonValue,
+        showAgentReasoning: typeof showAgentReasoning === 'boolean' ? showAgentReasoning : false,
       },
     });
 
@@ -101,7 +102,7 @@ smartSpacesRouter.get('/:smartSpaceId', requireAuth(), requireMembership(), asyn
 smartSpacesRouter.patch('/:smartSpaceId', requireSecretKey(), async (req, res) => {
   try {
     const { smartSpaceId } = req.params;
-    const { name, description, metadata } = req.body;
+    const { name, description, metadata, showAgentReasoning } = req.body;
 
     const smartSpace = await prisma.smartSpace.update({
       where: { id: smartSpaceId },
@@ -109,6 +110,7 @@ smartSpacesRouter.patch('/:smartSpaceId', requireSecretKey(), async (req, res) =
         name: typeof name === 'string' ? name : undefined,
         description: typeof description === 'string' ? description : undefined,
         metadata: metadata !== undefined ? ((metadata ?? null) as Prisma.InputJsonValue) : undefined,
+        showAgentReasoning: typeof showAgentReasoning === 'boolean' ? showAgentReasoning : undefined,
       },
     });
 

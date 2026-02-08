@@ -5,6 +5,7 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
 } from "@assistant-ui/react";
+import { ReasoningPart } from "./HsafaReasoning";
 
 // =============================================================================
 // HsafaThread — Prebuilt full chat thread
@@ -181,15 +182,15 @@ function HsafaAssistantMessage() {
       <div
         style={{
           maxWidth: "75%",
-          borderRadius: "1rem 1rem 1rem 0.25rem",
-          padding: "0.625rem 1rem",
-          background: "#f0f0f0",
-          color: "#111",
           fontSize: "0.9rem",
           lineHeight: 1.5,
         }}
       >
-        <MessagePrimitive.Content />
+        <MessagePrimitive.Parts
+          components={{
+            Reasoning: ReasoningPart,
+          }}
+        />
       </div>
     </MessagePrimitive.Root>
   );

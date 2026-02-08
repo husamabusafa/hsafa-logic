@@ -26,9 +26,14 @@ Use these tools when the user asks about them or requests related functionality.
     },
     model: {
       provider: 'openai',
-      name: 'gpt-4o-mini',
-      temperature: 0.7,
-      maxOutputTokens: 1000,
+      name: 'gpt-5',
+      api: 'responses',
+      maxOutputTokens: 16000,
+      reasoning: {
+        enabled: true,
+        effort: 'medium',
+        summary: 'auto',
+      },
     },
     loop: {
       maxSteps: 5,

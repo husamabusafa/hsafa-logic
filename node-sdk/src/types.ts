@@ -38,6 +38,7 @@ export interface SmartSpace {
   name?: string | null;
   description?: string | null;
   metadata?: Record<string, unknown> | null;
+  showAgentReasoning?: boolean;
   createdAt: string;
 }
 
@@ -177,12 +178,14 @@ export interface CreateSmartSpaceParams {
   name?: string;
   description?: string;
   metadata?: Record<string, unknown>;
+  showAgentReasoning?: boolean;
 }
 
 export interface UpdateSmartSpaceParams {
   name?: string;
   description?: string;
   metadata?: Record<string, unknown>;
+  showAgentReasoning?: boolean;
 }
 
 export interface AddMemberParams {

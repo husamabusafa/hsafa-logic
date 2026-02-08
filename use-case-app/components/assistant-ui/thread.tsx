@@ -7,8 +7,8 @@ import {
   useMessage,
 } from "@assistant-ui/react";
 import { useMembers } from "@hsafa/ui";
-import { ArrowUpIcon, SquareIcon } from "lucide-react";
-import { type ReactNode } from "react";
+import { ArrowUpIcon, SquareIcon, ChevronRightIcon, LoaderIcon } from "lucide-react";
+import { type ReactNode, useState, useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -112,6 +112,70 @@ function TextWithCaret({
   );
 }
 
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function ReasoningBlock({
+  text,
+  status,
+}: {
+  text: string;
+  status: { type: string };
+}) {
+  const isStreaming = status?.type === "running";
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (isStreaming) setOpen(true);
+  }, [isStreaming]);
+
+  useEffect(() => {
+    if (!isStreaming && status?.type === "complete") setOpen(false);
+  }, [isStreaming, status?.type]);
+
+  if (!text) return null;
+
+  const tokens = estimateTokens(text);
+
+  return (
+    <div className="mb-2 rounded-lg border border-border bg-muted/30 overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        type="button"
+        className="flex w-full items-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:bg-muted/50 transition-colors"
+      >
+        {isStreaming ? (
+          <LoaderIcon className="size-3 animate-spin" />
+        ) : (
+          <ChevronRightIcon
+            className={`size-3 transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+          />
+        )}
+        <span className="font-medium">
+          {isStreaming ? "Thinking…" : "Thought process"}
+        </span>
+        <span className="ml-auto tabular-nums text-[10px] opacity-60">
+          {tokens} tokens
+        </span>
+      </button>
+      <div
+        className="transition-[grid-template-rows] duration-250 ease-in-out"
+        style={{
+          display: "grid",
+          gridTemplateRows: open ? "1fr" : "0fr",
+        }}
+      >
+        <div className="overflow-hidden">
+          <div className="px-3 pb-2 text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+            {text}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function UserMessage() {
   const { membersById, currentEntityId } = useMembers();
   const entityId = useMessage((m) => (m.metadata as any)?.custom?.entityId as string | undefined);
@@ -155,6 +219,7 @@ function AssistantMessage() {
         <MessagePrimitive.Parts
           components={{
             Text: TextWithCaret,
+            Reasoning: ReasoningBlock,
           }}
         />
       </div>

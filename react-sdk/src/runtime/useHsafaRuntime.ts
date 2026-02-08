@@ -29,7 +29,12 @@ export interface ToolCallContentPart {
   result?: unknown;
 }
 
-export type ContentPart = TextContentPart | ToolCallContentPart;
+export interface ReasoningContentPart {
+  type: 'reasoning';
+  text: string;
+}
+
+export type ContentPart = TextContentPart | ToolCallContentPart | ReasoningContentPart;
 
 export interface ThreadMessageLike {
   id: string;
@@ -60,6 +65,7 @@ interface StreamingMessage {
   id: string;
   entityId: string;
   text: string;
+  reasoning: string;
   toolCalls: Array<{
     toolCallId: string;
     toolName: string;
@@ -92,14 +98,31 @@ export interface UseHsafaRuntimeReturn {
 }
 
 // =============================================================================
+// Helper: Merge consecutive reasoning parts
+// e.g. [reasoning, reasoning, tool-call, reasoning, text]
+//    → [reasoning(merged), tool-call, reasoning, text]
+// =============================================================================
+
+function mergeConsecutiveReasoning(parts: ContentPart[]): ContentPart[] {
+  const merged: ContentPart[] = [];
+  for (const part of parts) {
+    const prev = merged[merged.length - 1];
+    if (part.type === 'reasoning' && prev?.type === 'reasoning') {
+      // Merge into the previous reasoning part
+      merged[merged.length - 1] = { type: 'reasoning', text: prev.text + part.text };
+    } else {
+      merged.push(part);
+    }
+  }
+  return merged;
+}
+
+// =============================================================================
 // Helper: Convert SmartSpaceMessage → ThreadMessageLike
 // =============================================================================
 
 function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): ThreadMessageLike | null {
   if (msg.role === 'tool') return null;
-
-  const text = msg.content || '';
-  if (!text.trim()) return null;
 
   // Determine the display role:
   // - Current user's messages → 'user' (right-aligned)
@@ -113,10 +136,39 @@ function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): Threa
     isOtherHuman = true;
   }
 
+  const content: ContentPart[] = [];
+
+  // Extract structured parts from metadata.uiMessage (includes reasoning + tool calls)
+  const uiMessage = (msg.metadata as any)?.uiMessage;
+  if (uiMessage?.parts && Array.isArray(uiMessage.parts)) {
+    for (const part of uiMessage.parts) {
+      if (part.type === 'reasoning' && part.text) {
+        content.push({ type: 'reasoning', text: part.text });
+      } else if (part.type === 'text' && part.text) {
+        content.push({ type: 'text', text: part.text });
+      } else if (part.type === 'tool-call') {
+        content.push({
+          type: 'tool-call',
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          args: part.args,
+          result: part.result,
+        });
+      }
+    }
+  }
+
+  // Fallback to plain content if no structured parts
+  if (content.length === 0) {
+    const text = msg.content || '';
+    if (!text.trim()) return null;
+    content.push({ type: 'text', text });
+  }
+
   return {
     id: msg.id,
     role,
-    content: [{ type: 'text', text }],
+    content: mergeConsecutiveReasoning(content),
     createdAt: new Date(msg.createdAt),
     metadata: { custom: { entityId: msg.entityId || undefined, isOtherHuman } },
   };
@@ -198,18 +250,22 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
           try {
             const { events } = await client.runs.getEvents(run.id);
             let text = '';
+            let reasoning = '';
             for (const ev of events) {
               if (ev.type === 'text-delta') {
                 text += (ev.payload?.delta as string) || '';
+              } else if (ev.type === 'reasoning-delta') {
+                reasoning += (ev.payload?.delta as string) || '';
               }
             }
-            if (text) {
+            if (text || reasoning) {
               setStreamingMessages((prev) => {
                 if (prev.some((sm) => sm.id === run.id)) return prev;
                 return [...prev, {
                   id: run.id,
                   entityId: run.agentEntityId,
                   text,
+                  reasoning,
                   toolCalls: [],
                   isStreaming: true,
                 }];
@@ -250,6 +306,13 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
             .join('\n');
         }
 
+        // Reconstruct metadata.uiMessage from parts so convertMessage
+        // can extract reasoning + tool-call parts from SSE messages.
+        let metadata = (raw.metadata as Record<string, unknown>) || null;
+        if (!metadata && Array.isArray(raw.parts)) {
+          metadata = { uiMessage: { parts: raw.parts } };
+        }
+
         const msg: SmartSpaceMessage = {
           id: raw.id as string,
           smartSpaceId: event.smartSpaceId || (raw.smartSpaceId as string) || '',
@@ -257,6 +320,7 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
           seq: (raw.seq as string) || String(event.seq || '0'),
           role: (raw.role as string) || 'user',
           content: content || null,
+          metadata,
           createdAt: (raw.createdAt as string) || new Date().toISOString(),
         };
 
@@ -266,6 +330,11 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
           if (prev.some((m) => m.id === msg.id)) return prev;
           return [...prev, msg];
         });
+
+        // Remove streaming entry for this run (persisted message takes over)
+        if (event.runId) {
+          setStreamingMessages((prev) => prev.filter((sm) => sm.id !== event.runId));
+        }
       });
 
       stream.on('run.created', (event: StreamEvent) => {
@@ -279,6 +348,7 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
             id: runId,
             entityId,
             text: '',
+            reasoning: '',
             toolCalls: [],
             isStreaming: true,
           }];
@@ -298,12 +368,36 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
               id: runId,
               entityId: event.entityId || '',
               text: delta,
+              reasoning: '',
               toolCalls: [],
               isStreaming: true,
             }];
           }
           return prev.map((sm) =>
             sm.id === runId ? { ...sm, text: sm.text + delta } : sm
+          );
+        });
+      });
+
+      stream.on('reasoning-delta', (event: StreamEvent) => {
+        const runId = event.runId || (event.data.runId as string);
+        const delta = (event.data.delta as string) || '';
+        if (!runId || !delta) return;
+
+        setStreamingMessages((prev) => {
+          const exists = prev.some((sm) => sm.id === runId);
+          if (!exists) {
+            return [...prev, {
+              id: runId,
+              entityId: event.entityId || '',
+              text: '',
+              reasoning: delta,
+              toolCalls: [],
+              isStreaming: true,
+            }];
+          }
+          return prev.map((sm) =>
+            sm.id === runId ? { ...sm, reasoning: sm.reasoning + delta } : sm
           );
         });
       });
@@ -352,6 +446,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       stream.on('run.completed', (event: StreamEvent) => {
         const runId = event.runId || (event.data.runId as string);
         if (!runId) return;
+        // Mark as not streaming but keep visible — will be removed
+        // when smartSpace.message arrives with the persisted version.
         setStreamingMessages((prev) =>
           prev.map((sm) =>
             sm.id === runId ? { ...sm, isStreaming: false } : sm
@@ -401,9 +497,13 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       .filter((m): m is ThreadMessageLike => m !== null);
 
     const streaming = streamingMessages
-      .filter((sm) => sm.isStreaming && sm.text.trim())
+      .filter((sm) => sm.text.trim() || sm.reasoning.trim() || sm.toolCalls.length > 0)
       .map((sm): ThreadMessageLike => {
         const content: ContentPart[] = [];
+
+        if (sm.reasoning) {
+          content.push({ type: 'reasoning', text: sm.reasoning });
+        }
 
         if (sm.text) {
           content.push({ type: 'text', text: sm.text });
