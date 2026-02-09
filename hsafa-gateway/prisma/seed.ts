@@ -25,14 +25,14 @@ You have access to these tools:
 Use these tools when the user asks about them or requests related functionality.`,
     },
     model: {
-      provider: 'openai',
-      name: 'gpt-5',
-      api: 'responses',
+      provider: 'google',
+      name: 'gemini-2.5-flash',
+      api: 'default',
       maxOutputTokens: 16000,
       reasoning: {
         enabled: true,
         effort: 'medium',
-        summary: 'auto',
+        includeThoughts: true,
       },
     },
     loop: {

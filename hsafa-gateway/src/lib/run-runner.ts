@@ -327,7 +327,7 @@ export async function executeRun(runId: string): Promise<void> {
       systemParts.push(`Your next response will be posted as a new message in "${smartSpace?.name || run.smartSpaceId}", visible to all participants.`);
 
       systemParts.push(...formatGoalsBlock());
-      systemParts.push(...formatSpacesBlock());
+      // No spaces list in child runs — the agent should focus on the task, not navigate
 
       const goToSystemPrompt = systemParts.join('\n');
 
@@ -391,6 +391,24 @@ export async function executeRun(runId: string): Promise<void> {
       const taggedUiMessages = messages.map((m) => {
         const base = toUiMessageFromSmartSpaceMessage(m);
         const isOwnMessage = m.entityId === run.agentEntityId;
+        const meta = (m.metadata ?? null) as Record<string, any> | null;
+
+        // For own assistant messages with provenance (from goToSpace child runs),
+        // prepend context so the agent remembers why it said this
+        if (isOwnMessage && m.role === 'assistant' && meta?.provenance) {
+          const prov = meta.provenance;
+          const ctx = `[Context: You said this after visiting "${prov.originSpaceName || 'another space'}" where you were asked to: ${prov.instruction || 'carry out a task'}]`;
+          if (Array.isArray(base.parts)) {
+            const parts = base.parts.map((p: any, i: number) => {
+              if (i === 0 && p.type === 'text' && typeof p.text === 'string') {
+                return { ...p, text: `${ctx} ${p.text}` };
+              }
+              return p;
+            });
+            return { ...base, parts };
+          }
+        }
+
         const shouldTag =
           (m.role === 'user' || m.role === 'system' || (m.role === 'assistant' && !isOwnMessage))
           && m.entity?.displayName;
@@ -585,12 +603,24 @@ export async function executeRun(runId: string): Promise<void> {
       parts: finalParts.length > 0 ? finalParts : [{ type: 'text', text: finalText ?? '' }],
     };
 
+    // For goToSpace child runs, attach provenance so future runs know why this message exists
+    const messageMetadata: Record<string, unknown> = { uiMessage: assistantMessage };
+    if (isGoToSpaceRun) {
+      const meta = run.metadata as any;
+      messageMetadata.provenance = {
+        originSpaceId: meta?.originSmartSpaceId,
+        originSpaceName: meta?.originSmartSpaceName,
+        instruction: meta?.instruction,
+        parentRunId: meta?.parentRunId,
+      };
+    }
+
     const dbMessage = await createSmartSpaceMessage({
       smartSpaceId: run.smartSpaceId,
       entityId: run.agentEntityId,
       role: 'assistant',
       content: finalText,
-      metadata: { uiMessage: assistantMessage } as unknown as Prisma.InputJsonValue,
+      metadata: messageMetadata as unknown as Prisma.InputJsonValue,
       runId,
     });
 
