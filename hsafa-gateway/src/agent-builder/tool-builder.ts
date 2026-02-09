@@ -1,13 +1,13 @@
 import { jsonSchema, tool, type ToolExecutionOptions } from 'ai';
-import type { ToolConfig } from './types';
-import type { PrebuiltToolContext } from './builder';
-import { executeBasic, isNoExecutionBasic } from './tools/basic';
-import { executeRequest } from './tools/request';
-import { executeWaiting } from './tools/waiting';
-import { executeCompute } from './tools/compute';
-import { executeAiAgent } from './tools/ai-agent';
-import { executeImageGenerator } from './tools/image-generator';
-import { getPrebuiltHandler } from './prebuilt-tools/registry';
+import type { ToolConfig } from './types.js';
+import type { PrebuiltToolContext } from './builder.js';
+import { executeBasic, isNoExecutionBasic } from './tools/basic.js';
+import { executeRequest } from './tools/request.js';
+import { executeWaiting } from './tools/waiting.js';
+import { executeCompute } from './tools/compute.js';
+import { executeAiAgent } from './tools/ai-agent.js';
+import { executeImageGenerator } from './tools/image-generator.js';
+import { getPrebuiltHandler } from './prebuilt-tools/registry.js';
 
 /**
  * Determines the execution target for a tool based on its configuration.

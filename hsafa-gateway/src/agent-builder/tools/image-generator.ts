@@ -1,7 +1,7 @@
 import type { ToolExecutionOptions } from 'ai';
 import { generateImage } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
-import type { ImageGeneratorExecution } from '../types';
+import type { ImageGeneratorExecution } from '../types.js';
 
 function mapSize(size: string): `${number}x${number}` | undefined {
   const normalized = size.trim().toLowerCase();

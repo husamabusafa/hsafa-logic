@@ -3,7 +3,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createXai } from '@ai-sdk/xai';
 import type { LanguageModel } from 'ai';
-import type { ModelConfig, ProviderOptions, ReasoningConfig, JSONObject } from './types';
+import type { ModelConfig, ProviderOptions, ReasoningConfig, JSONObject } from './types.js';
 
 export class ModelResolverError extends Error {
   constructor(message: string) {

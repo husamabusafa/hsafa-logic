@@ -1,4 +1,4 @@
-import { AgentConfigSchema, type AgentConfig } from './types';
+import { AgentConfigSchema, type AgentConfig } from './types.js';
 
 export class AgentConfigParseError extends Error {
   constructor(message: string, public readonly cause?: unknown) {

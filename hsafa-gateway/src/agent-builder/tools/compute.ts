@@ -1,4 +1,4 @@
-import type { ComputeExecution } from '../types';
+import type { ComputeExecution } from '../types.js';
 
 type Token =
   | { type: 'number'; value: number }

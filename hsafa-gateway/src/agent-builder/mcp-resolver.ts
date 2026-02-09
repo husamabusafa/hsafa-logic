@@ -1,5 +1,5 @@
 import { createMCPClient } from '@ai-sdk/mcp';
-import type { McpConfig } from './types';
+import type { McpConfig } from './types.js';
 
 export interface MCPClientWrapper {
   client: Awaited<ReturnType<typeof createMCPClient>>;

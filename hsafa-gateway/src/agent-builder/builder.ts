@@ -1,10 +1,10 @@
 import { ToolLoopAgent, stepCountIs, jsonSchema, tool } from 'ai';
-import { validateAgentConfig, interpolateConfigEnvVars } from './parser';
-import { resolveModel, getModelSettings } from './model-resolver';
-import { resolveTools } from './tool-resolver';
-import { resolveMCPClients, loadMCPTools, closeMCPClients, type MCPClientWrapper } from './mcp-resolver';
-import { initPrebuiltTools, getAllPrebuiltHandlers } from './prebuilt-tools/registry';
-import type { AgentConfig } from './types';
+import { validateAgentConfig, interpolateConfigEnvVars } from './parser.js';
+import { resolveModel, getModelSettings } from './model-resolver.js';
+import { resolveTools } from './tool-resolver.js';
+import { resolveMCPClients, loadMCPTools, closeMCPClients, type MCPClientWrapper } from './mcp-resolver.js';
+import { initPrebuiltTools, getAllPrebuiltHandlers } from './prebuilt-tools/registry.js';
+import type { AgentConfig } from './types.js';
 
 export interface PrebuiltToolContext {
   runId: string;

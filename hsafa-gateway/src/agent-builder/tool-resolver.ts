@@ -1,6 +1,6 @@
-import type { ToolConfig } from './types';
-import type { PrebuiltToolContext } from './builder';
-import { buildTool } from './tool-builder';
+import type { ToolConfig } from './types.js';
+import type { PrebuiltToolContext } from './builder.js';
+import { buildTool } from './tool-builder.js';
 
 export function resolveTools(
   configs: ToolConfig[],

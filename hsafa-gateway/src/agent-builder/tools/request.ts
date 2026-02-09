@@ -1,6 +1,6 @@
 import type { ToolExecutionOptions } from 'ai';
-import type { RequestExecution } from '../types';
-import { getInterpolationVariables, interpolateAny } from './template';
+import type { RequestExecution } from '../types.js';
+import { getInterpolationVariables, interpolateAny } from './template.js';
 
 export async function executeRequest(
   execution: RequestExecution,

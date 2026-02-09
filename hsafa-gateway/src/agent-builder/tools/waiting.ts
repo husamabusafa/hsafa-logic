@@ -1,4 +1,4 @@
-import type { WaitingExecution } from '../types';
+import type { WaitingExecution } from '../types.js';
 
 export async function executeWaiting(execution: WaitingExecution | null | undefined, input: unknown): Promise<unknown> {
   const inputObj = (input && typeof input === 'object' ? (input as Record<string, unknown>) : {}) as Record<

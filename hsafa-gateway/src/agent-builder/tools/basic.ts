@@ -1,5 +1,5 @@
-import type { BasicExecution } from '../types';
-import { getInterpolationVariables, interpolateAny } from './template';
+import type { BasicExecution } from '../types.js';
+import { getInterpolationVariables, interpolateAny } from './template.js';
 
 export function isNoExecutionBasic(execution: BasicExecution | null | undefined): boolean {
   return execution == null || execution.mode === 'no-execution';

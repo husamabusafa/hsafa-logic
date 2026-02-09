@@ -1,7 +1,7 @@
 import { createAgentUIStream, type ToolExecutionOptions } from 'ai';
-import type { AiAgentExecution } from '../types';
-import { validateAgentConfig } from '../parser';
-import { buildAgent } from '../builder';
+import type { AiAgentExecution } from '../types.js';
+import { validateAgentConfig } from '../parser.js';
+import { buildAgent } from '../builder.js';
 
 function extractTextFromModelMessageContent(content: unknown): string | null {
   if (typeof content === 'string') return content;
