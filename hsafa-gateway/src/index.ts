@@ -14,7 +14,13 @@ const app = express();
 const server = createServer(app);
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: '*',
+  exposedHeaders: ['Content-Type', 'Cache-Control', 'Connection', 'X-Accel-Buffering'],
+  credentials: false,
+}));
 app.use(express.json());
 
 app.use('/api/agents', agentsRouter);

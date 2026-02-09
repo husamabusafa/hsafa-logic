@@ -1,124 +1,228 @@
-# Hsafa Logic - AI Agent Platform
+<div align="center">
 
-A distributed AI agent platform with persistent memory, multi-device tool execution, and a powerful React SDK.
+# Hsafa  
+### The Operating System for Autonomous AI Agents (network of AI agents)
 
-## 🏗️ Project Structure
+**Hsafa is not a chatbot framework.**  
+It is a runtime for long-lived AI operators that can collaborate, migrate between contexts, execute workflows, and run indefinitely via scheduled self-triggers.
 
-This is a **pnpm monorepo** with the following packages:
+**A world-changer:** the foundation for an AI workforce layer that most modern systems will eventually rely on.
+
+> A new category of system:  
+> **from conversational assistants → to autonomous digital workers.**
+
+</div>
+
+---
+
+## 🚀 Why Hsafa Exists
+
+Most "AI agents" today are basically:
+- one user  
+- one chat  
+- one prompt-response loop  
+- zero persistence  
+- no real autonomy  
+
+That is not an agent. That is a chatbot with tools.
+
+**Hsafa introduces a new definition:**
+
+> An agent is a persistent participant inside a shared operational system.  
+> It can reason, act, coordinate, remember, schedule tasks, and continue working even when nobody is watching.
+
+---
+
+## 🧠 What Makes Hsafa Different
+
+### ⚡ Autonomous by Default
+Agents do not wait for humans to type.
+
+They can start work from:
+- system events
+- schedules
+- other agents
+- incoming messages
+- external services
+
+Hsafa is designed for **continuous operation**.
+
+Agents can even create their own self-triggering schedules (cron-style): they decide *when* to wake up, *what* to check, and *what* to do next — and they keep going indefinitely.
+
+---
+
+### 🏙 SmartSpaces (Shared Timelines)
+Instead of isolated chats, Hsafa runs inside **SmartSpaces**:
+
+SmartSpaces are shared environments where:
+- humans collaborate with agents
+- multiple agents coordinate together
+- services and tools produce events
+- memory and history live permanently
+
+This is the difference between:
+- a chat window  
+vs  
+- an **operational workspace**
+
+---
+
+### 🧳 Agents Can Move Across Contexts
+Hsafa agents are not stuck in one thread.
+
+An agent can:
+- enter a new space
+- understand the situation instantly
+- respond naturally
+- execute tasks
+- coordinate with agents already inside
+
+This enables **cross-team workflows** and real organizational intelligence.
+
+---
+
+### 🕸 Multi-Agent Networks (Not Single Bots)
+Hsafa is built for **agent ecosystems**, not "one assistant".
+
+You can build:
+- agent-to-agent workflows
+- specialized departments (research, planning, QA, execution)
+- long-running mission teams
+- full operational systems where humans are optional
+
+---
+
+### 🛠 Action is a First-Class Primitive
+In Hsafa, tools are not "plugins".
+
+Tools are the **hands of the agent**.
+
+Agents can:
+- call services
+- request approvals
+- orchestrate workflows
+- coordinate external systems
+- execute real operations
+
+---
+
+### 🧬 Long-Term Memory & Continuity
+Hsafa agents maintain continuity across time.
+
+They can persist:
+- goals
+- plans
+- progress states
+- relationships
+- long-term task chains
+- historical decisions
+
+This allows agents to operate **continuously (weeks, months)**, not minutes.
+
+---
+
+## 🌍 What You Can Build With Hsafa
+
+### 🏢 Autonomous Operations Copilots
+Agents that manage projects like a real coordinator:
+- follow up tasks
+- assign work
+- report progress
+- keep timelines alive
+
+### 🎧 Customer Support Networks
+Multi-agent support systems:
+- triage + escalation
+- human handoff
+- knowledge retrieval
+- automatic resolution workflows
+
+### 🔄 Service Orchestrators
+Agents that behave like internal teammates:
+- talk to APIs
+- run deployments
+- monitor incidents
+- trigger recovery actions
+
+### 🧠 Multi-Agent Departments
+Example:
+- **Research Agent**
+- **Planner Agent**
+- **Executor Agent**
+- **QA Agent**
+- **Delivery Agent**
+
+All cooperating in SmartSpaces.
+
+### 🌐 Cross-Context Assistants
+An agent can talk to Team A, then jump to Team B, continue the same workflow, and keep the full story.
+
+---
+
+## 🧩 Core Concepts
+
+| Concept | Meaning |
+|--------|---------|
+| **Agent** | A persistent AI operator with goals, memory, and actions |
+| **SmartSpace** | Shared environment for humans + agents + tools |
+| **Events** | Messages, schedules, triggers, service updates |
+| **Tools** | The agent’s execution layer (APIs, services, workflows) |
+| **Continuity** | Memory + long-running state across sessions |
+
+---
+
+## 🧠 Vision
+
+Hsafa is designed around one goal:
+
+> Build agents that behave like real autonomous workers,  
+> not prompt-based assistants.
+
+Hsafa turns agents into a **reusable workforce primitive**: an OS-layer abstraction you plug into your product so work keeps happening automatically.
+
+It is a system where AI agents can form:
+- teams  
+- organizations  
+- networks  
+- operational workflows  
+- long-running missions  
+
+---
+
+## 📖 Documentation (Vision & Architecture)
+
+If you want the full architecture and product philosophy:
+
+- **Architecture / Big Idea**  
+  [`hsafa-docs/idea-docs/hsafa-gateway-doc.mdx`](./hsafa-docs/idea-docs/hsafa-gateway-doc.mdx)
+
+- **Tools as an Interaction Model**  
+  [`hsafa-docs/idea-docs/tools-design-doc.md`](./hsafa-docs/idea-docs/tools-design-doc.md)
+
+- **Cross-Space Agents (goToSpace)**  
+  [`hsafa-docs/idea-docs/go-to-space-feature.md`](./hsafa-docs/idea-docs/go-to-space-feature.md)
+
+- **Reasoning UX (Optional Transparency)**  
+  [`hsafa-docs/idea-docs/reasoning-design-doc.md`](./hsafa-docs/idea-docs/reasoning-design-doc.md)
+
+- **SDK Direction**  
+  [`hsafa-docs/idea-docs/sdk-design-doc.md`](./hsafa-docs/idea-docs/sdk-design-doc.md)
+
+---
+
+## 🗂 Repository Structure
+
+```txt
+hsafa-gateway/   # Core gateway runtime (agent execution + orchestration)
+react-sdk/       # Connect Hsafa to React apps
+ui-sdk/          # Drop-in UI components (chat + spaces)
+node-sdk/        # Backend + services integration SDK
+hsafa-docs/      # Vision, architecture, design docs
 
 ```
-hsafa-logic/
-├── hsafa-gateway/        # Node.js server - Agent builder & runtime
-├── react-sdk/            # React SDK for building agent UIs
-├── vite-test-app/        # Vite test app for SDK development
-├── hsafa-docs/           # Platform documentation
-└── vercel-ai-sdk-docs/   # Vercel AI SDK documentation
-```
 
-### 📦 Packages
+---
 
-- **`hsafa-gateway`** - Node.js Express server that builds and runs agents from JSON configs. Supports distributed tool execution, streaming, and persistent memory.
+## License
 
-- **`react-sdk`** - React components and hooks for integrating AI agents into your app. Includes `HsafaChat` component with theming, custom tool UIs, and more.
-
-- **`vite-test-app`** - Vite-powered test application for SDK development and testing.
-
-- **`hsafa-docs`** - Comprehensive platform documentation including architecture guides and API references.
-
-- **`vercel-ai-sdk-docs`** - Documentation for the Vercel AI SDK integration.
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Node.js 20+
-- pnpm 8+
-
-### Installation
-
-```bash
-pnpm install
-```
-
-### Environment Setup
-
-Create a `.env` file in the root (or in `hsafa-gateway/`):
-
-```env
-OPENAI_API_KEY=your-key-here
-ANTHROPIC_API_KEY=your-key-here
-GOOGLE_GENERATIVE_AI_API_KEY=your-key-here
-XAI_API_KEY=your-key-here
-```
-
-### Development
-
-**Start everything:**
-```bash
-pnpm dev
-```
-
-This will start:
-- Gateway server on `http://localhost:3001`
-- Vite test app on `http://localhost:5173`
-
-**Or run individually:**
-
-```bash
-# Gateway server only
-pnpm dev:gateway
-
-# React SDK (watch mode)
-pnpm dev:sdk
-
-# Vite test app only
-pnpm dev:test
-```
-
-### Building
-
-```bash
-# Build all packages
-pnpm build
-
-# Build specific package
-pnpm build:gateway
-pnpm build:sdk
-pnpm build:test
-```
-
-## 📖 Architecture
-
-See [`hsafa-docs/idea-docs/11-agent-builder-server.mdx`](./hsafa-docs/idea-docs/11-agent-builder-server.mdx) for the complete platform architecture.
-
-### Key Concepts
-
-- **Agent Builder** - Create agents from JSON configs with model settings, tools, and MCP servers
-- **Distributed Runtime** - Agents run on the server with tools executing on any connected device
-- **Persistent Memory** - PostgreSQL for long-term storage, Redis for live streaming state
-- **Multi-client Support** - Web, mobile, Node.js clients via SSE + WebSockets
-
-## 🛠️ Tech Stack
-
-| Purpose          | Technology                |
-| ---------------- | ------------------------- |
-| AI Agent Brain   | Vercel AI SDK (Core)      |
-| Gateway Server   | Node.js + Express         |
-| React SDK        | React + TypeScript        |
-| Build Tool       | tsup / Vite               |
-| Package Manager  | pnpm                      |
-
-## 📚 Documentation
-
-- [Platform Architecture](./hsafa-docs/idea-docs/11-agent-builder-server.mdx)
-- [Integration Guide](./INTEGRATION_GUIDE.md)
-- [React SDK Docs](./react-sdk/DOCUMENTATION.md)
-
-## 🤝 Contributing
-
-This is a monorepo managed with pnpm workspaces. Each package has its own `README.md` with specific documentation.
-
-## 📄 License
-
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
-See the [LICENSE](./LICENSE) file for details.
+[AGPL-3.0](./LICENSE)
