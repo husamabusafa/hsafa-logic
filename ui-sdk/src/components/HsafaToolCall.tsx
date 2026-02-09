@@ -197,6 +197,7 @@ const TOOL_STYLES = `
 
     border-radius: 0.5rem;
     border: 1px solid var(--_border);
+    margin-top: 0.5rem;
     margin-bottom: 0.5rem;
     overflow: hidden;
     background: var(--_bg);

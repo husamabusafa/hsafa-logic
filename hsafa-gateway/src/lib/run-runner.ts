@@ -92,6 +92,8 @@ export async function executeRun(runId: string): Promise<void> {
 
     const config = agent.configJson as unknown as AgentConfig;
 
+    const isGoToSpaceRun = !!(run.metadata as any)?.originSmartSpaceId;
+
     const built = await buildAgent({
       config,
       runContext: {
@@ -99,6 +101,7 @@ export async function executeRun(runId: string): Promise<void> {
         agentEntityId: run.agentEntityId,
         smartSpaceId: run.smartSpaceId,
         agentId: run.agentId,
+        isGoToSpaceRun,
       },
     });
 
@@ -156,6 +159,11 @@ export async function executeRun(runId: string): Promise<void> {
 
     contextParts.push('Messages from other participants are prefixed with [Name] for identification. Do NOT prefix your own responses with your name or any tag.');
 
+    // goToSpace child runs: tell the agent it must carry out the task
+    if (isGoToSpaceRun) {
+      contextParts.push('You have a task to carry out in this space. Read the latest message and do exactly what it says. Do not suggest or advise — act on it yourself. Respond directly to the participants here.');
+    }
+
     // Tag messages with sender identity
     // - user/system messages: always tagged
     // - assistant messages from OTHER agents: tagged so this agent can tell them apart
@@ -190,6 +198,19 @@ export async function executeRun(runId: string): Promise<void> {
         role: 'system',
         parts: [{ type: 'text', text: contextParts.join('\n') }],
       });
+    }
+
+    // goToSpace child runs: append the instruction as a synthetic user message.
+    // This is in-memory only (never persisted to DB) so the agent responds to it
+    // naturally as the last message, without the real user ever seeing it.
+    if (isGoToSpaceRun) {
+      const goToInstruction = (run.metadata as any)?.instruction;
+      if (goToInstruction) {
+        aiSdkUiMessages.push({
+          role: 'user',
+          parts: [{ type: 'text', text: `[Task] ${goToInstruction}\n\nCarry out this task now. Respond directly to the people in this space.` }],
+        });
+      }
     }
 
     const modelMessages = await convertToModelMessages(aiSdkUiMessages as any);
@@ -383,13 +404,15 @@ export async function executeRun(runId: string): Promise<void> {
     await emitEvent('run.completed', { status: 'completed', text: finalText });
 
     // Trigger other agents in the SmartSpace (agent message triggers other agents)
-    const triggerDepth = (run.metadata as any)?.triggerDepth ?? 0;
-    
-    await triggerAgentsInSmartSpace({
-      smartSpaceId: run.smartSpaceId,
-      senderEntityId: run.agentEntityId,
-      triggerDepth,
-    });
+    // Skip triggering for goToSpace child runs — they are isolated task runs, not conversations
+    if (!isGoToSpaceRun) {
+      const triggerDepth = (run.metadata as any)?.triggerDepth ?? 0;
+      await triggerAgentsInSmartSpace({
+        smartSpaceId: run.smartSpaceId,
+        senderEntityId: run.agentEntityId,
+        triggerDepth,
+      });
+    }
   } catch (error) {
     if (error instanceof AgentBuildError) {
       await emitRunEvent('agent.build.error', { error: error.message });

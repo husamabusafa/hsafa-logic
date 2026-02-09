@@ -20,6 +20,14 @@ export async function initPrebuiltTools(): Promise<void> {
     await import('./set-goals.js');
     await import('./get-goals.js');
     await import('./delete-goals.js');
+    await import('./get-memories.js');
+    await import('./set-memories.js');
+    await import('./delete-memories.js');
+    await import('./get-plans.js');
+    await import('./set-plans.js');
+    await import('./delete-plans.js');
+    await import('./go-to-space.js');
+    await import('./get-spaces.js');
   })();
   return _initPromise;
 }

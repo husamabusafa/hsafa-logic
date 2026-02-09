@@ -47,8 +47,8 @@ enum ToolResultSource {
 }
 
 enum PlanStatus {
-  active
-  paused
+  pending
+  running
   completed
   canceled
 }
@@ -319,13 +319,16 @@ model Memory {
 model Plan {
   id           String     @id @default(uuid()) @db.Uuid
   entityId     String     @map("entity_id") @db.Uuid // Agent Entity
-  name         String?
-  schedule     String     // Cron expression or ISO timestamp
+  name         String
+  description  String?    @db.Text // What this plan is about
   instruction  String?    @db.Text // What to do when triggered
-  targetSmartSpaceId String?   @map("target_smart_space_id") @db.Uuid
-  status       PlanStatus @default(active)
+  isRecurring  Boolean    @default(false) @map("is_recurring")
+  cron         String?    // Cron expression for recurring plans (e.g. "0 9 * * 1" = every Monday 9am)
+  scheduledAt  DateTime?  @map("scheduled_at") @db.Timestamptz(6) // Exact time for one-time plans
+  nextRunAt    DateTime?  @map("next_run_at") @db.Timestamptz(6)  // Computed: next execution time
   lastRunAt    DateTime?  @map("last_run_at") @db.Timestamptz(6)
-  nextRunAt    DateTime?  @map("next_run_at") @db.Timestamptz(6)
+  status       PlanStatus @default(pending)
+  completedAt  DateTime?  @map("completed_at") @db.Timestamptz(6)
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
