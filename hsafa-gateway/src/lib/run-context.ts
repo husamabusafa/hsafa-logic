@@ -17,6 +17,8 @@ export interface RunContext {
   };
   agentDisplayName: string;
   isGoToSpaceRun: boolean;
+  isPlanRun: boolean;
+  plan: PlanRunData | null;
   spaceMembers: SpaceMember[];
   smartSpace: { name: string | null } | null;
   triggeredByEntity: { displayName: string | null; type: string } | null;
@@ -77,6 +79,13 @@ export interface AgentPlan {
   createdAt: Date;
 }
 
+export interface PlanRunData {
+  planId: string;
+  planName: string;
+  planDescription: string | null;
+  planInstruction: string | null;
+}
+
 export interface CrossSpaceDigest {
   spaceId: string;
   spaceName: string;
@@ -94,6 +103,15 @@ export interface CrossSpaceDigest {
  */
 export async function loadRunContext(run: RunContext['run']): Promise<RunContext> {
   const isGoToSpaceRun = !!(run.metadata as any)?.originSmartSpaceId;
+  const isPlanRun = !!(run.metadata as any)?.isPlanRun;
+  const plan: PlanRunData | null = isPlanRun
+    ? {
+        planId: (run.metadata as any).planId,
+        planName: (run.metadata as any).planName,
+        planDescription: (run.metadata as any).planDescription ?? null,
+        planInstruction: (run.metadata as any).planInstruction ?? null,
+      }
+    : null;
 
   // Load space members + triggering entity + agent display name for run context
   const [spaceMembers, smartSpace, triggeredByEntity, agentEntity, agentGoals, agentMemories, agentMemberships, agentPlans] = await Promise.all([
@@ -177,6 +195,8 @@ export async function loadRunContext(run: RunContext['run']): Promise<RunContext
     run,
     agentDisplayName,
     isGoToSpaceRun,
+    isPlanRun,
+    plan,
     spaceMembers,
     smartSpace,
     triggeredByEntity,

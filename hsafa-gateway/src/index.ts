@@ -8,6 +8,7 @@ import { runsRouter } from './routes/runs.js';
 import { prisma } from './lib/db.js';
 import { redis } from './lib/redis.js';
 import { setupWebSocketServer } from './lib/websocket.js';
+import { startPlanScheduler } from './lib/plan-scheduler.js';
 
 const app = express();
 const server = createServer(app);
@@ -67,4 +68,7 @@ server.listen(PORT, async () => {
   } catch (error) {
     console.error('❌ Redis connection failed:', error);
   }
+
+  // Start the plan scheduler after DB + Redis are ready
+  startPlanScheduler();
 });

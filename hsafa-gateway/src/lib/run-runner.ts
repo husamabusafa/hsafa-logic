@@ -90,6 +90,7 @@ export async function executeRun(runId: string): Promise<void> {
 
     const config = agent.configJson as unknown as AgentConfig;
     const isGoToSpaceRun = !!(run.metadata as any)?.originSmartSpaceId;
+    const isPlanRun = !!(run.metadata as any)?.isPlanRun;
 
     // ── 2. Build agent (model + tools) ────────────────────────────────────
 
@@ -139,38 +140,42 @@ export async function executeRun(runId: string): Promise<void> {
       parts: orderedParts.length > 0 ? orderedParts : [{ type: 'text', text: finalText ?? '' }],
     };
 
-    // For goToSpace child runs, attach provenance so future runs know why this message exists
-    const messageMetadata: Record<string, unknown> = { uiMessage: assistantMessage };
-    if (isGoToSpaceRun) {
-      const meta = run.metadata as any;
-      messageMetadata.provenance = {
-        originSpaceId: meta?.originSmartSpaceId,
-        originSpaceName: meta?.originSmartSpaceName,
-        instruction: meta?.instruction,
-        parentRunId: meta?.parentRunId,
-      };
+    // Plan runs: agent is not in a space, so don't persist a message or trigger agents.
+    // The agent uses goToSpace to interact — those child runs handle their own messages.
+    if (!isPlanRun) {
+      // For goToSpace child runs, attach provenance so future runs know why this message exists
+      const messageMetadata: Record<string, unknown> = { uiMessage: assistantMessage };
+      if (isGoToSpaceRun) {
+        const meta = run.metadata as any;
+        messageMetadata.provenance = {
+          originSpaceId: meta?.originSmartSpaceId,
+          originSpaceName: meta?.originSmartSpaceName,
+          instruction: meta?.instruction,
+          parentRunId: meta?.parentRunId,
+        };
+      }
+
+      const dbMessage = await createSmartSpaceMessage({
+        smartSpaceId: run.smartSpaceId,
+        entityId: run.agentEntityId,
+        role: 'assistant',
+        content: finalText,
+        metadata: messageMetadata as unknown as Prisma.InputJsonValue,
+        runId,
+      });
+
+      // Use DB record ID so SSE event message IDs match messages.list() results
+      const emittedMessage = { ...assistantMessage, id: dbMessage.id };
+
+      await emitSmartSpaceEvent(
+        run.smartSpaceId,
+        'smartSpace.message',
+        { message: emittedMessage },
+        { runId, agentEntityId: run.agentEntityId }
+      );
+
+      await emitEvent('message.assistant', { message: emittedMessage });
     }
-
-    const dbMessage = await createSmartSpaceMessage({
-      smartSpaceId: run.smartSpaceId,
-      entityId: run.agentEntityId,
-      role: 'assistant',
-      content: finalText,
-      metadata: messageMetadata as unknown as Prisma.InputJsonValue,
-      runId,
-    });
-
-    // Use DB record ID so SSE event message IDs match messages.list() results
-    const emittedMessage = { ...assistantMessage, id: dbMessage.id };
-
-    await emitSmartSpaceEvent(
-      run.smartSpaceId,
-      'smartSpace.message',
-      { message: emittedMessage },
-      { runId, agentEntityId: run.agentEntityId }
-    );
-
-    await emitEvent('message.assistant', { message: emittedMessage });
     
     // Emit finish with full message
     await emitEvent('finish', { messageId, message: assistantMessage });
@@ -178,8 +183,8 @@ export async function executeRun(runId: string): Promise<void> {
     await emitEvent('run.completed', { status: 'completed', text: finalText });
 
     // ── 6. Trigger other agents ───────────────────────────────────────────
-    // Skip triggering for goToSpace child runs — they are isolated task runs, not conversations
-    if (!isGoToSpaceRun) {
+    // Skip triggering for goToSpace child runs and plan runs
+    if (!isGoToSpaceRun && !isPlanRun) {
       const triggerDepth = (run.metadata as any)?.triggerDepth ?? 0;
       await triggerAgentsInSmartSpace({
         smartSpaceId: run.smartSpaceId,

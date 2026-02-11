@@ -112,13 +112,14 @@ registerPrebuiltTool('setPlans', {
       const isRecurring = !!plan.cron;
       const nextRunAt = computeNextRunAt(plan.cron, plan.scheduledAt);
 
-      if (plan.match) {
-        const lower = plan.match.toLowerCase();
+      // Try to match an existing plan for update
+      const matchTrimmed = (plan.match || '').trim();
+      if (matchTrimmed) {
+        const lower = matchTrimmed.toLowerCase();
         const found = existingPlans.filter((p: any) => (p.name || '').toLowerCase().includes(lower));
 
-        if (found.length === 0) {
-          results.push({ action: 'not_found', name: plan.name, nextRunAt: null, ambiguousCandidates: [] });
-        } else if (found.length === 1) {
+        if (found.length === 1) {
+          // Exact match — update existing plan
           await (prisma.plan as any).update({
             where: { id: found[0].id },
             data: {
@@ -133,33 +134,38 @@ registerPrebuiltTool('setPlans', {
             },
           });
           results.push({ action: 'updated', name: plan.name, nextRunAt: nextRunAt?.toISOString() ?? null });
-        } else {
+          continue;
+        } else if (found.length > 1) {
+          // Multiple matches — ambiguous, ask for more specificity
           results.push({ action: 'ambiguous', name: plan.name, nextRunAt: null, ambiguousCandidates: found.map((p: any) => p.name) });
-        }
-      } else {
-        if (!plan.cron && !plan.scheduledAt) {
-          results.push({
-            action: 'error',
-            name: plan.name,
-            nextRunAt: null,
-          });
           continue;
         }
-        await (prisma.plan as any).create({
-          data: {
-            entityId: agentEntityId,
-            name: plan.name,
-            description: plan.description ?? null,
-            instruction: plan.instruction ?? null,
-            isRecurring,
-            cron: plan.cron ?? null,
-            scheduledAt: plan.scheduledAt ? new Date(plan.scheduledAt) : null,
-            nextRunAt,
-            status: plan.status ?? 'pending',
-          },
-        });
-        results.push({ action: 'created', name: plan.name, nextRunAt: nextRunAt?.toISOString() ?? null });
+        // found.length === 0 — no match, fall through to create
       }
+
+      // Create new plan
+      if (!plan.cron && !plan.scheduledAt) {
+        results.push({
+          action: 'error',
+          name: plan.name,
+          nextRunAt: null,
+        });
+        continue;
+      }
+      await (prisma.plan as any).create({
+        data: {
+          entityId: agentEntityId,
+          name: plan.name,
+          description: plan.description ?? null,
+          instruction: plan.instruction ?? null,
+          isRecurring,
+          cron: plan.cron || null,
+          scheduledAt: plan.scheduledAt ? new Date(plan.scheduledAt) : null,
+          nextRunAt,
+          status: plan.status ?? 'pending',
+        },
+      });
+      results.push({ action: 'created', name: plan.name, nextRunAt: nextRunAt?.toISOString() ?? null });
     }
 
     const allPlans: any[] = await (prisma.plan as any).findMany({

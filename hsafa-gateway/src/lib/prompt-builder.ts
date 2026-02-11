@@ -423,13 +423,88 @@ async function buildNormalRunMessages(ctx: RunContext) {
   return convertToModelMessages(aiSdkUiMessages as any);
 }
 
+// ─── Plan run message builder ────────────────────────────────────────────────
+
+async function buildPlanRunMessages(ctx: RunContext) {
+  const {
+    run,
+    agentDisplayName,
+    plan,
+    agentGoals,
+    agentMemories,
+    agentMemberships,
+    agentPlans,
+    crossSpaceMessages,
+  } = ctx;
+
+  const systemParts: string[] = [];
+
+  systemParts.push(`You are ${agentDisplayName}.`);
+  systemParts.push(`Current time: ${new Date().toISOString()}`);
+  systemParts.push('');
+
+  // Explain the plan trigger
+  systemParts.push('======================================================================');
+  systemParts.push('YOU WERE TRIGGERED BY A PLAN');
+  systemParts.push('======================================================================');
+  systemParts.push('');
+  systemParts.push('You are not in any specific space right now. You were triggered automatically by one of your scheduled plans.');
+  systemParts.push('');
+
+  if (plan) {
+    systemParts.push(`Plan name: ${plan.planName}`);
+    if (plan.planDescription) {
+      systemParts.push(`Plan description: ${plan.planDescription}`);
+    }
+    if (plan.planInstruction) {
+      systemParts.push('');
+      systemParts.push('Your task:');
+      systemParts.push(plan.planInstruction);
+    }
+  }
+
+  systemParts.push('');
+  systemParts.push('======================================================================');
+  systemParts.push('HOW TO ACT');
+  systemParts.push('======================================================================');
+  systemParts.push('');
+  systemParts.push('You are NOT in any space. Your response will NOT be posted anywhere automatically.');
+  systemParts.push('To interact with people or spaces, you MUST use the goToSpace tool. Look at your spaces list below to decide where to go.');
+  systemParts.push('You can go to multiple spaces if needed — just call goToSpace multiple times.');
+  systemParts.push('If the plan requires no interaction (e.g. updating your own goals or memories), you can do that directly without going to a space.');
+  systemParts.push('');
+  systemParts.push('RULES:');
+  systemParts.push('- Do NOT say "I was triggered by a plan" or "My plan told me to do this" to people. Act naturally.');
+  systemParts.push('- If you need to talk to someone, go to the relevant space and speak naturally as yourself.');
+  systemParts.push('- After completing the task, consider if your plans need updating (e.g. mark a one-time task as done, adjust recurring schedules).');
+
+  // Inject all agent context
+  systemParts.push(...formatGoalsBlock(agentGoals));
+  systemParts.push(...formatMemoriesBlock(agentMemories));
+  systemParts.push(...formatPlansBlock(agentPlans));
+  systemParts.push(...formatSpacesBlock(agentMemberships, run.smartSpaceId));
+  systemParts.push(...formatCrossSpaceDigest(crossSpaceMessages, run.agentEntityId, agentDisplayName));
+
+  const planSystemPrompt = systemParts.join('\n');
+
+  const aiSdkUiMessages = [
+    { role: 'system' as const, parts: [{ type: 'text' as const, text: planSystemPrompt }] },
+    { role: 'user' as const, parts: [{ type: 'text' as const, text: 'Your plan has triggered. Execute it now.' }] },
+  ];
+
+  return convertToModelMessages(aiSdkUiMessages as any);
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
  * Builds the model messages for a run based on its context.
- * Delegates to goToSpace or normal builder depending on run type.
+ * Delegates to plan, goToSpace, or normal builder depending on run type.
  */
 export async function buildModelMessages(ctx: RunContext) {
+  if (ctx.isPlanRun) {
+    return buildPlanRunMessages(ctx);
+  }
   if (ctx.isGoToSpaceRun) {
     return buildGoToSpaceMessages(ctx);
   }
