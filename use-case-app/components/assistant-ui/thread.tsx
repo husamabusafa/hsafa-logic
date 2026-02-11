@@ -112,17 +112,40 @@ function TextWithCaret({
   );
 }
 
+function formatMessageTime(date: Date | undefined): string {
+  if (!date) return '';
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 function UserMessage() {
   const { membersById, currentEntityId } = useMembers();
   const entityId = useMessage((m) => (m.metadata as any)?.custom?.entityId as string | undefined);
+  const createdAt = useMessage((m) => m.createdAt);
   const member = entityId ? membersById[entityId] : undefined;
   const displayName = member?.displayName || "You";
 
   return (
     <MessagePrimitive.Root className="flex flex-col items-end py-2" data-role="user">
-      <span className="mb-1 mr-1 text-xs font-medium text-muted-foreground">
-        {displayName}
-      </span>
+      <div className="flex items-center gap-2 mb-1 mr-1">
+        <span className="text-xs font-medium text-muted-foreground">
+          {displayName}
+        </span>
+        {createdAt && (
+          <span className="text-[10px] text-muted-foreground/60">
+            {formatMessageTime(createdAt as Date)}
+          </span>
+        )}
+      </div>
       <div className="max-w-[85%] rounded-2xl bg-primary text-primary-foreground px-3 py-2 text-sm">
         <MessagePrimitive.Content />
       </div>
@@ -134,6 +157,7 @@ function AssistantMessage() {
   const { membersById } = useMembers();
   const entityId = useMessage((m) => (m.metadata as any)?.custom?.entityId as string | undefined);
   const isOtherHuman = useMessage((m) => (m.metadata as any)?.custom?.isOtherHuman === true);
+  const createdAt = useMessage((m) => m.createdAt);
   const member = entityId ? membersById[entityId] : undefined;
   const displayName = member?.displayName || (isOtherHuman ? "User" : "AI Assistant");
 
@@ -150,6 +174,11 @@ function AssistantMessage() {
         <span className="text-xs font-medium text-muted-foreground">
           {displayName}
         </span>
+        {createdAt && (
+          <span className="text-[10px] text-muted-foreground/60">
+            {formatMessageTime(createdAt as Date)}
+          </span>
+        )}
       </div>
       <div className="text-sm pl-8">
         <MessagePrimitive.Parts

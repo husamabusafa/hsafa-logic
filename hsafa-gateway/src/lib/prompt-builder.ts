@@ -149,7 +149,8 @@ function formatCrossSpaceDigest(
         ? agentDisplayName
         : (m.entity?.displayName || 'Unknown');
       const text = m.content ? (m.content.length > 120 ? m.content.slice(0, 120) + '…' : m.content) : '(empty)';
-      return `${name}: ${text}`;
+      const time = m.createdAt ? new Date(m.createdAt).toISOString() : '';
+      return `[${time}] ${name}: ${text}`;
     });
     lines.push(`- "${s.spaceName}": ${msgLines.join(' / ')}`);
   }
@@ -182,6 +183,7 @@ async function buildGoToSpaceMessages(ctx: RunContext) {
             role: true,
             content: true,
             entityId: true,
+            createdAt: true,
             entity: { select: { displayName: true, type: true } },
           },
         }).then((msgs) => msgs.reverse())
@@ -197,16 +199,18 @@ async function buildGoToSpaceMessages(ctx: RunContext) {
       role: true,
       content: true,
       entityId: true,
+      createdAt: true,
       entity: { select: { displayName: true, type: true } },
     },
   }).then((msgs) => msgs.reverse());
 
   // Format messages as "Name: text" for system prompt
-  const formatMsgLine = (m: { content: string | null; entityId: string; entity: { displayName: string | null; type: string } | null }) => {
+  const formatMsgLine = (m: { content: string | null; entityId: string; entity: { displayName: string | null; type: string } | null; createdAt?: Date | string }) => {
     const name = m.entityId === run.agentEntityId
       ? agentDisplayName
       : (m.entity?.displayName || 'Unknown');
-    return `${name}: ${m.content || '(empty)'}`;
+    const time = m.createdAt ? new Date(m.createdAt).toISOString() : '';
+    return `[${time}] ${name}: ${m.content || '(empty)'}`;
   };
 
   // Build the v3 isolated system prompt

@@ -4,6 +4,7 @@ import {
   ThreadPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
+  useMessage,
 } from "@assistant-ui/react";
 import { ReasoningPart } from "./HsafaReasoning";
 import { ToolCallPart } from "./HsafaToolCall";
@@ -141,15 +142,38 @@ function HsafaComposer({ placeholder }: { placeholder: string }) {
 // User Message
 // =============================================================================
 
+function formatMessageTime(date: Date | undefined): string {
+  if (!date) return '';
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 function HsafaUserMessage() {
+  const createdAt = useMessage((m) => m.createdAt);
+
   return (
     <MessagePrimitive.Root
       style={{
         display: "flex",
-        justifyContent: "flex-end",
+        flexDirection: "column",
+        alignItems: "flex-end",
         marginBottom: "0.75rem",
       }}
     >
+      {createdAt && (
+        <span style={{ fontSize: "0.65rem", color: "#aaa", marginBottom: "0.2rem" }}>
+          {formatMessageTime(createdAt as Date)}
+        </span>
+      )}
       <div
         style={{
           maxWidth: "75%",
@@ -172,6 +196,8 @@ function HsafaUserMessage() {
 // =============================================================================
 
 function HsafaAssistantMessage() {
+  const createdAt = useMessage((m) => m.createdAt);
+
   return (
     <MessagePrimitive.Root
       style={{
@@ -187,6 +213,11 @@ function HsafaAssistantMessage() {
           lineHeight: 1.5,
         }}
       >
+        {createdAt && (
+          <span style={{ fontSize: "0.65rem", color: "#aaa", display: "block", marginBottom: "0.2rem" }}>
+            {formatMessageTime(createdAt as Date)}
+          </span>
+        )}
         <MessagePrimitive.Parts
           components={{
             Reasoning: ReasoningPart,
