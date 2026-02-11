@@ -4,9 +4,22 @@ import { prisma } from './db.js';
 
 export type EmitEventFn = (type: string, payload: Record<string, unknown>) => Promise<void>;
 
+// Delta event types — high-frequency, streamed via Redis only, NOT persisted to Postgres.
+// The final assembled content is stored in SmartSpaceMessage / ToolCall records.
+const DELTA_EVENT_TYPES = new Set([
+  'text-delta',
+  'reasoning-delta',
+  'tool-input-delta',
+]);
+
+// Redis stream TTL: 2 hours — enough for reconnect during/after a run
+const STREAM_TTL_SECONDS = 2 * 60 * 60;
+
 /**
  * Creates an event emitter for a specific run.
  * Handles Redis streaming, pub/sub notification, and Postgres persistence.
+ * Delta events (text-delta, reasoning-delta, tool-input-delta) are only written
+ * to Redis for real-time streaming — they are NOT persisted to Postgres.
  */
 export async function createEmitEvent(runId: string): Promise<{ emitEvent: EmitEventFn }> {
   const streamKey = `run:${runId}:stream`;
@@ -24,21 +37,26 @@ export async function createEmitEvent(runId: string): Promise<{ emitEvent: EmitE
     seq += 1;
     const ts = new Date().toISOString();
 
-    // Write to Redis Stream
+    // Write to Redis Stream (all events)
     await redis.xadd(streamKey, '*', 'type', type, 'ts', ts, 'payload', JSON.stringify(payload));
+
+    // Set TTL on the stream so it auto-expires
+    await redis.expire(streamKey, STREAM_TTL_SECONDS);
 
     // Notify subscribers
     await redis.publish(notifyChannel, JSON.stringify({ type, seq }));
 
-    // Persist to Postgres
-    await prisma.runEvent.create({
-      data: {
-        runId,
-        seq: BigInt(seq),
-        type,
-        payload: payload as Prisma.InputJsonValue,
-      },
-    });
+    // Persist to Postgres — skip high-frequency delta events
+    if (!DELTA_EVENT_TYPES.has(type)) {
+      await prisma.runEvent.create({
+        data: {
+          runId,
+          seq: BigInt(seq),
+          type,
+          payload: payload as Prisma.InputJsonValue,
+        },
+      });
+    }
   };
 
   return { emitEvent };

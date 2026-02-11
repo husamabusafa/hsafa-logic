@@ -152,6 +152,33 @@ export async function executeRun(runId: string): Promise<void> {
 
     const agentDisplayName = agentEntity?.displayName || 'AI Assistant';
 
+    // Load last 2 messages from each OTHER space for cross-space awareness
+    console.log(`[run-runner] Agent "${agentDisplayName}" is in ${agentMemberships.length} spaces. Current: ${run.smartSpaceId}`);
+    const otherSpaceIds = agentMemberships
+      .map((m) => m.smartSpace.id)
+      .filter((id) => id !== run.smartSpaceId);
+    console.log(`[run-runner] Other space IDs for digest: ${otherSpaceIds.length > 0 ? otherSpaceIds.join(', ') : '(none)'}`);
+
+    const crossSpaceMessages = otherSpaceIds.length > 0
+      ? await Promise.all(
+          otherSpaceIds.map(async (spaceId) => {
+            const msgs = await prisma.smartSpaceMessage.findMany({
+              where: { smartSpaceId: spaceId },
+              orderBy: { seq: 'desc' },
+              take: 2,
+              select: {
+                content: true,
+                entityId: true,
+                entity: { select: { displayName: true, type: true } },
+                createdAt: true,
+              },
+            });
+            const space = agentMemberships.find((m) => m.smartSpace.id === spaceId)?.smartSpace;
+            return { spaceId, spaceName: space?.name || spaceId, messages: msgs.reverse() };
+          })
+        )
+      : [];
+
     // Format spaces list block for system prompt injection
     const formatSpacesBlock = (): string[] => {
       if (agentMemberships.length <= 1) return [];
@@ -204,6 +231,27 @@ export async function executeRun(runId: string): Promise<void> {
       for (const m of agentMemories) {
         const topicTag = m.topic ? `[${m.topic}] ` : '';
         lines.push(`- ${topicTag}${m.content}`);
+      }
+      return lines;
+    };
+
+    // Format cross-space digest for background awareness
+    const formatCrossSpaceDigest = (): string[] => {
+      const spacesWithMessages = crossSpaceMessages.filter((s) => s.messages.length > 0);
+      if (spacesWithMessages.length === 0) return [];
+      const lines: string[] = [
+        '',
+        'BACKGROUND — Recent activity in your other spaces (for general awareness only — do not act on, reference, or respond to these unless something is clearly and directly relevant to what is being discussed right now):',
+      ];
+      for (const s of spacesWithMessages) {
+        const msgLines = s.messages.map((m) => {
+          const name = m.entityId === run.agentEntityId
+            ? agentDisplayName
+            : (m.entity?.displayName || 'Unknown');
+          const text = m.content ? (m.content.length > 120 ? m.content.slice(0, 120) + '…' : m.content) : '(empty)';
+          return `${name}: ${text}`;
+        });
+        lines.push(`- "${s.spaceName}": ${msgLines.join(' / ')}`);
       }
       return lines;
     };
@@ -406,6 +454,8 @@ export async function executeRun(runId: string): Promise<void> {
       contextParts.push(...formatMemoriesBlock());
 
       contextParts.push(...formatSpacesBlock());
+
+      contextParts.push(...formatCrossSpaceDigest());
 
       // Tag messages with sender identity
       // - user/system messages: always tagged

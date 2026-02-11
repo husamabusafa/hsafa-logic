@@ -305,13 +305,34 @@ runsRouter.get('/:runId/events', requireAuth(), async (req: Request, res: Respon
     const run = await verifyRunMembership(req, res, runId);
     if (!run) return;
 
-    const events = await prisma.runEvent.findMany({
+    const streamKey = `run:${runId}:stream`;
+
+    // Read all events from Redis Stream (includes deltas that aren't in Postgres)
+    const streamEntries = await redis.xrange(streamKey, '-', '+');
+
+    if (streamEntries && streamEntries.length > 0) {
+      const events = streamEntries.map(([id, fields], idx) => {
+        const event = toSSEEvent(id, fields);
+        return {
+          id: event.id,
+          runId,
+          seq: idx + 1,
+          type: event.type,
+          payload: event.data,
+          createdAt: event.ts,
+        };
+      });
+
+      return res.json({ events });
+    }
+
+    // Fallback: if Redis stream expired, read coarse events from Postgres
+    const pgEvents = await prisma.runEvent.findMany({
       where: { runId },
       orderBy: { seq: 'asc' },
     });
 
-    // Convert BigInt seq to number for JSON serialization
-    const serializedEvents = events.map(e => ({
+    const serializedEvents = pgEvents.map(e => ({
       ...e,
       seq: Number(e.seq),
     }));
