@@ -192,3 +192,7 @@ All system prompts include the same agent context blocks:
 - **Cross-space digest** — Last 2 messages from each other space (with timestamps). Shown for background awareness.
 
 The order is always: Goals → Memories → Plans → Spaces → Cross-space digest.
+
+---
+
+> **Note:** A SmartSpace can contain any combination of participants — humans, AI agents, Node.js services, or all of them together. The system prompts currently use human-oriented language (e.g. "talk to people", "speak naturally"), but the underlying model is fully entity-agnostic. The prompt wording does not need to change for this to work — agents already see each member's type label (human/agent/system) and adapt accordingly.

@@ -223,7 +223,14 @@ async function buildGoToSpaceMessages(ctx: RunContext) {
     'You are a single entity that operates across multiple spaces. You move between ' +
     'spaces to talk to people, just like a person walks between rooms. You are NOT ' +
     'a message relay, NOT a notification system, and NOT executing a dispatched task. ' +
-    'You are simply continuing your own natural flow of conversation.'
+    'You are simply continuing your own natural flow of interaction.'
+  );
+  systemParts.push(
+    'Spaces can contain any combination of participants: humans, other AI agents, ' +
+    'services (Node.js backends, integrations, IoT devices), or all of them together. ' +
+    'Each participant is labeled with their type (human/agent/system). Adapt your ' +
+    'communication style accordingly — speak naturally to humans, and be more direct ' +
+    'or structured when interacting with agents or services.'
   );
 
   // Origin context
@@ -285,9 +292,9 @@ async function buildGoToSpaceMessages(ctx: RunContext) {
   systemParts.push(instruction);
   systemParts.push('');
   systemParts.push('RULES:');
-  systemParts.push('- Address the people in THIS space directly. You are talking TO them, not ABOUT them.');
+  systemParts.push('- Address the participants in THIS space directly. You are talking TO them, not ABOUT them.');
   systemParts.push(`- Speak naturally as yourself. You remember being in "${originSmartSpaceName}" — use that context to speak with full understanding, not like you're reading from a script.`);
-  systemParts.push('- Do NOT say things like "I was asked to tell you" or "I have a message for you" or "Just a heads up." You are not delivering a message. You are talking to people you know, about something you know, because you were part of the original conversation.');
+  systemParts.push('- Do NOT say things like "I was asked to tell you" or "I have a message for you" or "Just a heads up." You are not delivering a message. You are talking to participants you know, about something you know, because you were part of the original conversation.');
   systemParts.push('- Do NOT narrate what you are doing. Do not say "I am here to inform you" or "I am passing along information." Just say what needs to be said.');
   systemParts.push('- If the task requires action (e.g., scheduling, creating something), do it yourself using your available tools. Do not suggest that someone else do it.');
   systemParts.push(`- If you need to reference what was said in "${originSmartSpaceName}", do it naturally, for example "Husam mentioned..." — not "I received a task from ${originSmartSpaceName}."`);
@@ -346,7 +353,8 @@ async function buildNormalRunMessages(ctx: RunContext) {
   contextParts.push(`Current time: ${new Date().toISOString()}`);
 
   if (smartSpace?.name) {
-    contextParts.push(`You are ${agentDisplayName}. You are a single entity that operates across multiple spaces — you move between them like a person walking between rooms.`);
+    contextParts.push(`You are ${agentDisplayName}. You are a single entity that operates across multiple spaces — you move between them to interact with other participants.`);
+    contextParts.push('Spaces can contain any combination of participants: humans, other AI agents, services (Node.js backends, integrations, IoT devices), or all of them together. Each participant is labeled with their type (human/agent/system). Adapt your communication style accordingly — speak naturally to humans, and be more direct or structured when interacting with agents or services.');
     contextParts.push(`You are currently in "${smartSpace.name}" (id: ${run.smartSpaceId}). Any response you produce in this run will be automatically posted as a message in this space. Do NOT use the goToSpace tool to send messages here — goToSpace is ONLY for carrying out tasks in a different space.`);
   }
 
@@ -473,13 +481,14 @@ async function buildPlanRunMessages(ctx: RunContext) {
   systemParts.push('======================================================================');
   systemParts.push('');
   systemParts.push('You are NOT in any space. Your response will NOT be posted anywhere automatically.');
-  systemParts.push('To interact with people or spaces, you MUST use the goToSpace tool. Look at your spaces list below to decide where to go.');
+  systemParts.push('To interact with participants or spaces, you MUST use the goToSpace tool. Look at your spaces list below to decide where to go.');
+  systemParts.push('Spaces can contain any combination of participants: humans, other AI agents, services (Node.js backends, integrations, IoT devices), or all of them together. Each participant is labeled with their type (human/agent/system). Adapt your communication style accordingly — speak naturally to humans, and be more direct or structured when interacting with agents or services.');
   systemParts.push('You can go to multiple spaces if needed — just call goToSpace multiple times.');
   systemParts.push('If the plan requires no interaction (e.g. updating your own goals or memories), you can do that directly without going to a space.');
   systemParts.push('');
   systemParts.push('RULES:');
-  systemParts.push('- Do NOT say "I was triggered by a plan" or "My plan told me to do this" to people. Act naturally.');
-  systemParts.push('- If you need to talk to someone, go to the relevant space and speak naturally as yourself.');
+  systemParts.push('- Do NOT say "I was triggered by a plan" or "My plan told me to do this" to participants. Act naturally.');
+  systemParts.push('- If you need to interact with someone, go to the relevant space and communicate as yourself.');
   systemParts.push('- After completing the task, consider if your plans need updating (e.g. mark a one-time task as done, adjust recurring schedules).');
 
   // Inject all agent context
