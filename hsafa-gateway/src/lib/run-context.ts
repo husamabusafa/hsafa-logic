@@ -24,6 +24,7 @@ export interface RunContext {
   agentMemories: AgentMemory[];
   agentMemberships: AgentMembership[];
   crossSpaceMessages: CrossSpaceDigest[];
+  agentPlans: AgentPlan[];
 }
 
 export interface SpaceMember {
@@ -62,6 +63,20 @@ export interface AgentMembership {
   };
 }
 
+export interface AgentPlan {
+  id: string;
+  name: string;
+  description: string | null;
+  instruction: string | null;
+  isRecurring: boolean;
+  cron: string | null;
+  scheduledAt: Date | null;
+  nextRunAt: Date | null;
+  lastRunAt: Date | null;
+  status: string;
+  createdAt: Date;
+}
+
 export interface CrossSpaceDigest {
   spaceId: string;
   spaceName: string;
@@ -81,7 +96,7 @@ export async function loadRunContext(run: RunContext['run']): Promise<RunContext
   const isGoToSpaceRun = !!(run.metadata as any)?.originSmartSpaceId;
 
   // Load space members + triggering entity + agent display name for run context
-  const [spaceMembers, smartSpace, triggeredByEntity, agentEntity, agentGoals, agentMemories, agentMemberships] = await Promise.all([
+  const [spaceMembers, smartSpace, triggeredByEntity, agentEntity, agentGoals, agentMemories, agentMemberships, agentPlans] = await Promise.all([
     prisma.smartSpaceMembership.findMany({
       where: { smartSpaceId: run.smartSpaceId },
       include: { entity: { select: { id: true, displayName: true, type: true, metadata: true } } },
@@ -123,6 +138,10 @@ export async function loadRunContext(run: RunContext['run']): Promise<RunContext
         },
       },
     }),
+    (prisma.plan as any).findMany({
+      where: { entityId: run.agentEntityId, status: { in: ['pending', 'running'] } },
+      orderBy: [{ nextRunAt: 'asc' }],
+    }) as Promise<AgentPlan[]>,
   ]);
 
   const agentDisplayName = agentEntity?.displayName || 'AI Assistant';
@@ -165,5 +184,6 @@ export async function loadRunContext(run: RunContext['run']): Promise<RunContext
     agentMemories,
     agentMemberships,
     crossSpaceMessages,
+    agentPlans,
   };
 }

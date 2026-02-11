@@ -22,7 +22,7 @@ export async function initPrebuiltTools(): Promise<void> {
     // getMemories removed — memories are injected into the system prompt directly
     await import('./set-memories.js');
     await import('./delete-memories.js');
-    await import('./get-plans.js');
+    await import('./get-plans.js'); // registers getPreviousPlans (active plans are in system prompt)
     await import('./set-plans.js');
     await import('./delete-plans.js');
     await import('./go-to-space.js');

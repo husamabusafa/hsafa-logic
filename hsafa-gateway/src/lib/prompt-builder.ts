@@ -41,6 +41,70 @@ function formatMemoriesBlock(memories: RunContext['agentMemories']): string[] {
   return lines;
 }
 
+function formatRemainingTime(targetDate: Date): string {
+  const now = new Date();
+  const diffMs = targetDate.getTime() - now.getTime();
+
+  if (diffMs <= 0) return 'overdue';
+
+  const seconds = Math.floor(diffMs / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  const weeks = Math.floor(days / 7);
+  const months = Math.floor(days / 30);
+
+  const parts: string[] = [];
+
+  if (months > 0) {
+    parts.push(`${months} month${months > 1 ? 's' : ''}`);
+    const remDays = days - months * 30;
+    if (remDays > 0) parts.push(`${remDays} day${remDays > 1 ? 's' : ''}`);
+  } else if (weeks > 0) {
+    parts.push(`${weeks} week${weeks > 1 ? 's' : ''}`);
+    const remDays = days - weeks * 7;
+    if (remDays > 0) parts.push(`${remDays} day${remDays > 1 ? 's' : ''}`);
+  } else if (days > 0) {
+    parts.push(`${days} day${days > 1 ? 's' : ''}`);
+    const remHours = hours - days * 24;
+    if (remHours > 0) parts.push(`${remHours} hour${remHours > 1 ? 's' : ''}`);
+  } else if (hours > 0) {
+    parts.push(`${hours} hour${hours > 1 ? 's' : ''}`);
+    const remMins = minutes - hours * 60;
+    if (remMins > 0) parts.push(`${remMins} minute${remMins > 1 ? 's' : ''}`);
+  } else if (minutes > 0) {
+    parts.push(`${minutes} minute${minutes > 1 ? 's' : ''}`);
+  } else {
+    parts.push(`${seconds} second${seconds > 1 ? 's' : ''}`);
+  }
+
+  return parts.join(', ');
+}
+
+function formatPlansBlock(plans: RunContext['agentPlans']): string[] {
+  const lines: string[] = [
+    '',
+    'PLANS (your scheduled triggers):',
+    'Plans are how you stay alive and active. Each plan is a scheduled trigger that will wake you up at a specific time to perform a task. Without any plans, you will never be triggered again unless someone talks to you — so you should ALWAYS have at least one plan active.',
+    'When a plan triggers, you will be woken up with the plan\'s instruction and can act on it. Use your plan tools (setPlans, deletePlans) to manage them.',
+  ];
+  if (plans.length === 0) {
+    lines.push('⚠ You currently have NO active plans. You should create at least one plan to ensure you remain active and can be triggered in the future.');
+    return lines;
+  }
+  lines.push('Your current active plans:');
+  for (const p of plans) {
+    const type = p.isRecurring ? 'recurring' : 'one-time';
+    const schedule = p.cron ? `cron: ${p.cron}` : (p.scheduledAt ? `at: ${p.scheduledAt.toISOString()}` : 'no schedule');
+    const nextRun = p.nextRunAt ? p.nextRunAt.toISOString() : null;
+    const remaining = p.nextRunAt ? formatRemainingTime(p.nextRunAt) : null;
+    const desc = p.description ? ` — ${p.description}` : '';
+    const timeInfo = nextRun ? ` [next: ${nextRun}, in ${remaining}]` : '';
+    lines.push(`- ${p.name} (${type}, ${schedule})${desc}${timeInfo} [${p.status}]`);
+  }
+  return lines;
+}
+
 function formatSpacesBlock(
   memberships: RunContext['agentMemberships'],
   currentSmartSpaceId: string,
@@ -149,6 +213,7 @@ async function buildGoToSpaceMessages(ctx: RunContext) {
   const systemParts: string[] = [];
 
   systemParts.push(`You are ${agentDisplayName}.`);
+  systemParts.push(`Current time: ${new Date().toISOString()}`);
   systemParts.push('');
   systemParts.push(
     'You are a single entity that operates across multiple spaces. You move between ' +
@@ -227,6 +292,7 @@ async function buildGoToSpaceMessages(ctx: RunContext) {
 
   systemParts.push(...formatGoalsBlock(agentGoals));
   systemParts.push(...formatMemoriesBlock(agentMemories));
+  systemParts.push(...formatPlansBlock(ctx.agentPlans));
   // No spaces list in child runs — the agent should focus on the task, not navigate
 
   const goToSystemPrompt = systemParts.join('\n');
@@ -273,6 +339,8 @@ async function buildNormalRunMessages(ctx: RunContext) {
   // Build run context system message
   const contextParts: string[] = [];
 
+  contextParts.push(`Current time: ${new Date().toISOString()}`);
+
   if (smartSpace?.name) {
     contextParts.push(`You are ${agentDisplayName}. You are a single entity that operates across multiple spaces — you move between them like a person walking between rooms.`);
     contextParts.push(`You are currently in "${smartSpace.name}" (id: ${run.smartSpaceId}). Any response you produce in this run will be automatically posted as a message in this space. Do NOT use the goToSpace tool to send messages here — goToSpace is ONLY for carrying out tasks in a different space.`);
@@ -294,6 +362,7 @@ async function buildNormalRunMessages(ctx: RunContext) {
 
   contextParts.push(...formatGoalsBlock(agentGoals));
   contextParts.push(...formatMemoriesBlock(agentMemories));
+  contextParts.push(...formatPlansBlock(ctx.agentPlans));
   contextParts.push(...formatSpacesBlock(agentMemberships, run.smartSpaceId));
   contextParts.push(...formatCrossSpaceDigest(crossSpaceMessages, run.agentEntityId, agentDisplayName));
 
