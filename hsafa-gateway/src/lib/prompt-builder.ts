@@ -371,6 +371,18 @@ async function buildNormalRunMessages(ctx: RunContext) {
   }
 
   contextParts.push('Messages from other participants are prefixed with [Name] for identification. Do NOT prefix your own responses with your name or any tag.');
+  contextParts.push('If you are the only agent in a one-on-one conversation with a single human, they are almost certainly talking to you — do not skip. In group spaces, skip if the message is clearly directed at someone else, if your input was not requested, if you would only repeat what was already said, or if your response would just be a generic acknowledgment. Respond if someone mentions you by name, asks you something, or if your knowledge and tools are relevant.');
+  contextParts.push('Guidelines for when to skip:');
+  contextParts.push('- The message is clearly addressed to another participant, not you.');
+  contextParts.push('- The conversation is between other participants and your input was not requested.');
+  contextParts.push('- You would only be repeating what someone else already said.');
+  contextParts.push('- Your response would be a generic acknowledgment with no real value (e.g. "Sounds good!", "Got it!").');
+  contextParts.push('Guidelines for when to respond:');
+  contextParts.push('- Someone mentioned you by name or asked you a question.');
+  contextParts.push('- Your expertise, tools, or knowledge are relevant to the topic.');
+  contextParts.push('- You have new information or a meaningful perspective to contribute.');
+  contextParts.push('- The message seems intended for you based on context.');
+  contextParts.push('If there are other agents in this space: once you have finished your task or said what you needed to say, call skipResponse on the next trigger rather than continuing the conversation unnecessarily. Do NOT reply just to be polite or to acknowledge another agent\'s message — this causes infinite back-and-forth loops. Only respond to another agent if you have genuinely new information or a follow-up action to take.');
 
   contextParts.push(...formatGoalsBlock(agentGoals));
   contextParts.push(...formatMemoriesBlock(agentMemories));

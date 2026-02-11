@@ -590,11 +590,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       stream.on('run.canceled', (event: StreamEvent) => {
         const runId = event.runId || (event.data.runId as string);
         if (!runId) return;
-        setStreamingMessages((prev) =>
-          prev.map((sm) =>
-            sm.id === runId ? { ...sm, isStreaming: false } : sm
-          )
-        );
+        // Remove entirely — no persisted message will arrive for canceled runs
+        setStreamingMessages((prev) => prev.filter((sm) => sm.id !== runId));
       });
     };
 

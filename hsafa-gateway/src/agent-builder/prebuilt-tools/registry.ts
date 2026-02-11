@@ -26,6 +26,7 @@ export async function initPrebuiltTools(): Promise<void> {
     await import('./set-plans.js');
     await import('./delete-plans.js');
     await import('./go-to-space.js');
+    await import('./skip-response.js');
   })();
   return _initPromise;
 }

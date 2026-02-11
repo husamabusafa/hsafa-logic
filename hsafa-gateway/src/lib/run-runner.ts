@@ -115,7 +115,7 @@ export async function executeRun(runId: string): Promise<void> {
     const streamResult = await built.agent.stream({ messages: modelMessages });
     const messageId = `msg-${runId}-${Date.now()}`;
 
-    const { orderedParts, finalText } = await processStream(
+    const { orderedParts, finalText, skipped } = await processStream(
       streamResult.fullStream,
       messageId,
       runId,
@@ -127,7 +127,18 @@ export async function executeRun(runId: string): Promise<void> {
       await closeMCPClients(built.mcpClients);
     }
 
-    // ── 5. Persist message + emit completion events ───────────────────────
+    // ── 5. Handle skip (agent chose not to respond) ───────────────────────
+
+    if (skipped) {
+      await prisma.run.update({
+        where: { id: runId },
+        data: { status: 'canceled', completedAt: new Date() },
+      });
+      await emitEvent('run.canceled', { reason: 'skip' });
+      return;
+    }
+
+    // ── 6. Persist message + emit completion events ───────────────────────
 
     await prisma.run.update({
       where: { id: runId },
@@ -182,7 +193,7 @@ export async function executeRun(runId: string): Promise<void> {
     
     await emitEvent('run.completed', { status: 'completed', text: finalText });
 
-    // ── 6. Trigger other agents ───────────────────────────────────────────
+    // ── 7. Trigger other agents ───────────────────────────────────────────
     // Skip triggering for goToSpace child runs and plan runs
     if (!isGoToSpaceRun && !isPlanRun) {
       const triggerDepth = (run.metadata as any)?.triggerDepth ?? 0;

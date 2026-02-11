@@ -11,6 +11,7 @@ const PARTIAL_JSON_ALLOW = STR | OBJ | ARR | NUM | BOOL | NULL;
 export interface StreamResult {
   orderedParts: Array<{ type: string; [key: string]: unknown }>;
   finalText: string | undefined;
+  skipped: boolean;
 }
 
 /**
@@ -35,6 +36,7 @@ export async function processStream(
   let currentTextContent = '';   // Current text block accumulator
   const toolArgsAccumulator = new Map<string, string>(); // toolCallId -> accumulated args text
   const orderedParts: Array<{ type: string; [key: string]: unknown }> = [];
+  let skipped = false;
 
   // Flush current reasoning block into orderedParts
   const flushReasoning = () => {
@@ -130,6 +132,10 @@ export async function processStream(
       flushReasoning();
       
       await emitEvent('tool-input-available', { toolCallId, toolName, input });
+
+      if (toolName === 'skipResponse') {
+        skipped = true;
+      }
       
       orderedParts.push({ type: 'tool-call', toolCallId, toolName, args: input });
     }
@@ -169,5 +175,5 @@ export async function processStream(
 
   const finalText = orderedParts.find(p => p.type === 'text')?.text as string | undefined;
 
-  return { orderedParts, finalText };
+  return { orderedParts, finalText, skipped };
 }
