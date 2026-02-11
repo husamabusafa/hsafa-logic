@@ -90,7 +90,7 @@ importers:
       '@assistant-ui/react':
         specifier: ^0.10.25
         version: 0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3))
-      '@hsafa/react-sdk':
+      '@hsafa/react':
         specifier: workspace:*
         version: link:../react-sdk
       '@hsafa/ui':
@@ -191,9 +191,9 @@ importers:
       '@assistant-ui/react':
         specifier: ^0.10.25
         version: 0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3))
-      '@hsafa/react-sdk':
-        specifier: ^0.1.0
-        version: 0.1.0(@assistant-ui/react@0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3)))(react@19.2.3)
+      '@hsafa/react':
+        specifier: workspace:*
+        version: link:../react-sdk
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.8
@@ -213,14 +213,14 @@ importers:
         specifier: ^0.10.25
         version: 0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3))
       '@hsafa/node':
-        specifier: ^0.1.0
-        version: 0.1.0
-      '@hsafa/react-sdk':
-        specifier: ^0.1.0
-        version: 0.1.0(@assistant-ui/react@0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3)))(react@19.2.3)
+        specifier: workspace:*
+        version: link:../node-sdk
+      '@hsafa/react':
+        specifier: workspace:*
+        version: link:../react-sdk
       '@hsafa/ui':
-        specifier: ^0.1.0
-        version: 0.1.0(@assistant-ui/react@0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3)))(@hsafa/react-sdk@0.1.0(@assistant-ui/react@0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3)))(react@19.2.3))(lucide-react@0.563.0(react@19.2.3))(react@19.2.3)
+        specifier: workspace:*
+        version: link:../ui-sdk
       '@prisma/client':
         specifier: ^5.22.0
         version: 5.22.0(prisma@5.22.0)
@@ -547,29 +547,6 @@ packages:
 
   '@floating-ui/utils@0.2.10':
     resolution: {integrity: sha512-aGTxbpbg8/b5JfU1HXSrbH3wXZuLPJcNEcZQFMxLs3oSzgtVu6nFPkbbGGUvBcUjKV2YyB9Wxxabo+HEH9tcRQ==}
-
-  '@hsafa/node@0.1.0':
-    resolution: {integrity: sha512-/HOumsnagWQxPPkbfawQImK1gkvCt7y+Eaj7AgceQXauoxLQw+piY1hXFvEbYwsB5pWmobM3kJlw5ma/LBUnpQ==}
-
-  '@hsafa/react-sdk@0.1.0':
-    resolution: {integrity: sha512-RDafwpucwlXTDKp7TBvk9MfNvgy+tBuUOLZ2Qqlhy7ZrVuiS3iv689FQ1RpCO+67e1get5BbG6xgn+nB3SjATg==}
-    peerDependencies:
-      '@assistant-ui/react': '>=0.7.0'
-      react: ^18.0.0 || ^19.0.0
-    peerDependenciesMeta:
-      '@assistant-ui/react':
-        optional: true
-
-  '@hsafa/ui@0.1.0':
-    resolution: {integrity: sha512-Rum4ffcnObh/qfm/N1cE+J+of1kLm34H2d9uUPJTS0SPmi2pk7tkZO9icQqS1fCfP2aVC6NebD0YZHNHHSoarg==}
-    peerDependencies:
-      '@assistant-ui/react': '>=0.10.0'
-      '@hsafa/react-sdk': '>=0.1.0'
-      lucide-react: '*'
-      react: ^18.0.0 || ^19.0.0
-    peerDependenciesMeta:
-      lucide-react:
-        optional: true
 
   '@img/colour@1.0.0':
     resolution: {integrity: sha512-A5P/LfWGFSl6nsckYtjw9da+19jB8hkJ6ACTGcDfEJ0aE+l2n2El7dsVM7UVHZQ9s2lmYMWlrS21YLy2IR1LUw==}
@@ -2346,23 +2323,6 @@ snapshots:
       react-dom: 19.2.3(react@19.2.3)
 
   '@floating-ui/utils@0.2.10': {}
-
-  '@hsafa/node@0.1.0': {}
-
-  '@hsafa/react-sdk@0.1.0(@assistant-ui/react@0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3)))(react@19.2.3)':
-    dependencies:
-      partial-json: 0.1.7
-      react: 19.2.3
-    optionalDependencies:
-      '@assistant-ui/react': 0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3))
-
-  '@hsafa/ui@0.1.0(@assistant-ui/react@0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3)))(@hsafa/react-sdk@0.1.0(@assistant-ui/react@0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3)))(react@19.2.3))(lucide-react@0.563.0(react@19.2.3))(react@19.2.3)':
-    dependencies:
-      '@assistant-ui/react': 0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3))
-      '@hsafa/react-sdk': 0.1.0(@assistant-ui/react@0.10.50(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(use-sync-external-store@1.6.0(react@19.2.3)))(react@19.2.3)
-      react: 19.2.3
-    optionalDependencies:
-      lucide-react: 0.563.0(react@19.2.3)
 
   '@img/colour@1.0.0':
     optional: true

@@ -6,7 +6,7 @@ import {
   useHsafaRuntime as useHsafaRuntimeCore,
   type UseHsafaRuntimeOptions as CoreRuntimeOptions,
   type Entity,
-} from "@hsafa/react-sdk";
+} from "@hsafa/react";
 
 export interface UseHsafaChatRuntimeOptions extends CoreRuntimeOptions {}
 

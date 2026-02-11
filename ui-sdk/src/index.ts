@@ -30,4 +30,4 @@ export type {
   Entity,
   SmartSpace,
   SmartSpaceMessage,
-} from "@hsafa/react-sdk";
+} from "@hsafa/react";

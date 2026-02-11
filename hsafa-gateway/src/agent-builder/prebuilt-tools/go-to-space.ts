@@ -8,8 +8,10 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 registerPrebuiltTool('goToSpace', {
   defaultDescription:
-    'Go to another SmartSpace and carry out a task there. ' +
-    'Your response will appear as a regular message in that space. ' +
+    'Go to a DIFFERENT SmartSpace and carry out a task there. ' +
+    'Do NOT use this tool to respond in the space you are currently in — your normal responses are already posted there automatically. ' +
+    'This tool is ONLY for participating in another space. ' +
+    'Your response will appear as a regular message in that target space. ' +
     'This returns immediately — you will not see the result. ' +
     'The available spaces and their IDs are listed in your system prompt.',
 

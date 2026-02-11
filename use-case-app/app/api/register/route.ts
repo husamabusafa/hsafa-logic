@@ -6,63 +6,30 @@ import { signToken } from "@/lib/auth";
 const GATEWAY_URL = process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
 const SECRET_KEY = process.env.HSAFA_SECRET_KEY || "";
 
-const AGENT_CONFIG = {
-  version: "1.0",
-  agent: {
-    name: "hsafa-assistant",
-    description: "A helpful AI assistant for Hsafa users.",
-    system:
-      "You are a helpful assistant.\nKeep answers concise and helpful.\nBe friendly and approachable.",
-  },
-  model: {
-    provider: "openai",
-    name: "gpt-5",
-    api: "responses",
-    maxOutputTokens: 16000,
-    reasoning: {
-      enabled: true,
-      effort: "medium",
-      summary: "auto",
-    },
-  },
-  loop: {
-    maxSteps: 10,
-    toolChoice: "auto",
-  },
-};
+const AGENT_ID = "5ae86ea1-6866-4672-b61a-c01753387415";
 
 let cachedAgentEntityId: string | null = null;
 
-async function ensureAgent(client: HsafaClient): Promise<string> {
+async function ensureAgentEntity(client: HsafaClient): Promise<string> {
   if (cachedAgentEntityId) return cachedAgentEntityId;
 
-  try {
-    // Try to create the agent + entity
-    const { agentId } = await client.agents.create({
-      name: "hsafa-assistant",
-      config: AGENT_CONFIG,
-    });
+  // Check if an agent entity already exists for this agent
+  const { entities } = await client.entities.list({ type: "agent" });
+  const existing = entities.find((e: any) => e.agentId === AGENT_ID);
 
-    const { entity: agentEntity } = await client.entities.createAgent({
-      agentId,
-      displayName: "Hsafa Assistant",
-    });
-
-    cachedAgentEntityId = agentEntity.id;
-    return agentEntity.id;
-  } catch {
-    // Agent likely already exists (e.g., server restart) — look it up
-    const { agents } = await client.agents.list();
-    const existing = agents.find((a: any) => a.name === "hsafa-assistant");
-    if (!existing) throw new Error("Failed to create or find hsafa-assistant agent");
-
-    const { entities } = await client.entities.list({ type: "agent" });
-    const agentEntity = entities.find((e: any) => e.agentId === existing.id);
-    if (!agentEntity) throw new Error("Agent exists but has no entity");
-
-    cachedAgentEntityId = agentEntity.id;
-    return agentEntity.id;
+  if (existing) {
+    cachedAgentEntityId = existing.id;
+    return existing.id;
   }
+
+  // Create the agent entity (agent itself already exists in the DB)
+  const { entity: agentEntity } = await client.entities.createAgent({
+    agentId: AGENT_ID,
+    displayName: "Hsafa Assistant",
+  });
+
+  cachedAgentEntityId = agentEntity.id;
+  return agentEntity.id;
 }
 
 export async function POST(request: Request) {
@@ -114,7 +81,7 @@ export async function POST(request: Request) {
     });
 
     // 2. Ensure the agent + agent entity exist
-    const agentEntityId = await ensureAgent(hsafaClient);
+    const agentEntityId = await ensureAgentEntity(hsafaClient);
 
     // 3. Create human entity in hsafa gateway
     //    externalId = user.id so it matches the JWT sub claim

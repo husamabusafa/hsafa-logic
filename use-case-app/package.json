@@ -10,9 +10,9 @@
   },
   "dependencies": {
     "@assistant-ui/react": "^0.10.25",
-    "@hsafa/node": "^0.1.0",
-    "@hsafa/react-sdk": "^0.1.0",
-    "@hsafa/ui": "^0.1.0",
+    "@hsafa/node": "workspace:*",
+    "@hsafa/react": "workspace:*",
+    "@hsafa/ui": "workspace:*",
     "@prisma/client": "^5.22.0",
     "@radix-ui/react-slot": "^1.2.4",
     "bcryptjs": "^3.0.3",

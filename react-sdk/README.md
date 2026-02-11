@@ -1,11 +1,11 @@
-# @hsafa/react-sdk
+# @hsafa/react
 
 React SDK for Hsafa — hooks and providers for building chat UIs and admin panels.
 
 ## Installation
 
 ```bash
-pnpm add @hsafa/react-sdk
+pnpm add @hsafa/react
 ```
 
 Peer dependencies: `react` (18+/19+), optionally `@assistant-ui/react` (for `useHsafaRuntime`).
@@ -15,7 +15,7 @@ Peer dependencies: `react` (18+/19+), optionally `@assistant-ui/react` (for `use
 ### 1. Wrap your app with `HsafaProvider`
 
 ```tsx
-import { HsafaProvider } from '@hsafa/react-sdk';
+import { HsafaProvider } from '@hsafa/react';
 
 function App() {
   return (
@@ -33,7 +33,7 @@ function App() {
 ### 2. Use hooks in your components
 
 ```tsx
-import { useSmartSpace } from '@hsafa/react-sdk';
+import { useSmartSpace } from '@hsafa/react';
 
 function Chat({ spaceId }: { spaceId: string }) {
   const { messages, send, runs, isConnected } = useSmartSpace(spaceId);
@@ -94,7 +94,7 @@ function Chat({ spaceId }: { spaceId: string }) {
 The `HsafaClient` class can be used outside React:
 
 ```ts
-import { HsafaClient } from '@hsafa/react-sdk';
+import { HsafaClient } from '@hsafa/react';
 
 const client = new HsafaClient({
   gatewayUrl: 'http://localhost:3001',

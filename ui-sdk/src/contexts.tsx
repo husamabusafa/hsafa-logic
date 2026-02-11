@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, type ReactNode } from "react";
-import type { Entity } from "@hsafa/react-sdk";
+import type { Entity } from "@hsafa/react";
 
 // Members Context
 interface MembersContextValue {

@@ -613,7 +613,7 @@ await client.tools.submitRunResult(runId, {
 });
 ```
 
-**React SDK (`@hsafa/react-sdk`):**
+**React SDK (`@hsafa/react`):**
 ```typescript
 const { submit, submitToRun, isSubmitting } = useToolResult();
 

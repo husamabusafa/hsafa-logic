@@ -1,5 +1,5 @@
 {
-  "name": "@hsafa/react-sdk",
+  "name": "@hsafa/react",
   "version": "0.1.0",
   "description": "React SDK for Hsafa — hooks and providers for building chat UIs and admin panels",
   "type": "module",

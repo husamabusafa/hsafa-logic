@@ -6,7 +6,7 @@ import {
   HsafaProvider as HsafaSdkProvider,
   useHsafaClient,
   type SmartSpace,
-} from "@hsafa/react-sdk";
+} from "@hsafa/react";
 import { useHsafaChatRuntime } from "./useHsafaRuntime";
 import { MembersProvider } from "./contexts";
 

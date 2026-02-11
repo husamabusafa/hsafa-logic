@@ -12,7 +12,7 @@ That question led to Hsafa — not a chatbot framework, but an **operating syste
 
 ## What it does
 
-Hsafa is a runtime for building **persistent, autonomous, collaborative AI agents** that operate like digital workers. It comes with 3 published SDKs (`@hsafa/node` · `@hsafa/react-sdk` · `@hsafa/ui`) so any app can integrate in minutes.
+Hsafa is a runtime for building **persistent, autonomous, collaborative AI agents** that operate like digital workers. It comes with 3 published SDKs (`@hsafa/node` · `@hsafa/react` · `@hsafa/ui`) so any app can integrate in minutes.
 
 - **SmartSpaces** — Shared workspaces where humans and agents collaborate in persistent timelines with permanent memory.
 - **Cross-Space Mobility** — Agents move between spaces carrying full context, like a person walking between rooms.
@@ -34,14 +34,14 @@ Hsafa ships **4 SDKs** (3 published on npm, 1 coming soon) designed to make inte
 | SDK | Package | Status | What it does |
 |-----|---------|--------|--------------|
 | **Node.js SDK** | `@hsafa/node` | Published | Full admin + service SDK. Create agents, manage spaces, send messages, subscribe to streams. For backends, services, robots, CLI tools. |
-| **React SDK** | `@hsafa/react-sdk` | Published | React hooks and providers. `useSmartSpace()`, `useMessages()`, `useRun()`, `useHsafaRuntime()` — plug into any React app with one provider. |
+| **React SDK** | `@hsafa/react` | Published | React hooks and providers. `useSmartSpace()`, `useMessages()`, `useRun()`, `useHsafaRuntime()` — plug into any React app with one provider. |
 | **UI SDK** | `@hsafa/ui` | Published | Drop-in prebuilt chat components (thread, composer, modal). One line to get a full agent chat UI with streaming, reasoning, and tool calls. |
 | **Python SDK** | `hsafa` | Coming Soon | Same capabilities as Node.js — sync and async. For data pipelines, ML services, and automation. |
 
 **Why this matters:**
 - **Any client can connect** — web, mobile, Node.js backend, IoT device, Python script
 - **Minimal code** — Go from zero to a working multi-agent chat in ~20 lines with `@hsafa/ui`
-- **Layered complexity** — Use `@hsafa/ui` for instant UI, `@hsafa/react-sdk` for custom hooks, or `@hsafa/node` for full programmatic control
+- **Layered complexity** — Use `@hsafa/ui` for instant UI, `@hsafa/react` for custom hooks, or `@hsafa/node` for full programmatic control
 - **System-wide auth** — One secret key for backends, one public key + JWT for browsers. No per-space key management.
 
 ---

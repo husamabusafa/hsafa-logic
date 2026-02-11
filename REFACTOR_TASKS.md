@@ -53,7 +53,7 @@ This document outlines all refactoring tasks based on the hsafa-docs, current co
 - [x] **Move useHsafaRuntime logic to ui-sdk (not react-sdk)**
   - Created `@hsafa/ui-sdk` package with `@assistant-ui/react` as peer dependency
   - `useHsafaRuntime` now lives in `ui-sdk/src/useHsafaRuntime.ts`
-  - `@hsafa/react-sdk` remains transport-only (no assistant-ui dependency)
+  - `@hsafa/react` remains transport-only (no assistant-ui dependency)
 
 - [x] **Move useStreamingToolCalls logic to SDK**
   - Moved to `ui-sdk/src/contexts.tsx` as `StreamingToolCallsProvider` + `useStreamingToolCalls`
@@ -126,7 +126,7 @@ This document outlines all refactoring tasks based on the hsafa-docs, current co
 ### 4.1 Package Setup
 - [x] **Create new package `ui-sdk/`** (completed in Phase 2)
   - Package created with package.json, tsconfig.json
-  - Depends on `@hsafa/react-sdk` and `@assistant-ui/react` (peer deps)
+  - Depends on `@hsafa/react` and `@assistant-ui/react` (peer deps)
   - Uses ESNext module with Bundler resolution
 
 ### 4.2 Prebuilt Components

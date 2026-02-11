@@ -13,7 +13,7 @@ It is a runtime for long-lived AI operators that can collaborate, migrate betwee
 > A new category of system:  
 > **from conversational assistants → to autonomous digital workers.**
 
-`@hsafa/node` · `@hsafa/react-sdk` · `@hsafa/ui` — 3 SDKs published on npm. Integrate from any platform in minutes.
+`@hsafa/node` · `@hsafa/react` · `@hsafa/ui` — 3 SDKs published on npm. Integrate from any platform in minutes.
 
 </div>
 
@@ -221,7 +221,7 @@ Hsafa ships **4 SDKs** (3 published on npm, 1 coming soon) so you can integrate 
 | SDK | Package | Status | Use Case |
 |-----|---------|--------|----------|
 | **Node.js SDK** | [`@hsafa/node`](https://www.npmjs.com/package/@hsafa/node) | ✅ Published | Backends, services, robots, CLI — full admin + streaming |
-| **React SDK** | [`@hsafa/react-sdk`](https://www.npmjs.com/package/@hsafa/react-sdk) | ✅ Published | React hooks & providers — plug into any React app |
+| **React SDK** | [`@hsafa/react`](https://www.npmjs.com/package/@hsafa/react) | ✅ Published | React hooks & providers — plug into any React app |
 | **UI SDK** | [`@hsafa/ui`](https://www.npmjs.com/package/@hsafa/ui) | ✅ Published | Drop-in chat UI with streaming, reasoning & tool calls |
 | **Python SDK** | `hsafa` | 🔜 Coming Soon | Data pipelines, ML services, automation — sync & async |
 
@@ -229,7 +229,7 @@ Hsafa ships **4 SDKs** (3 published on npm, 1 coming soon) so you can integrate 
 
 - **Any client can connect** — web, mobile, Node.js, IoT, Python
 - **Minimal code** — Full multi-agent chat UI in ~20 lines with `@hsafa/ui`
-- **Layered complexity** — `@hsafa/ui` for instant UI → `@hsafa/react-sdk` for custom hooks → `@hsafa/node` for full control
+- **Layered complexity** — `@hsafa/ui` for instant UI → `@hsafa/react` for custom hooks → `@hsafa/node` for full control
 - **One auth model** — System-wide secret key for backends, public key + JWT for browsers. No per-space key management.
 
 ---
@@ -239,7 +239,7 @@ Hsafa ships **4 SDKs** (3 published on npm, 1 coming soon) so you can integrate 
 ```txt
 hsafa-gateway/   # Core gateway runtime (agent execution + orchestration)
 node-sdk/        # @hsafa/node — Backend + services SDK
-react-sdk/       # @hsafa/react-sdk — React hooks + providers
+react-sdk/       # @hsafa/react — React hooks + providers
 ui-sdk/          # @hsafa/ui — Drop-in chat UI components
 hsafa-docs/      # Vision, architecture, design docs
 ```

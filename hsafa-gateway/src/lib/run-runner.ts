@@ -363,7 +363,7 @@ export async function executeRun(runId: string): Promise<void> {
       const contextParts: string[] = [];
 
       if (smartSpace?.name) {
-        contextParts.push(`You are operating in SmartSpace "${smartSpace.name}".`);
+        contextParts.push(`You are currently in SmartSpace "${smartSpace.name}" (id: ${run.smartSpaceId}). Any response you produce in this run will be automatically posted as a message in this space. Do NOT use the goToSpace tool to send messages here — goToSpace is ONLY for carrying out tasks in a different space.`);
       }
 
       if (triggeredByEntity) {

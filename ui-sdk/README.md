@@ -1,11 +1,11 @@
 # @hsafa/ui
 
-Prebuilt chat UI components for Hsafa — drop-in chat powered by `@assistant-ui/react` and `@hsafa/react-sdk`.
+Prebuilt chat UI components for Hsafa — drop-in chat powered by `@assistant-ui/react` and `@hsafa/react`.
 
 ## Installation
 
 ```bash
-pnpm add @hsafa/ui @hsafa/react-sdk @assistant-ui/react
+pnpm add @hsafa/ui @hsafa/react @assistant-ui/react
 ```
 
 ## Quick Start — One-Liner Chat
@@ -87,16 +87,16 @@ function App() {
 
 | Hook | Description |
 |------|-------------|
-| `useHsafaChatRuntime()` | Creates an `AssistantRuntime` from `@hsafa/react-sdk` data |
+| `useHsafaChatRuntime()` | Creates an `AssistantRuntime` from `@hsafa/react` data |
 | `useMembers()` | Access members context (membersById, currentEntityId) |
 
 ## Architecture
 
 ```
 @hsafa/ui
-  └── @hsafa/react-sdk        (data layer: client, hooks, SSE)
+  └── @hsafa/react        (data layer: client, hooks, SSE)
   └── @assistant-ui/react      (UI primitives: Thread, Composer, Message)
 ```
 
-- **`@hsafa/react-sdk`** handles all gateway communication (REST + SSE streaming)
+- **`@hsafa/react`** handles all gateway communication (REST + SSE streaming)
 - **`@hsafa/ui`** bridges the data into `@assistant-ui/react` primitives and provides prebuilt components

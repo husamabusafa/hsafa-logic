@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ["@assistant-ui/react", "@hsafa/react-sdk", "@hsafa/ui"],
+  transpilePackages: ["@assistant-ui/react", "@hsafa/react", "@hsafa/ui"],
   output: "standalone",
 };
 
