@@ -152,7 +152,7 @@ export async function executeRun(runId: string): Promise<void> {
       if (agentMemberships.length <= 1) return [];
       const lines: string[] = [
         '',
-        'You are a member of the following spaces. You can use goToSpace to go to any of them:',
+        'These are the spaces you are part of. You can go to any of them if you need to talk to someone or do something there:',
       ];
       for (const membership of agentMemberships) {
         const sp = membership.smartSpace;
@@ -363,7 +363,8 @@ export async function executeRun(runId: string): Promise<void> {
       const contextParts: string[] = [];
 
       if (smartSpace?.name) {
-        contextParts.push(`You are currently in SmartSpace "${smartSpace.name}" (id: ${run.smartSpaceId}). Any response you produce in this run will be automatically posted as a message in this space. Do NOT use the goToSpace tool to send messages here — goToSpace is ONLY for carrying out tasks in a different space.`);
+        contextParts.push(`You are ${agentDisplayName}. You are a single entity that operates across multiple spaces — you move between them like a person walking between rooms.`);
+        contextParts.push(`You are currently in "${smartSpace.name}" (id: ${run.smartSpaceId}). Any response you produce in this run will be automatically posted as a message in this space. Do NOT use the goToSpace tool to send messages here — goToSpace is ONLY for carrying out tasks in a different space.`);
       }
 
       if (triggeredByEntity) {
@@ -397,7 +398,7 @@ export async function executeRun(runId: string): Promise<void> {
         // prepend context so the agent remembers why it said this
         if (isOwnMessage && m.role === 'assistant' && meta?.provenance) {
           const prov = meta.provenance;
-          const ctx = `[Context: You said this after visiting "${prov.originSpaceName || 'another space'}" where you were asked to: ${prov.instruction || 'carry out a task'}]`;
+          const ctx = `[You remember saying this after coming from "${prov.originSpaceName || 'another space'}" — you went there because: ${prov.instruction || 'you had something to take care of'}]`;
           if (Array.isArray(base.parts)) {
             const parts = base.parts.map((p: any, i: number) => {
               if (i === 0 && p.type === 'text' && typeof p.text === 'string') {
