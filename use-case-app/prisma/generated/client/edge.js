@@ -132,7 +132,7 @@ const config = {
       "value": "prisma-client-js"
     },
     "output": {
-      "value": "/Users/husamabusafa/Dev/hsafa-logic/use-case-app/prisma/generated/client",
+      "value": "/Users/Husam/Dev/hsafa-logic/use-case-app/prisma/generated/client",
       "fromEnvVar": null
     },
     "config": {
@@ -146,7 +146,7 @@ const config = {
       }
     ],
     "previewFeatures": [],
-    "sourceFilePath": "/Users/husamabusafa/Dev/hsafa-logic/use-case-app/prisma/schema.prisma",
+    "sourceFilePath": "/Users/Husam/Dev/hsafa-logic/use-case-app/prisma/schema.prisma",
     "isCustomOutput": true
   },
   "relativeEnvPaths": {
