@@ -106,7 +106,7 @@ export async function executeRun(runId: string): Promise<void> {
     });
 
     // Load space members + triggering entity + agent display name for run context
-    const [spaceMembers, smartSpace, triggeredByEntity, agentEntity, agentGoals, agentMemberships] = await Promise.all([
+    const [spaceMembers, smartSpace, triggeredByEntity, agentEntity, agentGoals, agentMemories, agentMemberships] = await Promise.all([
       prisma.smartSpaceMembership.findMany({
         where: { smartSpaceId: run.smartSpaceId },
         include: { entity: { select: { id: true, displayName: true, type: true, metadata: true } } },
@@ -128,6 +128,11 @@ export async function executeRun(runId: string): Promise<void> {
       prisma.goal.findMany({
         where: { entityId: run.agentEntityId, isCompleted: false },
         orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
+      }),
+      prisma.memory.findMany({
+        where: { entityId: run.agentEntityId },
+        orderBy: [{ updatedAt: 'desc' }],
+        take: 50,
       }),
       prisma.smartSpaceMembership.findMany({
         where: { entityId: run.agentEntityId },
@@ -177,7 +182,7 @@ export async function executeRun(runId: string): Promise<void> {
       if (agentGoals.length === 0) return [];
       const lines: string[] = [
         '',
-        'Your current goals (highest priority first):',
+        'These are your general goals — they define your purpose and what you are working towards overall, not specific to this conversation:',
       ];
       for (const g of agentGoals) {
         const tags: string[] = [];
@@ -185,6 +190,20 @@ export async function executeRun(runId: string): Promise<void> {
         if (g.priority > 0) tags.push(`priority: ${g.priority}`);
         const suffix = tags.length > 0 ? ` (${tags.join(', ')})` : '';
         lines.push(`- ${g.description}${suffix}`);
+      }
+      return lines;
+    };
+
+    // Format memories block for system prompt injection
+    const formatMemoriesBlock = (): string[] => {
+      if (agentMemories.length === 0) return [];
+      const lines: string[] = [
+        '',
+        'These are things you remember — general knowledge about yourself, people you interact with, and context you\'ve saved. This is your persistent memory, not specific to this conversation:',
+      ];
+      for (const m of agentMemories) {
+        const topicTag = m.topic ? `[${m.topic}] ` : '';
+        lines.push(`- ${topicTag}${m.content}`);
       }
       return lines;
     };
@@ -327,6 +346,7 @@ export async function executeRun(runId: string): Promise<void> {
       systemParts.push(`Your next response will be posted as a new message in "${smartSpace?.name || run.smartSpaceId}", visible to all participants.`);
 
       systemParts.push(...formatGoalsBlock());
+      systemParts.push(...formatMemoriesBlock());
       // No spaces list in child runs — the agent should focus on the task, not navigate
 
       const goToSystemPrompt = systemParts.join('\n');
@@ -382,6 +402,8 @@ export async function executeRun(runId: string): Promise<void> {
       contextParts.push('Messages from other participants are prefixed with [Name] for identification. Do NOT prefix your own responses with your name or any tag.');
 
       contextParts.push(...formatGoalsBlock());
+
+      contextParts.push(...formatMemoriesBlock());
 
       contextParts.push(...formatSpacesBlock());
 

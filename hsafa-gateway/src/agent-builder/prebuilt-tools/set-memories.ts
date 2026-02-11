@@ -4,7 +4,7 @@ import { registerPrebuiltTool } from './registry.js';
 import type { PrebuiltToolContext } from '../builder.js';
 
 interface MemoryInput {
-  id?: string;
+  match?: string;
   topic?: string;
   content: string;
   metadata?: Record<string, unknown>;
@@ -16,7 +16,7 @@ interface SetMemoriesInput {
 }
 
 registerPrebuiltTool('setMemories', {
-  defaultDescription: 'Save or update memories. Use this to remember important information about the user, their preferences, context from conversations, or any knowledge you want to persist across sessions.',
+  defaultDescription: 'Save or update memories. To update an existing memory, provide a "match" string that partially matches its content. Omit "match" to create a new memory.',
 
   inputSchema: {
     type: 'object',
@@ -27,9 +27,9 @@ registerPrebuiltTool('setMemories', {
         items: {
           type: 'object',
           properties: {
-            id: {
+            match: {
               type: 'string',
-              description: 'Existing memory ID to update. Omit to create a new memory.',
+              description: 'A unique phrase from the existing memory you want to update. Use a distinctive multi-word phrase to avoid ambiguity — never a single common word. Omit to create a new memory.',
             },
             topic: {
               type: 'string',
@@ -65,21 +65,35 @@ registerPrebuiltTool('setMemories', {
       });
     }
 
-    const results: Array<{ action: string; id: string; topic: string | null; content: string }> = [];
+    const results: Array<{ action: string; topic: string | null; content: string; ambiguousCandidates?: string[] }> = [];
+
+    // Load all memories once for matching
+    const existingMemories = await prisma.memory.findMany({
+      where: { entityId: agentEntityId },
+    });
 
     for (const mem of memories) {
-      if (mem.id) {
-        const updated = await prisma.memory.update({
-          where: { id: mem.id },
-          data: {
-            topic: mem.topic ?? undefined,
-            content: mem.content,
-            metadata: mem.metadata ? (mem.metadata as Prisma.InputJsonValue) : undefined,
-          },
-        });
-        results.push({ action: 'updated', id: updated.id, topic: updated.topic, content: updated.content });
+      if (mem.match) {
+        const lower = mem.match.toLowerCase();
+        const found = existingMemories.filter((m) => m.content.toLowerCase().includes(lower));
+
+        if (found.length === 0) {
+          results.push({ action: 'not_found', topic: mem.topic ?? null, content: mem.content, ambiguousCandidates: [] });
+        } else if (found.length === 1) {
+          await prisma.memory.update({
+            where: { id: found[0].id },
+            data: {
+              topic: mem.topic ?? undefined,
+              content: mem.content,
+              metadata: mem.metadata ? (mem.metadata as Prisma.InputJsonValue) : undefined,
+            },
+          });
+          results.push({ action: 'updated', topic: mem.topic ?? found[0].topic, content: mem.content });
+        } else {
+          results.push({ action: 'ambiguous', topic: mem.topic ?? null, content: mem.content, ambiguousCandidates: found.map((m) => m.content) });
+        }
       } else {
-        const created = await prisma.memory.create({
+        await prisma.memory.create({
           data: {
             entityId: agentEntityId,
             topic: mem.topic ?? null,
@@ -87,7 +101,7 @@ registerPrebuiltTool('setMemories', {
             metadata: mem.metadata ? (mem.metadata as Prisma.InputJsonValue) : undefined,
           },
         });
-        results.push({ action: 'created', id: created.id, topic: created.topic, content: created.content });
+        results.push({ action: 'created', topic: mem.topic ?? null, content: mem.content });
       }
     }
 
@@ -100,7 +114,6 @@ registerPrebuiltTool('setMemories', {
       success: true,
       memoriesModified: results,
       currentMemories: allMemories.map((m) => ({
-        id: m.id,
         topic: m.topic,
         content: m.content,
       })),

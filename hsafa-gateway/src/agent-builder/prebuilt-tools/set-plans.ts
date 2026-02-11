@@ -4,7 +4,7 @@ import type { PrebuiltToolContext } from '../builder.js';
 import { CronExpressionParser } from 'cron-parser';
 
 interface PlanInput {
-  id?: string;
+  match?: string;
   name: string;
   description?: string;
   instruction?: string;
@@ -50,9 +50,9 @@ registerPrebuiltTool('setPlans', {
         items: {
           type: 'object',
           properties: {
-            id: {
+            match: {
               type: 'string',
-              description: 'Existing plan ID to update. Omit to create a new plan.',
+              description: 'A unique phrase from the existing plan name you want to update. Use a distinctive multi-word phrase to avoid ambiguity — never a single common word. Omit to create a new plan.',
             },
             name: {
               type: 'string',
@@ -101,43 +101,51 @@ registerPrebuiltTool('setPlans', {
       });
     }
 
-    const results: Array<{ action: string; id: string; name: string; nextRunAt: string | null }> = [];
+    const results: Array<{ action: string; name: string; nextRunAt: string | null; ambiguousCandidates?: string[] }> = [];
+
+    // Load all plans once for matching
+    const existingPlans: any[] = await (prisma.plan as any).findMany({
+      where: { entityId: agentEntityId },
+    });
 
     for (const plan of plans) {
       const isRecurring = !!plan.cron;
       const nextRunAt = computeNextRunAt(plan.cron, plan.scheduledAt);
 
-      if (plan.id) {
-        const updated = await (prisma.plan as any).update({
-          where: { id: plan.id },
-          data: {
-            name: plan.name,
-            description: plan.description ?? undefined,
-            instruction: plan.instruction ?? undefined,
-            isRecurring,
-            cron: plan.cron ?? null,
-            scheduledAt: plan.scheduledAt ? new Date(plan.scheduledAt) : null,
-            nextRunAt,
-            status: plan.status ?? undefined,
-          },
-        });
-        results.push({
-          action: 'updated',
-          id: updated.id,
-          name: updated.name ?? plan.name,
-          nextRunAt: nextRunAt?.toISOString() ?? null,
-        });
+      if (plan.match) {
+        const lower = plan.match.toLowerCase();
+        const found = existingPlans.filter((p: any) => (p.name || '').toLowerCase().includes(lower));
+
+        if (found.length === 0) {
+          results.push({ action: 'not_found', name: plan.name, nextRunAt: null, ambiguousCandidates: [] });
+        } else if (found.length === 1) {
+          await (prisma.plan as any).update({
+            where: { id: found[0].id },
+            data: {
+              name: plan.name,
+              description: plan.description ?? undefined,
+              instruction: plan.instruction ?? undefined,
+              isRecurring,
+              cron: plan.cron ?? found[0].cron,
+              scheduledAt: plan.scheduledAt ? new Date(plan.scheduledAt) : found[0].scheduledAt,
+              nextRunAt: nextRunAt ?? found[0].nextRunAt,
+              status: plan.status ?? undefined,
+            },
+          });
+          results.push({ action: 'updated', name: plan.name, nextRunAt: nextRunAt?.toISOString() ?? null });
+        } else {
+          results.push({ action: 'ambiguous', name: plan.name, nextRunAt: null, ambiguousCandidates: found.map((p: any) => p.name) });
+        }
       } else {
         if (!plan.cron && !plan.scheduledAt) {
           results.push({
             action: 'error',
-            id: '',
             name: plan.name,
             nextRunAt: null,
           });
           continue;
         }
-        const created = await (prisma.plan as any).create({
+        await (prisma.plan as any).create({
           data: {
             entityId: agentEntityId,
             name: plan.name,
@@ -150,12 +158,7 @@ registerPrebuiltTool('setPlans', {
             status: plan.status ?? 'pending',
           },
         });
-        results.push({
-          action: 'created',
-          id: created.id,
-          name: created.name ?? plan.name,
-          nextRunAt: nextRunAt?.toISOString() ?? null,
-        });
+        results.push({ action: 'created', name: plan.name, nextRunAt: nextRunAt?.toISOString() ?? null });
       }
     }
 
@@ -168,7 +171,6 @@ registerPrebuiltTool('setPlans', {
       success: true,
       plansModified: results,
       currentPlans: allPlans.map((p: any) => ({
-        id: p.id,
         name: p.name,
         description: p.description,
         type: p.isRecurring ? 'recurring' : 'one-time',

@@ -3,19 +3,19 @@ import { registerPrebuiltTool } from './registry.js';
 import type { PrebuiltToolContext } from '../builder.js';
 
 interface DeletePlansInput {
-  planIds?: string[];
+  matches?: string[];
   deleteAll?: boolean;
 }
 
 registerPrebuiltTool('deletePlans', {
-  defaultDescription: 'Delete specific plans by ID, or delete all plans at once. Use this when a scheduled task is no longer needed.',
+  defaultDescription: 'Delete plans by describing them, or delete all plans at once. You do not need IDs — just describe which plan to remove using a word or phrase from its name.',
 
   inputSchema: {
     type: 'object',
     properties: {
-      planIds: {
+      matches: {
         type: 'array',
-        description: 'IDs of specific plans to delete.',
+        description: 'A unique phrase from the plan name you want to delete. Use a distinctive multi-word phrase to avoid ambiguity — never a single common word. Example: ["weekly standup sync", "birthday reminder for Sarah"].',
         items: { type: 'string' },
       },
       deleteAll: {
@@ -26,10 +26,12 @@ registerPrebuiltTool('deletePlans', {
   },
 
   async execute(input: unknown, context: PrebuiltToolContext) {
-    const { planIds, deleteAll } = (input || {}) as DeletePlansInput;
+    const { matches, deleteAll } = (input || {}) as DeletePlansInput;
     const { agentEntityId } = context;
 
-    const deleted: Array<{ id: string; name: string }> = [];
+    const deleted: Array<{ name: string }> = [];
+    const ambiguous: Array<{ match: string; candidates: string[] }> = [];
+    const notFound: string[] = [];
 
     if (deleteAll) {
       const all: any[] = await (prisma.plan as any).findMany({
@@ -39,17 +41,33 @@ registerPrebuiltTool('deletePlans', {
         where: { entityId: agentEntityId },
       });
       for (const p of all) {
-        deleted.push({ id: p.id, name: p.name });
+        deleted.push({ name: p.name });
       }
-    } else if (planIds && planIds.length > 0) {
-      const toDelete: any[] = await (prisma.plan as any).findMany({
-        where: { id: { in: planIds }, entityId: agentEntityId },
+    } else if (matches && matches.length > 0) {
+      const allPlans: any[] = await (prisma.plan as any).findMany({
+        where: { entityId: agentEntityId },
       });
-      await (prisma.plan as any).deleteMany({
-        where: { id: { in: planIds }, entityId: agentEntityId },
-      });
-      for (const p of toDelete) {
-        deleted.push({ id: p.id, name: p.name });
+
+      const idsToDelete = new Set<string>();
+
+      for (const match of matches) {
+        const lower = match.toLowerCase();
+        const found = allPlans.filter((p: any) => (p.name || '').toLowerCase().includes(lower));
+
+        if (found.length === 0) {
+          notFound.push(match);
+        } else if (found.length === 1) {
+          idsToDelete.add(found[0].id);
+          deleted.push({ name: found[0].name });
+        } else {
+          ambiguous.push({ match, candidates: found.map((p: any) => p.name) });
+        }
+      }
+
+      if (idsToDelete.size > 0) {
+        await (prisma.plan as any).deleteMany({
+          where: { id: { in: [...idsToDelete] }, entityId: agentEntityId },
+        });
       }
     }
 
@@ -59,11 +77,12 @@ registerPrebuiltTool('deletePlans', {
     });
 
     return {
-      success: true,
+      success: ambiguous.length === 0 && notFound.length === 0,
       deleted,
       deletedCount: deleted.length,
+      ...(ambiguous.length > 0 ? { ambiguous, ambiguousMessage: 'Some matches found multiple plans. Be more specific.' } : {}),
+      ...(notFound.length > 0 ? { notFound, notFoundMessage: 'No plans matched these terms.' } : {}),
       remainingPlans: remaining.map((p: any) => ({
-        id: p.id,
         name: p.name,
         type: p.isRecurring ? 'recurring' : 'one-time',
         nextRunAt: p.nextRunAt?.toISOString() ?? null,

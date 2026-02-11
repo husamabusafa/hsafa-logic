@@ -3,7 +3,7 @@ import { registerPrebuiltTool } from './registry.js';
 import type { PrebuiltToolContext } from '../builder.js';
 
 interface GoalInput {
-  id?: string;
+  match?: string;
   description: string;
   priority?: number;
   isLongTerm?: boolean;
@@ -16,8 +16,7 @@ interface SetGoalsInput {
 }
 
 registerPrebuiltTool('setGoals', {
-  defaultDescription: 'Set or update goals. Use this to create new goals or update existing ones. You can also clear all goals and start fresh.',
-
+  defaultDescription: 'Set or update goals. To update an existing goal, provide a "match" string that partially matches its text. Omit "match" to create a new goal. You can also clear all goals and start fresh.',
 
   inputSchema: {
     type: 'object',
@@ -28,13 +27,13 @@ registerPrebuiltTool('setGoals', {
         items: {
           type: 'object',
           properties: {
-            id: {
+            match: {
               type: 'string',
-              description: 'Existing goal ID to update. Omit to create a new goal.',
+              description: 'A unique phrase from the existing goal you want to update. Use a distinctive multi-word phrase to avoid ambiguity — never a single common word. Omit to create a new goal.',
             },
             description: {
               type: 'string',
-              description: 'What you want to achieve.',
+              description: 'What you want to achieve (new text for the goal).',
             },
             priority: {
               type: 'number',
@@ -70,22 +69,36 @@ registerPrebuiltTool('setGoals', {
       });
     }
 
-    const results: Array<{ action: string; id: string; description: string }> = [];
+    const results: Array<{ action: string; description: string; ambiguousCandidates?: string[] }> = [];
+
+    // Load all goals once for matching
+    const existingGoals = await prisma.goal.findMany({
+      where: { entityId: agentEntityId },
+    });
 
     for (const goal of goals) {
-      if (goal.id) {
-        const updated = await prisma.goal.update({
-          where: { id: goal.id },
-          data: {
-            description: goal.description,
-            priority: goal.priority ?? 0,
-            isLongTerm: goal.isLongTerm ?? false,
-            isCompleted: goal.isCompleted ?? false,
-          },
-        });
-        results.push({ action: 'updated', id: updated.id, description: updated.description });
+      if (goal.match) {
+        const lower = goal.match.toLowerCase();
+        const found = existingGoals.filter((g) => g.description.toLowerCase().includes(lower));
+
+        if (found.length === 0) {
+          results.push({ action: 'not_found', description: goal.description, ambiguousCandidates: [] });
+        } else if (found.length === 1) {
+          await prisma.goal.update({
+            where: { id: found[0].id },
+            data: {
+              description: goal.description,
+              priority: goal.priority ?? found[0].priority,
+              isLongTerm: goal.isLongTerm ?? found[0].isLongTerm,
+              isCompleted: goal.isCompleted ?? found[0].isCompleted,
+            },
+          });
+          results.push({ action: 'updated', description: goal.description });
+        } else {
+          results.push({ action: 'ambiguous', description: goal.description, ambiguousCandidates: found.map((g) => g.description) });
+        }
       } else {
-        const created = await prisma.goal.create({
+        await prisma.goal.create({
           data: {
             entityId: agentEntityId,
             description: goal.description,
@@ -94,7 +107,7 @@ registerPrebuiltTool('setGoals', {
             isCompleted: goal.isCompleted ?? false,
           },
         });
-        results.push({ action: 'created', id: created.id, description: created.description });
+        results.push({ action: 'created', description: goal.description });
       }
     }
 
@@ -107,7 +120,6 @@ registerPrebuiltTool('setGoals', {
       success: true,
       goalsModified: results,
       currentGoals: allGoals.map((g) => ({
-        id: g.id,
         description: g.description,
         priority: g.priority,
         isLongTerm: g.isLongTerm,

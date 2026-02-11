@@ -19,7 +19,7 @@ export async function initPrebuiltTools(): Promise<void> {
   _initPromise = (async () => {
     await import('./set-goals.js');
     await import('./delete-goals.js');
-    await import('./get-memories.js');
+    // getMemories removed — memories are injected into the system prompt directly
     await import('./set-memories.js');
     await import('./delete-memories.js');
     await import('./get-plans.js');

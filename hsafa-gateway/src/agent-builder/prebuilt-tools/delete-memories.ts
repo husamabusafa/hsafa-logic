@@ -3,20 +3,20 @@ import { registerPrebuiltTool } from './registry.js';
 import type { PrebuiltToolContext } from '../builder.js';
 
 interface DeleteMemoriesInput {
-  memoryIds?: string[];
+  matches?: string[];
   topic?: string;
   deleteAll?: boolean;
 }
 
 registerPrebuiltTool('deleteMemories', {
-  defaultDescription: 'Delete specific memories by ID, by topic, or delete all memories at once. Use this when information is no longer relevant or the user asks you to forget something.',
+  defaultDescription: 'Delete memories by describing them, by topic, or delete all at once. You do not need IDs — just describe which memory to remove using a word or phrase from its content.',
 
   inputSchema: {
     type: 'object',
     properties: {
-      memoryIds: {
+      matches: {
         type: 'array',
-        description: 'IDs of specific memories to delete.',
+        description: 'A unique phrase from the memory you want to delete. Use a distinctive multi-word phrase to avoid ambiguity — never a single common word. Example: ["favorite color is blue", "project deadline in March"].',
         items: { type: 'string' },
       },
       topic: {
@@ -31,10 +31,12 @@ registerPrebuiltTool('deleteMemories', {
   },
 
   async execute(input: unknown, context: PrebuiltToolContext) {
-    const { memoryIds, topic, deleteAll } = (input || {}) as DeleteMemoriesInput;
+    const { matches, topic, deleteAll } = (input || {}) as DeleteMemoriesInput;
     const { agentEntityId } = context;
 
-    const deleted: Array<{ id: string; topic: string | null; content: string }> = [];
+    const deleted: Array<{ topic: string | null; content: string }> = [];
+    const ambiguous: Array<{ match: string; candidates: string[] }> = [];
+    const notFound: string[] = [];
 
     if (deleteAll) {
       const all = await prisma.memory.findMany({
@@ -44,7 +46,7 @@ registerPrebuiltTool('deleteMemories', {
         where: { entityId: agentEntityId },
       });
       for (const m of all) {
-        deleted.push({ id: m.id, topic: m.topic, content: m.content });
+        deleted.push({ topic: m.topic, content: m.content });
       }
     } else if (topic) {
       const byTopic = await prisma.memory.findMany({
@@ -54,17 +56,33 @@ registerPrebuiltTool('deleteMemories', {
         where: { entityId: agentEntityId, topic },
       });
       for (const m of byTopic) {
-        deleted.push({ id: m.id, topic: m.topic, content: m.content });
+        deleted.push({ topic: m.topic, content: m.content });
       }
-    } else if (memoryIds && memoryIds.length > 0) {
-      const toDelete = await prisma.memory.findMany({
-        where: { id: { in: memoryIds }, entityId: agentEntityId },
+    } else if (matches && matches.length > 0) {
+      const allMemories = await prisma.memory.findMany({
+        where: { entityId: agentEntityId },
       });
-      await prisma.memory.deleteMany({
-        where: { id: { in: memoryIds }, entityId: agentEntityId },
-      });
-      for (const m of toDelete) {
-        deleted.push({ id: m.id, topic: m.topic, content: m.content });
+
+      const idsToDelete = new Set<string>();
+
+      for (const match of matches) {
+        const lower = match.toLowerCase();
+        const found = allMemories.filter((m) => m.content.toLowerCase().includes(lower));
+
+        if (found.length === 0) {
+          notFound.push(match);
+        } else if (found.length === 1) {
+          idsToDelete.add(found[0].id);
+          deleted.push({ topic: found[0].topic, content: found[0].content });
+        } else {
+          ambiguous.push({ match, candidates: found.map((m) => m.content) });
+        }
+      }
+
+      if (idsToDelete.size > 0) {
+        await prisma.memory.deleteMany({
+          where: { id: { in: [...idsToDelete] }, entityId: agentEntityId },
+        });
       }
     }
 
@@ -74,11 +92,12 @@ registerPrebuiltTool('deleteMemories', {
     });
 
     return {
-      success: true,
+      success: ambiguous.length === 0 && notFound.length === 0,
       deleted,
       deletedCount: deleted.length,
+      ...(ambiguous.length > 0 ? { ambiguous, ambiguousMessage: 'Some matches found multiple memories. Be more specific.' } : {}),
+      ...(notFound.length > 0 ? { notFound, notFoundMessage: 'No memories matched these terms.' } : {}),
       remainingMemories: remaining.map((m) => ({
-        id: m.id,
         topic: m.topic,
         content: m.content,
       })),
