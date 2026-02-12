@@ -1,6 +1,8 @@
 "use client";
 
-import type { FC } from "react";
+import { useState, type FC } from "react";
+import { useMessage } from "@assistant-ui/react";
+import { useToolResult } from "@hsafa/ui";
 
 export interface ProductCardProps {
   toolName?: string;
@@ -21,7 +23,7 @@ interface ProductData {
 }
 
 function parseProduct(props: ProductCardProps): ProductData | null {
-  const raw = props.result ?? props.args;
+  const raw = props.args;
   if (!raw || typeof raw !== "object") return null;
   const data = raw as Record<string, unknown>;
   if (!data.name || data.price == null) return null;
@@ -51,11 +53,35 @@ function Stars({ rating }: { rating: number }) {
 }
 
 export const ProductCard: FC<ProductCardProps> = (props) => {
-  const { status } = props;
+  const { status, toolCallId } = props;
   const isRunning = status?.type === "running";
   const product = parseProduct(props);
+  const messageId = useMessage((m) => m.id);
+  const { submitToRun, isSubmitting } = useToolResult();
+  const [submitted, setSubmitted] = useState(false);
 
-  if (isRunning) {
+  const isPending = isRunning && product != null;
+  const hasResult = props.result != null || submitted;
+
+  const handleClick = async () => {
+    if (!isPending || !toolCallId || submitted || isSubmitting) return;
+    setSubmitted(true);
+    try {
+      await submitToRun(messageId, {
+        callId: toolCallId,
+        result: {
+          action: "selected",
+          productName: product!.name,
+          price: product!.price,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch {
+      setSubmitted(false);
+    }
+  };
+
+  if (isRunning && !product) {
     return (
       <div className="my-2 w-72 animate-pulse rounded-xl border border-border bg-muted/40 p-4">
         <div className="mb-3 h-36 rounded-lg bg-muted" />
@@ -75,7 +101,16 @@ export const ProductCard: FC<ProductCardProps> = (props) => {
   }
 
   return (
-    <div className="my-2 w-72 overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+    <div
+      onClick={isPending && !submitted ? handleClick : undefined}
+      className={`my-2 w-72 overflow-hidden rounded-xl border bg-card shadow-sm transition-all ${
+        isPending && !submitted
+          ? "border-primary/50 cursor-pointer hover:shadow-md hover:border-primary hover:scale-[1.02] active:scale-[0.98]"
+          : hasResult
+            ? "border-emerald-500/50"
+            : "border-border"
+      }`}
+    >
       {product.imageUrl && (
         <div className="relative h-40 w-full overflow-hidden bg-muted">
           <img
@@ -117,6 +152,17 @@ export const ProductCard: FC<ProductCardProps> = (props) => {
             </span>
           )}
         </div>
+
+        {isPending && !submitted && (
+          <p className="mt-2 text-center text-xs font-medium text-primary animate-pulse">
+            Click to select this product
+          </p>
+        )}
+        {submitted && (
+          <p className="mt-2 text-center text-xs font-medium text-emerald-600 dark:text-emerald-400">
+            ✓ Selected
+          </p>
+        )}
       </div>
     </div>
   );

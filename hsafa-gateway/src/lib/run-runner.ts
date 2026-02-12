@@ -108,14 +108,54 @@ export async function executeRun(runId: string): Promise<void> {
     // ── 3. Load context + build messages ──────────────────────────────────
 
     const ctx = await loadRunContext(run);
-    const modelMessages = await buildModelMessages(ctx);
+    let modelMessages = await buildModelMessages(ctx);
+
+    // If resuming from waiting_tool, inject the tool-call + tool-result
+    // into the conversation so the agent sees what happened.
+    const isResuming = run.status === 'waiting_tool';
+    const runMeta = (run.metadata && typeof run.metadata === 'object') ? run.metadata as Record<string, unknown> : {};
+
+    if (isResuming) {
+      const pendingTools = (runMeta.pendingClientTools ?? []) as Array<{ toolCallId: string; toolName: string; args: unknown }>;
+      const toolResults = (runMeta.clientToolResults ?? {}) as Record<string, unknown>;
+
+      if (pendingTools.length > 0) {
+        // Construct model messages directly in AI SDK v6 format:
+        // - tool-call uses `input` (not `args`)
+        // - tool-result uses `output` wrapped as { type: 'json', value: ... }
+        modelMessages.push({
+          role: 'assistant' as const,
+          content: pendingTools.map((tc) => ({
+            type: 'tool-call' as const,
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            input: tc.args,
+          })),
+        } as any);
+
+        modelMessages.push({
+          role: 'tool' as const,
+          content: pendingTools.map((tc) => {
+            const raw = toolResults[tc.toolCallId] ?? { error: 'No result received' };
+            return {
+              type: 'tool-result' as const,
+              toolCallId: tc.toolCallId,
+              toolName: tc.toolName,
+              output: typeof raw === 'string'
+                ? { type: 'text' as const, value: raw }
+                : { type: 'json' as const, value: raw },
+            };
+          }),
+        } as any);
+      }
+    }
 
     // ── 4. Stream AI response ─────────────────────────────────────────────
 
     const streamResult = await built.agent.stream({ messages: modelMessages });
     const messageId = `msg-${runId}-${Date.now()}`;
 
-    const { orderedParts, finalText, skipped } = await processStream(
+    const { orderedParts, finalText, skipped, pendingClientToolCalls } = await processStream(
       streamResult.fullStream,
       messageId,
       runId,
@@ -138,6 +178,35 @@ export async function executeRun(runId: string): Promise<void> {
       return;
     }
 
+    // ── 5b. Handle pending client tool calls ──────────────────────────────
+    // Stream ended with tool calls that have no server-side execute.
+    // Store in run metadata and pause — client will submit results, then we resume.
+
+    if (pendingClientToolCalls.length > 0 && !isPlanRun) {
+      await prisma.run.update({
+        where: { id: runId },
+        data: {
+          status: 'waiting_tool',
+          metadata: {
+            ...runMeta,
+            pendingClientTools: pendingClientToolCalls,
+            clientToolResults: {},
+            waitingParts: orderedParts,
+          } as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      await emitEvent('run.waiting_tool', {
+        status: 'waiting_tool',
+        pendingToolCalls: pendingClientToolCalls.map((tc) => ({
+          toolCallId: tc.toolCallId,
+          toolName: tc.toolName,
+        })),
+      });
+
+      return;
+    }
+
     // ── 6. Persist message + emit completion events ───────────────────────
 
     await prisma.run.update({
@@ -145,10 +214,36 @@ export async function executeRun(runId: string): Promise<void> {
       data: { status: 'completed', completedAt: new Date() },
     });
 
+    // Build the final assistant message.
+    // When resuming from waiting_tool, prepend the tool-call + tool-result parts.
+    let combinedParts = orderedParts;
+    if (isResuming) {
+      const waitingParts = (runMeta.waitingParts ?? []) as Array<{ type: string; [key: string]: unknown }>;
+      const toolResults = (runMeta.clientToolResults ?? {}) as Record<string, unknown>;
+
+      // Enrich old tool-call parts with their results
+      const enriched = waitingParts.map((p) => {
+        if (p.type === 'tool-call' && typeof p.toolCallId === 'string' && toolResults[p.toolCallId] !== undefined) {
+          return { ...p, result: toolResults[p.toolCallId] };
+        }
+        return p;
+      });
+
+      // Add tool-result parts
+      const resultParts = Object.entries(toolResults).map(([callId, result]) => ({
+        type: 'tool-result',
+        toolCallId: callId,
+        toolName: (enriched.find((p) => p.toolCallId === callId)?.toolName as string) ?? '',
+        result,
+      }));
+
+      combinedParts = [...enriched, ...resultParts, ...orderedParts];
+    }
+
     const assistantMessage = {
       id: messageId,
       role: 'assistant',
-      parts: orderedParts.length > 0 ? orderedParts : [{ type: 'text', text: finalText ?? '' }],
+      parts: combinedParts.length > 0 ? combinedParts : [{ type: 'text', text: finalText ?? '' }],
     };
 
     // Plan runs: agent is not in a space, so don't persist a message or trigger agents.

@@ -200,6 +200,9 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
   const clientToolsRef = useRef(clientTools);
   clientToolsRef.current = clientTools;
 
+  // Buffer for client tool calls — executed only after run.waiting_tool fires
+  const pendingClientToolCalls = useRef<Map<string, Array<{ toolCallId: string; toolName: string; args: Record<string, unknown>; runId: string }>>>(new Map());
+
   // State
   const [rawMessages, setRawMessages] = useState<SmartSpaceMessage[]>([]);
   const [streamingMessages, setStreamingMessages] = useState<StreamingMessage[]>([]);
@@ -558,18 +561,13 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
           });
         });
 
-        // Auto-execute client tool handler if registered
+        // Buffer client tool calls — they will be executed when run.waiting_tool fires
+        // (the run must be in waiting_tool status before we submit results)
         const handler = clientToolsRef.current?.[toolName];
         if (handler) {
-          (async () => {
-            try {
-              const result = await handler({ toolCallId, toolName, input: args ?? {}, runId });
-              await client.tools.submitRunResult(runId, { callId: toolCallId, result });
-            } catch (err) {
-              const errorResult = { error: err instanceof Error ? err.message : String(err) };
-              await client.tools.submitRunResult(runId, { callId: toolCallId, result: errorResult }).catch(() => {});
-            }
-          })();
+          const existing = pendingClientToolCalls.current.get(runId) ?? [];
+          existing.push({ toolCallId, toolName, args: args ?? {}, runId });
+          pendingClientToolCalls.current.set(runId, existing);
         }
       });
 
@@ -592,6 +590,34 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
               : sm
           )
         );
+      });
+
+      // Run is paused waiting for client tool results.
+      // Now it's safe to execute buffered client tools and submit results.
+      stream.on('run.waiting_tool', (event: StreamEvent) => {
+        const runId = event.runId || (event.data.runId as string);
+        if (!runId) return;
+
+        const buffered = pendingClientToolCalls.current.get(runId);
+        pendingClientToolCalls.current.delete(runId);
+        if (!buffered || buffered.length === 0) return;
+
+        for (const tc of buffered) {
+          const handler = clientToolsRef.current?.[tc.toolName];
+          if (!handler) continue;
+          (async () => {
+            try {
+              const result = await handler({ toolCallId: tc.toolCallId, toolName: tc.toolName, input: tc.args, runId: tc.runId });
+              // If the handler returns undefined, skip auto-submit.
+              // The consumer will use useToolResult() to submit manually (e.g. after user interaction).
+              if (result === undefined) return;
+              await client.tools.submitRunResult(tc.runId, { callId: tc.toolCallId, result });
+            } catch (err) {
+              const errorResult = { error: err instanceof Error ? err.message : String(err) };
+              await client.tools.submitRunResult(tc.runId, { callId: tc.toolCallId, result: errorResult }).catch(() => {});
+            }
+          })();
+        }
       });
 
       stream.on('run.completed', (event: StreamEvent) => {

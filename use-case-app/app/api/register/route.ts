@@ -6,7 +6,7 @@ import { signToken } from "@/lib/auth";
 const GATEWAY_URL = process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
 const SECRET_KEY = process.env.HSAFA_SECRET_KEY || "";
 
-const AGENT_ID = "5ae86ea1-6866-4672-b61a-c01753387415";
+const AGENT_ID = "0babfe34-02f4-4c23-84ea-7ef929fbe1ff";
 
 let cachedAgentEntityId: string | null = null;
 

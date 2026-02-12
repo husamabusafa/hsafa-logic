@@ -8,10 +8,18 @@ const PARTIAL_JSON_ALLOW = STR | OBJ | ARR | NUM | BOOL | NULL;
  * Result of processing the AI stream.
  * Contains the ordered parts and final text for message persistence.
  */
+export interface PendingClientToolCall {
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+}
+
 export interface StreamResult {
   orderedParts: Array<{ type: string; [key: string]: unknown }>;
   finalText: string | undefined;
   skipped: boolean;
+  /** Tool calls that had no server-side execute (client tools) — need external result */
+  pendingClientToolCalls: PendingClientToolCall[];
 }
 
 /**
@@ -37,6 +45,8 @@ export async function processStream(
   const toolArgsAccumulator = new Map<string, string>(); // toolCallId -> accumulated args text
   const orderedParts: Array<{ type: string; [key: string]: unknown }> = [];
   let skipped = false;
+  const toolCallIds = new Set<string>();
+  const toolResultIds = new Set<string>();
 
   // Flush current reasoning block into orderedParts
   const flushReasoning = () => {
@@ -138,12 +148,14 @@ export async function processStream(
       }
       
       orderedParts.push({ type: 'tool-call', toolCallId, toolName, args: input });
+      toolCallIds.add(toolCallId);
     }
     // Tool result (AI SDK v6: .output instead of .result)
     else if (t === 'tool-result') {
       const { toolCallId, toolName, output } = part as any;
       await emitEvent('tool-output-available', { toolCallId, toolName, output });
       orderedParts.push({ type: 'tool-result', toolCallId, toolName, result: output });
+      toolResultIds.add(toolCallId);
     }
     // Tool error
     else if (t === 'tool-error') {
@@ -175,5 +187,17 @@ export async function processStream(
 
   const finalText = orderedParts.find(p => p.type === 'text')?.text as string | undefined;
 
-  return { orderedParts, finalText, skipped };
+  // Identify tool calls without a server-side result (client tools)
+  const pendingClientToolCalls: PendingClientToolCall[] = [];
+  for (const part of orderedParts) {
+    if (part.type === 'tool-call' && !toolResultIds.has(part.toolCallId as string)) {
+      pendingClientToolCalls.push({
+        toolCallId: part.toolCallId as string,
+        toolName: part.toolName as string,
+        args: part.args,
+      });
+    }
+  }
+
+  return { orderedParts, finalText, skipped, pendingClientToolCalls };
 }

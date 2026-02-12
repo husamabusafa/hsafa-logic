@@ -100,7 +100,7 @@ Use these tools when the user asks about them or requests related functionality.
           mode: 'pass-through',
         },
       },
-      // 4. PASS-THROUGH MODE with CUSTOM UI: Frontend renders a rich product card
+      // 4. NO-EXECUTION (client tool): Frontend renders a rich product card + user clicks to submit
       {
         name: 'showProductCard',
         description: 'Display a rich product card to the user. Use when the user asks about a product, wants to see product details, or when recommending products. The frontend renders a custom UI card for this tool.',
@@ -118,7 +118,7 @@ Use these tools when the user asks about them or requests related functionality.
         },
         executionType: 'basic',
         execution: {
-          mode: 'pass-through',
+          mode: 'no-execution',
         },
       },
     ],

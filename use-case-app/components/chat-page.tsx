@@ -7,7 +7,7 @@ import {
   LogOutIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { HsafaChatProvider } from "@hsafa/ui";
+import { HsafaChatProvider, type ClientToolCall } from "@hsafa/ui";
 
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
@@ -54,7 +54,7 @@ export function ChatPage({ session, onLogout }: ChatPageProps) {
 
   // Client-side tool handlers — executed in the browser when the agent calls them
   const clientTools = useMemo(() => ({
-    clientTestTool: async ({ toolCallId, toolName, input, runId }) => {
+    clientTestTool: async ({ toolCallId, toolName, input, runId }: ClientToolCall) => {
       console.log("Client tool called —", { toolCallId, toolName, input, runId });
       return {
         toolCallId,

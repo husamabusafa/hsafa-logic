@@ -24,11 +24,13 @@ export {
 // Members context
 export { MembersProvider, useMembers } from "./contexts";
 
-// Re-export commonly used types from react-sdk for convenience
+// Re-export commonly used types and hooks from react-sdk for convenience
+export { useToolResult } from "@hsafa/react";
 export type {
   HsafaClient,
   ClientToolCall,
   ClientToolHandler,
+  UseToolResultReturn,
   Entity,
   SmartSpace,
   SmartSpaceMessage,
