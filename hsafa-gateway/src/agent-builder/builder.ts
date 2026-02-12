@@ -81,6 +81,13 @@ export async function buildAgent(options: BuildAgentOptions): Promise<BuildAgent
     const mcpClients = await resolveMCPClients(validatedConfig.mcp);
     const mcpTools = await loadMCPTools(mcpClients, validatedConfig.mcp);
 
+    const mcpToolNames = Object.keys(mcpTools);
+    if (mcpToolNames.length > 0) {
+      console.log(`[agent-builder] MCP tools loaded (${mcpToolNames.length}): ${mcpToolNames.join(', ')}`);
+    } else if (validatedConfig.mcp?.servers?.length) {
+      console.warn(`[agent-builder] MCP servers configured but no tools loaded`);
+    }
+
     // Merge all tools (prebuilt first, then config, then MCP)
     const allTools: Record<string, any> = { ...prebuiltTools, ...staticTools, ...mcpTools };
 
