@@ -1,5 +1,6 @@
 import express from 'express';
 import { createServer } from 'http';
+import path from 'path';
 import { agentsRouter } from './routes/agents.js';
 import { entitiesRouter } from './routes/entities.js';
 import { smartSpacesRouter } from './routes/smart-spaces.js';
@@ -29,6 +30,9 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json());
+
+// Serve uploaded files (generated images, etc.)
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 app.use('/api/agents', agentsRouter);
 app.use('/api/entities', entitiesRouter);

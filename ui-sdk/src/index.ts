@@ -13,6 +13,10 @@ export {
   ToolCallPart,
   type ToolCallPartProps,
 } from "./components/HsafaToolCall";
+export {
+  ImageToolUI,
+  type ImageToolProps,
+} from "./components/HsafaImageTool";
 
 // Runtime bridge
 export {

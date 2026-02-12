@@ -157,7 +157,10 @@ export const ComputeExecutionSchema = z.object({
 });
 
 export const ImageGeneratorExecutionSchema = z.object({
-  provider: z.enum(['dall-e', 'stable-diffusion']),
+  provider: z.string(),
+  model: z.string().optional(),
+  apiKey: z.string().optional(),
+  baseURL: z.string().optional(),
   size: z.string().optional().default('1024x1024'),
   quality: z.enum(['standard', 'hd']).optional().default('standard'),
   style: z.string().optional(),

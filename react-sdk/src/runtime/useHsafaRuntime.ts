@@ -148,6 +148,14 @@ function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): Threa
   // Extract structured parts from metadata.uiMessage (includes reasoning + tool calls)
   const uiMessage = (msg.metadata as any)?.uiMessage;
   if (uiMessage?.parts && Array.isArray(uiMessage.parts)) {
+    // Collect tool-result outputs so we can merge them into tool-call parts
+    const toolResults = new Map<string, unknown>();
+    for (const part of uiMessage.parts) {
+      if (part.type === 'tool-result' && part.toolCallId) {
+        toolResults.set(part.toolCallId, part.result ?? part.output);
+      }
+    }
+
     for (const part of uiMessage.parts) {
       if (part.type === 'reasoning' && part.text) {
         content.push({ type: 'reasoning', text: part.text });
@@ -159,7 +167,7 @@ function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): Threa
           toolCallId: part.toolCallId,
           toolName: part.toolName,
           args: part.args,
-          result: part.result,
+          result: part.result ?? toolResults.get(part.toolCallId),
         });
       }
     }

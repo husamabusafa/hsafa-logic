@@ -52,9 +52,21 @@ Add MCP servers to your agent configuration using the `mcp` property:
 
 ## Transport Types
 
-### SSE (Server-Sent Events) - Recommended for Production
+### HTTP Transport (Recommended)
 
-SSE provides a reliable HTTP-based transport suitable for production deployments:
+HTTP is the recommended transport for production deployments. Based on the Vercel AI SDK's MCP best practices, HTTP transport (`StreamableHTTPClientTransport`) provides the most reliable connection:
+
+```json
+{
+  "name": "http-server",
+  "url": "https://mcp.example.com/mcp",
+  "transport": "http"
+}
+```
+
+### SSE (Server-Sent Events)
+
+SSE is an alternative HTTP-based transport. Use when the MCP server only exposes an SSE endpoint:
 
 ```json
 {
@@ -64,17 +76,7 @@ SSE provides a reliable HTTP-based transport suitable for production deployments
 }
 ```
 
-### HTTP Transport
-
-Direct HTTP transport for MCP communication:
-
-```json
-{
-  "name": "http-server",
-  "url": "https://mcp.example.com/mcp",
-  "transport": "http"
-}
-```
+**Note:** stdio transport is not supported — it is local-only and not suitable for production.
 
 ## Authentication
 
@@ -254,54 +256,26 @@ MCP connections are established during agent build. Check logs for connection wa
   "version": "1.0",
   "agent": {
     "name": "smart-assistant",
-    "description": "AI assistant with external tool access",
-    "system": "You are a helpful assistant with access to weather, calendar, and file tools. Use these tools to help users accomplish their tasks."
+    "description": "AI assistant with MCP tools",
+    "system": "You are a helpful assistant with access to external tools via MCP. Use them when the user asks for help."
   },
   "model": {
-    "provider": "openai",
-    "name": "gpt-4o",
-    "temperature": 0.7,
-    "maxOutputTokens": 2000
+    "provider": "google",
+    "name": "gemini-2.5-flash",
+    "maxOutputTokens": 8000
   },
   "loop": {
     "maxSteps": 10,
     "toolChoice": "auto"
   },
-  "tools": [
-    {
-      "name": "getUserApproval",
-      "description": "Request user approval for sensitive actions",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "action": { "type": "string" },
-          "reason": { "type": "string" }
-        },
-        "required": ["action"]
-      },
-      "executionType": "basic",
-      "execution": {
-        "mode": "static",
-        "output": { "approved": true }
-      }
-    }
-  ],
   "mcp": {
     "servers": [
       {
-        "name": "metamcp-hsafa",
+        "name": "hsafa-mcp",
         "url": "https://mcp.hsafa.com/metamcp/hsafa-endpoint/sse",
-        "transport": "sse",
-        "headers": {
-          "Authorization": "Bearer ${HSAFA_MCP_TOKEN}"
-        }
+        "transport": "sse"
       }
     ]
-  },
-  "runtime": {
-    "response": {
-      "type": "ui-message-stream"
-    }
   }
 }
 ```
@@ -337,9 +311,9 @@ try {
 ## Limitations
 
 - **No stdio transport**: Only HTTP and SSE transports are supported (stdio is local-only and not suitable for production)
-- **No OAuth providers**: Currently only header-based authentication is supported
+- **No OAuth providers**: Currently only header-based authentication is supported. The AI SDK supports OAuth via `authProvider`, but Hsafa Logic uses header-based auth
 - **Tool name conflicts**: If multiple servers expose the same tool name, the last one wins
-- **No resource/prompt support**: Currently only MCP tools are supported, not resources or prompts
+- **No resource/prompt support**: Currently only MCP tools are supported, not MCP resources or prompts
 
 ## Troubleshooting
 

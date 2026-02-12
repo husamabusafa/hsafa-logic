@@ -7,7 +7,7 @@ import {
   LogOutIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { HsafaChatProvider, type ClientToolCall } from "@hsafa/ui";
+import { HsafaChatProvider } from "@hsafa/ui";
 
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
@@ -52,23 +52,6 @@ export function ChatPage({ session, onLogout }: ChatPageProps) {
     window.history.replaceState({}, "", url.toString());
   }, []);
 
-  // Client-side tool handlers — executed in the browser when the agent calls them
-  const clientTools = useMemo(() => ({
-    clientTestTool: async ({ toolCallId, toolName, input, runId }: ClientToolCall) => {
-      console.log("Client tool called —", { toolCallId, toolName, input, runId });
-      return {
-        toolCallId,
-        toolName,
-        runId,
-        received: input.message || '(no message)',
-        browser: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
-        timestamp: new Date().toISOString(),
-        randomNumber: Math.floor(Math.random() * 1000),
-        source: 'browser',
-      };
-    },
-  }), []);
-
   // Create new space via server-side API route (requires secret key)
   const handleCreateSpace = useCallback(async () => {
     const res = await fetch("/api/spaces/create", {
@@ -98,7 +81,6 @@ export function ChatPage({ session, onLogout }: ChatPageProps) {
       defaultSpaceId={initialSpaceId}
       onCreateSpace={handleCreateSpace}
       onSpaceChange={handleSpaceChange}
-      clientTools={clientTools}
     >
       <div className="flex h-dvh w-full bg-background">
         {/* Desktop Sidebar */}

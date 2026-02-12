@@ -2,116 +2,223 @@
 
 ## Overview
 
-Make HTTP requests to external APIs and services. Supports dynamic variable substitution using `{{variable}}` syntax.
+Make HTTP requests to any external URL — REST APIs, GraphQL endpoints, webhooks, or any HTTP service. Supports dynamic `{{variable}}` interpolation in URLs, headers, query params, and request bodies.
 
 ## Purpose
 
-- Call external APIs (REST, GraphQL, etc.)
-- Send webhooks to other systems
-- Fetch or submit data to external services
-- Integrate with third-party platforms
+- **REST APIs** — GET, POST, PUT, PATCH, DELETE to any endpoint
+- **GraphQL** — Send queries and mutations to GraphQL servers
+- **Webhooks** — Fire events to external services
+- **Any HTTP service** — Fetch data, submit forms, trigger actions
 
 ## Execution Property
 
-In agent config, use the `execution` property to configure the HTTP request:
-
 ```json
 {
-  "url": "string",              // URL with {{variable}} support
+  "url": "string",
   "method": "GET|POST|PUT|PATCH|DELETE",
-  "headers": {},                // Optional headers with {{variable}} support
-  "queryParams": {},            // Optional query parameters
-  "body": {},                   // Optional request body
-  "timeout": 30000              // Optional timeout in ms
+  "headers": {},
+  "queryParams": {},
+  "body": {},
+  "timeout": 30000
 }
 ```
 
-## Input Schema
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `url` | string | Yes | Request URL. Supports `{{variable}}` interpolation |
+| `method` | string | Yes | HTTP method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE` |
+| `headers` | object | No | HTTP headers. Supports `{{variable}}` interpolation |
+| `queryParams` | object | No | URL query parameters (appended to URL) |
+| `body` | any | No | Request body (JSON). For `POST`/`PUT`/`PATCH`. If omitted, the agent's full input is used as the body |
+| `timeout` | number | No | Request timeout in milliseconds. Default: `30000` (30s) |
+
+## Variable Interpolation
+
+All fields support `{{variableName}}` syntax. Variables are resolved from:
+1. Top-level properties in the agent's input
+2. The `variables` object in the input (merged, takes priority)
 
 ```json
+// Agent input:
 {
-  "variables": {}               // Values for {{variable}} replacement in execution config
-  // ... any additional data for the request
+  "userId": "123",
+  "variables": { "apiKey": "secret_token" }
 }
+
+// Both {{userId}} and {{apiKey}} are available in the execution config
 ```
 
-## Agent Config Example
+## Agent Config Examples
 
+### REST API — GET
 ```json
 {
-  "name": "fetchUserData",
-  "description": "Fetch user data from API",
+  "name": "fetchTodo",
+  "description": "Fetch a todo item from the API",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "userId": {"type": "string"}
+      "todoId": { "type": "number", "description": "The todo ID to fetch" }
     },
-    "required": ["userId"]
+    "required": ["todoId"]
   },
   "executionType": "request",
   "execution": {
-    "url": "https://api.example.com/users/{{userId}}",
-    "method": "GET",
+    "url": "https://jsonplaceholder.typicode.com/todos/{{todoId}}",
+    "method": "GET"
+  }
+}
+```
+
+### REST API — POST
+```json
+{
+  "name": "createTicket",
+  "description": "Create a support ticket",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "title": { "type": "string" },
+      "body": { "type": "string" },
+      "priority": { "type": "string", "enum": ["low", "medium", "high"] }
+    },
+    "required": ["title", "body"]
+  },
+  "executionType": "request",
+  "execution": {
+    "url": "https://api.example.com/tickets",
+    "method": "POST",
     "headers": {
       "Authorization": "Bearer {{apiKey}}"
+    },
+    "body": {
+      "title": "{{title}}",
+      "body": "{{body}}",
+      "priority": "{{priority}}"
     }
   }
 }
 ```
 
-## Examples
-
-### GET Request
+### GraphQL Query
 ```json
-// Agent calls:
 {
-  "userId": "123",
-  "variables": {"apiKey": "abc123"}
-}
-
-// Request sent:
-// GET https://api.example.com/users/123
-// Headers: Authorization: Bearer abc123
-```
-
-### POST Request
-```json
-// Agent config execution:
-{
-  "url": "https://api.crm.com/tickets",
-  "method": "POST",
-  "headers": {
-    "Authorization": "Bearer {{apiKey}}"
+  "name": "searchUsers",
+  "description": "Search users via GraphQL",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string", "description": "Search query" },
+      "limit": { "type": "number", "description": "Max results" }
+    },
+    "required": ["query"]
   },
-  "body": {
-    "title": "{{title}}",
-    "priority": "high"
+  "executionType": "request",
+  "execution": {
+    "url": "https://api.example.com/graphql",
+    "method": "POST",
+    "headers": {
+      "Authorization": "Bearer {{apiKey}}",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "query": "query SearchUsers($q: String!, $limit: Int) { users(search: $q, first: $limit) { id name email } }",
+      "variables": {
+        "q": "{{query}}",
+        "limit": "{{limit}}"
+      }
+    }
   }
 }
+```
 
-// Agent calls:
+### GraphQL Mutation
+```json
 {
-  "title": "System Alert",
-  "variables": {"apiKey": "secret_key"}
+  "name": "createUser",
+  "description": "Create a new user via GraphQL",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" },
+      "email": { "type": "string" }
+    },
+    "required": ["name", "email"]
+  },
+  "executionType": "request",
+  "execution": {
+    "url": "https://api.example.com/graphql",
+    "method": "POST",
+    "headers": {
+      "Authorization": "Bearer {{apiKey}}"
+    },
+    "body": {
+      "query": "mutation CreateUser($input: CreateUserInput!) { createUser(input: $input) { id name } }",
+      "variables": {
+        "input": {
+          "name": "{{name}}",
+          "email": "{{email}}"
+        }
+      }
+    }
+  }
 }
 ```
 
 ### Webhook
 ```json
-// Agent config execution:
 {
-  "url": "{{webhookUrl}}",
-  "method": "POST",
-  "body": {
-    "event": "order.completed",
-    "orderId": "{{orderId}}"
+  "name": "sendWebhook",
+  "description": "Send a webhook event to an external service",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "event": { "type": "string" },
+      "payload": { "type": "object" }
+    },
+    "required": ["event"]
+  },
+  "executionType": "request",
+  "execution": {
+    "url": "https://hooks.example.com/events",
+    "method": "POST",
+    "headers": {
+      "X-Webhook-Secret": "{{webhookSecret}}"
+    }
   }
 }
+```
 
-// Agent calls:
+**Note:** When `body` is omitted for POST/PUT/PATCH, the agent's full input object is sent as the request body.
+
+### With Query Parameters
+```json
 {
-  "orderId": "ORD-123",
-  "variables": {"webhookUrl": "https://hooks.example.com/events"}
+  "name": "searchProducts",
+  "description": "Search products with filters",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string" },
+      "category": { "type": "string" },
+      "maxPrice": { "type": "number" }
+    },
+    "required": ["query"]
+  },
+  "executionType": "request",
+  "execution": {
+    "url": "https://api.store.com/products",
+    "method": "GET",
+    "queryParams": {
+      "q": "{{query}}",
+      "category": "{{category}}",
+      "max_price": "{{maxPrice}}"
+    },
+    "headers": {
+      "X-API-Key": "{{apiKey}}"
+    }
+  }
 }
 ```
 
@@ -121,21 +228,31 @@ In agent config, use the `execution` property to configure the HTTP request:
 {
   "success": true,
   "status": 200,
-  "data": {},                   // Parsed response body
-  "headers": {},
-  "error": "error message"      // If failed
+  "data": {},
+  "headers": {}
 }
 ```
 
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | boolean | `true` if HTTP status is 2xx |
+| `status` | number | HTTP status code |
+| `data` | any | Parsed response body (JSON if `Content-Type: application/json`, otherwise string) |
+| `headers` | object | Response headers |
+
 ## Best Practices
 
-1. Use variables for sensitive data (API keys, tokens)
-2. Set reasonable timeouts
-3. Handle errors gracefully
-4. Respect API rate limits
+1. **Use `{{variables}}` for secrets** — never hardcode API keys in URLs or bodies
+2. **Set reasonable timeouts** — default is 30s, reduce for fast APIs
+3. **Use specific inputSchema** — guide the agent on what parameters to provide
+4. **Omit `body` for simple POST** — the agent's input is used automatically
+5. **GraphQL: use the `variables` pattern** — cleaner than string interpolation in queries
+6. **Content-Type is automatic** — `application/json` is always set; override in `headers` if needed
 
 ## Notes
 
-- Variables use `{{variableName}}` syntax
-- Supports all standard HTTP methods
-- Template replacement happens in: url, headers, queryParams, body
+- `{{variable}}` interpolation works in: `url`, `headers`, `queryParams`, `body`
+- `Content-Type: application/json` is set by default on all requests
+- For `GET` requests, `body` is ignored
+- Response is auto-parsed as JSON when the server returns `Content-Type: application/json`
+- The `variables` object in agent input is merged with top-level properties for interpolation

@@ -14,20 +14,19 @@ async function main() {
     version: '1.0',
     agent: {
       name: 'demo-agent',
-      description: 'A simple demo agent for testing',
+      description: 'A demo agent with MCP, request, and image generation tools',
       system: `You are a helpful assistant. Keep responses concise.
 
 You have access to these tools:
-1. clientTestTool - A client-side tool that executes in the browser and returns example data. Use when asked to test tools or get client data.
-2. getSystemStatus - Returns current system health status. Use when asked about system status.
-3. displayNotification - Shows a notification to the user. Use when asked to show notifications or alerts.
-4. showProductCard - Displays a rich product card UI. Use when the user asks about products or wants to see product details.
+1. MCP tools from the Hsafa MCP server — use whatever tools are available from the server.
+2. fetchTodo — Fetches a todo item from an external API by ID. Use when asked about todos or tasks.
+3. generateImage — Generates images from text descriptions using AI. Use when asked to create, draw, or generate any image.
 
 Use these tools when the user asks about them or requests related functionality.`,
     },
     model: {
-      provider: 'google',
-      name: 'gemini-2.5-flash',
+      provider: 'openai',
+      name: 'gpt-5.2',
       api: 'default',
       maxOutputTokens: 16000,
       reasoning: {
@@ -41,87 +40,44 @@ Use these tools when the user asks about them or requests related functionality.
       toolChoice: 'auto',
     },
     tools: [
-      // 1. NO-EXECUTION MODE: Runs on CLIENT (execution is null/undefined)
+      // 1. REQUEST TOOL: Fetches data from an external REST API
       {
-        name: 'clientTestTool',
-        description: 'A client-side test tool that executes on the browser and returns data. Use this when asked to test client tools or get example data from the client.',
+        name: 'fetchTodo',
+        description: 'Fetch a todo item from the JSONPlaceholder API. Use when the user asks about a todo, task, or wants to look up a todo by ID.',
         inputSchema: {
           type: 'object',
           properties: {
-            message: { type: 'string', description: 'A message to send to the client' },
-            data: { type: 'object', description: 'Optional data to pass to the client' },
+            todoId: { type: 'number', description: 'The todo ID to fetch (1-200)' },
           },
-          required: ['message'],
+          required: ['todoId'],
         },
-        executionType: 'basic',
-        execution: null, // no-execution → runs on client
-      },
-      // 2. STATIC MODE: Runs on SERVER (has execution config)
-      {
-        name: 'getSystemStatus',
-        description: 'Get the current system status. Returns a fixed status response. Use this when asked about system status or health.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            component: { type: 'string', description: 'Optional component name to check' },
-          },
-        },
-        executionType: 'basic',
+        executionType: 'request',
         execution: {
-          mode: 'static',
-          output: {
-            status: 'healthy',
-            uptime: '99.9%',
-            services: {
-              database: 'online',
-              cache: 'online',
-              api: 'online',
-            },
-            lastChecked: '2024-01-01T00:00:00Z',
-            message: 'All systems operational',
-          },
+          url: 'https://jsonplaceholder.typicode.com/todos/{{todoId}}',
+          method: 'GET',
         },
       },
-      // 3. PASS-THROUGH MODE: Runs on SERVER (has execution config)
+      // 2. IMAGE GENERATOR TOOL: Generates images via OpenRouter (Gemini)
       {
-        name: 'displayNotification',
-        description: 'Display a notification message to the user. The notification will be shown in the UI. Use when asked to show notifications, alerts, or messages.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            title: { type: 'string', description: 'The notification title' },
-            message: { type: 'string', description: 'The notification message content' },
-            type: { type: 'string', enum: ['info', 'success', 'warning', 'error'], description: 'The type of notification' },
-          },
-          required: ['title', 'message'],
-        },
-        executionType: 'basic',
+        name: 'generateImage',
+        description: 'Generate an image from a text description. Use when the user asks to create, draw, or generate any image or visual.',
+        executionType: 'image-generator',
         execution: {
-          mode: 'pass-through',
-        },
-      },
-      // 4. NO-EXECUTION (client tool): Frontend renders a rich product card + user clicks to submit
-      {
-        name: 'showProductCard',
-        description: 'Display a rich product card to the user. Use when the user asks about a product, wants to see product details, or when recommending products. The frontend renders a custom UI card for this tool.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            name: { type: 'string', description: 'Product name' },
-            price: { type: 'number', description: 'Product price in USD' },
-            description: { type: 'string', description: 'Short product description' },
-            imageUrl: { type: 'string', description: 'URL to the product image (use a placeholder like https://picsum.photos/300/200 if unknown)' },
-            rating: { type: 'number', description: 'Product rating from 1-5' },
-            inStock: { type: 'boolean', description: 'Whether the product is in stock' },
-          },
-          required: ['name', 'price', 'description'],
-        },
-        executionType: 'basic',
-        execution: {
-          mode: 'no-execution',
+          provider: 'openrouter',
+          model: 'google/gemini-3-pro-image-preview',
         },
       },
     ],
+    // 3. MCP TOOLS: Loaded dynamically from the Hsafa MCP server
+    mcp: {
+      servers: [
+        {
+          name: 'hsafa-mcp',
+          url: 'https://mcp.hsafa.com/metamcp/hsafa-endpoint/sse',
+          transport: 'sse',
+        },
+      ],
+    },
   };
 
   const agent = await prisma.agent.upsert({

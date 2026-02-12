@@ -2,130 +2,106 @@
 
 ## Overview
 
-Generate images from text prompts using AI models (DALL-E, Stable Diffusion, etc.).
+Generate images from text prompts using AI models. Built on the Vercel AI SDK's `generateImage` and `generateText` functions. Supports OpenAI DALL-E, OpenRouter (Gemini, etc.), and any OpenAI-compatible image API. **Returns image URLs.**
 
 ## Purpose
 
 - Create marketing visuals and illustrations
-- Generate product mockups
+- Generate product mockups and thumbnails
 - Design icons and UI elements
 - Turn text descriptions into images
 
+## How It Works
+
+Under the hood, Hsafa Logic uses two strategies depending on the provider:
+
+- **Image API providers** (DALL-E, OpenAI-compatible): Uses AI SDK `generateImage()` → returns image URLs
+- **Language model providers** (OpenRouter with Gemini image-preview): Uses AI SDK `generateText()` → extracts generated image files → returns URLs
+
+Both return the same response format with image URLs.
+
 ## Execution Property
 
-In agent config, use the `execution` property to pre-configure generation settings:
-
 ```json
 {
-  "provider": "dall-e|stable-diffusion|midjourney",
+  "provider": "dall-e|openrouter|openai",
+  "model": "model-name",
+  "apiKey": "sk-...",
+  "baseURL": "https://...",
   "size": "1024x1024|landscape|portrait|square",
   "quality": "standard|hd",
-  "style": "photorealistic|digital-art|anime|...",
-  "includeContext": false  // Optional: pass message context to model (default: false)
+  "style": "vivid|natural|...",
+  "includeContext": false
 }
 ```
 
-**Options:**
-- **`includeContext: false`** (default) - Model only receives the prompt
-- **`includeContext: true`** - Model receives message context for better understanding
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `provider` | string | Yes | Provider identifier: `dall-e`, `openrouter`, `openai`, or any custom name |
+| `model` | string | No | Model name. Defaults to `dall-e-3` for image APIs, `google/gemini-2.0-flash-exp:free` for OpenRouter |
+| `apiKey` | string | No | API key. Falls back to env vars: `OPENAI_API_KEY`, `OPENROUTER_API_KEY` |
+| `baseURL` | string | No | Custom API base URL (e.g. `https://openrouter.ai/api/v1`) |
+| `size` | string | No | Image size: `1024x1024`, `landscape`, `portrait`, `square`. Default: `1024x1024` |
+| `quality` | string | No | `standard` or `hd`. Default: `standard` |
+| `style` | string | No | Provider-specific style (e.g. `vivid`, `natural` for DALL-E) |
+| `includeContext` | boolean | No | Pass conversation context to model. Default: `false` |
 
-## Input
+## Input Schema
 
-**Note:** This tool has a default `prompt` inputSchema that is automatically provided. Do not add `inputSchema` manually.
+**Automatic.** A default `prompt` inputSchema is provided — do not add `inputSchema` manually.
 
-The default schema includes:
-- `prompt` (required) - What to generate
-- `negativePrompt` (optional) - What to avoid
-- `numberOfImages` (optional) - How many images
-- `seed` (optional) - For reproducibility
-- `outputFormat` (optional) - url or base64
-
-## Agent Config Example
-
-### Without Context (Default)
 ```json
 {
-  "name": "createProductImage",
-  "description": "Generate product images from description",
+  "prompt": "string (required)"
+}
+```
+
+## Agent Config Examples
+
+### DALL-E (OpenAI)
+```json
+{
+  "name": "generateImage",
+  "description": "Generate images from text descriptions using DALL-E",
   "executionType": "image-generator",
   "execution": {
     "provider": "dall-e",
+    "model": "dall-e-3",
     "size": "1024x1024",
     "quality": "hd",
-    "style": "photorealistic",
-    "includeContext": false
+    "style": "vivid"
   }
 }
 ```
-Model only sees the prompt.
 
-### With Context
+### OpenRouter (Gemini Image Preview)
 ```json
 {
-  "name": "createContextualImage",
-  "description": "Generate images with conversation context",
+  "name": "generateImage",
+  "description": "Generate images using Gemini via OpenRouter",
   "executionType": "image-generator",
   "execution": {
-    "provider": "dall-e",
-    "size": "1024x1024",
-    "quality": "hd",
-    "includeContext": true
+    "provider": "openrouter",
+    "model": "google/gemini-2.0-flash-exp:free",
+    "apiKey": "sk-or-v1-..."
   }
 }
 ```
-Model sees previous messages for better understanding of what to generate.
 
-**Note:** Default `prompt` inputSchema is automatic - do not add manually.
-
-## Examples
-
-### Product Photo
+### Custom OpenAI-Compatible API
 ```json
-// Agent config execution:
 {
-  "provider": "dall-e",
-  "size": "landscape",
-  "quality": "hd",
-  "style": "photorealistic"
+  "name": "generateImage",
+  "description": "Generate images via custom API",
+  "executionType": "image-generator",
+  "execution": {
+    "provider": "openai",
+    "model": "custom-model-name",
+    "apiKey": "sk-...",
+    "baseURL": "https://my-proxy.example.com/v1",
+    "size": "1024x1024"
+  }
 }
-
-// Agent input:
-{
-  "prompt": "Modern smartphone on white surface, professional lighting"
-}
-// Generates image with configured settings
-```
-
-### Icon
-```json
-// Agent config execution:
-{
-  "provider": "dall-e",
-  "size": "512x512",
-  "style": "flat-design"
-}
-
-// Agent input:
-{
-  "prompt": "Flat rocket icon, minimal design, blue"
-}
-// Generates icon
-```
-
-### Illustration
-```json
-// Agent config execution:
-{
-  "provider": "stable-diffusion",
-  "style": "digital-art"
-}
-
-// Agent input:
-{
-  "prompt": "Abstract data network visualization, glowing blue lines",
-  "negativePrompt": "people, text, watermarks"
-}
-// Generates illustration
 ```
 
 ## Response Format
@@ -133,35 +109,41 @@ Model sees previous messages for better understanding of what to generate.
 ```json
 {
   "success": true,
+  "provider": "openrouter",
+  "model": "google/gemini-2.0-flash-exp:free",
   "images": [
     {
-      "url": "https://...",
-      "prompt": "original prompt",
-      "size": "1024x1024"
+      "url": "data:image/png;base64,...",
+      "mediaType": "image/png"
     }
   ],
-  "provider": "dall-e",
-  "duration": 5000
+  "duration": 8500
 }
 ```
 
-## Common Styles
+The `url` field contains:
+- A **data URI** (`data:image/png;base64,...`) — works directly in `<img src>` tags
+- Future: direct URLs when providers return them natively
 
-- `photorealistic` - Realistic photos
-- `digital-art` - Digital illustrations
-- `flat-design` - Minimalist icons
-- `anime` - Anime style
-- `3d-render` - 3D rendered
+## API Key Resolution
+
+API keys are resolved in order:
+1. `execution.apiKey` — hardcoded in agent config (for testing)
+2. Environment variable — `OPENAI_API_KEY` (for `dall-e`/`openai`), `OPENROUTER_API_KEY` (for `openrouter`)
+
+**Best practice:** Use environment variables in production. Only use `execution.apiKey` for development/testing.
 
 ## Best Practices
 
-1. Use detailed, specific prompts
-2. Use negative prompts to exclude unwanted elements
-3. Generate multiple variations (numberOfImages)
-4. Use seeds for reproducible results
+1. **Use detailed, specific prompts** — more detail yields better results
+2. **Choose the right provider** — DALL-E for high-quality images, OpenRouter for cost-effective generation
+3. **Set appropriate sizes** — larger sizes cost more and take longer
+4. **Use environment variables** for API keys in production
+5. **Handle errors gracefully** — image generation can fail due to content filters or rate limits
 
 ## Notes
 
-- Generation typically takes 5-30 seconds
-- Costs vary by provider and quality
-- Some providers have content filters
+- Generation typically takes 5–30 seconds depending on provider and model
+- Costs vary by provider, model, and quality setting
+- Some providers have content safety filters that may reject certain prompts
+- The `prompt` inputSchema is automatic — do not define `inputSchema` manually for this tool type

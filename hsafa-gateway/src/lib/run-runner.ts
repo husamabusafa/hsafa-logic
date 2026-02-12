@@ -215,8 +215,20 @@ export async function executeRun(runId: string): Promise<void> {
     });
 
     // Build the final assistant message.
-    // When resuming from waiting_tool, prepend the tool-call + tool-result parts.
-    let combinedParts = orderedParts;
+    // Enrich tool-call parts with their results from tool-result parts so the
+    // persisted uiMessage has complete tool-call entries (result included).
+    const toolResultMap = new Map<string, unknown>();
+    for (const p of orderedParts) {
+      if (p.type === 'tool-result' && typeof p.toolCallId === 'string') {
+        toolResultMap.set(p.toolCallId, p.result);
+      }
+    }
+    let combinedParts = orderedParts.map((p) => {
+      if (p.type === 'tool-call' && typeof p.toolCallId === 'string' && toolResultMap.has(p.toolCallId)) {
+        return { ...p, result: toolResultMap.get(p.toolCallId) };
+      }
+      return p;
+    });
     if (isResuming) {
       const waitingParts = (runMeta.waitingParts ?? []) as Array<{ type: string; [key: string]: unknown }>;
       const toolResults = (runMeta.clientToolResults ?? {}) as Record<string, unknown>;

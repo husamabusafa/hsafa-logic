@@ -14,5 +14,8 @@ package-lock.json
 *.log
 npm-debug.log*
 
+# Uploads (generated images, etc.)
+uploads/
+
 # OS
 .DS_Store
