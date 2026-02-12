@@ -21,6 +21,7 @@ You have access to these tools:
 1. clientTestTool - A client-side tool that executes in the browser and returns example data. Use when asked to test tools or get client data.
 2. getSystemStatus - Returns current system health status. Use when asked about system status.
 3. displayNotification - Shows a notification to the user. Use when asked to show notifications or alerts.
+4. showProductCard - Displays a rich product card UI. Use when the user asks about products or wants to see product details.
 
 Use these tools when the user asks about them or requests related functionality.`,
     },
@@ -84,7 +85,7 @@ Use these tools when the user asks about them or requests related functionality.
       // 3. PASS-THROUGH MODE: Runs on SERVER (has execution config)
       {
         name: 'displayNotification',
-        description: 'Display a notification message to the user. The notification will be shown in the UI. Use this when asked to show notifications, alerts, or messages.',
+        description: 'Display a notification message to the user. The notification will be shown in the UI. Use when asked to show notifications, alerts, or messages.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -93,6 +94,27 @@ Use these tools when the user asks about them or requests related functionality.
             type: { type: 'string', enum: ['info', 'success', 'warning', 'error'], description: 'The type of notification' },
           },
           required: ['title', 'message'],
+        },
+        executionType: 'basic',
+        execution: {
+          mode: 'pass-through',
+        },
+      },
+      // 4. PASS-THROUGH MODE with CUSTOM UI: Frontend renders a rich product card
+      {
+        name: 'showProductCard',
+        description: 'Display a rich product card to the user. Use when the user asks about a product, wants to see product details, or when recommending products. The frontend renders a custom UI card for this tool.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Product name' },
+            price: { type: 'number', description: 'Product price in USD' },
+            description: { type: 'string', description: 'Short product description' },
+            imageUrl: { type: 'string', description: 'URL to the product image (use a placeholder like https://picsum.photos/300/200 if unknown)' },
+            rating: { type: 'number', description: 'Product rating from 1-5' },
+            inStock: { type: 'boolean', description: 'Whether the product is in stock' },
+          },
+          required: ['name', 'price', 'description'],
         },
         executionType: 'basic',
         execution: {

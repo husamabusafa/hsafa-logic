@@ -6,6 +6,7 @@ import {
   HsafaProvider as HsafaSdkProvider,
   useHsafaClient,
   type SmartSpace,
+  type ClientToolHandler,
 } from "@hsafa/react";
 import { useHsafaChatRuntime } from "./useHsafaRuntime";
 import { MembersProvider } from "./contexts";
@@ -31,6 +32,9 @@ export interface HsafaChatProviderProps {
   onCreateSpace?: () => Promise<string>;
   /** Called whenever the selected space changes (auto-mode only). */
   onSpaceChange?: (spaceId: string) => void;
+
+  /** Client-side tool handlers. Key = tool name, value = async function. */
+  clientTools?: Record<string, ClientToolHandler>;
 }
 
 interface InnerProps {
@@ -45,6 +49,7 @@ interface InnerProps {
   defaultSpaceId?: string;
   onCreateSpace?: () => Promise<string>;
   onSpaceChange?: (spaceId: string) => void;
+  clientTools?: Record<string, ClientToolHandler>;
 }
 
 function HsafaChatProviderInner({
@@ -57,6 +62,7 @@ function HsafaChatProviderInner({
   defaultSpaceId,
   onCreateSpace,
   onSpaceChange,
+  clientTools,
 }: InnerProps) {
   const client = useHsafaClient();
 
@@ -121,6 +127,7 @@ function HsafaChatProviderInner({
     smartSpaces,
     onSwitchThread,
     onNewThread,
+    clientTools,
   });
 
   return (

@@ -78,12 +78,22 @@ interface StreamingMessage {
 // Hook Options & Return
 // =============================================================================
 
+export interface ClientToolCall {
+  toolCallId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  runId: string;
+}
+
+export type ClientToolHandler = (toolCall: ClientToolCall) => Promise<unknown> | unknown;
+
 export interface UseHsafaRuntimeOptions {
   smartSpaceId: string | null;
   entityId?: string;
   smartSpaces?: SmartSpace[];
   onSwitchThread?: (smartSpaceId: string) => void;
   onNewThread?: () => void;
+  clientTools?: Record<string, ClientToolHandler>;
 }
 
 export interface UseHsafaRuntimeReturn {
@@ -183,7 +193,12 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
     smartSpaces = [],
     onSwitchThread,
     onNewThread,
+    clientTools,
   } = options;
+
+  // Keep a ref so the SSE handler always sees the latest clientTools
+  const clientToolsRef = useRef(clientTools);
+  clientToolsRef.current = clientTools;
 
   // State
   const [rawMessages, setRawMessages] = useState<SmartSpaceMessage[]>([]);
@@ -542,6 +557,20 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
             };
           });
         });
+
+        // Auto-execute client tool handler if registered
+        const handler = clientToolsRef.current?.[toolName];
+        if (handler) {
+          (async () => {
+            try {
+              const result = await handler({ toolCallId, toolName, input: args ?? {}, runId });
+              await client.tools.submitRunResult(runId, { callId: toolCallId, result });
+            } catch (err) {
+              const errorResult = { error: err instanceof Error ? err.message : String(err) };
+              await client.tools.submitRunResult(runId, { callId: toolCallId, result: errorResult }).catch(() => {});
+            }
+          })();
+        }
       });
 
       stream.on('tool-output-available', (event: StreamEvent) => {

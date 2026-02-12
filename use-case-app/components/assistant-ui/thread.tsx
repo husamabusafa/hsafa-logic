@@ -7,6 +7,7 @@ import {
   useMessage,
 } from "@assistant-ui/react";
 import { useMembers, ReasoningPart, ToolCallPart } from "@hsafa/ui";
+import { ProductCard } from "./product-card";
 import { ArrowUpIcon, SquareIcon } from "lucide-react";
 import { type ReactNode } from "react";
 
@@ -186,6 +187,9 @@ function AssistantMessage() {
             Text: TextWithCaret,
             Reasoning: ReasoningPart,
             tools: {
+              by_name: {
+                showProductCard: ProductCard,
+              },
               Fallback: ToolCallPart,
             },
           }}

@@ -43,6 +43,8 @@ export { useHsafaRuntime } from './runtime/useHsafaRuntime.js';
 export type {
   UseHsafaRuntimeOptions,
   UseHsafaRuntimeReturn,
+  ClientToolCall,
+  ClientToolHandler,
   ThreadMessageLike,
   AppendMessage,
   ThreadListAdapter,

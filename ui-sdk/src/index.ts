@@ -27,6 +27,8 @@ export { MembersProvider, useMembers } from "./contexts";
 // Re-export commonly used types from react-sdk for convenience
 export type {
   HsafaClient,
+  ClientToolCall,
+  ClientToolHandler,
   Entity,
   SmartSpace,
   SmartSpaceMessage,
