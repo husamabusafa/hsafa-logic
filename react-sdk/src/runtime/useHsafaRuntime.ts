@@ -7,10 +7,8 @@ import type {
   SmartSpace,
   StreamEvent,
   HsafaStream,
-  Membership,
   Entity,
 } from '../types.js';
-import { parse as parsePartialJson } from 'partial-json';
 
 // =============================================================================
 // Types for assistant-ui integration
@@ -62,15 +60,10 @@ export interface ThreadListAdapter {
 // Streaming message state
 // =============================================================================
 
-type StreamingPart =
-  | { type: 'reasoning'; text: string }
-  | { type: 'text'; text: string }
-  | { type: 'tool-call'; toolCallId: string; toolName: string; argsText: string; args?: Record<string, unknown>; result?: unknown; status: 'running' | 'complete' };
-
 interface StreamingMessage {
-  id: string;
+  id: string;          // runId
   entityId: string;
-  parts: StreamingPart[];
+  text: string;        // accumulated text from sendSpaceMessage
   isStreaming: boolean;
 }
 
@@ -78,22 +71,12 @@ interface StreamingMessage {
 // Hook Options & Return
 // =============================================================================
 
-export interface ClientToolCall {
-  toolCallId: string;
-  toolName: string;
-  input: Record<string, unknown>;
-  runId: string;
-}
-
-export type ClientToolHandler = (toolCall: ClientToolCall) => Promise<unknown> | unknown;
-
 export interface UseHsafaRuntimeOptions {
   smartSpaceId: string | null;
   entityId?: string;
   smartSpaces?: SmartSpace[];
   onSwitchThread?: (smartSpaceId: string) => void;
   onNewThread?: () => void;
-  clientTools?: Record<string, ClientToolHandler>;
 }
 
 export interface UseHsafaRuntimeReturn {
@@ -105,36 +88,12 @@ export interface UseHsafaRuntimeReturn {
 }
 
 // =============================================================================
-// Helper: Merge consecutive reasoning parts
-// e.g. [reasoning, reasoning, tool-call, reasoning, text]
-//    → [reasoning(merged), tool-call, reasoning, text]
-// =============================================================================
-
-function mergeConsecutiveReasoning(parts: ContentPart[]): ContentPart[] {
-  const merged: ContentPart[] = [];
-  for (const part of parts) {
-    const prev = merged[merged.length - 1];
-    if (part.type === 'reasoning' && prev?.type === 'reasoning') {
-      // Merge into the previous reasoning part
-      merged[merged.length - 1] = { type: 'reasoning', text: prev.text + part.text };
-    } else {
-      merged.push(part);
-    }
-  }
-  return merged;
-}
-
-// =============================================================================
 // Helper: Convert SmartSpaceMessage → ThreadMessageLike
 // =============================================================================
 
 function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): ThreadMessageLike | null {
   if (msg.role === 'tool') return null;
 
-  // Determine the display role:
-  // - Current user's messages → 'user' (right-aligned)
-  // - Other humans' messages → 'assistant' with isOtherHuman flag (left-aligned)
-  // - Agent/assistant messages → 'assistant'
   let role: 'user' | 'assistant' = msg.role === 'user' ? 'user' : 'assistant';
   let isOtherHuman = false;
 
@@ -145,35 +104,17 @@ function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): Threa
 
   const content: ContentPart[] = [];
 
-  // Extract structured parts from metadata.uiMessage (includes reasoning + tool calls)
+  // Extract structured parts from metadata.uiMessage if present
   const uiMessage = (msg.metadata as any)?.uiMessage;
   if (uiMessage?.parts && Array.isArray(uiMessage.parts)) {
-    // Collect tool-result outputs so we can merge them into tool-call parts
-    const toolResults = new Map<string, unknown>();
     for (const part of uiMessage.parts) {
-      if (part.type === 'tool-result' && part.toolCallId) {
-        toolResults.set(part.toolCallId, part.result ?? part.output);
-      }
-    }
-
-    for (const part of uiMessage.parts) {
-      if (part.type === 'reasoning' && part.text) {
-        content.push({ type: 'reasoning', text: part.text });
-      } else if (part.type === 'text' && part.text) {
+      if (part.type === 'text' && part.text) {
         content.push({ type: 'text', text: part.text });
-      } else if (part.type === 'tool-call') {
-        content.push({
-          type: 'tool-call',
-          toolCallId: part.toolCallId,
-          toolName: part.toolName,
-          args: part.args,
-          result: part.result ?? toolResults.get(part.toolCallId),
-        });
       }
     }
   }
 
-  // Fallback to plain content if no structured parts
+  // Fallback to plain content
   if (content.length === 0) {
     const text = msg.content || '';
     if (!text.trim()) return null;
@@ -183,7 +124,7 @@ function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): Threa
   return {
     id: msg.id,
     role,
-    content: mergeConsecutiveReasoning(content),
+    content,
     createdAt: new Date(msg.createdAt),
     metadata: { custom: { entityId: msg.entityId || undefined, isOtherHuman } },
   };
@@ -201,22 +142,12 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
     smartSpaces = [],
     onSwitchThread,
     onNewThread,
-    clientTools,
   } = options;
 
-  // Keep a ref so the SSE handler always sees the latest clientTools
-  const clientToolsRef = useRef(clientTools);
-  clientToolsRef.current = clientTools;
-
-  // Buffer for client tool calls — executed only after run.waiting_tool fires
-  const pendingClientToolCalls = useRef<Map<string, Array<{ toolCallId: string; toolName: string; args: Record<string, unknown>; runId: string }>>>(new Map());
-
-  // State
   const [rawMessages, setRawMessages] = useState<SmartSpaceMessage[]>([]);
   const [streamingMessages, setStreamingMessages] = useState<StreamingMessage[]>([]);
   const [membersById, setMembersById] = useState<Record<string, Entity>>({});
   const streamRef = useRef<HsafaStream | null>(null);
-  // Signals that initial messages have been loaded, so SSE can safely subscribe.
   const [messagesLoaded, setMessagesLoaded] = useState(false);
 
   // Load initial messages
@@ -255,417 +186,104 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
     }).catch(() => {});
   }, [client, smartSpaceId]);
 
-  // Subscribe to SSE — deferred until initial messages are loaded.
-  // First reconstructs streaming state for active runs, THEN connects SSE
-  // so text-delta events append to pre-populated entries instead of creating new ones.
+  // Subscribe to space SSE.
+  //
+  // In the general-purpose run model, runs do NOT relay events to spaces.
+  // The ONLY events on the space SSE are:
+  //   - smartSpace.message  — persisted messages (from human posts & sendSpaceMessage)
+  //   - text-delta          — real LLM streaming from sendSpaceMessage tool-input interception
+  //   - finish              — sendSpaceMessage call completed
+  //   - smartSpace.member.* — membership changes
+  //
+  // No reconstruction from run events needed — page refresh loads persisted messages.
   useEffect(() => {
     if (!smartSpaceId || !messagesLoaded) return;
 
-    let cancelled = false;
+    const stream = client.spaces.subscribe(smartSpaceId);
+    streamRef.current = stream;
 
-    const init = async () => {
-      // Step 1: Reconstruct streaming state for any in-progress runs so a
-      // page refresh mid-stream shows the accumulated text immediately.
-      try {
-        const { runs } = await client.spaces.listRuns(smartSpaceId, { status: 'running' });
-        for (const run of runs) {
-          if (cancelled) return;
-          try {
-            const { events } = await client.runs.getEvents(run.id);
-            let text = '';
-            let reasoning = '';
-            for (const ev of events) {
-              if (ev.type === 'text-delta') {
-                text += (ev.payload?.delta as string) || '';
-              } else if (ev.type === 'reasoning-delta') {
-                reasoning += (ev.payload?.delta as string) || '';
-              }
-            }
-            if (text || reasoning) {
-              const reconstructedParts: StreamingPart[] = [];
-              // Build ordered parts from events
-              let currentReasoning = '';
-              let currentText = '';
-              for (const ev of events) {
-                if (ev.type === 'reasoning-delta') {
-                  currentReasoning += (ev.payload?.delta as string) || '';
-                } else if (ev.type === 'text-delta') {
-                  // Flush reasoning before text
-                  if (currentReasoning) {
-                    reconstructedParts.push({ type: 'reasoning', text: currentReasoning });
-                    currentReasoning = '';
-                  }
-                  currentText += (ev.payload?.delta as string) || '';
-                } else if (ev.type === 'tool-input-available') {
-                  // Flush reasoning before tool
-                  if (currentReasoning) {
-                    reconstructedParts.push({ type: 'reasoning', text: currentReasoning });
-                    currentReasoning = '';
-                  }
-                  if (currentText) {
-                    reconstructedParts.push({ type: 'text', text: currentText });
-                    currentText = '';
-                  }
-                  reconstructedParts.push({
-                    type: 'tool-call',
-                    toolCallId: (ev.payload?.toolCallId as string) || '',
-                    toolName: (ev.payload?.toolName as string) || '',
-                    argsText: typeof ev.payload?.input === 'string' ? ev.payload.input : JSON.stringify(ev.payload?.input ?? {}),
-                    args: (typeof ev.payload?.input === 'object' && ev.payload?.input !== null ? ev.payload.input : undefined) as Record<string, unknown> | undefined,
-                    result: undefined,
-                    status: 'running',
-                  });
-                } else if (ev.type === 'tool-output-available') {
-                  const tcId = (ev.payload?.toolCallId as string) || '';
-                  for (let j = reconstructedParts.length - 1; j >= 0; j--) {
-                    const p = reconstructedParts[j];
-                    if (p.type === 'tool-call' && p.toolCallId === tcId) {
-                      reconstructedParts[j] = { ...p, result: ev.payload?.output, status: 'complete' };
-                      break;
-                    }
-                  }
-                }
-              }
-              // Flush remaining
-              if (currentReasoning) reconstructedParts.push({ type: 'reasoning', text: currentReasoning });
-              if (currentText) reconstructedParts.push({ type: 'text', text: currentText });
-
-              setStreamingMessages((prev) => {
-                if (prev.some((sm) => sm.id === run.id)) return prev;
-                return [...prev, {
-                  id: run.id,
-                  entityId: run.agentEntityId,
-                  parts: reconstructedParts,
-                  isStreaming: true,
-                }];
-              });
-            }
-          } catch { /* run may have completed between list and getEvents */ }
-        }
-      } catch { /* failed to list runs — proceed without reconstruction */ }
-
-      if (cancelled) return;
-
-      // Step 2: Now subscribe to SSE — text-delta events will append to
-      // the pre-populated entries created in step 1.
-      const stream = client.spaces.subscribe(smartSpaceId);
-      streamRef.current = stream;
-
-      // Catch-up: re-fetch messages to cover the window between
-      // the initial messages.list() and SSE connection establishment.
-      client.messages.list(smartSpaceId, { limit: 100 }).then(({ messages: fresh }: { messages: SmartSpaceMessage[] }) => {
-        setRawMessages((prev) => {
-          const freshIds = new Set(fresh.map((m) => m.id));
-          const sseOnly = prev.filter((m) => !freshIds.has(m.id));
-          return [...fresh, ...sseOnly];
-        });
-      }).catch(() => {});
-
-      stream.on('smartSpace.message', (event: StreamEvent) => {
-        const raw = event.data?.message as Record<string, unknown> | undefined;
-        if (!raw || !raw.id) return;
-
-        // The gateway emits UI-formatted messages with `parts` array,
-        // but SmartSpaceMessage uses `content`. Normalise here.
-        let content = raw.content as string | undefined;
-        if (!content && Array.isArray(raw.parts)) {
-          content = (raw.parts as Array<{ type: string; text?: string }>)
-            .filter((p) => p.type === 'text' && p.text)
-            .map((p) => p.text)
-            .join('\n');
-        }
-
-        // Reconstruct metadata.uiMessage from parts so convertMessage
-        // can extract reasoning + tool-call parts from SSE messages.
-        let metadata = (raw.metadata as Record<string, unknown>) || null;
-        if (!metadata && Array.isArray(raw.parts)) {
-          metadata = { uiMessage: { parts: raw.parts } };
-        }
-
-        const msg: SmartSpaceMessage = {
-          id: raw.id as string,
-          smartSpaceId: event.smartSpaceId || (raw.smartSpaceId as string) || '',
-          entityId: (raw.entityId as string) || event.entityId || null,
-          seq: (raw.seq as string) || String(event.seq || '0'),
-          role: (raw.role as string) || 'user',
-          content: content || null,
-          metadata,
-          createdAt: (raw.createdAt as string) || new Date().toISOString(),
-        };
-
-        if (!msg.content?.trim()) return;
-
-        setRawMessages((prev) => {
-          if (prev.some((m) => m.id === msg.id)) return prev;
-          return [...prev, msg];
-        });
-
-        // Remove streaming entry for this run (persisted message takes over)
-        if (event.runId) {
-          setStreamingMessages((prev) => prev.filter((sm) => sm.id !== event.runId));
-        }
+    // Catch-up: re-fetch to cover the window between initial load and SSE connection
+    client.messages.list(smartSpaceId, { limit: 100 }).then(({ messages: fresh }: { messages: SmartSpaceMessage[] }) => {
+      setRawMessages((prev) => {
+        const freshIds = new Set(fresh.map((m) => m.id));
+        const sseOnly = prev.filter((m) => !freshIds.has(m.id));
+        return [...fresh, ...sseOnly];
       });
+    }).catch(() => {});
 
-      stream.on('run.created', (event: StreamEvent) => {
-        const runId = (event.data.runId as string) || event.runId || '';
-        const entityId = (event.data.agentEntityId as string) || event.entityId || '';
-        if (!runId) return;
+    // ── smartSpace.message: persisted message arrived ──
+    stream.on('smartSpace.message', (event: StreamEvent) => {
+      const raw = event.data?.message as Record<string, unknown> | undefined;
+      if (!raw || !raw.id) return;
 
-        setStreamingMessages((prev) => {
-          if (prev.some((sm) => sm.id === runId)) return prev;
-          return [...prev, {
-            id: runId,
-            entityId,
-            parts: [],
-            isStreaming: true,
-          }];
-        });
-      });
+      let content = raw.content as string | undefined;
+      if (!content && Array.isArray(raw.parts)) {
+        content = (raw.parts as Array<{ type: string; text?: string }>)
+          .filter((p) => p.type === 'text' && p.text)
+          .map((p) => p.text)
+          .join('\n');
+      }
 
-      // Helper: ensure a streaming entry exists for a run
-      const ensureEntry = (prev: StreamingMessage[], runId: string, entityId: string): StreamingMessage[] => {
-        if (prev.some((sm) => sm.id === runId)) return prev;
-        return [...prev, { id: runId, entityId, parts: [], isStreaming: true }];
+      let metadata = (raw.metadata as Record<string, unknown>) || null;
+      if (!metadata && Array.isArray(raw.parts)) {
+        metadata = { uiMessage: { parts: raw.parts } };
+      }
+
+      const msg: SmartSpaceMessage = {
+        id: raw.id as string,
+        smartSpaceId: event.smartSpaceId || (raw.smartSpaceId as string) || '',
+        entityId: (raw.entityId as string) || event.entityId || null,
+        seq: (raw.seq as string) || String(event.seq || '0'),
+        role: (raw.role as string) || 'user',
+        content: content || null,
+        metadata,
+        createdAt: (raw.createdAt as string) || new Date().toISOString(),
       };
 
-      stream.on('text-delta', (event: StreamEvent) => {
-        const runId = event.runId || (event.data.runId as string);
-        const delta = (event.data.delta as string) || (event.data.text as string) || '';
-        if (!runId || !delta) return;
+      if (!msg.content?.trim()) return;
 
-        setStreamingMessages((prev) => {
-          prev = ensureEntry(prev, runId, event.entityId || '');
-          return prev.map((sm) => {
-            if (sm.id !== runId) return sm;
-            const parts = [...sm.parts];
-            const last = parts[parts.length - 1];
-            if (last?.type === 'text') {
-              parts[parts.length - 1] = { ...last, text: last.text + delta };
-            } else {
-              parts.push({ type: 'text', text: delta });
-            }
-            return { ...sm, parts };
-          });
-        });
+      setRawMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
       });
 
-      stream.on('reasoning-delta', (event: StreamEvent) => {
-        const runId = event.runId || (event.data.runId as string);
-        const delta = (event.data.delta as string) || '';
-        if (!runId || !delta) return;
+      // Remove streaming entry — persisted message takes over
+      if (event.runId) {
+        setStreamingMessages((prev) => prev.filter((sm) => sm.id !== event.runId));
+      }
+    });
 
-        setStreamingMessages((prev) => {
-          prev = ensureEntry(prev, runId, event.entityId || '');
-          return prev.map((sm) => {
-            if (sm.id !== runId) return sm;
-            const parts = [...sm.parts];
-            const last = parts[parts.length - 1];
-            if (last?.type === 'reasoning') {
-              parts[parts.length - 1] = { ...last, text: last.text + delta };
-            } else {
-              parts.push({ type: 'reasoning', text: delta });
-            }
-            return { ...sm, parts };
-          });
-        });
-      });
+    // ── text-delta: real LLM streaming from sendSpaceMessage ──
+    stream.on('text-delta', (event: StreamEvent) => {
+      const runId = event.runId || (event.data.runId as string);
+      const delta = (event.data.delta as string) || (event.data.text as string) || '';
+      if (!runId || !delta) return;
 
-      stream.on('tool-input-start', (event: StreamEvent) => {
-        const runId = event.runId || (event.data.runId as string);
-        if (!runId) return;
-        const toolCallId = (event.data.toolCallId as string) || '';
-        const toolName = (event.data.toolName as string) || '';
-
-        const tc: StreamingPart & { type: 'tool-call' } = {
-          type: 'tool-call',
-          toolCallId,
-          toolName,
-          argsText: '',
-          args: undefined as Record<string, unknown> | undefined,
-          result: undefined,
-          status: 'running',
-        };
-
-        setStreamingMessages((prev) => {
-          prev = ensureEntry(prev, runId, event.entityId || '');
+      setStreamingMessages((prev) => {
+        const existing = prev.find((sm) => sm.id === runId);
+        if (existing) {
           return prev.map((sm) =>
-            sm.id === runId ? { ...sm, parts: [...sm.parts, tc] } : sm
+            sm.id === runId ? { ...sm, text: sm.text + delta } : sm
           );
-        });
-      });
-
-      stream.on('tool-input-delta', (event: StreamEvent) => {
-        const runId = event.runId || (event.data.runId as string);
-        const toolCallId = (event.data.toolCallId as string) || '';
-        const delta = (event.data.delta as string) || '';
-        if (!runId || !toolCallId || !delta) return;
-
-        setStreamingMessages((prev) =>
-          prev.map((sm) => {
-            if (sm.id !== runId) return sm;
-            return {
-              ...sm,
-              parts: sm.parts.map((p) => {
-                if (p.type !== 'tool-call' || p.toolCallId !== toolCallId) return p;
-                // Accumulate raw text from deltas
-                const rawAccumulated = (event.data.accumulated as string) || ((p.argsText || '') + delta);
-                // Parse partial JSON locally for structured display
-                let parsedArgs: Record<string, unknown> | undefined;
-                try {
-                  const parsed = parsePartialJson(rawAccumulated);
-                  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                    parsedArgs = parsed as Record<string, unknown>;
-                  }
-                } catch {
-                  // Not parseable yet — keep previous args
-                  parsedArgs = p.args;
-                }
-                const displayText = parsedArgs
-                  ? JSON.stringify(parsedArgs, null, 2)
-                  : rawAccumulated;
-                return { ...p, argsText: displayText, args: parsedArgs };
-              }),
-            };
-          })
-        );
-      });
-
-      stream.on('tool-input-available', (event: StreamEvent) => {
-        const runId = event.runId || (event.data.runId as string);
-        if (!runId) return;
-        const toolCallId = (event.data.toolCallId as string) || '';
-        const toolName = (event.data.toolName as string) || '';
-        const argsText = typeof event.data.input === 'string' ? event.data.input : JSON.stringify(event.data.input ?? {});
-        const args = (typeof event.data.input === 'object' && event.data.input !== null ? event.data.input : undefined) as Record<string, unknown> | undefined;
-
-        setStreamingMessages((prev) => {
-          prev = ensureEntry(prev, runId, event.entityId || '');
-          return prev.map((sm) => {
-            if (sm.id !== runId) return sm;
-            // Update existing streaming part, or push new one
-            const existing = sm.parts.some((p) => p.type === 'tool-call' && p.toolCallId === toolCallId);
-            if (existing) {
-              return {
-                ...sm,
-                parts: sm.parts.map((p) =>
-                  p.type === 'tool-call' && p.toolCallId === toolCallId
-                    ? { ...p, argsText, args, status: 'running' as const }
-                    : p
-                ),
-              };
-            }
-            return {
-              ...sm,
-              parts: [...sm.parts, {
-                type: 'tool-call' as const,
-                toolCallId,
-                toolName,
-                argsText,
-                args,
-                result: undefined,
-                status: 'running' as const,
-              }],
-            };
-          });
-        });
-
-        // Buffer client tool calls — they will be executed when run.waiting_tool fires
-        // (the run must be in waiting_tool status before we submit results)
-        const handler = clientToolsRef.current?.[toolName];
-        if (handler) {
-          const existing = pendingClientToolCalls.current.get(runId) ?? [];
-          existing.push({ toolCallId, toolName, args: args ?? {}, runId });
-          pendingClientToolCalls.current.set(runId, existing);
         }
+        return [...prev, { id: runId, entityId: event.entityId || '', text: delta, isStreaming: true }];
       });
+    });
 
-      stream.on('tool-output-available', (event: StreamEvent) => {
-        const runId = event.runId || (event.data.runId as string);
-        const toolCallId = (event.data.toolCallId as string) || '';
-        if (!runId || !toolCallId) return;
-
-        setStreamingMessages((prev) =>
-          prev.map((sm) =>
-            sm.id === runId
-              ? {
-                  ...sm,
-                  parts: sm.parts.map((p) =>
-                    p.type === 'tool-call' && p.toolCallId === toolCallId
-                      ? { ...p, result: event.data.output, status: 'complete' as const }
-                      : p
-                  ),
-                }
-              : sm
-          )
-        );
-      });
-
-      // Run is paused waiting for client tool results.
-      // Now it's safe to execute buffered client tools and submit results.
-      stream.on('run.waiting_tool', (event: StreamEvent) => {
-        const runId = event.runId || (event.data.runId as string);
-        if (!runId) return;
-
-        const buffered = pendingClientToolCalls.current.get(runId);
-        pendingClientToolCalls.current.delete(runId);
-        if (!buffered || buffered.length === 0) return;
-
-        for (const tc of buffered) {
-          const handler = clientToolsRef.current?.[tc.toolName];
-          if (!handler) continue;
-          (async () => {
-            try {
-              const result = await handler({ toolCallId: tc.toolCallId, toolName: tc.toolName, input: tc.args, runId: tc.runId });
-              // If the handler returns undefined, skip auto-submit.
-              // The consumer will use useToolResult() to submit manually (e.g. after user interaction).
-              if (result === undefined) return;
-              await client.tools.submitRunResult(tc.runId, { callId: tc.toolCallId, result });
-            } catch (err) {
-              const errorResult = { error: err instanceof Error ? err.message : String(err) };
-              await client.tools.submitRunResult(tc.runId, { callId: tc.toolCallId, result: errorResult }).catch(() => {});
-            }
-          })();
-        }
-      });
-
-      stream.on('run.completed', (event: StreamEvent) => {
-        const runId = event.runId || (event.data.runId as string);
-        if (!runId) return;
-        // Mark as not streaming but keep visible — will be removed
-        // when smartSpace.message arrives with the persisted version.
-        setStreamingMessages((prev) =>
-          prev.map((sm) =>
-            sm.id === runId ? { ...sm, isStreaming: false } : sm
-          )
-        );
-      });
-
-      stream.on('run.failed', (event: StreamEvent) => {
-        const runId = event.runId || (event.data.runId as string);
-        if (!runId) return;
-        setStreamingMessages((prev) =>
-          prev.map((sm) =>
-            sm.id === runId ? { ...sm, isStreaming: false } : sm
-          )
-        );
-      });
-
-      stream.on('run.canceled', (event: StreamEvent) => {
-        const runId = event.runId || (event.data.runId as string);
-        if (!runId) return;
-        // Remove entirely — no persisted message will arrive for canceled runs
-        setStreamingMessages((prev) => prev.filter((sm) => sm.id !== runId));
-      });
-    };
-
-    init();
+    // ── finish: sendSpaceMessage call completed ──
+    stream.on('finish', (event: StreamEvent) => {
+      const runId = event.runId || (event.data.runId as string);
+      if (!runId) return;
+      setStreamingMessages((prev) =>
+        prev.map((sm) =>
+          sm.id === runId ? { ...sm, isStreaming: false } : sm
+        )
+      );
+    });
 
     return () => {
-      cancelled = true;
-      if (streamRef.current) {
-        streamRef.current.close();
-        streamRef.current = null;
-      }
+      stream.close();
+      streamRef.current = null;
       setStreamingMessages([]);
     };
   }, [client, smartSpaceId, messagesLoaded]);
@@ -679,29 +297,14 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       .filter((m): m is ThreadMessageLike => m !== null);
 
     const streaming = streamingMessages
-      .map((sm): ThreadMessageLike => {
-        const content: ContentPart[] = sm.parts.map((p): ContentPart => {
-          if (p.type === 'tool-call') {
-            return {
-              type: 'tool-call',
-              toolCallId: p.toolCallId,
-              toolName: p.toolName,
-              argsText: p.argsText,
-              args: p.args,
-              result: p.result,
-            };
-          }
-          return p;
-        });
-
-        return {
-          id: sm.id,
-          role: 'assistant',
-          content: mergeConsecutiveReasoning(content),
-          createdAt: new Date(),
-          metadata: { custom: { entityId: sm.entityId } },
-        };
-      });
+      .filter((sm) => sm.text)
+      .map((sm): ThreadMessageLike => ({
+        id: sm.id,
+        role: 'assistant',
+        content: [{ type: 'text', text: sm.text }],
+        createdAt: new Date(),
+        metadata: { custom: { entityId: sm.entityId } },
+      }));
 
     return [...persisted, ...streaming];
   }, [rawMessages, streamingMessages]);
@@ -720,11 +323,6 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
   );
 
   // Thread list adapter
-  // NOTE: intentionally NOT memoized — @assistant-ui/react's
-  // ExternalStoreThreadListRuntimeCore compares adapter references
-  // to detect changes, but its constructor never initialises _threads
-  // from the adapter. A fresh object on each render ensures the first
-  // setAdapter call after mount actually applies the data.
   const threadListAdapter: ThreadListAdapter | undefined =
     onSwitchThread
       ? {

@@ -25,11 +25,12 @@ export async function initPrebuiltTools(): Promise<void> {
     await import('./get-plans.js'); // registers getPreviousPlans (active plans are in system prompt)
     await import('./set-plans.js');
     await import('./delete-plans.js');
-    await import('./go-to-space.js');
+    await import('./send-space-message.js');
     await import('./get-space-messages.js');
+    await import('./get-my-runs.js');
     await import('./skip-response.js');
-    await import('./mention-agent.js');
     await import('./delegate-agent.js');
+    // mentionAgent removed — superseded by sendSpaceMessage's `mention` field
   })();
   return _initPromise;
 }

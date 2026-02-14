@@ -1,26 +1,23 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './db.js';
-import { createEmitEvent, handleRunError, type EmitEventFn } from './run-events.js';
+import { createEmitEvent, handleRunError } from './run-events.js';
 import { buildAgent, AgentBuildError } from '../agent-builder/builder.js';
 import { closeMCPClients } from '../agent-builder/mcp-resolver.js';
 import type { AgentConfig } from '../agent-builder/types.js';
-import { emitSmartSpaceEvent } from './smartspace-events.js';
-import { createSmartSpaceMessage } from './smartspace-db.js';
-import { triggerOneAgent, triggerMentionedAgent, popReplyStack, type ChainMeta } from './agent-trigger.js';
+import { delegateToAgent, type TriggerContext } from './agent-trigger.js';
 import { loadRunContext } from './run-context.js';
 import { buildModelMessages } from './prompt-builder.js';
 import { processStream } from './stream-processor.js';
 
 /**
- * Run Runner - Orchestrator
- * 
- * Coordinates the run lifecycle:
- * 1. Load run + agent config
- * 2. Build agent (model + tools)
- * 3. Load context (members, goals, memories, etc.)
- * 4. Build model messages (normal or goToSpace)
- * 5. Stream AI response, emitting events to Redis/SmartSpace
- * 6. Persist assistant message + trigger other agents
+ * Run Runner — General-Purpose Runs
+ *
+ * Runs are standalone — they do NOT affect any space directly.
+ * The agent's LLM text output is internal reasoning/planning.
+ * All visible communication happens through sendSpaceMessage (prebuilt tool),
+ * which streams text to target spaces via tool-input-delta interception.
+ *
+ * The trigger space is like any other space — no special relay.
  */
 
 export async function executeRun(runId: string): Promise<void> {
@@ -28,13 +25,23 @@ export async function executeRun(runId: string): Promise<void> {
     where: { id: runId },
     select: {
       id: true,
-      smartSpaceId: true,
       agentEntityId: true,
       agentId: true,
       triggeredById: true,
       status: true,
       startedAt: true,
       metadata: true,
+      triggerType: true,
+      triggerSpaceId: true,
+      triggerMessageContent: true,
+      triggerSenderEntityId: true,
+      triggerSenderName: true,
+      triggerSenderType: true,
+      triggerMentionReason: true,
+      triggerServiceName: true,
+      triggerPayload: true,
+      triggerPlanId: true,
+      triggerPlanName: true,
     },
   });
 
@@ -42,25 +49,9 @@ export async function executeRun(runId: string): Promise<void> {
     return;
   }
 
-  const { emitEvent: emitRunEvent } = await createEmitEvent(runId);
-
-  // Event context includes entity info for multi-entity support
-  // All subscribers can see which entity (agent) produced each event
-  const eventContext = {
-    runId,
-    entityId: run.agentEntityId,
-    entityType: 'agent' as const,
-    agentEntityId: run.agentEntityId, // backwards compat
-  };
-
-  const emitEvent: EmitEventFn = async (type, payload) => {
-    await emitRunEvent(type, payload);
-    try {
-      await emitSmartSpaceEvent(run.smartSpaceId, type, payload, eventContext);
-    } catch (err) {
-      console.error(`[run-runner] emitSmartSpaceEvent FAILED for ${type}:`, err);
-    }
-  };
+  // Run events go ONLY to the run stream — never relayed to any space.
+  // Spaces are affected exclusively through sendSpaceMessage tool.
+  const { emitEvent } = await createEmitEvent(runId);
 
   try {
     if (run.status === 'completed' || run.status === 'failed' || run.status === 'canceled') {
@@ -89,39 +80,30 @@ export async function executeRun(runId: string): Promise<void> {
     }
 
     const config = agent.configJson as unknown as AgentConfig;
-    const isGoToSpaceRun = !!(run.metadata as any)?.originSmartSpaceId;
-    const isPlanRun = !!(run.metadata as any)?.isPlanRun;
 
-    // ── 2. Build agent (model + tools) ────────────────────────────────────
+    // ── 2. Load context ──────────────────────────────────────────────────
 
-    // Check if this is a multi-agent space (to decide which prebuilt tools to inject)
-    const agentMemberCount = await prisma.smartSpaceMembership.count({
-      where: {
-        smartSpaceId: run.smartSpaceId,
-        entity: { type: 'agent' },
-      },
-    });
-    const isMultiAgentSpace = agentMemberCount > 1;
+    const ctx = await loadRunContext(run);
+
+    // ── 3. Build agent (model + tools) ────────────────────────────────────
 
     const built = await buildAgent({
       config,
       runContext: {
         runId,
         agentEntityId: run.agentEntityId,
-        smartSpaceId: run.smartSpaceId,
         agentId: run.agentId,
-        isGoToSpaceRun,
-        isMultiAgentSpace,
+        triggerSpaceId: run.triggerSpaceId ?? undefined,
+        isAdminAgent: ctx.isAdminAgent,
+        isMultiAgentSpace: ctx.isMultiAgentSpace,
       },
     });
 
-    // ── 3. Load context + build messages ──────────────────────────────────
+    // ── 4. Build messages ─────────────────────────────────────────────────
 
-    const ctx = await loadRunContext(run);
     let modelMessages = await buildModelMessages(ctx);
 
     // If resuming from waiting_tool, inject the tool-call + tool-result
-    // into the conversation so the agent sees what happened.
     const isResuming = run.status === 'waiting_tool';
     const runMeta = (run.metadata && typeof run.metadata === 'object') ? run.metadata as Record<string, unknown> : {};
 
@@ -130,9 +112,6 @@ export async function executeRun(runId: string): Promise<void> {
       const toolResults = (runMeta.clientToolResults ?? {}) as Record<string, unknown>;
 
       if (pendingTools.length > 0) {
-        // Construct model messages directly in AI SDK v6 format:
-        // - tool-call uses `input` (not `args`)
-        // - tool-result uses `output` wrapped as { type: 'json', value: ... }
         modelMessages.push({
           role: 'assistant' as const,
           content: pendingTools.map((tc) => ({
@@ -160,16 +139,17 @@ export async function executeRun(runId: string): Promise<void> {
       }
     }
 
-    // ── 4. Stream AI response ─────────────────────────────────────────────
+    // ── 5. Stream AI response ─────────────────────────────────────────────
 
     const streamResult = await built.agent.stream({ messages: modelMessages });
     const messageId = `msg-${runId}-${Date.now()}`;
 
-    const { orderedParts, finalText, skipped, pendingClientToolCalls, mentionSignal, delegateSignal } = await processStream(
+    const { orderedParts, finalText, skipped, pendingClientToolCalls, delegateSignal } = await processStream(
       streamResult.fullStream,
       messageId,
       runId,
       emitEvent,
+      { agentEntityId: run.agentEntityId },
     );
 
     // Clean up MCP clients after streaming completes
@@ -177,10 +157,7 @@ export async function executeRun(runId: string): Promise<void> {
       await closeMCPClients(built.mcpClients);
     }
 
-    // Extract chain metadata for mention chain logic
-    const chain = (runMeta.chain as ChainMeta) ?? null;
-
-    // ── 5. Handle skip / delegate (agent chose not to respond) ──────────
+    // ── 6. Handle skip / delegate ─────────────────────────────────────────
 
     if (skipped) {
       await prisma.run.update({
@@ -188,37 +165,43 @@ export async function executeRun(runId: string): Promise<void> {
         data: { status: 'canceled', completedAt: new Date() },
       });
 
-      // Delegate: cancel this run silently, then trigger the target agent
-      if (delegateSignal && chain) {
+      // Delegate: cancel this run, re-trigger target agent with ORIGINAL trigger context
+      if (delegateSignal && run.triggerSpaceId) {
         await emitEvent('run.canceled', { reason: 'delegate', targetAgentEntityId: delegateSignal.targetAgentEntityId });
-        await triggerMentionedAgent({
-          smartSpaceId: run.smartSpaceId,
-          callerEntityId: run.agentEntityId,
-          targetAgentEntityId: delegateSignal.targetAgentEntityId,
-          reason: delegateSignal.reason,
-          expectReply: false, // delegate doesn't expect a reply — delegatee inherits position
-          chain,
+
+        const targetMembership = await prisma.smartSpaceMembership.findUnique({
+          where: { smartSpaceId_entityId: { smartSpaceId: run.triggerSpaceId, entityId: delegateSignal.targetAgentEntityId } },
+          include: { entity: { select: { agentId: true } } },
         });
+
+        if (targetMembership?.entity.agentId) {
+          const originalTrigger: TriggerContext = {
+            triggerType: (run.triggerType as TriggerContext['triggerType']) ?? 'space_message',
+            triggerSpaceId: run.triggerSpaceId ?? undefined,
+            triggerMessageContent: run.triggerMessageContent ?? undefined,
+            triggerSenderEntityId: run.triggerSenderEntityId ?? undefined,
+            triggerSenderName: run.triggerSenderName ?? undefined,
+            triggerSenderType: (run.triggerSenderType as 'human' | 'agent') ?? undefined,
+          };
+
+          await delegateToAgent({
+            originalTrigger,
+            targetAgentEntityId: delegateSignal.targetAgentEntityId,
+            targetAgentId: targetMembership.entity.agentId,
+            originalTriggeredById: run.triggeredById ?? undefined,
+          });
+        }
         return;
       }
 
-      // Plain skip: check reply stack
+      // Plain skip
       await emitEvent('run.canceled', { reason: 'skip' });
-      if (chain) {
-        await popReplyStack({
-          smartSpaceId: run.smartSpaceId,
-          currentEntityId: run.agentEntityId,
-          chain,
-        });
-      }
       return;
     }
 
-    // ── 5b. Handle pending client tool calls ──────────────────────────────
-    // Stream ended with tool calls that have no server-side execute.
-    // Store in run metadata and pause — client will submit results, then we resume.
+    // ── 7. Handle pending client tool calls ───────────────────────────────
 
-    if (pendingClientToolCalls.length > 0 && !isPlanRun) {
+    if (pendingClientToolCalls.length > 0) {
       await prisma.run.update({
         where: { id: runId },
         data: {
@@ -243,144 +226,29 @@ export async function executeRun(runId: string): Promise<void> {
       return;
     }
 
-    // ── 6. Persist message + emit completion events ───────────────────────
+    // ── 8. Complete the run ───────────────────────────────────────────────
+
+    const completionMeta: Record<string, unknown> = { ...runMeta };
+    if (finalText) {
+      completionMeta.summary = finalText;
+    }
 
     await prisma.run.update({
       where: { id: runId },
-      data: { status: 'completed', completedAt: new Date() },
+      data: {
+        status: 'completed',
+        completedAt: new Date(),
+        metadata: completionMeta as unknown as Prisma.InputJsonValue,
+      },
     });
 
-    // Build the final assistant message.
-    // Enrich tool-call parts with their results from tool-result parts so the
-    // persisted uiMessage has complete tool-call entries (result included).
-    const toolResultMap = new Map<string, unknown>();
-    for (const p of orderedParts) {
-      if (p.type === 'tool-result' && typeof p.toolCallId === 'string') {
-        toolResultMap.set(p.toolCallId, p.result);
-      }
-    }
-    let combinedParts = orderedParts.map((p) => {
-      if (p.type === 'tool-call' && typeof p.toolCallId === 'string' && toolResultMap.has(p.toolCallId)) {
-        return { ...p, result: toolResultMap.get(p.toolCallId) };
-      }
-      return p;
-    });
-    if (isResuming) {
-      const waitingParts = (runMeta.waitingParts ?? []) as Array<{ type: string; [key: string]: unknown }>;
-      const toolResults = (runMeta.clientToolResults ?? {}) as Record<string, unknown>;
-
-      // Enrich old tool-call parts with their results
-      const enriched = waitingParts.map((p) => {
-        if (p.type === 'tool-call' && typeof p.toolCallId === 'string' && toolResults[p.toolCallId] !== undefined) {
-          return { ...p, result: toolResults[p.toolCallId] };
-        }
-        return p;
-      });
-
-      // Add tool-result parts
-      const resultParts = Object.entries(toolResults).map(([callId, result]) => ({
-        type: 'tool-result',
-        toolCallId: callId,
-        toolName: (enriched.find((p) => p.toolCallId === callId)?.toolName as string) ?? '',
-        result,
-      }));
-
-      combinedParts = [...enriched, ...resultParts, ...orderedParts];
-    }
-
-    const assistantMessage = {
-      id: messageId,
-      role: 'assistant',
-      parts: combinedParts.length > 0 ? combinedParts : [{ type: 'text', text: finalText ?? '' }],
-    };
-
-    // Plan runs: agent is not in a space, so don't persist a message or trigger agents.
-    // The agent uses goToSpace to interact — those child runs handle their own messages.
-    if (!isPlanRun) {
-      // For goToSpace child runs, attach provenance so future runs know why this message exists
-      const messageMetadata: Record<string, unknown> = { uiMessage: assistantMessage };
-      if (isGoToSpaceRun) {
-        const meta = run.metadata as any;
-        messageMetadata.provenance = {
-          originSpaceId: meta?.originSmartSpaceId,
-          originSpaceName: meta?.originSmartSpaceName,
-          instruction: meta?.instruction,
-          parentRunId: meta?.parentRunId,
-        };
-      }
-
-      const dbMessage = await createSmartSpaceMessage({
-        smartSpaceId: run.smartSpaceId,
-        entityId: run.agentEntityId,
-        role: 'assistant',
-        content: finalText,
-        metadata: messageMetadata as unknown as Prisma.InputJsonValue,
-        runId,
-      });
-
-      // Use DB record ID so SSE event message IDs match messages.list() results
-      const emittedMessage = { ...assistantMessage, id: dbMessage.id };
-
-      await emitSmartSpaceEvent(
-        run.smartSpaceId,
-        'smartSpace.message',
-        { message: emittedMessage },
-        { runId, agentEntityId: run.agentEntityId }
-      );
-
-      await emitEvent('message.assistant', { message: emittedMessage });
-    }
-    
-    // Emit finish with full message
-    await emitEvent('finish', { messageId, message: assistantMessage });
-    
-    await emitEvent('run.completed', { status: 'completed', text: finalText });
-
-    // ── 7a. goToSpace child runs: trigger agents in target space ─────
-    // The agent went to another space and posted a message — trigger one agent
-    // there so the message actually gets a response.
-    if (isGoToSpaceRun && !isPlanRun) {
-      await triggerOneAgent({
-        smartSpaceId: run.smartSpaceId,
-        senderEntityId: run.agentEntityId,
-      });
-    }
-
-    // ── 7b. Mention chain: trigger next agent or pop reply stack ────────
-    if (!isGoToSpaceRun && !isPlanRun && chain) {
-      if (mentionSignal) {
-        // Agent mentioned another agent → trigger them
-        await triggerMentionedAgent({
-          smartSpaceId: run.smartSpaceId,
-          callerEntityId: run.agentEntityId,
-          targetAgentEntityId: mentionSignal.targetAgentEntityId,
-          reason: mentionSignal.reason,
-          expectReply: mentionSignal.expectReply,
-          chain,
-        });
-      } else {
-        // No mention → pop reply stack (re-trigger waiting agent, or stop if empty)
-        await popReplyStack({
-          smartSpaceId: run.smartSpaceId,
-          currentEntityId: run.agentEntityId,
-          chain,
-        });
-      }
-    }
+    await emitEvent('finish', { messageId });
+    await emitEvent('run.completed', { status: 'completed' });
   } catch (error) {
     if (error instanceof AgentBuildError) {
-      await emitRunEvent('agent.build.error', { error: error.message });
+      await emitEvent('agent.build.error', { error: error.message });
     }
 
-    await handleRunError(runId, error, emitRunEvent);
-
-    try {
-      await emitSmartSpaceEvent(run.smartSpaceId, 'run.failed', {
-        runId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    } catch {
-      // ignore
-    }
+    await handleRunError(runId, error, emitEvent);
   }
 }

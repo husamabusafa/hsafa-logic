@@ -25,7 +25,7 @@ export interface Agent {
 
 export interface Entity {
   id: string;
-  type: 'human' | 'agent' | 'system';
+  type: 'human' | 'agent';
   externalId?: string | null;
   displayName?: string | null;
   agentId?: string | null;
@@ -39,6 +39,7 @@ export interface SmartSpace {
   description?: string | null;
   metadata?: Record<string, unknown> | null;
   showAgentReasoning?: boolean;
+  adminAgentEntityId?: string | null;
   createdAt: string;
 }
 
@@ -66,13 +67,24 @@ export interface Membership {
 
 export interface Run {
   id: string;
-  smartSpaceId: string;
+  smartSpaceId?: string | null;
   agentEntityId: string;
   agentId: string;
   triggeredById?: string | null;
-  parentRunId?: string | null;
   status: RunStatus;
   metadata?: Record<string, unknown> | null;
+  // Trigger context
+  triggerType?: 'space_message' | 'plan' | 'service' | null;
+  triggerSpaceId?: string | null;
+  triggerMessageContent?: string | null;
+  triggerSenderEntityId?: string | null;
+  triggerSenderName?: string | null;
+  triggerSenderType?: 'human' | 'agent' | null;
+  triggerMentionReason?: string | null;
+  triggerServiceName?: string | null;
+  triggerPayload?: unknown;
+  triggerPlanId?: string | null;
+  triggerPlanName?: string | null;
   createdAt: string;
   completedAt?: string | null;
   errorMessage?: string | null;
@@ -127,23 +139,13 @@ export type EventType =
   | 'smartSpace.message'
   | 'smartSpace.member.joined'
   | 'smartSpace.member.left'
-  | 'run.created'
-  | 'run.started'
-  | 'run.waiting_tool'
-  | 'run.completed'
-  | 'run.failed'
-  | 'run.canceled'
-  | 'text.delta'
-  | 'reasoning.delta'
-  | 'step.start'
-  | 'step.finish'
-  | 'tool-input-start'
-  | 'tool-input-delta'
-  | 'tool-input-available'
-  | 'tool-output-available'
+  | 'start'
+  | 'text-start'
+  | 'text-delta'
+  | 'text-end'
+  | 'finish'
   | 'message.user'
   | 'message.assistant'
-  | 'message.tool'
   | (string & {});
 
 // =============================================================================
@@ -156,7 +158,7 @@ export interface CreateAgentParams {
 }
 
 export interface CreateEntityParams {
-  type: 'human' | 'system';
+  type: 'human';
   externalId?: string;
   displayName?: string;
   metadata?: Record<string, unknown>;
@@ -179,6 +181,7 @@ export interface CreateSmartSpaceParams {
   description?: string;
   metadata?: Record<string, unknown>;
   showAgentReasoning?: boolean;
+  adminAgentEntityId?: string;
 }
 
 export interface UpdateSmartSpaceParams {
@@ -186,6 +189,7 @@ export interface UpdateSmartSpaceParams {
   description?: string;
   metadata?: Record<string, unknown>;
   showAgentReasoning?: boolean;
+  adminAgentEntityId?: string | null;
 }
 
 export interface AddMemberParams {
@@ -212,11 +216,10 @@ export interface ListMessagesParams {
 }
 
 export interface CreateRunParams {
-  smartSpaceId: string;
+  smartSpaceId?: string;
   agentEntityId: string;
   agentId?: string;
   triggeredById?: string;
-  parentRunId?: string;
   metadata?: Record<string, unknown>;
   start?: boolean;
 }
@@ -256,7 +259,7 @@ export interface ListRunsParams extends ListParams {
 }
 
 export interface ListEntitiesParams extends ListParams {
-  type?: 'human' | 'agent' | 'system';
+  type?: 'human' | 'agent';
 }
 
 export interface SubscribeOptions {

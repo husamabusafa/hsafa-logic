@@ -1,5 +1,6 @@
 import { parse as parsePartialJson, STR, OBJ, ARR, NUM, BOOL, NULL } from 'partial-json';
 import type { EmitEventFn } from './run-events.js';
+import { emitSmartSpaceEvent } from './smartspace-events.js';
 
 // Allow all partial JSON types for tool input streaming
 const PARTIAL_JSON_ALLOW = STR | OBJ | ARR | NUM | BOOL | NULL;
@@ -14,12 +15,6 @@ export interface PendingClientToolCall {
   args: unknown;
 }
 
-export interface MentionAgentSignal {
-  targetAgentEntityId: string;
-  reason: string | null;
-  expectReply: boolean;
-}
-
 export interface DelegateAgentSignal {
   targetAgentEntityId: string;
   reason: string | null;
@@ -31,8 +26,6 @@ export interface StreamResult {
   skipped: boolean;
   /** Tool calls that had no server-side execute (client tools) — need external result */
   pendingClientToolCalls: PendingClientToolCall[];
-  /** If the agent called mentionAgent during the run */
-  mentionSignal: MentionAgentSignal | null;
   /** If the agent called delegateToAgent during the run */
   delegateSignal: DelegateAgentSignal | null;
 }
@@ -52,18 +45,24 @@ export async function processStream(
   messageId: string,
   runId: string,
   emitEvent: EmitEventFn,
+  options?: {
+    agentEntityId?: string;
+  },
 ): Promise<StreamResult> {
-  let textId: string | null = null;
   let reasoningId: string | null = null;
   let currentReasoningText = ''; // Current reasoning block accumulator
-  let currentTextContent = '';   // Current text block accumulator
+  let currentTextContent = '';   // Current text block accumulator (internal only)
   const toolArgsAccumulator = new Map<string, string>(); // toolCallId -> accumulated args text
   const orderedParts: Array<{ type: string; [key: string]: unknown }> = [];
   let skipped = false;
-  let mentionSignal: MentionAgentSignal | null = null;
   let delegateSignal: DelegateAgentSignal | null = null;
   const toolCallIds = new Set<string>();
   const toolResultIds = new Set<string>();
+
+  // Track sendSpaceMessage tool calls for real LLM streaming
+  // When the agent calls sendSpaceMessage, we intercept the 'text' field from
+  // tool-input-delta and relay it as text-delta to the TARGET space's SSE channel.
+  const sendMsgToolCalls = new Map<string, { spaceId: string | null; textStreamId: string | null; accumulatedText: string }>();
 
   // Flush current reasoning block into orderedParts
   const flushReasoning = () => {
@@ -86,20 +85,17 @@ export async function processStream(
   for await (const part of fullStream) {
     const t = part.type as string;
 
-    // Text streaming (AI SDK v6: text-delta has .text)
+    // Text streaming — INTERNAL ONLY (never emitted to Redis/space)
+    // Agent's LLM text output is a private summary, not shown anywhere.
     if (t === 'text-delta') {
       const delta = (part as any).text || (part as any).textDelta || '';
       if (!delta) continue;
-      if (!textId) {
-        textId = `text-${messageId}-${Date.now()}`;
-        await emitEvent('text-start', { id: textId });
-      }
       currentTextContent += delta;
-      await emitEvent('text-delta', { id: textId, delta });
+      // No emit — text is internal
     }
     else if (t === 'text-end') {
-      if (textId) { await emitEvent('text-end', { id: textId }); textId = null; }
       flushText();
+      // No emit — text is internal
     }
     // Reasoning streaming (AI SDK v6: reasoning-delta has .text)
     else if (t === 'reasoning' || t === 'reasoning-delta') {
@@ -121,6 +117,11 @@ export async function processStream(
       const { id, toolName } = part as any;
       toolArgsAccumulator.set(id, '');
       await emitEvent('tool-input-start', { toolCallId: id, toolName });
+
+      // Track sendSpaceMessage calls for real-time text streaming
+      if (toolName === 'sendSpaceMessage') {
+        sendMsgToolCalls.set(id, { spaceId: null, textStreamId: null, accumulatedText: '' });
+      }
     }
     // Tool input args delta (AI SDK v6: tool-input-delta with .id, .delta)
     else if (t === 'tool-input-delta') {
@@ -142,6 +143,43 @@ export async function processStream(
           accumulated,
           partialInput,
         });
+
+        // ── sendSpaceMessage real-time streaming ──
+        // Extract the 'text' field from partial JSON and relay as text-delta
+        // to the TARGET space's SSE channel, so it looks like real LLM streaming.
+        const sendMsgState = sendMsgToolCalls.get(id);
+        if (sendMsgState && partialInput && typeof partialInput === 'object') {
+          const partial = partialInput as Record<string, unknown>;
+
+          // Always update spaceId — partial-json may return truncated strings
+          // early on. By the time 'text' appears, spaceId will be complete.
+          if (typeof partial.spaceId === 'string') {
+            sendMsgState.spaceId = partial.spaceId;
+          }
+
+          // Stream the 'text' field delta to the target space
+          if (typeof partial.text === 'string' && sendMsgState.spaceId) {
+            const newText = partial.text;
+            const prevText = sendMsgState.accumulatedText;
+
+            if (newText.length > prevText.length) {
+              const textDelta = newText.slice(prevText.length);
+              sendMsgState.accumulatedText = newText;
+
+              // Start a text stream on the space if not yet started
+              if (!sendMsgState.textStreamId) {
+                sendMsgState.textStreamId = `text-${messageId}-${id}-${Date.now()}`;
+                const spaceCtx = { runId, entityId: options?.agentEntityId || '', entityType: 'agent' as const, agentEntityId: options?.agentEntityId || '' };
+                await emitSmartSpaceEvent(sendMsgState.spaceId, 'start', { messageId }, spaceCtx);
+                await emitSmartSpaceEvent(sendMsgState.spaceId, 'text-start', { id: sendMsgState.textStreamId }, spaceCtx);
+              }
+
+              // Emit text-delta to the target space (real LLM streaming)
+              const spaceCtx = { runId, entityId: options?.agentEntityId || '', entityType: 'agent' as const, agentEntityId: options?.agentEntityId || '' };
+              await emitSmartSpaceEvent(sendMsgState.spaceId, 'text-delta', { id: sendMsgState.textStreamId, delta: textDelta }, spaceCtx);
+            }
+          }
+        }
       }
     }
     // Tool input end
@@ -153,10 +191,17 @@ export async function processStream(
       const { toolCallId, toolName, input } = part as any;
       
       // Close & flush text/reasoning blocks if open (preserves order)
-      if (textId) { await emitEvent('text-end', { id: textId }); textId = null; }
       flushText();
       if (reasoningId) { await emitEvent('reasoning-end', { id: reasoningId }); reasoningId = null; }
       flushReasoning();
+
+      // Close sendSpaceMessage text stream on the target space
+      const sendMsgState = sendMsgToolCalls.get(toolCallId);
+      if (sendMsgState?.textStreamId && sendMsgState.spaceId) {
+        const spaceCtx = { runId, entityId: options?.agentEntityId || '', entityType: 'agent' as const, agentEntityId: options?.agentEntityId || '' };
+        await emitSmartSpaceEvent(sendMsgState.spaceId, 'text-end', { id: sendMsgState.textStreamId }, spaceCtx);
+        await emitSmartSpaceEvent(sendMsgState.spaceId, 'finish', { messageId }, spaceCtx);
+      }
       
       await emitEvent('tool-input-available', { toolCallId, toolName, input });
 
@@ -176,19 +221,10 @@ export async function processStream(
       orderedParts.push({ type: 'tool-result', toolCallId, toolName, result: output });
       toolResultIds.add(toolCallId);
 
-      // Detect mention/delegate signals from tool results
-      if (toolName === 'mentionAgent' && output && typeof output === 'object') {
+      // Detect delegate signal from tool results
+      if (toolName === 'delegateToAgent' && output && typeof output === 'object') {
         const o = output as Record<string, unknown>;
-        if (o.mentioned) {
-          mentionSignal = {
-            targetAgentEntityId: o.targetAgentEntityId as string,
-            reason: (o.reason as string) ?? null,
-            expectReply: (o.expectReply as boolean) ?? false,
-          };
-        }
-      } else if (toolName === 'delegateToAgent' && output && typeof output === 'object') {
-        const o = output as Record<string, unknown>;
-        if (o.delegated) {
+        if (o.__delegateSignal) {
           delegateSignal = {
             targetAgentEntityId: o.targetAgentEntityId as string,
             reason: (o.reason as string) ?? null,
@@ -204,7 +240,6 @@ export async function processStream(
     }
     // Stream finish — flush any remaining open blocks
     else if (t === 'finish') {
-      if (textId) { await emitEvent('text-end', { id: textId }); textId = null; }
       flushText();
       if (reasoningId) { await emitEvent('reasoning-end', { id: reasoningId }); reasoningId = null; }
       flushReasoning();
@@ -238,5 +273,5 @@ export async function processStream(
     }
   }
 
-  return { orderedParts, finalText, skipped, pendingClientToolCalls, mentionSignal, delegateSignal };
+  return { orderedParts, finalText, skipped, pendingClientToolCalls, delegateSignal };
 }

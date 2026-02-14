@@ -11,8 +11,8 @@ entitiesRouter.post('/', requireSecretKey(), async (req, res) => {
   try {
     const { type, externalId, displayName, metadata } = req.body;
 
-    if (type !== 'human' && type !== 'system') {
-      return res.status(400).json({ error: 'Invalid type (must be human|system)' });
+    if (type !== 'human') {
+      return res.status(400).json({ error: 'Invalid type (must be human). Use POST /api/entities/agent for agent entities.' });
     }
 
     const extId = typeof externalId === 'string' ? externalId : null;
@@ -97,7 +97,7 @@ entitiesRouter.get('/', requireSecretKey(), async (req, res) => {
     const { type, limit = '50', offset = '0' } = req.query;
 
     const where: Prisma.EntityWhereInput = {};
-    if (typeof type === 'string' && (type === 'human' || type === 'agent' || type === 'system')) {
+    if (typeof type === 'string' && (type === 'human' || type === 'agent')) {
       (where as any).type = type;
     }
 

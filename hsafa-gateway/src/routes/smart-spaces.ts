@@ -5,14 +5,14 @@ import { prisma } from '../lib/db.js';
 import { createSmartSpaceMessage } from '../lib/smartspace-db.js';
 import { emitSmartSpaceEvent } from '../lib/smartspace-events.js';
 import { toSSEEvent } from '../lib/run-events.js';
-import { triggerOneAgent } from '../lib/agent-trigger.js';
+import { triggerAdminAgent } from '../lib/agent-trigger.js';
 import { requireAuth, requireSecretKey, requireMembership } from '../middleware/auth.js';
 
 export const smartSpacesRouter: ExpressRouter = Router();
 
 smartSpacesRouter.post('/', requireSecretKey(), async (req, res) => {
   try {
-    const { name, description, metadata, showAgentReasoning } = req.body;
+    const { name, description, metadata, showAgentReasoning, adminAgentEntityId } = req.body;
 
     const smartSpace = await prisma.smartSpace.create({
       data: {
@@ -20,6 +20,7 @@ smartSpacesRouter.post('/', requireSecretKey(), async (req, res) => {
         description: typeof description === 'string' ? description : null,
         metadata: (metadata ?? null) as Prisma.InputJsonValue,
         showAgentReasoning: typeof showAgentReasoning === 'boolean' ? showAgentReasoning : false,
+        adminAgentEntityId: typeof adminAgentEntityId === 'string' ? adminAgentEntityId : null,
       },
     });
 
@@ -102,7 +103,7 @@ smartSpacesRouter.get('/:smartSpaceId', requireAuth(), requireMembership(), asyn
 smartSpacesRouter.patch('/:smartSpaceId', requireSecretKey(), async (req, res) => {
   try {
     const { smartSpaceId } = req.params;
-    const { name, description, metadata, showAgentReasoning } = req.body;
+    const { name, description, metadata, showAgentReasoning, adminAgentEntityId } = req.body;
 
     const smartSpace = await prisma.smartSpace.update({
       where: { id: smartSpaceId },
@@ -111,6 +112,9 @@ smartSpacesRouter.patch('/:smartSpaceId', requireSecretKey(), async (req, res) =
         description: typeof description === 'string' ? description : undefined,
         metadata: metadata !== undefined ? ((metadata ?? null) as Prisma.InputJsonValue) : undefined,
         showAgentReasoning: typeof showAgentReasoning === 'boolean' ? showAgentReasoning : undefined,
+        adminAgentEntityId: adminAgentEntityId !== undefined
+          ? (typeof adminAgentEntityId === 'string' ? adminAgentEntityId : null)
+          : undefined,
       },
     });
 
@@ -232,10 +236,9 @@ smartSpacesRouter.delete('/:smartSpaceId/members/:entityId', requireSecretKey(),
 /**
  * Post a message to a SmartSpace.
  * 
- * Supports messages from ANY entity type:
- * - Human entities (users) - triggers agent runs
- * - Agent entities (AI agents) - no auto-trigger (they post via run-runner)
- * - System entities (servers, services) - can optionally trigger agents
+ * Supports messages from:
+ * - Human entities (users) - triggers the admin agent
+ * - Agent entities (AI agents) - no auto-trigger (they communicate via sendSpaceMessage tool)
  * 
  * The role is automatically determined from the entity type,
  * or can be explicitly set via the `role` field.
@@ -272,12 +275,7 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
     // Determine role based on entity type (or use explicit role if provided)
     // - human -> 'user'
     // - agent -> 'assistant'
-    // - system -> 'system'
-    const roleMap: Record<string, string> = {
-      human: 'user',
-      agent: 'assistant',
-      system: 'system',
-    };
+    const roleMap: Record<string, string> = { human: 'user', agent: 'assistant' };
     const role = explicitRole || roleMap[entity.type] || 'user';
 
     const messageRecord = await createSmartSpaceMessage({
@@ -301,21 +299,25 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
     // Emit events with full entity context
     const eventContext = { 
       entityId: entity.id, 
-      entityType: entity.type as 'human' | 'agent' | 'system',
+      entityType: entity.type as 'human' | 'agent',
     };
     
     await emitSmartSpaceEvent(smartSpaceId, 'smartSpace.message', { message: uiMessage }, eventContext);
     await emitSmartSpaceEvent(smartSpaceId, `message.${role}`, { message: uiMessage }, eventContext);
 
-    // Trigger ONE agent via mention chain (round-robin pick)
-    // Only trigger for non-agent senders (human, system). Agent messages don't re-trigger.
+    // Trigger admin agent for human messages
     let createdRuns: Array<{ runId: string; agentEntityId: string }> = [];
     
-    if (triggerAgents && entity.type !== 'agent') {
-      createdRuns = await triggerOneAgent({
+    if (triggerAgents && entity.type === 'human') {
+      const result = await triggerAdminAgent({
         smartSpaceId,
         senderEntityId: entityId,
+        senderName: entity.displayName || 'Unknown',
+        messageContent: content ?? '',
       });
+      if (result) {
+        createdRuns = [result];
+      }
     }
 
     const serializedMessage = {
@@ -502,7 +504,9 @@ smartSpacesRouter.get('/:smartSpaceId/runs', requireAuth(), requireMembership(),
     const { smartSpaceId } = req.params;
     const { status, limit = '20', offset = '0' } = req.query;
 
-    const where: Prisma.RunWhereInput = { smartSpaceId };
+    const where: Prisma.RunWhereInput = {
+      triggerSpaceId: smartSpaceId,
+    };
     if (typeof status === 'string') (where as any).status = status;
 
     const runs = await prisma.run.findMany({
@@ -531,55 +535,3 @@ smartSpacesRouter.get('/:smartSpaceId/runs', requireAuth(), requireMembership(),
   }
 });
 
-/**
- * Submit a tool result from an external client (Node.js, browser, etc.)
- * 
- * Flow:
- * 1. Client subscribes to SmartSpace stream
- * 2. Client sees `tool-input-available` event with {toolCallId, toolName, input}
- * 3. Client executes tool locally
- * 4. Client POSTs result here
- * 5. Gateway emits `tool-output-available` and resumes agent if needed
- */
-smartSpacesRouter.post('/:smartSpaceId/tool-results', requireAuth(), requireMembership(), async (req, res) => {
-  try {
-    const { smartSpaceId } = req.params;
-    const { runId, toolCallId, result, source = 'client' } = req.body;
-
-    if (!runId || typeof runId !== 'string') {
-      return res.status(400).json({ error: 'Missing required field: runId' });
-    }
-    if (!toolCallId || typeof toolCallId !== 'string') {
-      return res.status(400).json({ error: 'Missing required field: toolCallId' });
-    }
-
-    // Verify run belongs to this SmartSpace
-    const run = await prisma.run.findUnique({
-      where: { id: runId },
-      select: { smartSpaceId: true, agentEntityId: true },
-    });
-    
-    if (!run) {
-      return res.status(404).json({ error: 'Run not found' });
-    }
-    if (run.smartSpaceId !== smartSpaceId) {
-      return res.status(400).json({ error: 'Run does not belong to this SmartSpace' });
-    }
-
-    // Emit tool-output-available to SmartSpace stream
-    await emitSmartSpaceEvent(
-      smartSpaceId,
-      'tool-output-available',
-      { toolCallId, output: result, source },
-      { runId, entityId: run.agentEntityId, entityType: 'agent' }
-    );
-
-    return res.json({ success: true, toolCallId });
-  } catch (error) {
-    console.error('[POST /api/smart-spaces/:smartSpaceId/tool-results] Error:', error);
-    return res.status(500).json({
-      error: 'Failed to submit tool result',
-      message: error instanceof Error ? error.message : 'Unknown error',
-    });
-  }
-});

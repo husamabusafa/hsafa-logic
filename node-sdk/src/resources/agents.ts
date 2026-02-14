@@ -1,5 +1,5 @@
 import type { HttpClient } from '../http.js';
-import type { Agent, CreateAgentParams, ListParams } from '../types.js';
+import type { Agent, CreateAgentParams, ListParams, TriggerAgentParams, TriggerAgentResult } from '../types.js';
 
 export class AgentsResource {
   constructor(private http: HttpClient) {}
@@ -21,5 +21,13 @@ export class AgentsResource {
 
   async delete(agentId: string): Promise<{ success: boolean }> {
     return this.http.delete(`/api/agents/${agentId}`);
+  }
+
+  /**
+   * Trigger an agent directly from an external service.
+   * Services are NOT entities — they trigger agents via this API.
+   */
+  async trigger(agentId: string, params: TriggerAgentParams): Promise<TriggerAgentResult> {
+    return this.http.post(`/api/agents/${agentId}/trigger`, params);
   }
 }

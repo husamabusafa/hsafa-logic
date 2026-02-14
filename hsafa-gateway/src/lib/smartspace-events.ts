@@ -3,19 +3,18 @@ import { redis } from './redis.js';
 /**
  * Context for SmartSpace events.
  * 
- * All events in a SmartSpace can come from any entity type:
+ * All events in a SmartSpace can come from:
  * - Human entities (users)
  * - Agent entities (AI agents)
- * - System entities (servers, services, external systems)
  * 
  * The `entityId` identifies who/what produced the event.
  * The `entityType` helps clients render appropriately.
  */
 export interface SmartSpaceEventContext {
-  /** The entity that produced this event (human, agent, or system) */
+  /** The entity that produced this event (human or agent) */
   entityId?: string;
   /** The type of entity (for client-side rendering hints) */
-  entityType?: 'human' | 'agent' | 'system';
+  entityType?: 'human' | 'agent';
   /** If this event is part of an agent run */
   runId?: string;
   /** @deprecated Use entityId instead. Kept for backwards compatibility. */

@@ -5,7 +5,6 @@ import { prisma } from '../lib/db.js';
 import { createEmitEvent, toSSEEvent } from '../lib/run-events.js';
 import { executeRun } from '../lib/run-runner.js';
 import { submitToolResult } from '../lib/tool-results.js';
-import { emitSmartSpaceEvent } from '../lib/smartspace-events.js';
 import { requireAuth, requireSecretKey } from '../middleware/auth.js';
 
 export const runsRouter: ExpressRouter = Router();
@@ -19,10 +18,10 @@ async function verifyRunMembership(
   req: Request,
   res: Response,
   runId: string
-): Promise<{ id: string; smartSpaceId: string; agentEntityId: string; agentId: string } | null> {
+): Promise<{ id: string; triggerSpaceId: string | null; agentEntityId: string; agentId: string } | null> {
   const run = await prisma.run.findUnique({
     where: { id: runId },
-    select: { id: true, smartSpaceId: true, agentEntityId: true, agentId: true },
+    select: { id: true, triggerSpaceId: true, agentEntityId: true, agentId: true },
   });
 
   if (!run) {
@@ -35,20 +34,26 @@ async function verifyRunMembership(
     return run;
   }
 
-  // Public key + JWT = verify membership
+  // Public key + JWT = verify membership in the trigger space
   const entityId = req.auth?.entityId;
   if (!entityId) {
     res.status(403).json({ error: 'No entity resolved from JWT' });
     return null;
   }
 
+  // Spaceless runs (plan/service triggers) — require secret key
+  if (!run.triggerSpaceId) {
+    res.status(403).json({ error: 'This run has no associated space. Use secret key for access.' });
+    return null;
+  }
+
   const membership = await prisma.smartSpaceMembership.findUnique({
-    where: { smartSpaceId_entityId: { smartSpaceId: run.smartSpaceId, entityId } },
+    where: { smartSpaceId_entityId: { smartSpaceId: run.triggerSpaceId, entityId } },
     select: { id: true },
   });
 
   if (!membership) {
-    res.status(403).json({ error: 'Not a member of this run\'s SmartSpace' });
+    res.status(403).json({ error: 'Not a member of this run\'s trigger space' });
     return null;
   }
 
@@ -95,11 +100,8 @@ runsRouter.get('/', requireSecretKey(), async (req: Request, res: Response) => {
 // POST /api/runs - Create a new run (debugging)
 runsRouter.post('/', requireSecretKey(), async (req: Request, res: Response) => {
   try {
-    const { smartSpaceId, agentEntityId, agentId, triggeredById, parentRunId, metadata, start = true } = req.body;
+    const { smartSpaceId, agentEntityId, agentId, triggeredById, metadata, start = true } = req.body;
 
-    if (!smartSpaceId || typeof smartSpaceId !== 'string') {
-      return res.status(400).json({ error: 'Missing required field: smartSpaceId' });
-    }
     if (!agentEntityId || typeof agentEntityId !== 'string') {
       return res.status(400).json({ error: 'Missing required field: agentEntityId' });
     }
@@ -116,13 +118,14 @@ runsRouter.post('/', requireSecretKey(), async (req: Request, res: Response) => 
       finalAgentId = entity.agentId;
     }
 
+    const finalSmartSpaceId = typeof smartSpaceId === 'string' ? smartSpaceId : undefined;
+
     const run = await prisma.run.create({
       data: {
-        smartSpaceId,
+        smartSpaceId: finalSmartSpaceId,
         agentEntityId,
         agentId: finalAgentId,
         triggeredById: typeof triggeredById === 'string' ? triggeredById : null,
-        parentRunId: typeof parentRunId === 'string' ? parentRunId : null,
         metadata: (metadata ?? null) as Prisma.InputJsonValue,
         status: 'queued',
       },
@@ -131,13 +134,7 @@ runsRouter.post('/', requireSecretKey(), async (req: Request, res: Response) => 
 
     const runId = run.id;
     const { emitEvent } = await createEmitEvent(runId);
-    await emitEvent('run.created', { runId, smartSpaceId, agentEntityId, agentId: finalAgentId, status: 'queued' });
-    await emitSmartSpaceEvent(
-      smartSpaceId,
-      'run.created',
-      { runId, smartSpaceId, agentEntityId, agentId: finalAgentId, status: 'queued' },
-      { runId, agentEntityId }
-    );
+    await emitEvent('run.created', { runId, agentEntityId, agentId: finalAgentId, status: 'queued' });
 
     if (start !== false) {
       executeRun(runId).catch(() => {
@@ -417,19 +414,13 @@ runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res:
     const run = await verifyRunMembership(req, res, runId);
     if (!run) return;
 
-    const { callId, result, source, clientId } = req.body;
+    const { callId, result } = req.body;
 
     if (!callId || typeof callId !== 'string') {
       return res.status(400).json({ error: 'Missing required field: callId' });
     }
 
-    await submitToolResult({
-      runId,
-      callId,
-      result,
-      source: source === 'client' || source === 'server' ? source : undefined,
-      clientId: typeof clientId === 'string' ? clientId : null,
-    });
+    await submitToolResult({ runId, callId, result });
 
     return res.json({ success: true });
   } catch (error) {

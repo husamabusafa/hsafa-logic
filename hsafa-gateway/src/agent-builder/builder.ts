@@ -9,9 +9,9 @@ import type { AgentConfig } from './types.js';
 export interface PrebuiltToolContext {
   runId: string;
   agentEntityId: string;
-  smartSpaceId: string;
   agentId: string;
-  isGoToSpaceRun?: boolean;
+  triggerSpaceId?: string;
+  isAdminAgent?: boolean;
   isMultiAgentSpace?: boolean;
 }
 
@@ -63,15 +63,14 @@ export async function buildAgent(options: BuildAgentOptions): Promise<BuildAgent
     const staticTools = resolveTools(configTools, options.runContext);
 
     // Auto-inject prebuilt tools with conditional filtering:
-    // - goToSpace: skip for child goToSpace runs (prevent loops)
-    // - mentionAgent, delegateToAgent: only in multi-agent spaces
-    const multiAgentOnlyTools = new Set(['mentionAgent', 'delegateToAgent']);
+    // - delegateToAgent: only for admin agent in multi-agent spaces
     const isMultiAgent = options.runContext?.isMultiAgentSpace ?? false;
+    const isAdmin = options.runContext?.isAdminAgent ?? false;
 
     const prebuiltTools: Record<string, any> = {};
     for (const [action, handler] of getAllPrebuiltHandlers()) {
-      if (action === 'goToSpace' && options.runContext?.isGoToSpaceRun) continue;
-      if (multiAgentOnlyTools.has(action) && !isMultiAgent) continue;
+      // delegateToAgent is admin-only in multi-agent spaces
+      if (action === 'delegateToAgent' && !(isMultiAgent && isAdmin)) continue;
       prebuiltTools[action] = tool({
         description: handler.defaultDescription,
         inputSchema: jsonSchema(handler.inputSchema as Parameters<typeof jsonSchema>[0]),

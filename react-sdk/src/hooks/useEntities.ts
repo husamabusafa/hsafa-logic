@@ -11,7 +11,7 @@ import type {
 } from '../types.js';
 
 export interface UseEntitiesOptions {
-  type?: 'human' | 'agent' | 'system';
+  type?: 'human' | 'agent';
 }
 
 export interface UseEntitiesReturn {

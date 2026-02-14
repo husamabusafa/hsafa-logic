@@ -1,19 +1,15 @@
-import { Prisma } from '@prisma/client';
 import { CronExpressionParser } from 'cron-parser';
 import { prisma } from './db.js';
-import { executeRun } from './run-runner.js';
+import { triggerFromPlan } from './agent-trigger.js';
 
 /**
  * Plan Executor
  *
  * Finds plans that are due (nextRunAt <= now, status = pending),
- * creates a run for the agent, and updates the plan after execution.
+ * triggers the agent via triggerFromPlan, and updates the plan after execution.
  *
- * Plan runs are special:
- * - The agent is NOT in any specific space
- * - The agent must use goToSpace to interact with spaces
- * - The run's response is NOT auto-posted to a space
- * - The run metadata contains isPlanRun + plan details
+ * Plan runs use the general-purpose trigger context system.
+ * The agent uses sendSpaceMessage to interact with spaces.
  */
 
 /**
@@ -41,13 +37,12 @@ export async function executeDuePlans(): Promise<void> {
       await executePlan(plan);
     } catch (err) {
       console.error(`[plan-executor] Failed to execute plan "${plan.name}" (${plan.id}):`, err);
-      // Don't let one failed plan block the others
     }
   }
 }
 
 async function executePlan(plan: any): Promise<void> {
-  const { id: planId, entityId, name, description, instruction, isRecurring, cron } = plan;
+  const { id: planId, entityId, name, isRecurring, cron } = plan;
 
   console.log(`[plan-executor] Executing plan "${name}" (${planId}) for entity ${entityId}`);
 
@@ -68,40 +63,13 @@ async function executePlan(plan: any): Promise<void> {
       throw new Error(`Entity ${entityId} is not an agent or has no agentId`);
     }
 
-    // Find a space the agent is a member of (needed for run schema)
-    // Plan runs are "spaceless" but we need a smartSpaceId for the DB
-    const membership = await prisma.smartSpaceMembership.findFirst({
-      where: { entityId },
-      select: { smartSpaceId: true },
+    // Trigger the plan run using the new trigger system
+    await triggerFromPlan({
+      agentEntityId: entityId,
+      agentId: entity.agentId,
+      planId,
+      planName: name,
     });
-
-    if (!membership) {
-      throw new Error(`Agent entity ${entityId} is not a member of any space`);
-    }
-
-    // Create the plan-triggered run
-    const run = await prisma.run.create({
-      data: {
-        smartSpaceId: membership.smartSpaceId,
-        agentEntityId: entityId,
-        agentId: entity.agentId,
-        triggeredById: entityId, // triggered by itself (plan)
-        status: 'queued',
-        metadata: {
-          isPlanRun: true,
-          planId,
-          planName: name,
-          planDescription: description,
-          planInstruction: instruction,
-        } as unknown as Prisma.InputJsonValue,
-      },
-      select: { id: true },
-    });
-
-    console.log(`[plan-executor] Created run ${run.id} for plan "${name}"`);
-
-    // Execute the run (blocking — we need to know when it finishes to update the plan)
-    await executeRun(run.id);
 
     // Update plan after successful execution
     const updateData: any = {

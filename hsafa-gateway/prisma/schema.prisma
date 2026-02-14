@@ -15,7 +15,6 @@ datasource db {
 enum EntityType {
   human
   agent
-  system
 }
 
 enum RunStatus {
@@ -78,6 +77,7 @@ model Entity {
   memories         Memory[]
   plans            Plan[]
   goals            Goal[]
+  adminSpaces      SmartSpace[] @relation("AdminAgent") // Spaces where this entity is the admin agent
 
   @@index([type])
   @@index([externalId])
@@ -89,14 +89,16 @@ model Entity {
 // =============================================================================
 
 model SmartSpace {
-  id                 String   @id @default(uuid()) @db.Uuid
-  name               String?
-  description        String?
-  metadata           Json?    @db.JsonB
-  showAgentReasoning Boolean  @default(false) @map("show_agent_reasoning")
-  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                   String   @id @default(uuid()) @db.Uuid
+  name                 String?
+  description          String?
+  metadata             Json?    @db.JsonB
+  showAgentReasoning   Boolean  @default(false) @map("show_agent_reasoning")
+  adminAgentEntityId   String?  @map("admin_agent_entity_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  adminAgent  Entity? @relation("AdminAgent", fields: [adminAgentEntityId], references: [id])
   memberships SmartSpaceMembership[]
   messages    SmartSpaceMessage[]
   runs        Run[]
@@ -173,24 +175,35 @@ model Agent {
 
 model Run {
   id            String    @id @default(uuid()) @db.Uuid
-  smartSpaceId       String    @map("smart_space_id") @db.Uuid
+  smartSpaceId  String?   @map("smart_space_id") @db.Uuid // Optional — general runs may not belong to a space
   agentEntityId String    @map("agent_entity_id") @db.Uuid
   agentId       String    @map("agent_id") @db.Uuid
-  triggeredById String?   @map("triggered_by_id") @db.Uuid // Entity that triggered this run
-  parentRunId   String?   @map("parent_run_id") @db.Uuid   // For cross-smart-space runs
+  triggeredById String?   @map("triggered_by_id") @db.Uuid // Entity that triggered this run (for space_message triggers)
   status        RunStatus
   startedAt     DateTime? @map("started_at") @db.Timestamptz(6)
   completedAt   DateTime? @map("completed_at") @db.Timestamptz(6)
   errorMessage  String?   @map("error_message")
   metadata      Json?     @db.JsonB
+
+  // Trigger context — why was this run created?
+  triggerType           String?  @map("trigger_type")             // 'space_message' | 'plan' | 'service'
+  triggerSpaceId        String?  @map("trigger_space_id") @db.Uuid
+  triggerMessageContent String?  @map("trigger_message_content") @db.Text
+  triggerSenderEntityId String?  @map("trigger_sender_entity_id") @db.Uuid
+  triggerSenderName     String?  @map("trigger_sender_name")
+  triggerSenderType     String?  @map("trigger_sender_type")     // 'human' | 'agent'
+  triggerMentionReason  String?  @map("trigger_mention_reason") @db.Text
+  triggerServiceName    String?  @map("trigger_service_name")
+  triggerPayload        Json?    @map("trigger_payload") @db.JsonB
+  triggerPlanId         String?  @map("trigger_plan_id") @db.Uuid
+  triggerPlanName       String?  @map("trigger_plan_name")
+
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  smartSpace       SmartSpace  @relation(fields: [smartSpaceId], references: [id])
-  agentEntity Entity @relation(fields: [agentEntityId], references: [id])
-  agent       Agent  @relation(fields: [agentId], references: [id])
-  parentRun   Run?   @relation("RunHierarchy", fields: [parentRunId], references: [id])
-  childRuns   Run[]  @relation("RunHierarchy")
+  smartSpace    SmartSpace? @relation(fields: [smartSpaceId], references: [id])
+  agentEntity   Entity      @relation(fields: [agentEntityId], references: [id])
+  agent         Agent       @relation(fields: [agentId], references: [id])
 
   events       RunEvent[]
   toolCalls    ToolCall[]
@@ -199,8 +212,8 @@ model Run {
 
   @@index([smartSpaceId, createdAt])
   @@index([agentEntityId, createdAt])
+  @@index([agentEntityId, status])
   @@index([status, updatedAt])
-  @@index([parentRunId])
   @@map("runs")
 }
 

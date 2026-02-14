@@ -131,13 +131,17 @@ Use these tools when the user asks about them or requests related functionality.
   });
   console.log('✅ Second agent created:', secondAgent.name);
 
-  // 3. Use existing human entity (حسام)
-  const HUSAM_ENTITY_ID = '7d50af1b-5516-4dd1-84b8-3db254011976';
-  const humanEntity = await prisma.entity.update({
-    where: { id: HUSAM_ENTITY_ID },
-    data: { displayName: 'حسام' },
+  // 3. Create/update human entity
+  const humanEntity = await prisma.entity.upsert({
+    where: { externalId: DEMO_USER_EXTERNAL_ID },
+    update: { displayName: 'حسام' },
+    create: {
+      type: 'human',
+      externalId: DEMO_USER_EXTERNAL_ID,
+      displayName: 'حسام',
+    },
   });
-  console.log('✅ Human entity:', humanEntity.displayName);
+  console.log('✅ Human entity:', humanEntity.displayName, '(id:', humanEntity.id, ')');
 
   // 4. Create agent entity for demo-agent
   const agentEntity = await prisma.entity.upsert({
@@ -173,10 +177,16 @@ Use these tools when the user asks about them or requests related functionality.
       data: {
         name: DEMO_SPACE_NAME,
         description: 'A demo SmartSpace for testing the chat interface',
+        adminAgentEntityId: agentEntity.id,
       },
     });
+  } else if (!smartSpace.adminAgentEntityId) {
+    smartSpace = await prisma.smartSpace.update({
+      where: { id: smartSpace.id },
+      data: { adminAgentEntityId: agentEntity.id },
+    });
   }
-  console.log('✅ SmartSpace created:', smartSpace.name);
+  console.log('✅ SmartSpace created:', smartSpace.name, '(admin:', agentEntity.displayName, ')');
 
   // 7. Add human to SmartSpace
   await prisma.smartSpaceMembership.upsert({

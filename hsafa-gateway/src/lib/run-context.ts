@@ -7,26 +7,40 @@ import { prisma } from './db.js';
 export interface RunContext {
   run: {
     id: string;
-    smartSpaceId: string;
     agentEntityId: string;
     agentId: string;
     triggeredById: string | null;
     status: string;
     startedAt: Date | null;
     metadata: unknown;
+    // Trigger context
+    triggerType: string | null;
+    triggerSpaceId: string | null;
+    triggerMessageContent: string | null;
+    triggerSenderEntityId: string | null;
+    triggerSenderName: string | null;
+    triggerSenderType: string | null;
+    triggerMentionReason: string | null;
+    triggerServiceName: string | null;
+    triggerPayload: unknown;
+    triggerPlanId: string | null;
+    triggerPlanName: string | null;
   };
   agentDisplayName: string;
-  isGoToSpaceRun: boolean;
-  isPlanRun: boolean;
-  plan: PlanRunData | null;
-  spaceMembers: SpaceMember[];
-  smartSpace: { name: string | null } | null;
-  triggeredByEntity: { displayName: string | null; type: string } | null;
+  /** Is this agent the admin for the trigger space? */
+  isAdminAgent: boolean;
+  /** Is this a multi-agent space? (more than 1 agent member) */
+  isMultiAgentSpace: boolean;
+  /** Members of the trigger space (empty for service/plan triggers with no trigger space) */
+  triggerSpaceMembers: SpaceMember[];
+  /** Trigger space info */
+  triggerSpace: { id: string; name: string | null; adminAgentEntityId: string | null } | null;
   agentGoals: AgentGoal[];
   agentMemories: AgentMemory[];
   agentMemberships: AgentMembership[];
-  crossSpaceMessages: CrossSpaceDigest[];
   agentPlans: AgentPlan[];
+  /** Other active runs for this agent (for concurrent run awareness) */
+  otherActiveRunCount: number;
 }
 
 export interface SpaceMember {
@@ -57,6 +71,7 @@ export interface AgentMembership {
     name: string | null;
     memberships: Array<{
       entity: {
+        id: string;
         displayName: string | null;
         type: string;
         metadata: unknown;
@@ -79,13 +94,6 @@ export interface AgentPlan {
   createdAt: Date;
 }
 
-export interface PlanRunData {
-  planId: string;
-  planName: string;
-  planDescription: string | null;
-  planInstruction: string | null;
-}
-
 export interface CrossSpaceDigest {
   spaceId: string;
   spaceName: string;
@@ -98,35 +106,32 @@ export interface CrossSpaceDigest {
 }
 
 /**
- * Loads all context needed for a run: space members, goals, memories,
- * memberships, and cross-space message digests.
+ * Loads all context needed for a run.
  */
 export async function loadRunContext(run: RunContext['run']): Promise<RunContext> {
-  const isGoToSpaceRun = !!(run.metadata as any)?.originSmartSpaceId;
-  const isPlanRun = !!(run.metadata as any)?.isPlanRun;
-  const plan: PlanRunData | null = isPlanRun
-    ? {
-        planId: (run.metadata as any).planId,
-        planName: (run.metadata as any).planName,
-        planDescription: (run.metadata as any).planDescription ?? null,
-        planInstruction: (run.metadata as any).planInstruction ?? null,
-      }
-    : null;
+  const triggerSpaceId = run.triggerSpaceId;
 
-  // Load space members + triggering entity + agent display name for run context
-  const [spaceMembers, smartSpace, triggeredByEntity, agentEntity, agentGoals, agentMemories, agentMemberships, agentPlans] = await Promise.all([
-    prisma.smartSpaceMembership.findMany({
-      where: { smartSpaceId: run.smartSpaceId },
-      include: { entity: { select: { id: true, displayName: true, type: true, metadata: true } } },
-    }),
-    prisma.smartSpace.findUnique({
-      where: { id: run.smartSpaceId },
-      select: { name: true },
-    }),
-    run.triggeredById
-      ? prisma.entity.findUnique({
-          where: { id: run.triggeredById },
-          select: { displayName: true, type: true },
+  // Load everything in parallel
+  const [
+    triggerSpaceMembers,
+    triggerSpace,
+    agentEntity,
+    agentGoals,
+    agentMemories,
+    agentMemberships,
+    agentPlans,
+    otherActiveRunCount,
+  ] = await Promise.all([
+    triggerSpaceId
+      ? prisma.smartSpaceMembership.findMany({
+          where: { smartSpaceId: triggerSpaceId },
+          include: { entity: { select: { id: true, displayName: true, type: true, metadata: true } } },
+        })
+      : [],
+    triggerSpaceId
+      ? prisma.smartSpace.findUnique({
+          where: { id: triggerSpaceId },
+          select: { id: true, name: true, adminAgentEntityId: true },
         })
       : null,
     prisma.entity.findUnique({
@@ -150,7 +155,7 @@ export async function loadRunContext(run: RunContext['run']): Promise<RunContext
             id: true,
             name: true,
             memberships: {
-              include: { entity: { select: { displayName: true, type: true, metadata: true } } },
+              include: { entity: { select: { id: true, displayName: true, type: true, metadata: true } } },
             },
           },
         },
@@ -160,50 +165,38 @@ export async function loadRunContext(run: RunContext['run']): Promise<RunContext
       where: { entityId: run.agentEntityId, status: { in: ['pending', 'running'] } },
       orderBy: [{ nextRunAt: 'asc' }],
     }) as Promise<AgentPlan[]>,
+    prisma.run.count({
+      where: {
+        agentEntityId: run.agentEntityId,
+        id: { not: run.id },
+        status: { in: ['running', 'waiting_tool', 'queued'] },
+      },
+    }),
   ]);
 
   const agentDisplayName = agentEntity?.displayName || 'AI Assistant';
 
-  // Load last 2 messages from each OTHER space for cross-space awareness
-  console.log(`[run-runner] Agent "${agentDisplayName}" is in ${agentMemberships.length} spaces. Current: ${run.smartSpaceId}`);
-  const otherSpaceIds = agentMemberships
-    .map((m) => m.smartSpace.id)
-    .filter((id) => id !== run.smartSpaceId);
-  console.log(`[run-runner] Other space IDs for digest: ${otherSpaceIds.length > 0 ? otherSpaceIds.join(', ') : '(none)'}`);
+  // Determine if this agent is the admin for the trigger space
+  const isAdminAgent = triggerSpace
+    ? (triggerSpace.adminAgentEntityId === run.agentEntityId) ||
+      // If no explicit admin, the only agent is effectively the admin
+      (!triggerSpace.adminAgentEntityId && triggerSpaceMembers.filter(m => m.entity.type === 'agent').length === 1)
+    : false;
 
-  const crossSpaceMessages = otherSpaceIds.length > 0
-    ? await Promise.all(
-        otherSpaceIds.map(async (spaceId) => {
-          const msgs = await prisma.smartSpaceMessage.findMany({
-            where: { smartSpaceId: spaceId },
-            orderBy: { seq: 'desc' },
-            take: 2,
-            select: {
-              content: true,
-              entityId: true,
-              entity: { select: { displayName: true, type: true } },
-              createdAt: true,
-            },
-          });
-          const space = agentMemberships.find((m) => m.smartSpace.id === spaceId)?.smartSpace;
-          return { spaceId, spaceName: space?.name || spaceId, messages: msgs.reverse() };
-        })
-      )
-    : [];
+  const agentCount = triggerSpaceMembers.filter(m => m.entity.type === 'agent').length;
+  const isMultiAgentSpace = agentCount > 1;
 
   return {
     run,
     agentDisplayName,
-    isGoToSpaceRun,
-    isPlanRun,
-    plan,
-    spaceMembers,
-    smartSpace,
-    triggeredByEntity,
+    isAdminAgent,
+    isMultiAgentSpace,
+    triggerSpaceMembers,
+    triggerSpace,
     agentGoals,
     agentMemories,
     agentMemberships,
-    crossSpaceMessages,
     agentPlans,
+    otherActiveRunCount,
   };
 }

@@ -75,22 +75,11 @@ class SetupResource {
       }
     }
 
-    // 4. Create system entities and add as members
-    if (params.systems) {
-      for (const sysDef of params.systems) {
-        const { entity } = await this.entities.create({
-          type: 'system',
-          displayName: sysDef.displayName,
-          metadata: sysDef.metadata,
-        });
-        createdEntities.push(entity);
-
-        const { membership } = await this.spaces.addMember(smartSpace.id, {
-          entityId: entity.id,
-          role: 'member',
-        });
-        createdMemberships.push(membership);
-      }
+    // 4. Set admin agent if specified
+    if (params.adminAgentEntityId) {
+      await this.spaces.update(smartSpace.id, {
+        adminAgentEntityId: params.adminAgentEntityId,
+      });
     }
 
     return {

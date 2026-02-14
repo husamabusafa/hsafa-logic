@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/db.js';
 import { validateAgentConfig } from '../agent-builder/parser.js';
 import { requireSecretKey } from '../middleware/auth.js';
+import { triggerFromService } from '../lib/agent-trigger.js';
 
 export const agentsRouter: ExpressRouter = Router();
 
@@ -148,6 +149,61 @@ agentsRouter.delete('/:agentId', requireSecretKey(), async (req, res) => {
     console.error('[DELETE /api/agents/:agentId] Error:', error);
     return res.status(500).json({
       error: 'Failed to delete agent',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * Service Trigger API — trigger an agent directly from an external service.
+ *
+ * Services (Jira, Slack, cron jobs, Node.js backends, etc.) are NOT entities.
+ * They trigger agents via this endpoint and optionally subscribe to
+ * run events / submit tool results via the runs API.
+ *
+ * POST /api/agents/:agentId/trigger
+ * Body: { serviceName: string, payload: any }
+ */
+agentsRouter.post('/:agentId/trigger', requireSecretKey(), async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const { serviceName, payload } = req.body;
+
+    if (!serviceName || typeof serviceName !== 'string') {
+      return res.status(400).json({ error: 'Missing required field: serviceName (string)' });
+    }
+
+    // Find the agent and its entity
+    const agent = await prisma.agent.findUnique({
+      where: { id: agentId },
+      select: { id: true, entity: { select: { id: true } } },
+    });
+
+    if (!agent) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+
+    if (!agent.entity) {
+      return res.status(400).json({ error: 'Agent has no entity. Create an agent entity first via POST /api/entities/agent.' });
+    }
+
+    const result = await triggerFromService({
+      agentEntityId: agent.entity.id,
+      agentId: agent.id,
+      serviceName,
+      payload: payload ?? null,
+    });
+
+    return res.status(201).json({
+      runId: result.runId,
+      agentEntityId: result.agentEntityId,
+      status: 'queued',
+      streamUrl: `/api/runs/${result.runId}/stream`,
+    });
+  } catch (error) {
+    console.error('[POST /api/agents/:agentId/trigger] Error:', error);
+    return res.status(500).json({
+      error: 'Failed to trigger agent',
       message: error instanceof Error ? error.message : 'Unknown error',
     });
   }

@@ -25,7 +25,7 @@ export interface Agent {
 
 export interface Entity {
   id: string;
-  type: 'human' | 'agent' | 'system';
+  type: 'human' | 'agent';
   externalId?: string | null;
   displayName?: string | null;
   agentId?: string | null;
@@ -39,6 +39,7 @@ export interface SmartSpace {
   description?: string | null;
   metadata?: Record<string, unknown> | null;
   showAgentReasoning?: boolean;
+  adminAgentEntityId?: string | null;
   createdAt: string;
 }
 
@@ -66,13 +67,24 @@ export interface Membership {
 
 export interface Run {
   id: string;
-  smartSpaceId: string;
+  smartSpaceId?: string | null;
   agentEntityId: string;
   agentId: string;
   triggeredById?: string | null;
-  parentRunId?: string | null;
   status: RunStatus;
   metadata?: Record<string, unknown> | null;
+  // Trigger context
+  triggerType?: 'space_message' | 'plan' | 'service' | null;
+  triggerSpaceId?: string | null;
+  triggerMessageContent?: string | null;
+  triggerSenderEntityId?: string | null;
+  triggerSenderName?: string | null;
+  triggerSenderType?: 'human' | 'agent' | null;
+  triggerMentionReason?: string | null;
+  triggerServiceName?: string | null;
+  triggerPayload?: unknown;
+  triggerPlanId?: string | null;
+  triggerPlanName?: string | null;
   createdAt: string;
   completedAt?: string | null;
   errorMessage?: string | null;
@@ -156,7 +168,7 @@ export interface CreateAgentParams {
 }
 
 export interface CreateEntityParams {
-  type: 'human' | 'system';
+  type: 'human';
   externalId?: string;
   displayName?: string;
   metadata?: Record<string, unknown>;
@@ -179,6 +191,7 @@ export interface CreateSmartSpaceParams {
   description?: string;
   metadata?: Record<string, unknown>;
   showAgentReasoning?: boolean;
+  adminAgentEntityId?: string;
 }
 
 export interface UpdateSmartSpaceParams {
@@ -186,6 +199,7 @@ export interface UpdateSmartSpaceParams {
   description?: string;
   metadata?: Record<string, unknown>;
   showAgentReasoning?: boolean;
+  adminAgentEntityId?: string | null;
 }
 
 export interface AddMemberParams {
@@ -212,13 +226,24 @@ export interface ListMessagesParams {
 }
 
 export interface CreateRunParams {
-  smartSpaceId: string;
+  smartSpaceId?: string;
   agentEntityId: string;
   agentId?: string;
   triggeredById?: string;
-  parentRunId?: string;
   metadata?: Record<string, unknown>;
   start?: boolean;
+}
+
+export interface TriggerAgentParams {
+  serviceName: string;
+  payload?: unknown;
+}
+
+export interface TriggerAgentResult {
+  runId: string;
+  agentEntityId: string;
+  status: string;
+  streamUrl: string;
 }
 
 export interface SubmitToolResultParams {
@@ -256,7 +281,7 @@ export interface ListRunsParams extends ListParams {
 }
 
 export interface ListEntitiesParams extends ListParams {
-  type?: 'human' | 'agent' | 'system';
+  type?: 'human' | 'agent';
 }
 
 export interface SubscribeOptions {
@@ -299,7 +324,7 @@ export interface CreateSpaceSetupParams {
   name: string;
   agents?: Array<{ agentId: string; displayName?: string }>;
   humans?: Array<{ externalId: string; displayName?: string; metadata?: Record<string, unknown> }>;
-  systems?: Array<{ displayName?: string; metadata?: Record<string, unknown> }>;
+  adminAgentEntityId?: string;
 }
 
 export interface CreateSpaceSetupResult {

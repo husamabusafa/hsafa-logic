@@ -151,13 +151,7 @@ export function setupWebSocketServer(server: Server) {
               return;
             }
 
-            await submitToolResult({
-              runId,
-              callId,
-              result,
-              source: 'client',
-              clientId: clientConnection?.clientId ?? null,
-            });
+            await submitToolResult({ runId, callId, result });
 
             console.log(`✅ Tool result received: ${callId}`);
             break;

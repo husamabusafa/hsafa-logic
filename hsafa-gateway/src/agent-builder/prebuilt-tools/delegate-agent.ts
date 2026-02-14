@@ -1,38 +1,43 @@
 import { registerPrebuiltTool } from './registry.js';
 
-registerPrebuiltTool('delegateToAgent', {
-  defaultDescription:
-    'Delegate this message to another agent who is better suited to respond. ' +
-    'You will NOT produce a response — your run will be silently canceled and the target agent will handle it instead. ' +
-    'Use this when the message is clearly meant for another agent or when another agent has the right tools/expertise. ' +
-    'Decide BEFORE generating any text. The available agents and their entity IDs are listed in your system prompt.',
+/**
+ * delegateToAgent — Admin-only silent handoff.
+ * 
+ * When called, the current run is canceled (no message posted) and the
+ * target agent is triggered with the ORIGINAL human trigger context.
+ * The human never sees the switch.
+ * 
+ * Only available to the admin agent in multi-agent spaces.
+ */
 
+registerPrebuiltTool('delegateToAgent', {
   inputSchema: {
     type: 'object',
     properties: {
       targetAgentEntityId: {
         type: 'string',
-        description: 'Entity ID of the agent to delegate to (from your system prompt)',
+        description: 'Entity ID of the agent to delegate to. Must be another agent in this space.',
       },
       reason: {
         type: 'string',
-        description: 'Why this agent is better suited (passed as context to them)',
+        description: 'Brief reason for delegating (for internal logging only).',
       },
     },
     required: ['targetAgentEntityId'],
   },
+  defaultDescription:
+    'Silently hand off to another agent. Your run is canceled (no message posted) and the target agent receives the original human message as their trigger. Use when another agent is better suited for this task.',
 
-  async execute(input: unknown) {
+  execute: async (input: unknown) => {
     const { targetAgentEntityId, reason } = input as {
       targetAgentEntityId: string;
       reason?: string;
     };
-    // Actual delegation is handled by run-runner after the stream completes.
-    // This returns a signal similar to skipResponse.
+
     return {
-      delegated: true,
+      __delegateSignal: true,
       targetAgentEntityId,
-      reason: reason ?? null,
+      reason: reason || null,
     };
   },
 });

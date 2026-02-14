@@ -42,6 +42,8 @@ export type {
   SendMessageParams,
   ListMessagesParams,
   CreateRunParams,
+  TriggerAgentParams,
+  TriggerAgentResult,
   SubmitToolResultParams,
   SubmitRunToolResultParams,
   RegisterClientParams,

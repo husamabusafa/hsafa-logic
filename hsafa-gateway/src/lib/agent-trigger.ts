@@ -1,57 +1,58 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './db.js';
-import { emitSmartSpaceEvent } from './smartspace-events.js';
 import { executeRun } from './run-runner.js';
 
-// ─── Chain metadata types ───────────────────────────────────────────────────
+// ─── Trigger context type (stored on the Run row) ───────────────────────────
 
-export interface ChainMeta {
-  chainId: string;
-  chainDepth: number;
-  replyStack: Array<{ entityId: string; reason: string | null }>;
-  mentionedPairs: string[]; // "entityA->entityB" to prevent circular mentions
+export interface TriggerContext {
+  triggerType: 'space_message' | 'plan' | 'service';
+  triggerSpaceId?: string;
+  triggerMessageContent?: string;
+  triggerSenderEntityId?: string;
+  triggerSenderName?: string;
+  triggerSenderType?: 'human' | 'agent';
+  triggerMentionReason?: string;
+  triggerServiceName?: string;
+  triggerPayload?: unknown;
+  triggerPlanId?: string;
+  triggerPlanName?: string;
 }
 
-const MAX_CHAIN_DEPTH = 10;
-const MAX_REPLY_STACK = 5;
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function newChainId(): string {
-  return `chain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
+// ─── Helper: create run + emit event + execute ──────────────────────────────
 
 async function createAndExecuteRun(options: {
-  smartSpaceId: string;
   agentEntityId: string;
   agentId: string;
-  triggeredById: string;
-  metadata: Record<string, unknown>;
+  trigger: TriggerContext;
+  triggeredById?: string;
+  metadata?: Record<string, unknown>;
 }): Promise<{ runId: string; agentEntityId: string }> {
   const run = await prisma.run.create({
     data: {
-      smartSpaceId: options.smartSpaceId,
       agentEntityId: options.agentEntityId,
       agentId: options.agentId,
-      triggeredById: options.triggeredById,
+      triggeredById: options.triggeredById ?? null,
       status: 'queued',
-      metadata: options.metadata as unknown as Prisma.InputJsonValue,
+      metadata: (options.metadata ?? null) as unknown as Prisma.InputJsonValue,
+      triggerType: options.trigger.triggerType,
+      triggerSpaceId: options.trigger.triggerSpaceId ?? null,
+      triggerMessageContent: options.trigger.triggerMessageContent ?? null,
+      triggerSenderEntityId: options.trigger.triggerSenderEntityId ?? null,
+      triggerSenderName: options.trigger.triggerSenderName ?? null,
+      triggerSenderType: options.trigger.triggerSenderType ?? null,
+      triggerMentionReason: options.trigger.triggerMentionReason ?? null,
+      triggerServiceName: options.trigger.triggerServiceName ?? null,
+      triggerPayload: options.trigger.triggerPayload != null
+        ? (options.trigger.triggerPayload as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
+      triggerPlanId: options.trigger.triggerPlanId ?? null,
+      triggerPlanName: options.trigger.triggerPlanName ?? null,
     },
     select: { id: true, agentEntityId: true, agentId: true },
   });
 
-  await emitSmartSpaceEvent(
-    options.smartSpaceId,
-    'run.created',
-    {
-      runId: run.id,
-      agentEntityId: run.agentEntityId,
-      agentId: run.agentId,
-      status: 'queued',
-    },
-    { runId: run.id, entityId: run.agentEntityId, entityType: 'agent', agentEntityId: run.agentEntityId }
-  );
-
+  // Run executes in background — no events emitted to spaces here.
+  // Spaces are only affected when the agent calls sendSpaceMessage.
   executeRun(run.id).catch((err) => {
     console.error(`[agent-trigger] Run ${run.id} failed:`, err);
   });
@@ -59,108 +60,85 @@ async function createAndExecuteRun(options: {
   return { runId: run.id, agentEntityId: run.agentEntityId };
 }
 
-// ─── Pick one agent (round-robin via space metadata) ────────────────────────
-
-async function pickOneAgent(
-  smartSpaceId: string,
-  excludeEntityId: string,
-): Promise<{ id: string; agentId: string } | null> {
-  const members = await prisma.smartSpaceMembership.findMany({
-    where: { smartSpaceId },
-    include: { entity: true },
-  });
-
-  const agents = members
-    .map((m) => m.entity)
-    .filter((e) => e.type === 'agent' && e.agentId && e.id !== excludeEntityId);
-
-  if (agents.length === 0) return null;
-  if (agents.length === 1) return { id: agents[0].id, agentId: agents[0].agentId! };
-
-  // Round-robin: read lastPickedIndex from space metadata, advance it
-  const space = await prisma.smartSpace.findUnique({
-    where: { id: smartSpaceId },
-    select: { metadata: true },
-  });
-
-  const meta = (space?.metadata as Record<string, unknown>) ?? {};
-  const lastIndex = typeof meta.lastPickedAgentIndex === 'number' ? meta.lastPickedAgentIndex : -1;
-  const nextIndex = (lastIndex + 1) % agents.length;
-
-  // Update the round-robin index
-  await prisma.smartSpace.update({
-    where: { id: smartSpaceId },
-    data: { metadata: { ...meta, lastPickedAgentIndex: nextIndex } as unknown as Prisma.InputJsonValue },
-  });
-
-  const picked = agents[nextIndex];
-  return { id: picked.id, agentId: picked.agentId! };
-}
-
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Triggers ONE agent in a SmartSpace (round-robin) when a non-agent sends a message.
- * Starts a new mention chain.
+ * Triggers the admin agent (or the only agent) for a human message in a space.
+ * Human messages ALWAYS go to the admin agent.
  */
-export async function triggerOneAgent(options: {
+export async function triggerAdminAgent(options: {
   smartSpaceId: string;
   senderEntityId: string;
-}): Promise<Array<{ runId: string; agentEntityId: string }>> {
-  const { smartSpaceId, senderEntityId } = options;
+  senderName: string;
+  messageContent: string;
+}): Promise<{ runId: string; agentEntityId: string } | null> {
+  const { smartSpaceId, senderEntityId, senderName, messageContent } = options;
 
-  const picked = await pickOneAgent(smartSpaceId, senderEntityId);
-  if (!picked) {
-    console.log(`[agent-trigger] No agents to trigger in space ${smartSpaceId}`);
-    return [];
-  }
-
-  const chain: ChainMeta = {
-    chainId: newChainId(),
-    chainDepth: 0,
-    replyStack: [],
-    mentionedPairs: [],
-  };
-
-  console.log(`[agent-trigger] Triggering one agent (round-robin) in space ${smartSpaceId}`);
-
-  const result = await createAndExecuteRun({
-    smartSpaceId,
-    agentEntityId: picked.id,
-    agentId: picked.agentId,
-    triggeredById: senderEntityId,
-    metadata: { chain },
+  // Load space to find admin agent
+  const space = await prisma.smartSpace.findUnique({
+    where: { id: smartSpaceId },
+    select: { adminAgentEntityId: true, name: true },
   });
 
-  return [result];
+  let targetAgent: { id: string; agentId: string } | null = null;
+
+  if (space?.adminAgentEntityId) {
+    // Space has an explicit admin agent
+    const entity = await prisma.entity.findUnique({
+      where: { id: space.adminAgentEntityId },
+      select: { id: true, agentId: true, type: true },
+    });
+    if (entity?.type === 'agent' && entity.agentId) {
+      targetAgent = { id: entity.id, agentId: entity.agentId };
+    }
+  }
+
+  if (!targetAgent) {
+    // Fallback: pick the first (or only) agent member
+    const agentMembers = await prisma.smartSpaceMembership.findMany({
+      where: { smartSpaceId, entity: { type: 'agent' } },
+      include: { entity: { select: { id: true, agentId: true } } },
+      take: 1,
+    });
+    if (agentMembers.length > 0 && agentMembers[0].entity.agentId) {
+      targetAgent = { id: agentMembers[0].entity.id, agentId: agentMembers[0].entity.agentId };
+    }
+  }
+
+  if (!targetAgent) {
+    console.log(`[agent-trigger] No agents to trigger in space ${smartSpaceId}`);
+    return null;
+  }
+
+  console.log(`[agent-trigger] Human message → admin agent ${targetAgent.id} in space ${smartSpaceId}`);
+
+  return createAndExecuteRun({
+    agentEntityId: targetAgent.id,
+    agentId: targetAgent.agentId,
+    triggeredById: senderEntityId,
+    trigger: {
+      triggerType: 'space_message',
+      triggerSpaceId: smartSpaceId,
+      triggerMessageContent: messageContent,
+      triggerSenderEntityId: senderEntityId,
+      triggerSenderName: senderName,
+      triggerSenderType: 'human',
+    },
+  });
 }
 
 /**
- * Triggers a specific agent via mention (from another agent's response).
- * Optionally pushes the caller onto the reply stack if expectReply is true.
+ * Triggers a specific agent via mention (from sendSpaceMessage with `mention`).
  */
 export async function triggerMentionedAgent(options: {
-  smartSpaceId: string;
+  spaceId: string;
   callerEntityId: string;
+  callerName: string;
   targetAgentEntityId: string;
-  reason: string | null;
-  expectReply: boolean;
-  chain: ChainMeta;
+  messageContent: string;
+  mentionReason?: string;
 }): Promise<{ runId: string; agentEntityId: string } | null> {
-  const { smartSpaceId, callerEntityId, targetAgentEntityId, reason, expectReply, chain } = options;
-
-  // Loop protection: max chain depth
-  if (chain.chainDepth >= MAX_CHAIN_DEPTH) {
-    console.log(`[agent-trigger] Max chain depth (${MAX_CHAIN_DEPTH}) reached, stopping`);
-    return null;
-  }
-
-  // Prevent circular mentions (A->B->A)
-  const pair = `${callerEntityId}->${targetAgentEntityId}`;
-  if (chain.mentionedPairs.includes(pair)) {
-    console.log(`[agent-trigger] Circular mention detected (${pair}), stopping`);
-    return null;
-  }
+  const { spaceId, callerEntityId, callerName, targetAgentEntityId, messageContent, mentionReason } = options;
 
   // No self-mention
   if (callerEntityId === targetAgentEntityId) {
@@ -168,96 +146,100 @@ export async function triggerMentionedAgent(options: {
     return null;
   }
 
-  // Verify target is an agent in this space
+  // Verify target is an agent member of the space
   const membership = await prisma.smartSpaceMembership.findUnique({
-    where: { smartSpaceId_entityId: { smartSpaceId, entityId: targetAgentEntityId } },
+    where: { smartSpaceId_entityId: { smartSpaceId: spaceId, entityId: targetAgentEntityId } },
     include: { entity: { select: { type: true, agentId: true } } },
   });
 
   if (!membership || membership.entity.type !== 'agent' || !membership.entity.agentId) {
-    console.log(`[agent-trigger] Target ${targetAgentEntityId} is not an agent member of space ${smartSpaceId}`);
+    console.log(`[agent-trigger] Target ${targetAgentEntityId} is not an agent member of space ${spaceId}`);
     return null;
   }
 
-  // Build updated chain
-  const updatedChain: ChainMeta = {
-    chainId: chain.chainId,
-    chainDepth: chain.chainDepth + 1,
-    replyStack: [...chain.replyStack],
-    mentionedPairs: [...chain.mentionedPairs, pair],
-  };
-
-  // Push caller onto reply stack if they expect a reply
-  if (expectReply && updatedChain.replyStack.length < MAX_REPLY_STACK) {
-    updatedChain.replyStack.push({ entityId: callerEntityId, reason });
-  }
-
-  console.log(`[agent-trigger] Mention chain: ${callerEntityId} -> ${targetAgentEntityId} (expectReply=${expectReply}, depth=${updatedChain.chainDepth})`);
+  console.log(`[agent-trigger] Mention: ${callerEntityId} → ${targetAgentEntityId} in space ${spaceId}`);
 
   return createAndExecuteRun({
-    smartSpaceId,
     agentEntityId: targetAgentEntityId,
     agentId: membership.entity.agentId,
     triggeredById: callerEntityId,
-    metadata: {
-      chain: updatedChain,
-      mentionedBy: callerEntityId,
-      mentionReason: reason,
+    trigger: {
+      triggerType: 'space_message',
+      triggerSpaceId: spaceId,
+      triggerMessageContent: messageContent,
+      triggerSenderEntityId: callerEntityId,
+      triggerSenderName: callerName,
+      triggerSenderType: 'agent',
+      triggerMentionReason: mentionReason,
     },
   });
 }
 
 /**
- * Pops the reply stack and re-triggers the waiting agent.
- * Called when an agent finishes without mentioning anyone.
+ * Triggers an agent directly from an external service (no space, no entity).
+ * Service trigger API: POST /api/agents/{agentId}/trigger
  */
-export async function popReplyStack(options: {
-  smartSpaceId: string;
-  currentEntityId: string;
-  chain: ChainMeta;
-}): Promise<{ runId: string; agentEntityId: string } | null> {
-  const { smartSpaceId, currentEntityId, chain } = options;
+export async function triggerFromService(options: {
+  agentEntityId: string;
+  agentId: string;
+  serviceName: string;
+  payload: unknown;
+}): Promise<{ runId: string; agentEntityId: string }> {
+  const { agentEntityId, agentId, serviceName, payload } = options;
 
-  if (chain.replyStack.length === 0) {
-    return null;
-  }
-
-  if (chain.chainDepth >= MAX_CHAIN_DEPTH) {
-    console.log(`[agent-trigger] Max chain depth (${MAX_CHAIN_DEPTH}) reached during reply stack pop`);
-    return null;
-  }
-
-  const waitingAgent = chain.replyStack[chain.replyStack.length - 1];
-
-  // Verify the waiting agent is still a member
-  const membership = await prisma.smartSpaceMembership.findUnique({
-    where: { smartSpaceId_entityId: { smartSpaceId, entityId: waitingAgent.entityId } },
-    include: { entity: { select: { type: true, agentId: true } } },
-  });
-
-  if (!membership || membership.entity.type !== 'agent' || !membership.entity.agentId) {
-    console.log(`[agent-trigger] Reply stack agent ${waitingAgent.entityId} no longer valid, skipping`);
-    return null;
-  }
-
-  const updatedChain: ChainMeta = {
-    chainId: chain.chainId,
-    chainDepth: chain.chainDepth + 1,
-    replyStack: chain.replyStack.slice(0, -1), // pop
-    mentionedPairs: chain.mentionedPairs, // keep as-is (reply stack pops are system-initiated)
-  };
-
-  console.log(`[agent-trigger] Reply stack pop: re-triggering ${waitingAgent.entityId} (depth=${updatedChain.chainDepth}, remaining stack=${updatedChain.replyStack.length})`);
+  console.log(`[agent-trigger] Service trigger: ${serviceName} → agent ${agentEntityId}`);
 
   return createAndExecuteRun({
-    smartSpaceId,
-    agentEntityId: waitingAgent.entityId,
-    agentId: membership.entity.agentId,
-    triggeredById: currentEntityId,
-    metadata: {
-      chain: updatedChain,
-      replyStackResume: true,
-      resumeReason: waitingAgent.reason,
+    agentEntityId,
+    agentId,
+    trigger: {
+      triggerType: 'service',
+      triggerServiceName: serviceName,
+      triggerPayload: payload,
     },
+  });
+}
+
+/**
+ * Triggers an agent from a scheduled plan.
+ */
+export async function triggerFromPlan(options: {
+  agentEntityId: string;
+  agentId: string;
+  planId: string;
+  planName: string;
+}): Promise<{ runId: string; agentEntityId: string }> {
+  const { agentEntityId, agentId, planId, planName } = options;
+
+  console.log(`[agent-trigger] Plan trigger: "${planName}" → agent ${agentEntityId}`);
+
+  return createAndExecuteRun({
+    agentEntityId,
+    agentId,
+    trigger: {
+      triggerType: 'plan',
+      triggerPlanId: planId,
+      triggerPlanName: planName,
+    },
+  });
+}
+
+/**
+ * Delegates from admin to target agent with the ORIGINAL human trigger context.
+ * Used by delegateToAgent prebuilt tool.
+ */
+export async function delegateToAgent(options: {
+  originalTrigger: TriggerContext;
+  targetAgentEntityId: string;
+  targetAgentId: string;
+  originalTriggeredById?: string;
+}): Promise<{ runId: string; agentEntityId: string }> {
+  console.log(`[agent-trigger] Delegate → ${options.targetAgentEntityId}`);
+
+  return createAndExecuteRun({
+    agentEntityId: options.targetAgentEntityId,
+    agentId: options.targetAgentId,
+    triggeredById: options.originalTriggeredById,
+    trigger: options.originalTrigger,
   });
 }
