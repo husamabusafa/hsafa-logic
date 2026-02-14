@@ -5,7 +5,7 @@ import { prisma } from '../lib/db.js';
 import { createSmartSpaceMessage } from '../lib/smartspace-db.js';
 import { emitSmartSpaceEvent } from '../lib/smartspace-events.js';
 import { toSSEEvent } from '../lib/run-events.js';
-import { triggerAgentsInSmartSpace } from '../lib/agent-trigger.js';
+import { triggerOneAgent } from '../lib/agent-trigger.js';
 import { requireAuth, requireSecretKey, requireMembership } from '../middleware/auth.js';
 
 export const smartSpacesRouter: ExpressRouter = Router();
@@ -307,15 +307,14 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
     await emitSmartSpaceEvent(smartSpaceId, 'smartSpace.message', { message: uiMessage }, eventContext);
     await emitSmartSpaceEvent(smartSpaceId, `message.${role}`, { message: uiMessage }, eventContext);
 
-    // Trigger agent runs for ALL messages (human, system, AND other agents)
-    // Uses centralized trigger function with loop protection
+    // Trigger ONE agent via mention chain (round-robin pick)
+    // Only trigger for non-agent senders (human, system). Agent messages don't re-trigger.
     let createdRuns: Array<{ runId: string; agentEntityId: string }> = [];
     
-    if (triggerAgents) {
-      createdRuns = await triggerAgentsInSmartSpace({
+    if (triggerAgents && entity.type !== 'agent') {
+      createdRuns = await triggerOneAgent({
         smartSpaceId,
         senderEntityId: entityId,
-        triggerDepth: 0, // Initial message starts at depth 0
       });
     }
 

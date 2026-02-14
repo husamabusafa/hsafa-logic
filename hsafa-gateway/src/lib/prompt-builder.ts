@@ -363,26 +363,63 @@ async function buildNormalRunMessages(ctx: RunContext) {
     contextParts.push(`This run was triggered by a message from ${name} (${triggeredByEntity.type}).`);
   }
 
+  // Categorize space members
+  const otherAgents = spaceMembers.filter(
+    (m) => m.entity.type === 'agent' && m.entity.id !== run.agentEntityId
+  );
+  const isMultiAgent = otherAgents.length > 0;
+
   if (spaceMembers.length > 0) {
     const memberList = spaceMembers
-      .map((m) => `${m.entity.displayName || 'Unknown'} (${m.entity.type})`)
+      .map((m) => `${m.entity.displayName || 'Unknown'} (${m.entity.type}, id: ${m.entity.id})`)
       .join(', ');
     contextParts.push(`Members of this space: ${memberList}.`);
   }
 
   contextParts.push('Messages from other participants are prefixed with [Name] for identification. Do NOT prefix your own responses with your name or any tag.');
-  contextParts.push('If you are the only agent in a one-on-one conversation with a single human, they are almost certainly talking to you — do not skip. In group spaces, skip if the message is clearly directed at someone else, if your input was not requested, if you would only repeat what was already said, or if your response would just be a generic acknowledgment. Respond if someone mentions you by name, asks you something, or if your knowledge and tools are relevant.');
-  contextParts.push('Guidelines for when to skip:');
-  contextParts.push('- The message is clearly addressed to another participant, not you.');
-  contextParts.push('- The conversation is between other participants and your input was not requested.');
-  contextParts.push('- You would only be repeating what someone else already said.');
-  contextParts.push('- Your response would be a generic acknowledgment with no real value (e.g. "Sounds good!", "Got it!").');
-  contextParts.push('Guidelines for when to respond:');
-  contextParts.push('- Someone mentioned you by name or asked you a question.');
-  contextParts.push('- Your expertise, tools, or knowledge are relevant to the topic.');
-  contextParts.push('- You have new information or a meaningful perspective to contribute.');
-  contextParts.push('- The message seems intended for you based on context.');
-  contextParts.push('If there are other agents in this space: once you have finished your task or said what you needed to say, call skipResponse on the next trigger rather than continuing the conversation unnecessarily. Do NOT reply just to be polite or to acknowledge another agent\'s message — this causes infinite back-and-forth loops. Only respond to another agent if you have genuinely new information or a follow-up action to take.');
+
+  // Chain context: was this agent mentioned/delegated/resumed?
+  const runMetaForPrompt = (run.metadata as Record<string, unknown>) ?? {};
+  if (runMetaForPrompt.mentionedBy) {
+    const mentioner = spaceMembers.find((m) => m.entity.id === runMetaForPrompt.mentionedBy);
+    const mentionerName = mentioner?.entity.displayName || 'another agent';
+    const reason = runMetaForPrompt.mentionReason ? ` Reason: ${runMetaForPrompt.mentionReason}` : '';
+    contextParts.push(`You were mentioned by ${mentionerName} to continue the conversation.${reason}`);
+  }
+  if (runMetaForPrompt.replyStackResume) {
+    const reason = runMetaForPrompt.resumeReason ? ` You originally asked: ${runMetaForPrompt.resumeReason}` : '';
+    contextParts.push(`You are being re-triggered because the agent you previously mentioned has finished responding. You can now continue your task with whatever information they provided.${reason}`);
+  }
+
+  if (isMultiAgent) {
+    // ── Multi-agent space: explain mention chain system ──
+    contextParts.push('');
+    contextParts.push('MULTI-AGENT SPACE — You are one of several AI agents in this space. Only ONE agent is triggered per human message (round-robin). You must decide what to do:');
+    contextParts.push('');
+    contextParts.push('YOUR OPTIONS:');
+    contextParts.push('1. RESPOND — You have something meaningful to say. Write your response normally. The conversation then waits for the next human message (unless you also mention another agent).');
+    contextParts.push('2. RESPOND + MENTION — You respond AND need another agent to follow up. Call mentionAgent(targetAgentEntityId, reason, expectReply) alongside your text response:');
+    contextParts.push('   - expectReply=false: hand off — the mentioned agent takes over, you\'re done.');
+    contextParts.push('   - expectReply=true: request — the mentioned agent responds, then YOU are automatically re-triggered so you can continue your task with their output.');
+    contextParts.push('3. DELEGATE — The message is clearly meant for another agent, or another agent has better tools/expertise. Call delegateToAgent(targetAgentEntityId, reason). Your run is silently canceled (no message posted) and the target agent handles it instead.');
+    contextParts.push('4. SKIP — Nobody should respond to this message. Call skipResponse(). No message posted.');
+    contextParts.push('');
+    contextParts.push('GUIDELINES:');
+    contextParts.push('- If the message is clearly directed at you or relevant to your expertise → RESPOND.');
+    contextParts.push('- If the message is better suited for another agent → DELEGATE to them.');
+    contextParts.push('- If you can partially handle it but need another agent\'s help → RESPOND with your part + MENTION the other agent.');
+    contextParts.push('- If the message is a casual greeting or general question you can answer → RESPOND.');
+    contextParts.push('- If the message doesn\'t need any agent response → SKIP.');
+    contextParts.push('- Do NOT respond with something generic just to be polite — if you have nothing meaningful to add, delegate or skip.');
+    contextParts.push('');
+    contextParts.push('OTHER AGENTS IN THIS SPACE (use their entity IDs with mentionAgent/delegateToAgent):');
+    for (const agent of otherAgents) {
+      contextParts.push(`- ${agent.entity.displayName || 'Unknown'} (entity ID: ${agent.entity.id})`);
+    }
+  } else {
+    // ── Single-agent space: simple instructions ──
+    contextParts.push('You are the only agent in this space. Respond to messages directed at you. If a message doesn\'t need a response, you can call skipResponse().');
+  }
 
   contextParts.push(...formatGoalsBlock(agentGoals));
   contextParts.push(...formatMemoriesBlock(agentMemories));
@@ -390,10 +427,11 @@ async function buildNormalRunMessages(ctx: RunContext) {
   contextParts.push(...formatSpacesBlock(agentMemberships, run.smartSpaceId));
   contextParts.push(...formatCrossSpaceDigest(crossSpaceMessages, run.agentEntityId, agentDisplayName));
 
-  // Tag messages with sender identity
-  // - user/system messages: always tagged
-  // - assistant messages from OTHER agents: tagged so this agent can tell them apart
-  // - assistant messages from THIS agent: not tagged (the agent knows those are its own)
+  // Tag messages with sender identity and fix roles:
+  // - assistant messages from THIS agent: kept as assistant (no tag — the model knows these are its own)
+  // - assistant messages from OTHER agents: converted to user role + tagged with [Name]
+  //   (so the model only sees "assistant" for its own outputs, avoiding confusion)
+  // - user/system messages: kept as-is + tagged with [Name]
   const taggedUiMessages = messages.map((m) => {
     const base = toUiMessageFromSmartSpaceMessage(m);
     const isOwnMessage = m.entityId === run.agentEntityId;
@@ -415,10 +453,23 @@ async function buildNormalRunMessages(ctx: RunContext) {
       }
     }
 
-    const shouldTag =
-      (m.role === 'user' || m.role === 'system' || (m.role === 'assistant' && !isOwnMessage))
-      && m.entity?.displayName;
+    // Other agents' assistant messages → convert to user role
+    const isOtherAgentMessage = m.role === 'assistant' && !isOwnMessage;
+    if (isOtherAgentMessage) {
+      const senderTag = m.entity?.displayName ? `[${m.entity.displayName}]` : '[Other Agent]';
+      const parts = Array.isArray(base.parts)
+        ? base.parts.map((p: any, i: number) => {
+            if (i === 0 && p.type === 'text' && typeof p.text === 'string') {
+              return { ...p, text: `${senderTag} ${p.text}` };
+            }
+            return p;
+          })
+        : base.parts;
+      return { ...base, role: 'user', parts };
+    }
 
+    // Human/system messages → tag with sender name
+    const shouldTag = (m.role === 'user' || m.role === 'system') && m.entity?.displayName;
     if (shouldTag) {
       const senderTag = `[${m.entity!.displayName}]`;
       if (Array.isArray(base.parts)) {

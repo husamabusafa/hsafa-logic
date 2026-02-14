@@ -12,6 +12,7 @@ export interface PrebuiltToolContext {
   smartSpaceId: string;
   agentId: string;
   isGoToSpaceRun?: boolean;
+  isMultiAgentSpace?: boolean;
 }
 
 export interface BuildAgentOptions {
@@ -61,10 +62,16 @@ export async function buildAgent(options: BuildAgentOptions): Promise<BuildAgent
     // Resolve static tools from agent config
     const staticTools = resolveTools(configTools, options.runContext);
 
-    // Auto-inject prebuilt tools (skip goToSpace for child goToSpace runs to prevent loops)
+    // Auto-inject prebuilt tools with conditional filtering:
+    // - goToSpace: skip for child goToSpace runs (prevent loops)
+    // - mentionAgent, delegateToAgent: only in multi-agent spaces
+    const multiAgentOnlyTools = new Set(['mentionAgent', 'delegateToAgent']);
+    const isMultiAgent = options.runContext?.isMultiAgentSpace ?? false;
+
     const prebuiltTools: Record<string, any> = {};
     for (const [action, handler] of getAllPrebuiltHandlers()) {
       if (action === 'goToSpace' && options.runContext?.isGoToSpaceRun) continue;
+      if (multiAgentOnlyTools.has(action) && !isMultiAgent) continue;
       prebuiltTools[action] = tool({
         description: handler.defaultDescription,
         inputSchema: jsonSchema(handler.inputSchema as Parameters<typeof jsonSchema>[0]),

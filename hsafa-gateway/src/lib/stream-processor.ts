@@ -14,12 +14,27 @@ export interface PendingClientToolCall {
   args: unknown;
 }
 
+export interface MentionAgentSignal {
+  targetAgentEntityId: string;
+  reason: string | null;
+  expectReply: boolean;
+}
+
+export interface DelegateAgentSignal {
+  targetAgentEntityId: string;
+  reason: string | null;
+}
+
 export interface StreamResult {
   orderedParts: Array<{ type: string; [key: string]: unknown }>;
   finalText: string | undefined;
   skipped: boolean;
   /** Tool calls that had no server-side execute (client tools) — need external result */
   pendingClientToolCalls: PendingClientToolCall[];
+  /** If the agent called mentionAgent during the run */
+  mentionSignal: MentionAgentSignal | null;
+  /** If the agent called delegateToAgent during the run */
+  delegateSignal: DelegateAgentSignal | null;
 }
 
 /**
@@ -45,6 +60,8 @@ export async function processStream(
   const toolArgsAccumulator = new Map<string, string>(); // toolCallId -> accumulated args text
   const orderedParts: Array<{ type: string; [key: string]: unknown }> = [];
   let skipped = false;
+  let mentionSignal: MentionAgentSignal | null = null;
+  let delegateSignal: DelegateAgentSignal | null = null;
   const toolCallIds = new Set<string>();
   const toolResultIds = new Set<string>();
 
@@ -145,6 +162,8 @@ export async function processStream(
 
       if (toolName === 'skipResponse') {
         skipped = true;
+      } else if (toolName === 'delegateToAgent') {
+        skipped = true; // delegate also cancels the current run (no message posted)
       }
       
       orderedParts.push({ type: 'tool-call', toolCallId, toolName, args: input });
@@ -156,6 +175,26 @@ export async function processStream(
       await emitEvent('tool-output-available', { toolCallId, toolName, output });
       orderedParts.push({ type: 'tool-result', toolCallId, toolName, result: output });
       toolResultIds.add(toolCallId);
+
+      // Detect mention/delegate signals from tool results
+      if (toolName === 'mentionAgent' && output && typeof output === 'object') {
+        const o = output as Record<string, unknown>;
+        if (o.mentioned) {
+          mentionSignal = {
+            targetAgentEntityId: o.targetAgentEntityId as string,
+            reason: (o.reason as string) ?? null,
+            expectReply: (o.expectReply as boolean) ?? false,
+          };
+        }
+      } else if (toolName === 'delegateToAgent' && output && typeof output === 'object') {
+        const o = output as Record<string, unknown>;
+        if (o.delegated) {
+          delegateSignal = {
+            targetAgentEntityId: o.targetAgentEntityId as string,
+            reason: (o.reason as string) ?? null,
+          };
+        }
+      }
     }
     // Tool error
     else if (t === 'tool-error') {
@@ -199,5 +238,5 @@ export async function processStream(
     }
   }
 
-  return { orderedParts, finalText, skipped, pendingClientToolCalls };
+  return { orderedParts, finalText, skipped, pendingClientToolCalls, mentionSignal, delegateSignal };
 }

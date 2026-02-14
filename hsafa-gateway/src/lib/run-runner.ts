@@ -6,7 +6,7 @@ import { closeMCPClients } from '../agent-builder/mcp-resolver.js';
 import type { AgentConfig } from '../agent-builder/types.js';
 import { emitSmartSpaceEvent } from './smartspace-events.js';
 import { createSmartSpaceMessage } from './smartspace-db.js';
-import { triggerAgentsInSmartSpace } from './agent-trigger.js';
+import { triggerOneAgent, triggerMentionedAgent, popReplyStack, type ChainMeta } from './agent-trigger.js';
 import { loadRunContext } from './run-context.js';
 import { buildModelMessages } from './prompt-builder.js';
 import { processStream } from './stream-processor.js';
@@ -94,6 +94,15 @@ export async function executeRun(runId: string): Promise<void> {
 
     // ── 2. Build agent (model + tools) ────────────────────────────────────
 
+    // Check if this is a multi-agent space (to decide which prebuilt tools to inject)
+    const agentMemberCount = await prisma.smartSpaceMembership.count({
+      where: {
+        smartSpaceId: run.smartSpaceId,
+        entity: { type: 'agent' },
+      },
+    });
+    const isMultiAgentSpace = agentMemberCount > 1;
+
     const built = await buildAgent({
       config,
       runContext: {
@@ -102,6 +111,7 @@ export async function executeRun(runId: string): Promise<void> {
         smartSpaceId: run.smartSpaceId,
         agentId: run.agentId,
         isGoToSpaceRun,
+        isMultiAgentSpace,
       },
     });
 
@@ -155,7 +165,7 @@ export async function executeRun(runId: string): Promise<void> {
     const streamResult = await built.agent.stream({ messages: modelMessages });
     const messageId = `msg-${runId}-${Date.now()}`;
 
-    const { orderedParts, finalText, skipped, pendingClientToolCalls } = await processStream(
+    const { orderedParts, finalText, skipped, pendingClientToolCalls, mentionSignal, delegateSignal } = await processStream(
       streamResult.fullStream,
       messageId,
       runId,
@@ -167,14 +177,40 @@ export async function executeRun(runId: string): Promise<void> {
       await closeMCPClients(built.mcpClients);
     }
 
-    // ── 5. Handle skip (agent chose not to respond) ───────────────────────
+    // Extract chain metadata for mention chain logic
+    const chain = (runMeta.chain as ChainMeta) ?? null;
+
+    // ── 5. Handle skip / delegate (agent chose not to respond) ──────────
 
     if (skipped) {
       await prisma.run.update({
         where: { id: runId },
         data: { status: 'canceled', completedAt: new Date() },
       });
+
+      // Delegate: cancel this run silently, then trigger the target agent
+      if (delegateSignal && chain) {
+        await emitEvent('run.canceled', { reason: 'delegate', targetAgentEntityId: delegateSignal.targetAgentEntityId });
+        await triggerMentionedAgent({
+          smartSpaceId: run.smartSpaceId,
+          callerEntityId: run.agentEntityId,
+          targetAgentEntityId: delegateSignal.targetAgentEntityId,
+          reason: delegateSignal.reason,
+          expectReply: false, // delegate doesn't expect a reply — delegatee inherits position
+          chain,
+        });
+        return;
+      }
+
+      // Plain skip: check reply stack
       await emitEvent('run.canceled', { reason: 'skip' });
+      if (chain) {
+        await popReplyStack({
+          smartSpaceId: run.smartSpaceId,
+          currentEntityId: run.agentEntityId,
+          chain,
+        });
+      }
       return;
     }
 
@@ -300,15 +336,36 @@ export async function executeRun(runId: string): Promise<void> {
     
     await emitEvent('run.completed', { status: 'completed', text: finalText });
 
-    // ── 7. Trigger other agents ───────────────────────────────────────────
-    // Skip triggering for goToSpace child runs and plan runs
-    if (!isGoToSpaceRun && !isPlanRun) {
-      const triggerDepth = (run.metadata as any)?.triggerDepth ?? 0;
-      await triggerAgentsInSmartSpace({
+    // ── 7a. goToSpace child runs: trigger agents in target space ─────
+    // The agent went to another space and posted a message — trigger one agent
+    // there so the message actually gets a response.
+    if (isGoToSpaceRun && !isPlanRun) {
+      await triggerOneAgent({
         smartSpaceId: run.smartSpaceId,
         senderEntityId: run.agentEntityId,
-        triggerDepth,
       });
+    }
+
+    // ── 7b. Mention chain: trigger next agent or pop reply stack ────────
+    if (!isGoToSpaceRun && !isPlanRun && chain) {
+      if (mentionSignal) {
+        // Agent mentioned another agent → trigger them
+        await triggerMentionedAgent({
+          smartSpaceId: run.smartSpaceId,
+          callerEntityId: run.agentEntityId,
+          targetAgentEntityId: mentionSignal.targetAgentEntityId,
+          reason: mentionSignal.reason,
+          expectReply: mentionSignal.expectReply,
+          chain,
+        });
+      } else {
+        // No mention → pop reply stack (re-trigger waiting agent, or stop if empty)
+        await popReplyStack({
+          smartSpaceId: run.smartSpaceId,
+          currentEntityId: run.agentEntityId,
+          chain,
+        });
+      }
     }
   } catch (error) {
     if (error instanceof AgentBuildError) {

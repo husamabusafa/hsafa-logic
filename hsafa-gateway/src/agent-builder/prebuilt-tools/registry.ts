@@ -28,6 +28,8 @@ export async function initPrebuiltTools(): Promise<void> {
     await import('./go-to-space.js');
     await import('./get-space-messages.js');
     await import('./skip-response.js');
+    await import('./mention-agent.js');
+    await import('./delegate-agent.js');
   })();
   return _initPromise;
 }
