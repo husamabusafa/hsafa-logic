@@ -22,19 +22,25 @@ registerPrebuiltTool('sendSpaceMessage', {
     properties: {
       spaceId: {
         type: 'string',
-        description: 'Space ID to send to. MUST appear first in the JSON output.',
+        description: 'Space ID to send to.',
       },
       text: {
         type: 'string',
         description: 'Message text.',
       },
       mention: {
-        type: 'string',
-        description: 'Entity ID of an agent to trigger after posting. Optional.',
+        type: ['string', 'null'],
+        description: 'Entity ID of an agent to trigger after posting, or null.',
       },
     },
-    required: ['spaceId', 'text'],
+    required: ['spaceId', 'text', 'mention'],
+    additionalProperties: false,
   },
+  strict: true,
+  inputExamples: [
+    { input: { spaceId: 'space-123', text: 'Hello!', mention: null } },
+    { input: { spaceId: 'space-456', text: 'Check this out', mention: 'entity-789' } },
+  ],
   defaultDescription: 'Send a message to a space. Returns {success:true} on delivery — do NOT retry.',
 
   execute: async (input: unknown, context: PrebuiltToolContext) => {

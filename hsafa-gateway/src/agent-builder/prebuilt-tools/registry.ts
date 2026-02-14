@@ -3,6 +3,8 @@ import type { PrebuiltToolContext } from '../builder.js';
 export interface PrebuiltToolHandler {
   inputSchema: Record<string, unknown>;
   defaultDescription: string;
+  strict?: boolean;
+  inputExamples?: Array<{ input: unknown }>;
   execute: (input: unknown, context: PrebuiltToolContext) => Promise<unknown>;
 }
 

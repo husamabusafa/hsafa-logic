@@ -159,8 +159,7 @@ export async function buildModelMessages(ctx: RunContext) {
 
   // ── Core instruction ──
   systemParts.push('Your text output is internal — never shown to anyone. Keep it short (1-2 sentences summarizing what you did).');
-  systemParts.push('To communicate, use sendSpaceMessage(spaceId, text). Always put spaceId first in the JSON.');
-  systemParts.push('Do NOT retry sendSpaceMessage — it returns {success:true} on delivery.');
+  systemParts.push('To communicate, use sendSpaceMessage(spaceId, text). Do NOT retry — it returns {success:true} on delivery.');
   systemParts.push('Use readSpaceMessages to read context from any space you belong to.');
 
   // ── Trigger context ──

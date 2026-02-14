@@ -75,6 +75,8 @@ export async function buildAgent(options: BuildAgentOptions): Promise<BuildAgent
       prebuiltTools[action] = tool({
         description: handler.defaultDescription,
         inputSchema: jsonSchema(handler.inputSchema as Parameters<typeof jsonSchema>[0]),
+        ...(handler.strict ? { strict: true } : {}),
+        ...(handler.inputExamples ? { inputExamples: handler.inputExamples } : {}),
         execute: async (input: unknown, execOptions: ToolExecutionOptions) => {
           if (!options.runContext) {
             throw new Error('Prebuilt tools require a run context');
