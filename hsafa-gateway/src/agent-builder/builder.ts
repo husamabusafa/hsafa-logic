@@ -1,4 +1,4 @@
-import { ToolLoopAgent, stepCountIs, jsonSchema, tool } from 'ai';
+import { ToolLoopAgent, stepCountIs, jsonSchema, tool, type ToolExecutionOptions } from 'ai';
 import { validateAgentConfig, interpolateConfigEnvVars } from './parser.js';
 import { resolveModel, getModelSettings } from './model-resolver.js';
 import { resolveTools } from './tool-resolver.js';
@@ -13,6 +13,7 @@ export interface PrebuiltToolContext {
   triggerSpaceId?: string;
   isAdminAgent?: boolean;
   isMultiAgentSpace?: boolean;
+  toolCallId?: string;
 }
 
 export interface BuildAgentOptions {
@@ -74,11 +75,11 @@ export async function buildAgent(options: BuildAgentOptions): Promise<BuildAgent
       prebuiltTools[action] = tool({
         description: handler.defaultDescription,
         inputSchema: jsonSchema(handler.inputSchema as Parameters<typeof jsonSchema>[0]),
-        execute: async (input: unknown) => {
+        execute: async (input: unknown, execOptions: ToolExecutionOptions) => {
           if (!options.runContext) {
             throw new Error('Prebuilt tools require a run context');
           }
-          return handler.execute(input, options.runContext);
+          return handler.execute(input, { ...options.runContext, toolCallId: execOptions.toolCallId });
         },
       });
     }

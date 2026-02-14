@@ -144,7 +144,7 @@ export async function executeRun(runId: string): Promise<void> {
     const streamResult = await built.agent.stream({ messages: modelMessages });
     const messageId = `msg-${runId}-${Date.now()}`;
 
-    const { orderedParts, finalText, skipped, pendingClientToolCalls, delegateSignal } = await processStream(
+    const { finalText, skipped, pendingClientToolCalls, delegateSignal } = await processStream(
       streamResult.fullStream,
       messageId,
       runId,
@@ -210,7 +210,6 @@ export async function executeRun(runId: string): Promise<void> {
             ...runMeta,
             pendingClientTools: pendingClientToolCalls,
             clientToolResults: {},
-            waitingParts: orderedParts,
           } as unknown as Prisma.InputJsonValue,
         },
       });

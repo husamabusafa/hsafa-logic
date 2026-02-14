@@ -2,7 +2,7 @@
 
 import { useState, type FC } from "react";
 import { useMessage } from "@assistant-ui/react";
-import { useToolResult } from "@hsafa/ui";
+import { useToolResult } from "@hsafa/react";
 
 export interface ProductCardProps {
   toolName?: string;

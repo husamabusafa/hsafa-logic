@@ -10,15 +10,9 @@ import type {
   Entity,
 } from '../types.js';
 
-// =============================================================================
-// Types for assistant-ui integration
-// =============================================================================
+// ─── Types (assistant-ui compatible) ─────────────────────────────────────────
 
-export interface TextContentPart {
-  type: 'text';
-  text: string;
-}
-
+export interface TextContentPart { type: 'text'; text: string }
 export interface ToolCallContentPart {
   type: 'tool-call';
   toolCallId: string;
@@ -27,11 +21,7 @@ export interface ToolCallContentPart {
   args?: Record<string, unknown>;
   result?: unknown;
 }
-
-export interface ReasoningContentPart {
-  type: 'reasoning';
-  text: string;
-}
+export interface ReasoningContentPart { type: 'reasoning'; text: string }
 
 export type ContentPart = TextContentPart | ToolCallContentPart | ReasoningContentPart;
 
@@ -56,20 +46,16 @@ export interface ThreadListAdapter {
   onSwitchToNewThread?: () => void;
 }
 
-// =============================================================================
-// Streaming message state
-// =============================================================================
+// ─── Streaming state ─────────────────────────────────────────────────────────
 
-interface StreamingMessage {
-  id: string;          // runId
+interface StreamingEntry {
+  id: string;       // toolCallId used as streamId
   entityId: string;
-  text: string;        // accumulated text from sendSpaceMessage
-  isStreaming: boolean;
+  text: string;
+  active: boolean;  // true while text-delta events are flowing
 }
 
-// =============================================================================
-// Hook Options & Return
-// =============================================================================
+// ─── Options & Return ────────────────────────────────────────────────────────
 
 export interface UseHsafaRuntimeOptions {
   smartSpaceId: string | null;
@@ -87,9 +73,7 @@ export interface UseHsafaRuntimeReturn {
   membersById: Record<string, Entity>;
 }
 
-// =============================================================================
-// Helper: Convert SmartSpaceMessage → ThreadMessageLike
-// =============================================================================
+// ─── Convert persisted message → ThreadMessageLike ───────────────────────────
 
 function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): ThreadMessageLike | null {
   if (msg.role === 'tool') return null;
@@ -97,24 +81,20 @@ function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): Threa
   let role: 'user' | 'assistant' = msg.role === 'user' ? 'user' : 'assistant';
   let isOtherHuman = false;
 
+  // Other humans' messages display on assistant side
   if (msg.role === 'user' && currentEntityId && msg.entityId && msg.entityId !== currentEntityId) {
     role = 'assistant';
     isOtherHuman = true;
   }
 
+  // Extract text from structured parts or plain content
   const content: ContentPart[] = [];
-
-  // Extract structured parts from metadata.uiMessage if present
-  const uiMessage = (msg.metadata as any)?.uiMessage;
-  if (uiMessage?.parts && Array.isArray(uiMessage.parts)) {
-    for (const part of uiMessage.parts) {
-      if (part.type === 'text' && part.text) {
-        content.push({ type: 'text', text: part.text });
-      }
+  const parts = (msg.metadata as any)?.uiMessage?.parts;
+  if (Array.isArray(parts)) {
+    for (const p of parts) {
+      if (p.type === 'text' && p.text) content.push({ type: 'text', text: p.text });
     }
   }
-
-  // Fallback to plain content
   if (content.length === 0) {
     const text = msg.content || '';
     if (!text.trim()) return null;
@@ -130,223 +110,173 @@ function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): Threa
   };
 }
 
-// =============================================================================
-// Hook
-// =============================================================================
+// ─── Hook ────────────────────────────────────────────────────────────────────
 
 export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntimeReturn {
   const client = useHsafaClient();
-  const {
-    smartSpaceId,
-    entityId,
-    smartSpaces = [],
-    onSwitchThread,
-    onNewThread,
-  } = options;
+  const { smartSpaceId, entityId, smartSpaces = [], onSwitchThread, onNewThread } = options;
 
   const [rawMessages, setRawMessages] = useState<SmartSpaceMessage[]>([]);
-  const [streamingMessages, setStreamingMessages] = useState<StreamingMessage[]>([]);
+  const [streaming, setStreaming] = useState<StreamingEntry[]>([]);
   const [membersById, setMembersById] = useState<Record<string, Entity>>({});
+  const [loaded, setLoaded] = useState(false);
   const streamRef = useRef<HsafaStream | null>(null);
-  const [messagesLoaded, setMessagesLoaded] = useState(false);
+  // Dedup: track which streamIds already have a persisted message.
+  // Ref updates synchronously — always correct regardless of React batching.
+  const persistedRef = useRef(new Set<string>());
 
-  // Load initial messages
+  // ── Load messages ──
   useEffect(() => {
-    if (!smartSpaceId) {
-      setRawMessages([]);
-      setStreamingMessages([]);
-      setMessagesLoaded(false);
-      return;
-    }
-
-    setMessagesLoaded(false);
-    client.messages.list(smartSpaceId, { limit: 100 }).then(({ messages }) => {
-      setRawMessages(messages);
-      setMessagesLoaded(true);
-    }).catch(() => {
-      setMessagesLoaded(true);
-    });
+    if (!smartSpaceId) { setRawMessages([]); setStreaming([]); setLoaded(false); return; }
+    setLoaded(false);
+    client.messages.list(smartSpaceId, { limit: 100 })
+      .then(({ messages }) => { setRawMessages(messages); setLoaded(true); })
+      .catch(() => setLoaded(true));
   }, [client, smartSpaceId]);
 
-  // Load members
+  // ── Load members ──
   useEffect(() => {
-    if (!smartSpaceId) {
-      setMembersById({});
-      return;
-    }
-
-    client.spaces.listMembers(smartSpaceId).then(({ members }) => {
-      const map: Record<string, Entity> = {};
-      for (const m of members) {
-        if (m.entity) {
-          map[m.entityId] = m.entity;
-        }
-      }
-      setMembersById(map);
-    }).catch(() => {});
+    if (!smartSpaceId) { setMembersById({}); return; }
+    client.spaces.listMembers(smartSpaceId)
+      .then(({ members }) => {
+        const map: Record<string, Entity> = {};
+        for (const m of members) if (m.entity) map[m.entityId] = m.entity;
+        setMembersById(map);
+      })
+      .catch(() => {});
   }, [client, smartSpaceId]);
 
-  // Subscribe to space SSE.
-  //
-  // In the general-purpose run model, runs do NOT relay events to spaces.
-  // The ONLY events on the space SSE are:
-  //   - smartSpace.message  — persisted messages (from human posts & sendSpaceMessage)
-  //   - text-delta          — real LLM streaming from sendSpaceMessage tool-input interception
-  //   - finish              — sendSpaceMessage call completed
-  //   - smartSpace.member.* — membership changes
-  //
-  // No reconstruction from run events needed — page refresh loads persisted messages.
+  // ── SSE subscription ──
+  // Only 4 events matter on the space stream:
+  //   text-start / text-delta / text-end / finish  → streaming
+  //   smartSpace.message                           → persisted message
   useEffect(() => {
-    if (!smartSpaceId || !messagesLoaded) return;
-
+    if (!smartSpaceId || !loaded) return;
     const stream = client.spaces.subscribe(smartSpaceId);
     streamRef.current = stream;
 
-    // Catch-up: re-fetch to cover the window between initial load and SSE connection
+    // Catch-up fetch
     client.messages.list(smartSpaceId, { limit: 100 }).then(({ messages: fresh }: { messages: SmartSpaceMessage[] }) => {
       setRawMessages((prev) => {
-        const freshIds = new Set(fresh.map((m) => m.id));
-        const sseOnly = prev.filter((m) => !freshIds.has(m.id));
-        return [...fresh, ...sseOnly];
+        const ids = new Set(fresh.map((m) => m.id));
+        return [...fresh, ...prev.filter((m) => !ids.has(m.id))];
       });
     }).catch(() => {});
 
-    // ── smartSpace.message: persisted message arrived ──
-    stream.on('smartSpace.message', (event: StreamEvent) => {
-      const raw = event.data?.message as Record<string, unknown> | undefined;
-      if (!raw || !raw.id) return;
+    // text-start → create streaming entry
+    stream.on('text-start', (e: StreamEvent) => {
+      const id = e.data?.id as string;
+      if (!id) return;
+      setStreaming((prev) =>
+        prev.some((s) => s.id === id) ? prev : [...prev, { id, entityId: e.entityId || '', text: '', active: true }]
+      );
+    });
+
+    // text-delta → append text
+    stream.on('text-delta', (e: StreamEvent) => {
+      const id = e.data?.id as string;
+      const delta = (e.data?.delta as string) || '';
+      if (!id || !delta) return;
+      setStreaming((prev) => {
+        const exists = prev.find((s) => s.id === id);
+        if (exists) return prev.map((s) => s.id === id ? { ...s, text: s.text + delta } : s);
+        return [...prev, { id, entityId: e.entityId || '', text: delta, active: true }];
+      });
+    });
+
+    // text-end / finish → mark inactive
+    const markDone = (e: StreamEvent) => {
+      const id = (e.data?.id as string) || (e.data?.streamId as string) || '';
+      if (!id) return;
+      setStreaming((prev) => prev.map((s) => s.id === id ? { ...s, active: false } : s));
+    };
+    stream.on('text-end', markDone);
+    stream.on('finish', markDone);
+
+    // smartSpace.message → persisted message arrived
+    stream.on('smartSpace.message', (e: StreamEvent) => {
+      const raw = e.data?.message as Record<string, unknown> | undefined;
+      if (!raw?.id) return;
 
       let content = raw.content as string | undefined;
       if (!content && Array.isArray(raw.parts)) {
         content = (raw.parts as Array<{ type: string; text?: string }>)
-          .filter((p) => p.type === 'text' && p.text)
-          .map((p) => p.text)
-          .join('\n');
+          .filter((p) => p.type === 'text' && p.text).map((p) => p.text).join('\n');
       }
 
       let metadata = (raw.metadata as Record<string, unknown>) || null;
-      if (!metadata && Array.isArray(raw.parts)) {
-        metadata = { uiMessage: { parts: raw.parts } };
-      }
+      if (!metadata && Array.isArray(raw.parts)) metadata = { uiMessage: { parts: raw.parts } };
 
       const msg: SmartSpaceMessage = {
         id: raw.id as string,
-        smartSpaceId: event.smartSpaceId || (raw.smartSpaceId as string) || '',
-        entityId: (raw.entityId as string) || event.entityId || null,
-        seq: (raw.seq as string) || String(event.seq || '0'),
+        smartSpaceId: e.smartSpaceId || (raw.smartSpaceId as string) || '',
+        entityId: (raw.entityId as string) || e.entityId || null,
+        seq: (raw.seq as string) || String(e.seq || '0'),
         role: (raw.role as string) || 'user',
         content: content || null,
         metadata,
         createdAt: (raw.createdAt as string) || new Date().toISOString(),
       };
-
       if (!msg.content?.trim()) return;
 
-      setRawMessages((prev) => {
-        if (prev.some((m) => m.id === msg.id)) return prev;
-        return [...prev, msg];
-      });
+      // Dedup: mark streamId persisted BEFORE setState
+      const streamId = e.data?.streamId as string | undefined;
+      if (streamId) persistedRef.current.add(streamId);
 
-      // Remove streaming entry — persisted message takes over
-      if (event.runId) {
-        setStreamingMessages((prev) => prev.filter((sm) => sm.id !== event.runId));
-      }
-    });
-
-    // ── text-delta: real LLM streaming from sendSpaceMessage ──
-    stream.on('text-delta', (event: StreamEvent) => {
-      const runId = event.runId || (event.data.runId as string);
-      const delta = (event.data.delta as string) || (event.data.text as string) || '';
-      if (!runId || !delta) return;
-
-      setStreamingMessages((prev) => {
-        const existing = prev.find((sm) => sm.id === runId);
-        if (existing) {
-          return prev.map((sm) =>
-            sm.id === runId ? { ...sm, text: sm.text + delta } : sm
-          );
-        }
-        return [...prev, { id: runId, entityId: event.entityId || '', text: delta, isStreaming: true }];
-      });
-    });
-
-    // ── finish: sendSpaceMessage call completed ──
-    stream.on('finish', (event: StreamEvent) => {
-      const runId = event.runId || (event.data.runId as string);
-      if (!runId) return;
-      setStreamingMessages((prev) =>
-        prev.map((sm) =>
-          sm.id === runId ? { ...sm, isStreaming: false } : sm
-        )
-      );
+      setRawMessages((prev) => prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]);
+      if (streamId) setStreaming((prev) => prev.filter((s) => s.id !== streamId));
     });
 
     return () => {
       stream.close();
       streamRef.current = null;
-      setStreamingMessages([]);
+      setStreaming([]);
+      persistedRef.current.clear();
     };
-  }, [client, smartSpaceId, messagesLoaded]);
+  }, [client, smartSpaceId, loaded]);
 
-  // Build final message list
-  const isRunning = streamingMessages.some((sm) => sm.isStreaming);
+  // ── Build message list ──
+  const isRunning = streaming.some((s) => s.active);
 
   const messages = useMemo<ThreadMessageLike[]>(() => {
     const persisted = rawMessages
       .map((m) => convertMessage(m, entityId))
       .filter((m): m is ThreadMessageLike => m !== null);
 
-    const streaming = streamingMessages
-      .filter((sm) => sm.text)
-      .map((sm): ThreadMessageLike => ({
-        id: sm.id,
+    const live = streaming
+      .filter((s) => s.text && !persistedRef.current.has(s.id))
+      .map((s): ThreadMessageLike => ({
+        id: s.id,
         role: 'assistant',
-        content: [{ type: 'text', text: sm.text }],
+        content: [{ type: 'text', text: s.text }],
         createdAt: new Date(),
-        metadata: { custom: { entityId: sm.entityId } },
+        metadata: { custom: { entityId: s.entityId } },
       }));
 
-    return [...persisted, ...streaming];
-  }, [rawMessages, streamingMessages]);
+    return [...persisted, ...live];
+  }, [rawMessages, streaming, entityId]);
 
-  // Send message
+  // ── Send message ──
   const onNew = useCallback(
     async (message: AppendMessage) => {
       if (!smartSpaceId) throw new Error('No SmartSpace selected');
-      const firstPart = message.content[0];
-      if (!firstPart || firstPart.type !== 'text' || !firstPart.text) {
-        throw new Error('Only text messages are supported');
-      }
-      await client.messages.send(smartSpaceId, { content: firstPart.text, entityId });
+      const part = message.content[0];
+      if (!part || part.type !== 'text' || !part.text) throw new Error('Only text messages supported');
+      await client.messages.send(smartSpaceId, { content: part.text, entityId });
     },
-    [client, smartSpaceId, entityId]
+    [client, smartSpaceId, entityId],
   );
 
-  // Thread list adapter
-  const threadListAdapter: ThreadListAdapter | undefined =
-    onSwitchThread
-      ? {
-          threadId: smartSpaceId ?? undefined,
-          threads: smartSpaces.map((ss) => ({
-            threadId: ss.id,
-            status: 'regular' as const,
-            title: ss.name ?? 'Untitled',
-          })),
-          archivedThreads: [],
-          onSwitchToThread: (threadId: string) => {
-            onSwitchThread(threadId);
-          },
-          onSwitchToNewThread: () => {
-            onNewThread?.();
-          },
-        }
-      : undefined;
+  // ── Thread list adapter ──
+  const threadListAdapter: ThreadListAdapter | undefined = onSwitchThread
+    ? {
+        threadId: smartSpaceId ?? undefined,
+        threads: smartSpaces.map((ss) => ({ threadId: ss.id, status: 'regular' as const, title: ss.name ?? 'Untitled' })),
+        archivedThreads: [],
+        onSwitchToThread: (id: string) => onSwitchThread(id),
+        onSwitchToNewThread: () => onNewThread?.(),
+      }
+    : undefined;
 
-  return {
-    messages,
-    isRunning,
-    onNew,
-    threadListAdapter,
-    membersById,
-  };
+  return { messages, isRunning, onNew, threadListAdapter, membersById };
 }

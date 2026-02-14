@@ -118,11 +118,11 @@ export function buildTool(config: ToolConfig, runContext?: PrebuiltToolContext) 
     return tool({
       description,
       inputSchema: finalSchema,
-      execute: async (input: unknown) => {
+      execute: async (input: unknown, execOptions: ToolExecutionOptions) => {
         if (!runContext) {
           throw new Error('Prebuilt tools require a run context');
         }
-        return handler.execute(input, runContext);
+        return handler.execute(input, { ...runContext, toolCallId: execOptions.toolCallId });
       },
     });
   }
