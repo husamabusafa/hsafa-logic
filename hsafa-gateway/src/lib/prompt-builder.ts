@@ -181,7 +181,7 @@ export async function buildModelMessages(ctx: RunContext) {
   // ── Core instruction ──
   systemParts.push('Your text output is internal — never shown to anyone. Keep it short (1-2 sentences summarizing what you did).');
   systemParts.push('To communicate, use sendSpaceMessage(spaceId, text). Do NOT retry — it returns {success:true} on delivery.');
-  systemParts.push('Use readSpaceMessages to read context from any space you belong to.');
+  systemParts.push('Use getSpaceMessages to read context from any space you belong to.');
 
   // ── Trigger context ──
   systemParts.push('');
@@ -209,13 +209,12 @@ export async function buildModelMessages(ctx: RunContext) {
     systemParts.push('- Respond directly using sendSpaceMessage');
     systemParts.push('- Delegate to another agent using delegateToAgent(entityId) — your run is silently canceled and the target agent receives the original human message');
     systemParts.push('- Mention another agent using sendSpaceMessage with mention — your message appears in the space and the mentioned agent is triggered');
-    systemParts.push('- Skip using skipResponse if no response is needed');
   } else if (isMultiAgentSpace && run.triggerType === 'space_message') {
     systemParts.push('');
     systemParts.push('Use sendSpaceMessage to respond. You can mention other agents to trigger them.');
   } else if (run.triggerType === 'plan' || run.triggerType === 'service') {
     systemParts.push('');
-    systemParts.push('Use sendSpaceMessage to post to any space you belong to. Use readSpaceMessages for context.');
+    systemParts.push('Use sendSpaceMessage to post to any space you belong to. Use getSpaceMessages for context.');
   }
 
   // ── Concurrent run awareness ──

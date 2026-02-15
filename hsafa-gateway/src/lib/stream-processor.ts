@@ -18,7 +18,6 @@ export interface DelegateAgentSignal {
 
 export interface StreamResult {
   finalText: string | undefined;
-  skipped: boolean;
   pendingClientToolCalls: PendingClientToolCall[];
   delegateSignal: DelegateAgentSignal | null;
 }
@@ -31,7 +30,7 @@ export interface StreamResult {
  * Core responsibilities:
  * 1. Intercept sendSpaceMessage tool-input-delta → stream text to target space (real LLM streaming)
  * 2. Emit reasoning events to the run stream
- * 3. Track tool calls & detect skip/delegate signals
+ * 3. Track tool calls & detect delegate signals
  * 4. Identify pending client tool calls (no server-side result)
  */
 export async function processStream(
@@ -53,7 +52,6 @@ export async function processStream(
   // Internal state
   let reasoningId: string | null = null;
   let internalText = '';
-  let skipped = false;
   let delegateSignal: DelegateAgentSignal | null = null;
 
   const toolArgs = new Map<string, string>();              // toolCallId → accumulated JSON
@@ -156,8 +154,6 @@ export async function processStream(
         await emitSmartSpaceEvent(targetSpaceId, 'tool-call', { toolCallId, toolName, args: input }, spaceCtx);
       }
 
-      if (toolName === 'skipResponse' || toolName === 'delegateToAgent') skipped = true;
-
       toolCalls.set(toolCallId, { toolName, input });
     }
 
@@ -215,7 +211,6 @@ export async function processStream(
 
   return {
     finalText: internalText || undefined,
-    skipped,
     pendingClientToolCalls,
     delegateSignal,
   };

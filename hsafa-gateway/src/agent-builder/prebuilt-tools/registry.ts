@@ -30,7 +30,6 @@ export async function initPrebuiltTools(): Promise<void> {
     await import('./send-space-message.js');
     await import('./get-space-messages.js');
     await import('./get-my-runs.js');
-    await import('./skip-response.js');
     await import('./delegate-agent.js');
     // mentionAgent removed — superseded by sendSpaceMessage's `mention` field
   })();

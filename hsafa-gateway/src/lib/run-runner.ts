@@ -180,7 +180,7 @@ export async function executeRun(runId: string): Promise<void> {
     const streamResult = await built.agent.stream({ messages: modelMessages });
     const messageId = `msg-${runId}-${Date.now()}`;
 
-    const { finalText, skipped, pendingClientToolCalls, delegateSignal } = await processStream(
+    const { finalText, pendingClientToolCalls, delegateSignal } = await processStream(
       streamResult.fullStream,
       messageId,
       runId,
@@ -197,46 +197,38 @@ export async function executeRun(runId: string): Promise<void> {
       await closeMCPClients(built.mcpClients);
     }
 
-    // ── 6. Handle skip / delegate ─────────────────────────────────────────
+    // ── 6. Handle delegate ────────────────────────────────────────────────
 
-    if (skipped) {
+    if (delegateSignal && run.triggerSpaceId) {
       await prisma.run.update({
         where: { id: runId },
         data: { status: 'canceled', completedAt: new Date() },
       });
+      await emitEvent('run.canceled', { reason: 'delegate', targetAgentEntityId: delegateSignal.targetAgentEntityId });
 
-      // Delegate: cancel this run, re-trigger target agent with ORIGINAL trigger context
-      if (delegateSignal && run.triggerSpaceId) {
-        await emitEvent('run.canceled', { reason: 'delegate', targetAgentEntityId: delegateSignal.targetAgentEntityId });
+      const targetMembership = await prisma.smartSpaceMembership.findUnique({
+        where: { smartSpaceId_entityId: { smartSpaceId: run.triggerSpaceId, entityId: delegateSignal.targetAgentEntityId } },
+        include: { entity: { select: { agentId: true } } },
+      });
 
-        const targetMembership = await prisma.smartSpaceMembership.findUnique({
-          where: { smartSpaceId_entityId: { smartSpaceId: run.triggerSpaceId, entityId: delegateSignal.targetAgentEntityId } },
-          include: { entity: { select: { agentId: true } } },
+      if (targetMembership?.entity.agentId) {
+        const originalTrigger: TriggerContext = {
+          triggerType: (run.triggerType as TriggerContext['triggerType']) ?? 'space_message',
+          triggerSpaceId: run.triggerSpaceId ?? undefined,
+          triggerMessageContent: run.triggerMessageContent ?? undefined,
+          triggerSenderEntityId: run.triggerSenderEntityId ?? undefined,
+          triggerSenderName: run.triggerSenderName ?? undefined,
+          triggerSenderType: (run.triggerSenderType as 'human' | 'agent') ?? undefined,
+        };
+
+        await delegateToAgent({
+          originalTrigger,
+          targetAgentEntityId: delegateSignal.targetAgentEntityId,
+          targetAgentId: targetMembership.entity.agentId,
+          originalTriggeredById: run.triggeredById ?? undefined,
         });
-
-        if (targetMembership?.entity.agentId) {
-          const originalTrigger: TriggerContext = {
-            triggerType: (run.triggerType as TriggerContext['triggerType']) ?? 'space_message',
-            triggerSpaceId: run.triggerSpaceId ?? undefined,
-            triggerMessageContent: run.triggerMessageContent ?? undefined,
-            triggerSenderEntityId: run.triggerSenderEntityId ?? undefined,
-            triggerSenderName: run.triggerSenderName ?? undefined,
-            triggerSenderType: (run.triggerSenderType as 'human' | 'agent') ?? undefined,
-          };
-
-          await delegateToAgent({
-            originalTrigger,
-            targetAgentEntityId: delegateSignal.targetAgentEntityId,
-            targetAgentId: targetMembership.entity.agentId,
-            originalTriggeredById: run.triggeredById ?? undefined,
-          });
-        }
-        await emitAgentStatus(run.agentEntityId, 'inactive', { runId });
-        return;
       }
 
-      // Plain skip
-      await emitEvent('run.canceled', { reason: 'skip' });
       await emitAgentStatus(run.agentEntityId, 'inactive', { runId });
       return;
     }
