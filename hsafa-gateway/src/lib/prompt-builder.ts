@@ -92,6 +92,27 @@ function formatSpacesBlock(
   return lines;
 }
 
+// ─── Origin annotation formatter (for cross-space message context) ──────────
+
+function formatOriginAnnotation(origin: Record<string, unknown>): string | null {
+  const parts: string[] = [];
+
+  if (origin.triggerType === 'space_message') {
+    const sender = origin.triggerSenderName || 'someone';
+    const space = origin.triggerSpaceName || origin.triggerSpaceId || 'another space';
+    const msg = origin.triggerMessage;
+    parts.push(`[context: you sent this because ${sender} asked "${msg}" in "${space}"]`);
+  } else if (origin.triggerType === 'service') {
+    const service = origin.triggerServiceName || 'a service';
+    parts.push(`[context: you sent this because ${service} triggered you]`);
+  } else if (origin.triggerType === 'plan') {
+    const plan = origin.triggerPlanName || 'a scheduled plan';
+    parts.push(`[context: you sent this because plan "${plan}" triggered you]`);
+  }
+
+  return parts.length > 0 ? parts.join(' ') : null;
+}
+
 // ─── Trigger context formatter ──────────────────────────────────────────────
 
 function formatTriggerContext(ctx: RunContext): string[] {
@@ -230,6 +251,25 @@ export async function buildModelMessages(ctx: RunContext) {
     const taggedUiMessages = messages.map((m) => {
       const base = toUiMessageFromSmartSpaceMessage(m);
       const isOwnMessage = m.entityId === run.agentEntityId;
+
+      // Own messages with origin context → annotate so the agent knows WHY it sent them
+      if (isOwnMessage && m.role === 'assistant') {
+        const meta = (m.metadata ?? null) as Record<string, unknown> | null;
+        const origin = meta && typeof meta === 'object' ? (meta as any).origin : null;
+        if (origin && typeof origin === 'object') {
+          const annotation = formatOriginAnnotation(origin);
+          if (annotation && Array.isArray(base.parts)) {
+            const parts = base.parts.map((p: any, i: number) => {
+              if (i === 0 && p.type === 'text' && typeof p.text === 'string') {
+                return { ...p, text: `${annotation}\n${p.text}` };
+              }
+              return p;
+            });
+            return { ...base, parts };
+          }
+        }
+        return base;
+      }
 
       // Other agents' assistant messages → convert to user role + tag
       if (m.role === 'assistant' && !isOwnMessage) {

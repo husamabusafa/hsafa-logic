@@ -65,6 +65,41 @@ registerPrebuiltTool('sendSpaceMessage', {
     });
     const agentName = agentEntity?.displayName || 'AI Assistant';
 
+    // Build origin context for cross-space messages
+    // This tells the agent WHY it sent this message when triggered in this space later
+    let origin: Record<string, unknown> | undefined;
+    const isCrossSpace = context.triggerSpaceId && spaceId !== context.triggerSpaceId;
+    if (isCrossSpace) {
+      const [run, triggerSpace] = await Promise.all([
+        prisma.run.findUnique({
+          where: { id: context.runId },
+          select: {
+            triggerType: true,
+            triggerSpaceId: true,
+            triggerMessageContent: true,
+            triggerSenderName: true,
+            triggerServiceName: true,
+            triggerPlanName: true,
+          },
+        }),
+        prisma.smartSpace.findUnique({
+          where: { id: context.triggerSpaceId! },
+          select: { name: true },
+        }),
+      ]);
+      if (run) {
+        origin = {
+          triggerType: run.triggerType,
+          ...(run.triggerSpaceId ? { triggerSpaceId: run.triggerSpaceId } : {}),
+          ...(triggerSpace?.name ? { triggerSpaceName: triggerSpace.name } : {}),
+          ...(run.triggerSenderName ? { triggerSenderName: run.triggerSenderName } : {}),
+          ...(run.triggerMessageContent ? { triggerMessage: run.triggerMessageContent } : {}),
+          ...(run.triggerServiceName ? { triggerServiceName: run.triggerServiceName } : {}),
+          ...(run.triggerPlanName ? { triggerPlanName: run.triggerPlanName } : {}),
+        };
+      }
+    }
+
     // Persist the message
     const streamId = context.toolCallId || null;
     const dbMessage = await createSmartSpaceMessage({
@@ -75,6 +110,7 @@ registerPrebuiltTool('sendSpaceMessage', {
       metadata: {
         runId: context.runId,
         ...(streamId ? { streamId } : {}),
+        ...(origin ? { origin } : {}),
       } as unknown as Prisma.InputJsonValue,
       runId: context.runId,
     });
