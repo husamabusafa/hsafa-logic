@@ -1,4 +1,8 @@
-# goToSpace v3 — Clean Execution Model
+> **⚠️ SUPERSEDED** — This document describes the old `goToSpace` child-run model. It has been fully replaced by the **Single-Run Architecture** (`single-run-architecture/`). In the new model, agents use `sendSpaceMessage(spaceId, text)` to talk to any space from a single general-purpose run — no child runs, no goToSpace tool. See `single-run-architecture/01-core-concept.md` and `single-run-architecture/02-space-tools.md`.
+
+---
+
+# goToSpace v3 — Clean Execution Model (DEPRECATED)
 
 ## Core Idea
 

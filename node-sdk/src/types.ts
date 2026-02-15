@@ -246,18 +246,9 @@ export interface TriggerAgentResult {
   streamUrl: string;
 }
 
-export interface SubmitToolResultParams {
-  runId: string;
-  toolCallId: string;
-  result: unknown;
-  source?: 'client' | 'server';
-}
-
 export interface SubmitRunToolResultParams {
   callId: string;
   result: unknown;
-  source?: 'client' | 'server';
-  clientId?: string;
 }
 
 export interface RegisterClientParams {

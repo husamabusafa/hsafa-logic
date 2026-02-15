@@ -1,4 +1,8 @@
-# System Prompts Overview
+> **⚠️ SUPERSEDED** — This document describes the old system prompt model with 3 separate prompt types (Regular, GoToSpace, Plan). It has been fully replaced by the **Single-Run Architecture** (`single-run-architecture/`). In the new model, there is **one unified prompt builder** for all agents — the only variation is the trigger context (space_message, plan, or service) and whether the agent is admin. The agent's LLM text output is internal; all communication happens via `sendSpaceMessage`. See `single-run-architecture/03-admin-agent.md`.
+
+---
+
+# System Prompts Overview (DEPRECATED)
 
 The gateway builds **three** distinct system prompts depending on how a run is triggered. All three share the same underlying context (goals, memories, plans, spaces) but differ in **what the agent is told about its situation** and **how its response is handled**.
 

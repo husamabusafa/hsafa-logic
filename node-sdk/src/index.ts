@@ -44,7 +44,6 @@ export type {
   CreateRunParams,
   TriggerAgentParams,
   TriggerAgentResult,
-  SubmitToolResultParams,
   SubmitRunToolResultParams,
   RegisterClientParams,
   ListParams,

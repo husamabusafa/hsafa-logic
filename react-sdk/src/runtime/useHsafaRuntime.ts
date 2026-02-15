@@ -20,6 +20,7 @@ export interface ToolCallContentPart {
   argsText?: string;
   args?: Record<string, unknown>;
   result?: unknown;
+  status?: { type: string; reason?: string };
 }
 export interface ReasoningContentPart { type: 'reasoning'; text: string }
 
@@ -55,6 +56,21 @@ interface StreamingEntry {
   active: boolean;  // true while text-delta events are flowing
 }
 
+interface ToolCallEntry {
+  toolCallId: string;
+  toolName: string;
+  entityId: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+  status: 'running' | 'complete' | 'error';
+  error?: string;
+}
+
+export interface ActiveAgent {
+  entityId: string;
+  entityName?: string;
+}
+
 // ─── Options & Return ────────────────────────────────────────────────────────
 
 export interface UseHsafaRuntimeOptions {
@@ -68,6 +84,7 @@ export interface UseHsafaRuntimeOptions {
 export interface UseHsafaRuntimeReturn {
   messages: ThreadMessageLike[];
   isRunning: boolean;
+  activeAgents: ActiveAgent[];
   onNew: (message: AppendMessage) => Promise<void>;
   threadListAdapter?: ThreadListAdapter;
   membersById: Record<string, Entity>;
@@ -118,12 +135,16 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
 
   const [rawMessages, setRawMessages] = useState<SmartSpaceMessage[]>([]);
   const [streaming, setStreaming] = useState<StreamingEntry[]>([]);
+  const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([]);
   const [membersById, setMembersById] = useState<Record<string, Entity>>({});
   const [loaded, setLoaded] = useState(false);
   const streamRef = useRef<HsafaStream | null>(null);
   // Dedup: track which streamIds already have a persisted message.
   // Ref updates synchronously — always correct regardless of React batching.
   const persistedRef = useRef(new Set<string>());
+  // Active agents: Map<runId, { entityId, entityName }> for reference counting
+  const activeRunsRef = useRef(new Map<string, { entityId: string; entityName?: string }>());
+  const [activeAgents, setActiveAgents] = useState<ActiveAgent[]>([]);
 
   // ── Load messages ──
   useEffect(() => {
@@ -193,6 +214,73 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
     stream.on('text-end', markDone);
     stream.on('finish', markDone);
 
+    // tool-call.start → create tool call entry (running)
+    stream.on('tool-call.start', (e: StreamEvent) => {
+      const toolCallId = e.data?.toolCallId as string;
+      const toolName = e.data?.toolName as string;
+      if (!toolCallId || !toolName) return;
+      setToolCalls(prev =>
+        prev.some(tc => tc.toolCallId === toolCallId)
+          ? prev
+          : [...prev, { toolCallId, toolName, entityId: e.entityId || '', status: 'running' as const }]
+      );
+    });
+
+    // tool-call → update with full args
+    stream.on('tool-call', (e: StreamEvent) => {
+      const toolCallId = e.data?.toolCallId as string;
+      const args = e.data?.args as Record<string, unknown> | undefined;
+      if (!toolCallId) return;
+      setToolCalls(prev => prev.map(tc =>
+        tc.toolCallId === toolCallId ? { ...tc, args } : tc
+      ));
+    });
+
+    // tool-call.result → update with result, mark complete
+    stream.on('tool-call.result', (e: StreamEvent) => {
+      const toolCallId = e.data?.toolCallId as string;
+      const output = e.data?.output;
+      if (!toolCallId) return;
+      setToolCalls(prev => prev.map(tc =>
+        tc.toolCallId === toolCallId ? { ...tc, result: output, status: 'complete' as const } : tc
+      ));
+    });
+
+    // tool-call.error → mark error
+    stream.on('tool-call.error', (e: StreamEvent) => {
+      const toolCallId = e.data?.toolCallId as string;
+      const error = e.data?.error as string | undefined;
+      if (!toolCallId) return;
+      setToolCalls(prev => prev.map(tc =>
+        tc.toolCallId === toolCallId ? { ...tc, status: 'error' as const, error } : tc
+      ));
+    });
+
+    // agent.active / agent.inactive → track which agents have running runs
+    stream.on('agent.active', (e: StreamEvent) => {
+      const eid = e.data?.entityId as string;
+      const rid = e.data?.runId as string;
+      if (!eid || !rid) return;
+      activeRunsRef.current.set(rid, { entityId: eid, entityName: (e.data?.entityName as string) || undefined });
+      // Derive unique active agents
+      const seen = new Map<string, ActiveAgent>();
+      for (const v of activeRunsRef.current.values()) {
+        if (!seen.has(v.entityId)) seen.set(v.entityId, { entityId: v.entityId, entityName: v.entityName });
+      }
+      setActiveAgents(Array.from(seen.values()));
+    });
+
+    stream.on('agent.inactive', (e: StreamEvent) => {
+      const rid = e.data?.runId as string;
+      if (!rid) return;
+      activeRunsRef.current.delete(rid);
+      const seen = new Map<string, ActiveAgent>();
+      for (const v of activeRunsRef.current.values()) {
+        if (!seen.has(v.entityId)) seen.set(v.entityId, { entityId: v.entityId, entityName: v.entityName });
+      }
+      setActiveAgents(Array.from(seen.values()));
+    });
+
     // smartSpace.message → persisted message arrived
     stream.on('smartSpace.message', (e: StreamEvent) => {
       const raw = e.data?.message as Record<string, unknown> | undefined;
@@ -231,7 +319,10 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       stream.close();
       streamRef.current = null;
       setStreaming([]);
+      setToolCalls([]);
       persistedRef.current.clear();
+      activeRunsRef.current.clear();
+      setActiveAgents([]);
     };
   }, [client, smartSpaceId, loaded]);
 
@@ -243,6 +334,26 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       .map((m) => convertMessage(m, entityId))
       .filter((m): m is ThreadMessageLike => m !== null);
 
+    // Visible tool calls as assistant messages with tool-call content parts
+    const tcMessages = toolCalls.map((tc): ThreadMessageLike => ({
+      id: `tc-${tc.toolCallId}`,
+      role: 'assistant',
+      content: [{
+        type: 'tool-call',
+        toolCallId: tc.toolCallId,
+        toolName: tc.toolName,
+        args: tc.args,
+        result: tc.result,
+        status: tc.status === 'running'
+          ? { type: 'running' }
+          : tc.status === 'complete'
+            ? { type: 'complete' }
+            : { type: 'incomplete', reason: 'error' },
+      } as ToolCallContentPart],
+      createdAt: new Date(),
+      metadata: { custom: { entityId: tc.entityId } },
+    }));
+
     const live = streaming
       .filter((s) => s.text && !persistedRef.current.has(s.id))
       .map((s): ThreadMessageLike => ({
@@ -253,8 +364,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         metadata: { custom: { entityId: s.entityId } },
       }));
 
-    return [...persisted, ...live];
-  }, [rawMessages, streaming, entityId]);
+    return [...persisted, ...tcMessages, ...live];
+  }, [rawMessages, streaming, toolCalls, entityId]);
 
   // ── Send message ──
   const onNew = useCallback(
@@ -278,5 +389,5 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       }
     : undefined;
 
-  return { messages, isRunning, onNew, threadListAdapter, membersById };
+  return { messages, isRunning, activeAgents, onNew, threadListAdapter, membersById };
 }

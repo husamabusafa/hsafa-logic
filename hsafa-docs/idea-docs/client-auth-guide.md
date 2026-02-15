@@ -80,7 +80,7 @@ function Chat({ spaceId }) {
 
 ### Node.js (Backends / Services) — Secret Key
 
-System entities and backends authenticate via the secret key.
+Backends and external services authenticate via the secret key. Note: external services are **NOT entities** — they trigger agents directly via API.
 
 ```ts
 import { HsafaClient } from '@hsafa/node';
@@ -103,9 +103,9 @@ const clientWithJwt = new HsafaClient({
 
 ---
 
-## Service Subscription (Single Entity Stream)
+## Service Integration (Service Trigger API)
 
-For Node.js services that need to listen to multiple SmartSpaces, use a **single entity stream** instead of multiple connections. **Requires secret key auth.**
+External services (Jira, Slack, cron jobs, IoT devices, Node.js backends) are **NOT entities** in the system. Instead, they trigger agents directly via API and optionally subscribe to runs for tool results.
 
 ### How It Works
 
@@ -113,16 +113,13 @@ For Node.js services that need to listen to multiple SmartSpaces, use a **single
 ┌─────────────────┐         ┌─────────────────────────────────────┐
 │  Node.js        │         │           Hsafa Gateway             │
 │  Service        │         │                                     │
-│                 │         │  ┌─────────────────────────────┐    │
-│                 │   SSE   │  │ SmartSpace A (service is    │    │
-│  subscribeAll() │◄───────►│  │ member) → events routed     │    │
-│                 │         │  ├─────────────────────────────┤    │
-│                 │         │  │ SmartSpace B (service is    │    │
-│                 │         │  │ member) → events routed     │    │
-│                 │         │  ├─────────────────────────────┤    │
-│                 │         │  │ SmartSpace C (NOT member)   │    │
-│                 │         │  │ → NO events                 │    │
-│                 │         │  └─────────────────────────────┘    │
+│                 │  POST   │  POST /api/agents/{id}/trigger      │
+│  trigger()      │────────►│  → Creates a Run with               │
+│                 │         │    triggerType: 'service'            │
+│                 │         │    triggerServiceName: 'MyService'   │
+│                 │   SSE   │    triggerPayload: {...}             │
+│  subscribe()    │◄───────►│  → Agent uses sendSpaceMessage to   │
+│  (optional)     │         │    communicate with spaces           │
 └─────────────────┘         └─────────────────────────────────────┘
 ```
 
@@ -136,37 +133,37 @@ const client = new HsafaClient({
   secretKey: 'sk_...',  // system-wide secret key
 });
 
-const SERVICE_ENTITY_ID = 'order-processor-entity-id';
-
-// Single connection - receives events from ALL spaces this entity is in
-const stream = client.entities.subscribe(SERVICE_ENTITY_ID);
-
-stream.on('smartSpace.message', (event) => {
-  console.log(`[${event.smartSpaceId}] ${event.type}:`, event.data);
+// Trigger an agent directly (service trigger)
+const { runId } = await client.agents.trigger('order-agent-id', {
+  serviceName: 'OrderProcessor',
+  payload: { event: 'new_order', orderId: '8891' },
 });
 
-stream.on('tool-input-available', async (event) => {
-  // An agent needs this service to execute a tool
-  const { toolCallId, toolName, input } = event.data;
+// Optionally subscribe to the run for tool results
+const stream = client.runs.subscribe(runId);
 
-  // Execute the tool
-  const result = await executeMyTool(toolName, input);
+stream.on('run.waiting_tool', async (event) => {
+  for (const tc of event.data.pendingToolCalls) {
+    const result = await executeMyTool(tc.toolName, tc.input);
+    await client.tools.submitRunResult(runId, {
+      callId: tc.toolCallId,
+      result,
+    });
+  }
+});
 
-  // Send result back
-  await client.tools.submitResult(event.smartSpaceId, {
-    runId: event.runId,
-    toolCallId,
-    result,
-  });
+stream.on('run.completed', () => {
+  console.log('Agent run completed');
+  stream.close();
 });
 ```
 
 ### Benefits
 
-- **Single connection** - no need to manage multiple SSE streams
-- **Automatic routing** - Gateway sends events from all spaces entity is member of
-- **Simple code** - one subscription handles everything
-- **Efficient** - less connections, less overhead
+- **No entity management** — services don't need to be entities or space members
+- **Direct trigger** — one API call to kick off an agent
+- **Run subscription** — optionally subscribe to handle client tools
+- **Agent handles routing** — the agent uses `sendSpaceMessage` to post results to the right spaces
 
 ---
 
@@ -229,19 +226,13 @@ async function onUserJoinsWorkspace(entityId, smartSpaceId) {
   });
 }
 
-// Create a system entity (service)
-async function createServiceEntity() {
-  const { entity } = await client.entities.create({
-    type: 'system',
-    displayName: 'Order Processor',
+// Trigger an agent from your backend (service trigger)
+async function triggerAgentFromService(agentId: string, event: string, payload: any) {
+  const { runId } = await client.agents.trigger(agentId, {
+    serviceName: 'MyApp',
+    payload: { event, ...payload },
   });
-  
-  // Add to relevant spaces
-  await client.spaces.addMember('orders-space-id', {
-    entityId: entity.id,
-  });
-  
-  return entity;
+  return runId;
 }
 ```
 
@@ -310,6 +301,6 @@ JWT_ENTITY_CLAIM=sub
 | Client Type | Authentication | Subscription |
 |-------------|----------------|---------------|
 | **React (human)** | `publicKey` + `jwt` | Per-space via SDK hooks |
-| **Node.js (service)** | `secretKey` | Single entity stream (`client.entities.subscribe`) |
+| **Node.js (service)** | `secretKey` | Service trigger API (`client.agents.trigger`) + optional run subscription |
 | **Your backend** | `secretKey` | Admin APIs for entity/membership management |
 | **CLI** | `secretKey` | All operations |

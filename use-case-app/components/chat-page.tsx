@@ -7,7 +7,7 @@ import {
   LogOutIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { HsafaChatProvider } from "@hsafa/ui";
+import { HsafaChatProvider, useCurrentSpace, useActiveAgents, useMembers } from "@hsafa/ui";
 
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
@@ -18,6 +18,38 @@ import type { AuthSession } from "@/components/register-form";
 
 const GATEWAY_URL = process.env.NEXT_PUBLIC_HSAFA_GATEWAY_URL || "http://localhost:3001";
 const PUBLIC_KEY = process.env.NEXT_PUBLIC_HSAFA_PUBLIC_KEY || "";
+
+function SpaceHeader() {
+  const { spaceName } = useCurrentSpace();
+  const activeAgents = useActiveAgents();
+  const { membersById } = useMembers();
+
+  // Filter to agents in current space
+  const visibleAgents = activeAgents.filter(
+    (a: { entityId: string; entityName?: string }) => membersById[a.entityId] && membersById[a.entityId].type === "agent"
+  );
+
+  const agentLabel =
+    visibleAgents.length === 1
+      ? `${visibleAgents[0].entityName || membersById[visibleAgents[0].entityId]?.displayName || "AI Agent"} is active`
+      : visibleAgents.length > 1
+        ? `${visibleAgents.length} agents active`
+        : null;
+
+  return (
+    <div className="flex flex-1 flex-col justify-center min-w-0">
+      <span className="text-sm font-medium text-foreground truncate">
+        {spaceName || "AI Assistant"}
+      </span>
+      {agentLabel && (
+        <div className="flex items-center gap-1.5">
+          <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="text-[11px] text-muted-foreground/80">{agentLabel}</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface ChatPageProps {
   session: AuthSession;
@@ -139,9 +171,7 @@ export function ChatPage({ session, onLogout }: ChatPageProps) {
               )}
             </Button>
 
-            <span className="flex-1 text-sm font-medium text-muted-foreground">
-              AI Assistant
-            </span>
+            <SpaceHeader />
 
             <ThemeToggle />
 

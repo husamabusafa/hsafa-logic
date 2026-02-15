@@ -36,11 +36,12 @@ A **SmartSpace** is a shared context space (a timeline of events/messages) where
 
 ### Entity
 
-An **Entity** is anything that can participate in a SmartSpace.
+An **Entity** is a participant in the system. There are exactly two types:
 
 - **Human Entity** (a user from your app)
 - **Agent Entity** (an AI agent)
-- **System Entity** (a service/backend/integration/device)
+
+External services (Jira, Slack, IoT devices, payment gateways, cron jobs, Node.js backends) are **NOT entities**. They are **services** — they trigger agents via API (`POST /api/agents/{agentId}/trigger`) and submit tool results, but have no space membership or identity in the system.
 
 An Agent Entity can belong to multiple SmartSpaces.
 
@@ -55,10 +56,13 @@ One Entity can connect from **multiple Clients** simultaneously. For example, a 
 
 ### Run (Agent execution)
 
-A **Run** is one execution of **one Agent Entity** in response to a trigger that occurred inside a specific SmartSpace.
+A **Run** is a general-purpose execution of **one Agent Entity**. Runs are **not tied to any space** — the agent interacts with spaces through tools (`sendSpaceMessage`, `readSpaceMessages`).
 
-- A single SmartSpace event may trigger multiple Runs (one per Agent Entity in that SmartSpace).
-- Each Agent decides whether to respond (an Agent may do work and then emit no user-visible message).
+- A human message in a space triggers a run for the **admin agent** of that space
+- An agent message with a `mention` triggers a run for the mentioned agent
+- External services trigger runs directly via API (`POST /api/agents/{agentId}/trigger`)
+- Scheduled plans trigger runs automatically
+- The agent's LLM text output is internal (reasoning/planning). All visible communication happens through `sendSpaceMessage`.
 
 ### Step (inside a Run)
 
@@ -71,12 +75,11 @@ This distinction matters because the gateway streams **partial outputs** (text d
 
 ## Triggers (what starts a Run)
 
-An Agent Entity can be triggered in several ways:
+There are exactly three trigger types:
 
-* A Human Entity message inside a SmartSpace
-* Its own scheduled Plan (proactive execution)
-* Another Agent Entity inside a SmartSpace
-* A System Entity event inside a SmartSpace
+* **`space_message`** — A human (or agent via `mention`) posted a message in a space
+* **`plan`** — The agent's own scheduled plan triggered it
+* **`service`** — An external service triggered the agent directly via API (`POST /api/agents/{agentId}/trigger`)
 
 ## Scheduling and long-term behavior
 
@@ -148,17 +151,15 @@ In the SmartSpace model, the gateway runtime expands slightly:
 A Human Entity asks an Agent Entity (in the Employee SmartSpace) to send a leave request to their manager.
 
 1. The Human posts a message in the **Employee SmartSpace**.
-2. All Agent Entities in that SmartSpace are triggered; only the relevant Agent chooses to respond.
-3. During the same Run, the Agent calls a tool that triggers a **new Run** of itself inside a different SmartSpace: the **Manager SmartSpace**.
-4. The Manager SmartSpace is private and contains only the Manager (Human Entity) and the Agent.
-5. The Agent asks the Manager for approval.
-6. The Manager replies; that reply becomes a new event in the Manager SmartSpace, triggering the Agent again there.
-7. The Agent then triggers another Run back in the Employee SmartSpace to deliver the final decision.
+2. The **admin agent** of the space is triggered with a general-purpose run.
+3. The Agent calls `sendSpaceMessage(managerSpace, "Sarah is requesting 2 days PTO next week. Approve?", wait: { for: [{ type: "human" }] })` — the message streams into the Manager SmartSpace and the tool blocks until the manager replies.
+4. The Manager sees the message and replies "Approved."
+5. The Agent's `wait` resolves with the manager's reply.
+6. The Agent calls `sendSpaceMessage(employeeSpace, "Your leave request was approved!")` — streams back to the employee.
 
-While waiting, if the employee asks for status, the Agent can:
+All of this happens in **one general-purpose run**. No child runs, no goToSpace. The agent uses `sendSpaceMessage` with `wait` for cross-space request-response.
 
-* Read the Manager SmartSpace timeline.
-* Summarize progress back in the Employee SmartSpace.
+While waiting, if the employee asks for status, a **new run** is created. The agent can call `getMyRuns` to see it already has a run waiting on the manager's reply, and respond accordingly.
 
 ---
 
@@ -505,12 +506,12 @@ These are internal tools that Entities do not see or interact with:
    * List Entities in a SmartSpace
    * Look up Entity info (who is this person, what are their preferences)
 
-6. **Cross-SmartSpace execution tool**
+6. **Space communication tools**
 
-   * Run itself as a new execution inside a specific SmartSpace
-   * Include instructions about what it should do there
-   * Include context about where the run originated
-   * This also enables agent-to-agent collaboration: create a private SmartSpace between two agents, then run there to communicate
+   * `sendSpaceMessage` — send a message to any space (with optional `mention` to trigger another agent, optional `wait` to block for a reply)
+   * `readSpaceMessages` — read recent messages from any space
+   * `delegateToAgent` — (admin only) silently hand off to another agent
+   * `getMyRuns` — see own concurrent active runs
 
 7. **SmartSpace management tools**
 

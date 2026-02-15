@@ -28,6 +28,16 @@ export {
 // Members context
 export { MembersProvider, useMembers } from "./contexts";
 
+// Active agents
+export { ActiveAgentsProvider, useActiveAgents } from "./contexts";
+export {
+  ActiveAgentsBar,
+  type ActiveAgentsBarProps,
+} from "./components/HsafaActiveAgents";
+
+// Current space
+export { CurrentSpaceProvider, useCurrentSpace } from "./contexts";
+
 // Re-export commonly used types from react-sdk for convenience
 export type {
   HsafaClient,

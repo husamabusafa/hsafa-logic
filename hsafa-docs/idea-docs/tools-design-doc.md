@@ -71,8 +71,10 @@ const built = await buildAgent({
   runContext: {
     runId,
     agentEntityId: run.agentEntityId,
-    smartSpaceId: run.smartSpaceId,
     agentId: run.agentId,
+    triggerSpaceId: run.triggerSpaceId,
+    isMultiAgentSpace,  // computed from space membership count
+    isAdminAgent,       // computed from SmartSpace.adminAgentEntityId
   },
 });
 ```
@@ -221,8 +223,10 @@ The gateway maintains a registry of prebuilt tool handlers. Each handler:
 interface PrebuiltToolContext {
   runId: string;
   agentEntityId: string;
-  smartSpaceId: string;
   agentId: string;
+  triggerSpaceId?: string;       // space that triggered this run (if space_message trigger)
+  isMultiAgentSpace?: boolean;   // whether the trigger space has multiple agents
+  isAdminAgent?: boolean;        // whether this agent is the admin of the trigger space
 }
 
 interface PrebuiltToolHandler {
@@ -763,8 +767,10 @@ const built = await buildAgent({
   runContext: {
     runId,
     agentEntityId: run.agentEntityId,
-    smartSpaceId: run.smartSpaceId,
     agentId: run.agentId,
+    triggerSpaceId: run.triggerSpaceId,
+    isMultiAgentSpace,  // computed from space membership count
+    isAdminAgent,       // computed from SmartSpace.adminAgentEntityId
   },
 });
 ```
@@ -808,6 +814,8 @@ export interface BuildAgentOptions {
 | `sendNotification` | `sendNotification` | Send notification to user |
 | `getSpaceContext` | `getSpaceContext` | Read SmartSpace metadata and members |
 | `updateSpaceMetadata` | `updateSpaceMetadata` | Update SmartSpace metadata |
+
+> **Note:** The core space tools (`sendSpaceMessage`, `readSpaceMessages`, `delegateToAgent`, `getMyRuns`) are **auto-injected** by the prompt builder — they are NOT configured in the agent's `tools[]` array. They are always available to every agent. `delegateToAgent` is only injected for admin agents. See `single-run-architecture/02-space-tools.md`.
 
 ---
 

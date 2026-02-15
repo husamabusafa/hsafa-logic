@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import {
   HsafaProvider as HsafaSdkProvider,
@@ -8,7 +8,7 @@ import {
   type SmartSpace,
 } from "@hsafa/react";
 import { useHsafaChatRuntime } from "./useHsafaRuntime";
-import { MembersProvider } from "./contexts";
+import { MembersProvider, ActiveAgentsProvider, CurrentSpaceProvider } from "./contexts";
 
 export interface HsafaChatProviderProps {
   children: ReactNode;
@@ -116,7 +116,7 @@ function HsafaChatProviderInner({
   const onSwitchThread = controlledOnSwitch ?? (isAutoMode ? autoOnSwitch : undefined);
   const onNewThread = controlledOnNew ?? (isAutoMode ? autoOnNew : undefined);
 
-  const { runtime, membersById } = useHsafaChatRuntime({
+  const { runtime, membersById, activeAgents } = useHsafaChatRuntime({
     smartSpaceId,
     entityId,
     smartSpaces,
@@ -124,11 +124,21 @@ function HsafaChatProviderInner({
     onNewThread,
   });
 
+  const currentSpaceName = useMemo(() => {
+    if (!smartSpaceId) return null;
+    const space = smartSpaces.find((s) => s.id === smartSpaceId);
+    return space?.name ?? null;
+  }, [smartSpaceId, smartSpaces]);
+
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <MembersProvider membersById={membersById} currentEntityId={entityId}>
-        {children}
-      </MembersProvider>
+      <CurrentSpaceProvider spaceId={smartSpaceId} spaceName={currentSpaceName}>
+        <MembersProvider membersById={membersById} currentEntityId={entityId}>
+          <ActiveAgentsProvider activeAgents={activeAgents}>
+            {children}
+          </ActiveAgentsProvider>
+        </MembersProvider>
+      </CurrentSpaceProvider>
     </AssistantRuntimeProvider>
   );
 }

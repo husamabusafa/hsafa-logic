@@ -13,14 +13,8 @@ pnpm add @hsafa/node
 ```ts
 import { HsafaClient } from '@hsafa/node';
 
-// Admin mode (full access)
-const admin = new HsafaClient({
-  gatewayUrl: 'http://localhost:3001',
-  adminKey: 'gk_...',
-});
-
-// Secret key mode (space-scoped admin)
-const service = new HsafaClient({
+// Secret key — full admin access (backends, services, CLI)
+const client = new HsafaClient({
   gatewayUrl: 'http://localhost:3001',
   secretKey: 'sk_...',
 });
@@ -79,9 +73,8 @@ await client.entities.delete(entityId);
 ```ts
 const { smartSpace } = await client.spaces.create({
   name: 'Project Chat',
-  visibility: 'private',
+  adminAgentEntityId: agentEntity.id, // optional: set admin agent
 });
-// smartSpace.publicKey, smartSpace.secretKey
 
 const { smartSpaces } = await client.spaces.list();
 await client.spaces.update(spaceId, { name: 'New Name' });
@@ -114,9 +107,8 @@ const { messages } = await client.messages.list(spaceId, {
 ### Runs
 
 ```ts
-const { runs } = await client.runs.list({ smartSpaceId: 'uuid', status: 'running' });
+const { runs } = await client.runs.list({ agentId: 'uuid', status: 'running' });
 const { run } = await client.runs.get(runId);
-const { runId } = await client.runs.create({ smartSpaceId: 'uuid', agentEntityId: 'uuid' });
 await client.runs.cancel(runId);
 await client.runs.delete(runId);
 const { events } = await client.runs.getEvents(runId);
@@ -125,14 +117,9 @@ const { events } = await client.runs.getEvents(runId);
 ### Tool Results
 
 ```ts
-await client.tools.submitResult(spaceId, {
-  runId: 'uuid',
-  toolCallId: 'uuid',
-  result: { approved: true },
-});
-
-await client.tools.submitRunResult(runId, {
-  callId: 'uuid',
+// Submit a client tool result (run must be in waiting_tool status)
+await client.tools.submitResult(runId, {
+  callId: 'tool-call-uuid',
   result: { approved: true },
 });
 ```
@@ -152,6 +139,35 @@ const { clients } = await client.clients.list(entityId);
 await client.clients.delete(clientId);
 ```
 
+## Service Triggers
+
+External services (Jira, Slack, cron jobs, IoT devices) are **NOT entities**. They trigger agents directly via API:
+
+```ts
+// Trigger an agent from your backend
+const { runId, streamUrl } = await client.agents.trigger('agent-id', {
+  serviceName: 'OrderProcessor',
+  payload: { event: 'new_order', orderId: '8891' },
+});
+
+// Optionally subscribe to the run for client tool handling
+const stream = client.runs.subscribe(runId);
+
+stream.on('run.waiting_tool', async (event) => {
+  const data = event.data as Record<string, unknown>;
+  const pending = data.pendingToolCalls as Array<{ toolCallId: string; toolName: string; input: unknown }>;
+  for (const tc of pending) {
+    const result = await executeMyTool(tc.toolName, tc.input);
+    await client.tools.submitResult(runId, { callId: tc.toolCallId, result });
+  }
+});
+
+stream.on('run.completed', () => {
+  console.log('Done');
+  stream.close();
+});
+```
+
 ## Streaming
 
 ### Subscribe to a SmartSpace
@@ -167,44 +183,18 @@ stream.on('text.delta', (event) => {
   process.stdout.write(event.data.delta as string);
 });
 
-stream.on('tool-input-available', (event) => {
-  const { toolCallId, toolName, input } = event.data;
-  // Execute tool and send result back
-});
-
 stream.on('error', (err) => console.error(err));
-stream.close();
-```
-
-### Subscribe to Entity (all spaces)
-
-```ts
-const stream = client.entities.subscribe(entityId);
-
-stream.on('hsafa', (event) => {
-  console.log(`[${event.smartSpaceId}] ${event.type}:`, event.data);
-});
-
-stream.on('tool-input-available', async (event) => {
-  const { toolCallId, toolName, input } = event.data;
-  const result = await executeTool(toolName as string, input);
-  await client.tools.submitResult(event.smartSpaceId!, {
-    runId: event.runId!,
-    toolCallId: toolCallId as string,
-    result,
-  });
-});
-
 stream.close();
 ```
 
 ### Subscribe to a Run
 
 ```ts
-const stream = client.runs.subscribe(runId, { since: '0-0' });
+const stream = client.runs.subscribe(runId);
 
-stream.on('text.delta', (event) => { /* ... */ });
 stream.on('run.completed', (event) => { /* ... */ });
+stream.on('run.failed', (event) => { /* ... */ });
+stream.on('tool-input-available', (event) => { /* ... */ });
 
 stream.close();
 ```
@@ -238,6 +228,5 @@ const setup = await client.setup.createSpace({
 
 | Mode | Header | Use Case |
 |------|--------|----------|
-| **Admin** | `x-admin-key` | Full access: create spaces, entities, agents |
-| **SecretKey** | `x-secret-key` | Space-scoped admin: services, robots |
+| **SecretKey** | `x-secret-key` | Full access: backends, services, admin ops |
 | **PublicKey + JWT** | `x-public-key` + `Bearer` | User-scoped (rare in Node) |

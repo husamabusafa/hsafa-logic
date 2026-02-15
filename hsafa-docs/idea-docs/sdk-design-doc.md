@@ -103,11 +103,8 @@ const { entity } = await client.entities.create({
   metadata: { role: 'engineer' },
 });
 
-// Create system entity
-const { entity: sysEntity } = await client.entities.create({
-  type: 'system',
-  displayName: 'Order Processor',
-});
+// Note: External services (Jira, Slack, IoT, etc.) are NOT entities.
+// They trigger agents via: await client.agents.trigger(agentId, { serviceName: 'Order Processor', payload: {...} })
 
 // Create agent entity (links to an Agent config)
 const { entity: agentEntity } = await client.entities.createAgent({
@@ -115,7 +112,7 @@ const { entity: agentEntity } = await client.entities.createAgent({
   displayName: 'My Assistant',
 });
 
-// List entities
+// List entities (only 'human' and 'agent' types exist — no 'system')
 const { entities } = await client.entities.list({ type: 'human', limit: 50 });
 
 // Get entity
@@ -950,55 +947,45 @@ const client = new HsafaClient({
   secretKey: process.env.HSAFA_SECRET_KEY,
 });
 
-const SERVICE_ENTITY_ID = process.env.SERVICE_ENTITY_ID;
+// Note: External services are NOT entities in the new architecture.
+// Services trigger agents directly via API and handle client tools via run subscription.
 
 async function main() {
   console.log('Order processor starting...');
 
-  // Subscribe to ALL spaces this service is a member of
-  const stream = client.entities.subscribe(SERVICE_ENTITY_ID);
+  // Option 1: Trigger an agent directly (service trigger)
+  const { runId } = await client.agents.trigger('order-agent-id', {
+    serviceName: 'OrderProcessor',
+    payload: { event: 'new_order', orderId: '8891' },
+  });
 
-  stream.on('tool-input-available', async (event) => {
-    const { toolCallId, toolName, input } = event.data;
+  // Option 2: Subscribe to a run and handle client tools
+  const stream = client.runs.subscribe(runId);
 
-    console.log(`Tool call: ${toolName}`, input);
+  stream.on('run.waiting_tool', async (event) => {
+    for (const tc of event.data.pendingToolCalls) {
+      let result;
+      switch (tc.toolName) {
+        case 'processOrder':
+          result = await processOrder(tc.input.orderId, tc.input.items);
+          break;
+        case 'checkInventory':
+          result = await checkInventory(tc.input.productId);
+          break;
+        default:
+          continue;
+      }
 
-    let result;
-    switch (toolName) {
-      case 'processOrder':
-        result = await processOrder(input.orderId, input.items);
-        break;
-      case 'checkInventory':
-        result = await checkInventory(input.productId);
-        break;
-      default:
-        console.log(`Unknown tool: ${toolName}, skipping`);
-        return;
+      await client.tools.submitRunResult(runId, {
+        callId: tc.toolCallId,
+        result,
+      });
     }
-
-    // Send result back to gateway
-    await client.tools.submitResult(event.smartSpaceId, {
-      runId: event.runId,
-      toolCallId,
-      result,
-    });
-
-    console.log(`Tool result submitted for ${toolName}`);
   });
 
-  stream.on('smartSpace.message', (event) => {
-    console.log(`[${event.smartSpaceId}] New message:`, event.data);
-  });
-
-  stream.on('error', (err) => {
-    console.error('Stream error:', err);
-  });
-
-  // Optionally: send messages proactively
-  await client.messages.send('orders-space-id', {
-    content: 'Order processor is online and ready.',
-    entityId: SERVICE_ENTITY_ID,
-    triggerAgents: false,  // don't trigger agents for system messages
+  stream.on('run.completed', () => {
+    console.log('Agent run completed');
+    stream.close();
   });
 }
 
@@ -1020,41 +1007,46 @@ client = HsafaClient(
     secret_key="sk_..."
 )
 
-PIPELINE_ENTITY_ID = "data-pipeline-entity-id"
-ANALYTICS_SPACE_ID = "analytics-space-id"
+# Note: External services are NOT entities in the new architecture.
+# Services trigger agents directly via API.
+
+ANALYTICS_AGENT_ID = "analytics-agent-id"
 
 def run_daily_report():
     # Generate report
     report = generate_report()
 
-    # Send to SmartSpace (agents in the space will see it)
-    client.messages.send(
-        ANALYTICS_SPACE_ID,
-        content=f"Daily Report:\n{report.summary}",
-        entity_id=PIPELINE_ENTITY_ID,
-        trigger_agents=True,  # let the analytics agent process it
+    # Trigger the analytics agent directly (service trigger)
+    result = client.agents.trigger(
+        ANALYTICS_AGENT_ID,
+        service_name="DataPipeline",
+        payload={"event": "daily_report", "summary": report.summary},
     )
+    # The agent will use sendSpaceMessage to post results to the relevant spaces
 
 def listen_for_tool_calls():
-    """Listen for tool calls from agents in all spaces."""
-    for event in client.entities.subscribe(PIPELINE_ENTITY_ID):
-        if event.type == "tool-input-available":
-            tool_name = event.data["toolName"]
-            tool_input = event.data["input"]
+    """Subscribe to a run and handle client tools."""
+    result = client.agents.trigger(
+        ANALYTICS_AGENT_ID,
+        service_name="DataPipeline",
+        payload={"event": "etl_failed", "task": "load_users"},
+    )
+    
+    for event in client.runs.subscribe(result.run_id):
+        if event.type == "run.waiting_tool":
+            for tc in event.data["pendingToolCalls"]:
+                if tc["toolName"] == "queryDatabase":
+                    result = query_db(tc["input"]["sql"])
+                elif tc["toolName"] == "generateChart":
+                    result = generate_chart(tc["input"])
+                else:
+                    continue
 
-            if tool_name == "queryDatabase":
-                result = query_db(tool_input["sql"])
-            elif tool_name == "generateChart":
-                result = generate_chart(tool_input)
-            else:
-                continue
-
-            client.tools.submit_result(
-                event.smart_space_id,
-                run_id=event.run_id,
-                tool_call_id=event.data["toolCallId"],
-                result=result,
-            )
+                client.tools.submit_run_result(
+                    event.data["runId"],
+                    call_id=tc["toolCallId"],
+                    result=result,
+                )
 ```
 
 ---
@@ -1068,7 +1060,7 @@ import { HsafaClient } from '@hsafa/node';
 
 const admin = new HsafaClient({
   gatewayUrl: 'http://localhost:3001',
-  adminKey: 'gk_...',
+  secretKey: 'sk_...',
 });
 
 async function setupMultiAgentSystem() {
@@ -1155,7 +1147,7 @@ interface Agent {
 
 interface Entity {
   id: string;
-  type: 'human' | 'agent' | 'system';
+  type: 'human' | 'agent';
   externalId?: string;
   displayName?: string;
   agentId?: string;
@@ -1194,11 +1186,15 @@ interface Membership {
 
 interface Run {
   id: string;
-  smartSpaceId: string;
+  smartSpaceId?: string;          // optional (legacy)
   agentEntityId: string;
   agentId: string;
-  triggeredById?: string;
-  parentRunId?: string;
+  triggerType: 'space_message' | 'plan' | 'service';
+  triggerSpaceId?: string;
+  triggerMessageContent?: string;
+  triggerSenderEntityId?: string;
+  triggerServiceName?: string;
+  triggerPayload?: Record<string, unknown>;
   status: 'queued' | 'running' | 'waiting_tool' | 'completed' | 'failed' | 'canceled';
   metadata?: Record<string, unknown>;
   createdAt: string;

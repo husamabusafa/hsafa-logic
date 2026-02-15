@@ -8,6 +8,7 @@ import { delegateToAgent, type TriggerContext } from './agent-trigger.js';
 import { loadRunContext } from './run-context.js';
 import { buildModelMessages } from './prompt-builder.js';
 import { processStream } from './stream-processor.js';
+import { emitSmartSpaceEvent } from './smartspace-events.js';
 
 /**
  * Run Runner — General-Purpose Runs
@@ -19,6 +20,31 @@ import { processStream } from './stream-processor.js';
  *
  * The trigger space is like any other space — no special relay.
  */
+
+/**
+ * Broadcast agent.active / agent.inactive to ALL spaces the agent belongs to.
+ * This powers the "agent is active" indicator in the UI.
+ */
+async function emitAgentStatus(
+  agentEntityId: string,
+  status: 'active' | 'inactive',
+  extra: { runId: string; entityName?: string }
+): Promise<void> {
+  try {
+    const memberships = await prisma.smartSpaceMembership.findMany({
+      where: { entityId: agentEntityId },
+      select: { smartSpaceId: true },
+    });
+    const eventType = status === 'active' ? 'agent.active' : 'agent.inactive';
+    const data = { entityId: agentEntityId, runId: extra.runId, ...(extra.entityName ? { entityName: extra.entityName } : {}) };
+    const ctx = { entityId: agentEntityId, entityType: 'agent' as const, runId: extra.runId };
+    await Promise.all(
+      memberships.map((m) => emitSmartSpaceEvent(m.smartSpaceId, eventType, data, ctx))
+    );
+  } catch (err) {
+    console.error(`[run-runner] Failed to emit agent.${status}:`, err);
+  }
+}
 
 export async function executeRun(runId: string): Promise<void> {
   const run = await prisma.run.findUnique({
@@ -67,6 +93,16 @@ export async function executeRun(runId: string): Promise<void> {
     });
 
     await emitEvent('run.started', { status: 'running' });
+
+    // Broadcast "agent is active" to all spaces this agent belongs to
+    const agentEntity = await prisma.entity.findUnique({
+      where: { id: run.agentEntityId },
+      select: { displayName: true },
+    });
+    await emitAgentStatus(run.agentEntityId, 'active', {
+      runId,
+      entityName: agentEntity?.displayName || undefined,
+    });
 
     // ── 1. Load agent config ──────────────────────────────────────────────
 
@@ -149,7 +185,11 @@ export async function executeRun(runId: string): Promise<void> {
       messageId,
       runId,
       emitEvent,
-      { agentEntityId: run.agentEntityId },
+      {
+        agentEntityId: run.agentEntityId,
+        visibleTools: built.visibleToolNames,
+        targetSpaceId: run.triggerSpaceId ?? undefined,
+      },
     );
 
     // Clean up MCP clients after streaming completes
@@ -191,11 +231,13 @@ export async function executeRun(runId: string): Promise<void> {
             originalTriggeredById: run.triggeredById ?? undefined,
           });
         }
+        await emitAgentStatus(run.agentEntityId, 'inactive', { runId });
         return;
       }
 
       // Plain skip
       await emitEvent('run.canceled', { reason: 'skip' });
+      await emitAgentStatus(run.agentEntityId, 'inactive', { runId });
       return;
     }
 
@@ -222,6 +264,7 @@ export async function executeRun(runId: string): Promise<void> {
         })),
       });
 
+      await emitAgentStatus(run.agentEntityId, 'inactive', { runId });
       return;
     }
 
@@ -243,11 +286,13 @@ export async function executeRun(runId: string): Promise<void> {
 
     await emitEvent('finish', { messageId });
     await emitEvent('run.completed', { status: 'completed' });
+    await emitAgentStatus(run.agentEntityId, 'inactive', { runId });
   } catch (error) {
     if (error instanceof AgentBuildError) {
       await emitEvent('agent.build.error', { error: error.message });
     }
 
     await handleRunError(runId, error, emitEvent);
+    await emitAgentStatus(run.agentEntityId, 'inactive', { runId });
   }
 }

@@ -6,6 +6,7 @@ import {
   useHsafaRuntime as useHsafaRuntimeCore,
   type UseHsafaRuntimeOptions as CoreRuntimeOptions,
   type Entity,
+  type ActiveAgent,
 } from "@hsafa/react";
 
 export interface UseHsafaChatRuntimeOptions extends CoreRuntimeOptions {}
@@ -13,12 +14,13 @@ export interface UseHsafaChatRuntimeOptions extends CoreRuntimeOptions {}
 export interface UseHsafaChatRuntimeReturn {
   runtime: AssistantRuntime;
   membersById: Record<string, Entity>;
+  activeAgents: ActiveAgent[];
 }
 
 export function useHsafaChatRuntime(
   options: UseHsafaChatRuntimeOptions
 ): UseHsafaChatRuntimeReturn {
-  const { messages, isRunning, onNew, threadListAdapter, membersById } =
+  const { messages, isRunning, activeAgents, onNew, threadListAdapter, membersById } =
     useHsafaRuntimeCore(options);
 
   const runtime = useExternalStoreRuntime({
@@ -31,5 +33,5 @@ export function useHsafaChatRuntime(
       : undefined,
   });
 
-  return { runtime, membersById };
+  return { runtime, membersById, activeAgents };
 }

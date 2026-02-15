@@ -144,6 +144,12 @@ export type EventType =
   | 'text-delta'
   | 'text-end'
   | 'finish'
+  | 'agent.active'
+  | 'agent.inactive'
+  | 'tool-call.start'
+  | 'tool-call'
+  | 'tool-call.result'
+  | 'tool-call.error'
   | 'message.user'
   | 'message.assistant'
   | (string & {});

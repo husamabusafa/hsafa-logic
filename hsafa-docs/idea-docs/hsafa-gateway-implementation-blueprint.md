@@ -84,14 +84,16 @@ From `hsafa-gateway-doc.mdx`:
   - Shared context space: a timeline of events/messages
   - Public or private
 - **Entity**
-  - Unified identity: human/agent/system
+  - Unified identity: human/agent (only two types — external services are NOT entities, they trigger agents via API)
   - An agent is an Entity *plus* an Agent config pointer
 - **Client**
   - Connection surface (web/mobile/node/device)
   - Not an identity; it’s a channel
 - **Run**
-  - One execution of one Agent Entity inside one SmartSpace
-  - Triggered by a SmartSpace event (message, system event, schedule)
+  - One general-purpose execution of one Agent Entity (NOT tied to any space)
+  - Has a trigger context: `space_message`, `plan`, or `service`
+  - Agent interacts with spaces through tools (`sendSpaceMessage`, `readSpaceMessages`)
+  - Agent's LLM text output is internal — all visible communication via `sendSpaceMessage`
 - **Step**
   - One LLM call within the run
 
@@ -101,7 +103,7 @@ From `hsafa-gateway-doc.mdx`:
 
 Your `schema.prisma` already contains the *right high-level* tables:
 
-- `Entity` (human/agent/system)
+- `Entity` (human/agent — `system` type removed, services trigger agents via API)
 - `SmartSpace`
 - `SmartSpaceMembership`
 - `SmartSpaceMessage` (timeline)
@@ -118,7 +120,7 @@ Your `schema.prisma` already contains the *right high-level* tables:
 
 - **SmartSpace** no longer has per-space keys — authentication uses system-wide `HSAFA_SECRET_KEY` and `HSAFA_PUBLIC_KEY` env vars
 - **Entity** has `externalId` for mapping to external auth systems (e.g., JWT `sub` claim)
-- **Run** uses `smartSpaceId`, `agentEntityId`, `agentId`, `triggeredById`, `parentRunId`
+- **Run** uses `agentEntityId`, `agentId`, `triggerType` (`space_message`|`plan`|`service`), `triggerSpaceId` (optional), `triggerMessageContent`, `triggerSenderEntityId`, `triggerServiceName`, `triggerPayload`. `smartSpaceId` is optional (legacy). `parentRunId` removed.
 - **ToolExecutionTarget** enum: `server | client | external`
 - **Client** is the unified connection model for all surfaces (web, mobile, node)
   - `Client.clientType` encodes subtype (e.g. `web`, `mobile`, `node`)
@@ -158,27 +160,29 @@ Responsible for:
 
 ## 6) Data Flow (end-to-end)
 
-### 6.1 Human message triggers agents in a SmartSpace
+### 6.1 Human message triggers an agent in a SmartSpace
 
 1. Client posts a message to the SmartSpace
 2. Gateway writes a `SmartSpaceMessage` (seq ordered)
-3. Gateway finds Agent Entities that are members of that SmartSpace
-4. For each Agent Entity, gateway creates a `Run`:
-   - `smartSpaceId = the smart space`
-   - `agentEntityId = that agent entity`
+3. Gateway identifies the **admin agent** of the space (via `SmartSpace.adminAgentEntityId`). If not set, falls back to the single agent in the space.
+4. Gateway creates a general-purpose `Run`:
+   - `agentEntityId = admin agent entity`
    - `agentId = agent config`
-   - `triggeredById = human entity`
+   - `triggerType = 'space_message'`
+   - `triggerSpaceId = the smart space`
+   - `triggerMessageContent = message text`
+   - `triggerSenderEntityId = human entity`
    - `status = queued`
-5. Gateway executes each Run (async background)
-6. Gateway emits `RunEvent` records and streams them
-7. Agent may append new `SmartSpaceMessage` entries as it responds
+5. Gateway executes the Run (async background)
+6. Agent uses `sendSpaceMessage(spaceId, text)` to communicate with any space
+7. Agent messages stream via `tool-input-delta` interception (real LLM streaming)
 
-### 6.2 Cross-SmartSpace execution (leave request example)
+### 6.2 Cross-SmartSpace communication
 
-- A Run can create a child Run in a different SmartSpace
-- Link with `parentRunId`
-- Always write “origin metadata”:
-  - `Run.metadata.origin = { fromRunId, fromSmartSpaceId, intent }`
+- A Run can talk to ANY space via `sendSpaceMessage(spaceId, text)`
+- No child runs needed — one general-purpose run can read/write multiple spaces
+- Cross-space request-response: use `sendSpaceMessage` with `mention` (trigger another agent) + `wait` (block for reply)
+- Service triggers: `POST /api/agents/{agentId}/trigger` creates a general run with `triggerType: 'service'`
 
 ---
 
@@ -218,13 +222,13 @@ Agents are config definitions. An Agent Entity is created when you want an agent
 
 ### 7.2 Entities
 
-Entities are identities (human, agent, system) that can participate in SmartSpaces.
+Entities are identities (human, agent) that can participate in SmartSpaces. External services are NOT entities — they trigger agents via API.
 
 **Auth:** `x-secret-key` required.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/entities` | Create entity (human/system) |
+| `POST` | `/api/entities` | Create entity (human only) |
 | `POST` | `/api/entities/agent` | Create Agent Entity (links to an Agent) |
 | `GET` | `/api/entities` | List entities (filter by type) |
 | `GET` | `/api/entities/:entityId` | Get entity details |
@@ -241,6 +245,8 @@ Entities are identities (human, agent, system) that can participate in SmartSpac
   "metadata": {}
 }
 ```
+
+> **Note:** Only `human` type is accepted. Agent entities are created via `POST /api/entities/agent`. External services are NOT entities — they trigger agents via `POST /api/agents/{agentId}/trigger`.
 
 **Create Agent Entity request:**
 ```json
@@ -360,14 +366,13 @@ Send and read messages in a SmartSpace. Posting a message **triggers Agent Runs*
 
 **Events streamed:**
 - `smartSpace.message` - new message in the SmartSpace
-- `run.created` - agent run started
-- `run.started` - agent is executing
-- `run.waiting_tool` - agent waiting for tool response
-- `run.completed` - agent finished
-- `run.failed` - agent errored
-- `text.delta` - streaming text from agent
-- `tool-input-available` - tool call input ready (any member can respond)
+- `text-start` - agent text streaming started (from `sendSpaceMessage` tool-input interception)
+- `text-delta` - streaming text from agent (real LLM tokens via tool-input-delta interception)
+- `finish` - text streaming finished
+- `tool-input-available` - tool call input ready (for client tools)
 - `tool-output-available` - tool result received
+- `agent.active` - agent started working
+- `agent.inactive` - agent finished working
 
 ---
 
@@ -1076,11 +1081,22 @@ The gateway uses composable Express middleware:
 - ✅ Runs stream incremental events with reconnect support
 - ✅ All API routes are authenticated and authorized
 - ✅ All timeline messages are persisted and reload correctly
-- ⬜ Tools can execute on a client (browser/device) and resume correctly
-- ⬜ SDKs for Node.js, React, and CLI
+- ✅ Tools can execute on a client (browser/device) and resume correctly
+- ✅ SDKs for Node.js (`@hsafa/node`) and React (`@hsafa/react-sdk`, `@hsafa/ui`)
+- ✅ General-purpose runs (single-run architecture)
+- ✅ `sendSpaceMessage` with real LLM streaming via tool-input-delta interception
+- ✅ Admin agent pattern (human messages → admin agent)
+- ✅ Service trigger API (`POST /api/agents/{agentId}/trigger`)
+- ✅ `delegateToAgent` (admin-only silent handoff)
+- ✅ Agent reasoning (GPT-5 with reasoning, collapsible UI)
+- ⬜ Composite message model (one message per run per space, parts accumulate)
+- ⬜ Tool visibility (hidden/minimal/full)
+- ⬜ `targetSpaceId` auto-injection for tool call routing
+- ⬜ CLI (`@hsafa/cli`)
+- ⬜ Python SDK
 
 ---
 
 ## Status
 
-- **Gateway core is complete.** SmartSpace-centric API, 2-key system-wide authentication, streaming, and agent triggering are all implemented. Next step is building the SDKs (Node.js, React, CLI).
+- **Gateway core is complete.** Single-run architecture with general-purpose runs, `sendSpaceMessage` with real LLM streaming, admin agent pattern, service triggers, reasoning, client tools, and 2-key authentication are all implemented. SDKs for Node.js and React are built. Next steps: composite message model, tool visibility, CLI, and Python SDK.

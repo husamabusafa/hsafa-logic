@@ -29,12 +29,23 @@ export class MessagesResource {
 
   /**
    * Send a message and wait for the agent to finish responding.
-   * Subscribes to the SmartSpace SSE stream internally and resolves
-   * once a `run.completed` or `run.failed` event is received.
+   *
+   * Sends the message first (to get the runId), then subscribes to:
+   * - The **run stream** for completion/failure signals
+   * - The **space stream** for text deltas (from sendSpaceMessage interception)
    */
   async sendAndWait(smartSpaceId: string, params: SendAndWaitOptions): Promise<SendAndWaitResponse> {
     const timeout = params.timeout ?? 30000;
     const { timeout: _, ...sendParams } = params;
+
+    // 1. Send the message and get the triggered runId
+    const { runs } = await this.send(smartSpaceId, sendParams);
+
+    if (!runs || runs.length === 0) {
+      return { text: '', toolCalls: [] };
+    }
+
+    const runId = runs[0].runId;
 
     return new Promise<SendAndWaitResponse>((resolve, reject) => {
       let text = '';
@@ -42,8 +53,16 @@ export class MessagesResource {
       const activeToolCalls = new Map<string, { id: string; name: string; input: unknown; output?: unknown }>();
       let settled = false;
 
-      const stream = new SSEStream({
+      // Subscribe to space stream for text deltas
+      const spaceStream = new SSEStream({
         url: this.http.buildUrl(`/api/smart-spaces/${smartSpaceId}/stream`, { since: '$' }),
+        headers: this.http.getAuthHeaders(),
+        reconnect: false,
+      });
+
+      // Subscribe to run stream for completion signals
+      const runStream = new SSEStream({
+        url: this.http.buildUrl(`/api/runs/${runId}/stream`),
         headers: this.http.getAuthHeaders(),
         reconnect: false,
       });
@@ -51,44 +70,37 @@ export class MessagesResource {
       const timer = setTimeout(() => {
         if (!settled) {
           settled = true;
-          stream.close();
+          cleanup();
           reject(new Error(`sendAndWait timed out after ${timeout}ms`));
         }
       }, timeout);
 
       const cleanup = () => {
         clearTimeout(timer);
-        stream.close();
+        spaceStream.close();
+        runStream.close();
       };
 
-      // Send the message after stream is connected
-      this.send(smartSpaceId, sendParams).catch((err) => {
-        if (!settled) {
-          settled = true;
-          cleanup();
-          reject(err);
-        }
-      });
-
-      stream.on('text.delta', (event: StreamEvent) => {
+      // Space stream: accumulate text deltas
+      spaceStream.on('text.delta', (event: StreamEvent) => {
         const delta = (event.data as Record<string, unknown>).delta;
         if (typeof delta === 'string') {
           text += delta;
         }
       });
 
-      stream.on('tool-input-available', (event: StreamEvent) => {
+      // Run stream: tool events
+      runStream.on('tool-input-available', (event: StreamEvent) => {
         const data = event.data as Record<string, unknown>;
         const callId = String(data.toolCallId || '');
-        const toolCall = {
+        activeToolCalls.set(callId, {
           id: callId,
           name: String(data.toolName || ''),
           input: data.input,
-        };
-        activeToolCalls.set(callId, toolCall);
+        });
       });
 
-      stream.on('tool-output-available', (event: StreamEvent) => {
+      runStream.on('tool-output-available', (event: StreamEvent) => {
         const data = event.data as Record<string, unknown>;
         const callId = String(data.toolCallId || '');
         const existing = activeToolCalls.get(callId);
@@ -97,16 +109,17 @@ export class MessagesResource {
         }
       });
 
-      stream.on('run.completed', (_event: StreamEvent) => {
+      // Run stream: completion signals
+      runStream.on('run.completed', () => {
         if (!settled) {
           settled = true;
           cleanup();
           toolCalls.push(...activeToolCalls.values());
-          resolve({ text, toolCalls });
+          resolve({ text, toolCalls, run: { id: runId } as any });
         }
       });
 
-      stream.on('run.failed', (event: StreamEvent) => {
+      runStream.on('run.failed', (event: StreamEvent) => {
         if (!settled) {
           settled = true;
           cleanup();
@@ -115,13 +128,17 @@ export class MessagesResource {
         }
       });
 
-      stream.on('error', (event: StreamEvent) => {
+      // Error on either stream
+      const onError = (event: StreamEvent) => {
         if (!settled) {
           settled = true;
           cleanup();
           reject(new Error(String((event.data as Record<string, unknown>).error || 'Stream error')));
         }
-      });
+      };
+
+      spaceStream.on('error', onError);
+      runStream.on('error', onError);
     });
   }
 }

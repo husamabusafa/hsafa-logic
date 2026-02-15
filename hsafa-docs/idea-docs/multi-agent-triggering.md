@@ -1,4 +1,8 @@
-# Multi-Agent Triggering — Mention Chain
+> **⚠️ SUPERSEDED** — This document describes the old mention-chain / reply-stack / round-robin model. It has been fully replaced by the **Single-Run Architecture** (`single-run-architecture/`). In the new model: human messages always go to the **admin agent**, agents use `sendSpaceMessage` with an optional `mention` field (+ optional `wait`) for agent-to-agent collaboration, and `delegateToAgent` provides silent handoff. No reply stack, no round-robin, no `mentionAgent` prebuilt tool. See `single-run-architecture/03-admin-agent.md` and `single-run-architecture/02-space-tools.md`.
+
+---
+
+# Multi-Agent Triggering — Mention Chain (DEPRECATED)
 
 ## Problem
 

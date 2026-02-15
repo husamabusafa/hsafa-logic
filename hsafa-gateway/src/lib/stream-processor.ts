@@ -39,9 +39,15 @@ export async function processStream(
   messageId: string,
   runId: string,
   emitEvent: EmitEventFn,
-  options?: { agentEntityId?: string },
+  options?: {
+    agentEntityId?: string;
+    visibleTools?: Set<string>;
+    targetSpaceId?: string;
+  },
 ): Promise<StreamResult> {
   const agentEntityId = options?.agentEntityId || '';
+  const visibleTools = options?.visibleTools;
+  const targetSpaceId = options?.targetSpaceId;
   const spaceCtx = { runId, entityId: agentEntityId, entityType: 'agent' as const, agentEntityId };
 
   // Internal state
@@ -89,6 +95,11 @@ export async function processStream(
         msgStreams.set(id, { spaceId: null, streamStarted: false, prevText: '' });
       }
       await emitEvent('tool-input-start', { toolCallId: id, toolName });
+
+      // Emit to space stream for visible tools
+      if (visibleTools?.has(toolName) && targetSpaceId) {
+        await emitSmartSpaceEvent(targetSpaceId, 'tool-call.start', { toolCallId: id, toolName }, spaceCtx);
+      }
     }
 
     // ── Tool input delta — this is where sendSpaceMessage streaming happens ──
@@ -140,6 +151,11 @@ export async function processStream(
       if (reasoningId) { await emitEvent('reasoning-end', { id: reasoningId }); reasoningId = null; }
       await emitEvent('tool-input-available', { toolCallId, toolName, input });
 
+      // Emit to space stream for visible tools
+      if (visibleTools?.has(toolName) && targetSpaceId) {
+        await emitSmartSpaceEvent(targetSpaceId, 'tool-call', { toolCallId, toolName, args: input }, spaceCtx);
+      }
+
       if (toolName === 'skipResponse' || toolName === 'delegateToAgent') skipped = true;
 
       toolCalls.set(toolCallId, { toolName, input });
@@ -151,6 +167,11 @@ export async function processStream(
       await emitEvent('tool-output-available', { toolCallId, toolName, output });
       toolResultIds.add(toolCallId);
 
+      // Emit to space stream for visible tools
+      if (visibleTools?.has(toolName) && targetSpaceId) {
+        await emitSmartSpaceEvent(targetSpaceId, 'tool-call.result', { toolCallId, toolName, output }, spaceCtx);
+      }
+
       if (toolName === 'delegateToAgent' && output?.__delegateSignal) {
         delegateSignal = { targetAgentEntityId: output.targetAgentEntityId as string };
       }
@@ -160,7 +181,13 @@ export async function processStream(
     else if (t === 'tool-error') {
       const { toolCallId, toolName, error } = part as any;
       console.error(`[Run ${runId}] Tool error: ${toolName}`, error);
-      await emitEvent('tool-error', { toolCallId, toolName, error: error instanceof Error ? error.message : String(error) });
+      const errorStr = error instanceof Error ? error.message : String(error);
+      await emitEvent('tool-error', { toolCallId, toolName, error: errorStr });
+
+      // Emit to space stream for visible tools
+      if (visibleTools?.has(toolName) && targetSpaceId) {
+        await emitSmartSpaceEvent(targetSpaceId, 'tool-call.error', { toolCallId, toolName, error: errorStr }, spaceCtx);
+      }
     }
 
     // ── Finish ──

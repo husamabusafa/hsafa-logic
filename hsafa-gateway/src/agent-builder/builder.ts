@@ -2,6 +2,7 @@ import { ToolLoopAgent, stepCountIs, jsonSchema, tool, type ToolExecutionOptions
 import { validateAgentConfig, interpolateConfigEnvVars } from './parser.js';
 import { resolveModel, getModelSettings } from './model-resolver.js';
 import { resolveTools } from './tool-resolver.js';
+import { getToolExecutionTarget } from './tool-builder.js';
 import { resolveMCPClients, loadMCPTools, closeMCPClients, type MCPClientWrapper } from './mcp-resolver.js';
 import { initPrebuiltTools, getAllPrebuiltHandlers } from './prebuilt-tools/registry.js';
 import type { AgentConfig } from './types.js';
@@ -25,6 +26,7 @@ export interface BuildAgentResult {
   agent: ToolLoopAgent;
   config: AgentConfig;
   mcpClients: MCPClientWrapper[];
+  visibleToolNames: Set<string>;
 }
 
 export class AgentBuildError extends Error {
@@ -97,6 +99,20 @@ export async function buildAgent(options: BuildAgentOptions): Promise<BuildAgent
       console.warn(`[agent-builder] MCP servers configured but no tools loaded`);
     }
 
+    // Determine visible tools (shown in space chat UI)
+    // Config tools are visible by default unless:
+    //   - display.mode === 'hidden'
+    //   - client-side execution (no server result to show)
+    // Prebuilt tools: hidden (infrastructure)
+    // MCP tools: hidden (internal)
+    const visibleToolNames = new Set<string>();
+    for (const t of configTools) {
+      const target = getToolExecutionTarget(t);
+      if (target === 'client') continue;
+      if ((t as any).display?.mode === 'hidden') continue;
+      visibleToolNames.add(t.name);
+    }
+
     // Merge all tools (prebuilt first, then config, then MCP)
     const allTools: Record<string, any> = { ...prebuiltTools, ...staticTools, ...mcpTools };
 
@@ -109,7 +125,7 @@ export async function buildAgent(options: BuildAgentOptions): Promise<BuildAgent
       ...modelSettings,
     });
 
-    return { agent, config: validatedConfig, mcpClients };
+    return { agent, config: validatedConfig, mcpClients, visibleToolNames };
   } catch (error) {
     throw new AgentBuildError(
       `Failed to build agent: ${error instanceof Error ? error.message : String(error)}`,
