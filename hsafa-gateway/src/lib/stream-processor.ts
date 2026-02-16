@@ -1,8 +1,12 @@
 import { parse as parsePartialJson, STR, OBJ, ARR, NUM, BOOL, NULL } from 'partial-json';
+import { Prisma } from '@prisma/client';
+import { prisma } from './db.js';
 import type { EmitEventFn } from './run-events.js';
 import { emitSmartSpaceEvent } from './smartspace-events.js';
+import { createSmartSpaceMessage } from './smartspace-db.js';
 
 const PARTIAL_JSON_ALLOW = STR | OBJ | ARR | NUM | BOOL | NULL;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -20,6 +24,77 @@ export interface StreamResult {
   finalText: string | undefined;
   pendingClientToolCalls: PendingClientToolCall[];
   delegateSignal: DelegateAgentSignal | null;
+}
+
+interface ToolCallPart {
+  type: 'tool_call';
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  result?: unknown;
+  status: 'complete' | 'requires_action';
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Remove auto-injected routing field from tool call args. */
+function stripRoutingFields(args: Record<string, unknown>): Record<string, unknown> {
+  const clean = { ...args };
+  delete clean.targetSpaceId;
+  return clean;
+}
+
+function buildToolCallPart(
+  toolCallId: string, toolName: string, args: Record<string, unknown>,
+  status: 'complete' | 'requires_action', result?: unknown,
+): ToolCallPart {
+  return { type: 'tool_call', toolCallId, toolName, args, ...(result !== undefined && { result }), status };
+}
+
+/** Persist a display tool call as a SmartSpaceMessage and optionally emit to the space. */
+async function persistDisplayToolMessage(opts: {
+  smartSpaceId: string;
+  agentEntityId: string;
+  runId: string;
+  toolCallId: string;
+  part: ToolCallPart;
+  emit: boolean;
+  spaceCtx: Record<string, unknown>;
+}): Promise<void> {
+  const agentEntity = await prisma.entity.findUnique({
+    where: { id: opts.agentEntityId },
+    select: { displayName: true },
+  });
+  const agentName = agentEntity?.displayName || 'AI Assistant';
+
+  const dbMsg = await createSmartSpaceMessage({
+    smartSpaceId: opts.smartSpaceId,
+    entityId: opts.agentEntityId,
+    role: 'assistant',
+    content: null,
+    metadata: {
+      runId: opts.runId,
+      streamId: opts.toolCallId,
+      uiMessage: { parts: [opts.part] },
+    } as unknown as Prisma.InputJsonValue,
+    runId: opts.runId,
+  });
+
+  if (opts.emit) {
+    await emitSmartSpaceEvent(opts.smartSpaceId, 'smartSpace.message', {
+      message: {
+        id: dbMsg.id,
+        role: 'assistant',
+        parts: [opts.part],
+        entityId: opts.agentEntityId,
+        entityType: 'agent',
+        entityName: agentName,
+      },
+      streamId: opts.toolCallId,
+    }, opts.spaceCtx);
+  }
+
+  return;
 }
 
 // ─── Stream Processor ────────────────────────────────────────────────────────
@@ -42,11 +117,13 @@ export async function processStream(
     agentEntityId?: string;
     visibleTools?: Set<string>;
     targetSpaceId?: string;
+    displayTools?: Set<string>;
   },
 ): Promise<StreamResult> {
   const agentEntityId = options?.agentEntityId || '';
   const visibleTools = options?.visibleTools;
   const targetSpaceId = options?.targetSpaceId;
+  const displayTools = options?.displayTools;
   const spaceCtx = { runId, entityId: agentEntityId, entityType: 'agent' as const, agentEntityId };
 
   // Internal state
@@ -57,6 +134,10 @@ export async function processStream(
   const toolArgs = new Map<string, string>();              // toolCallId → accumulated JSON
   const toolCalls = new Map<string, { toolName: string; input: unknown }>();  // completed tool calls
   const toolResultIds = new Set<string>();
+
+  // Display tool routing state
+  const displayToolSpaces = new Map<string, string>();     // toolCallId → targetSpaceId
+  const displayToolNames = new Map<string, string>();      // toolCallId → toolName
 
   // sendSpaceMessage streaming state: intercept the `text` field and relay to target space
   const msgStreams = new Map<string, { spaceId: string | null; streamStarted: boolean; prevText: string }>();
@@ -92,10 +173,13 @@ export async function processStream(
       if (toolName === 'sendSpaceMessage') {
         msgStreams.set(id, { spaceId: null, streamStarted: false, prevText: '' });
       }
+      if (displayTools?.has(toolName)) {
+        displayToolNames.set(id, toolName);
+      }
       await emitEvent('tool-input-start', { toolCallId: id, toolName });
 
-      // Emit to space stream for visible tools
-      if (visibleTools?.has(toolName) && targetSpaceId) {
+      // Emit to space stream for visible tools (legacy — non-displayTool visible tools)
+      if (visibleTools?.has(toolName) && targetSpaceId && !displayTools?.has(toolName)) {
         await emitSmartSpaceEvent(targetSpaceId, 'tool-call.start', { toolCallId: id, toolName }, spaceCtx);
       }
     }
@@ -115,6 +199,30 @@ export async function processStream(
       } catch { /* ignore malformed JSON */ }
 
       await emitEvent('tool-input-delta', { toolCallId: id, delta: argsDelta, accumulated, partialInput: partial });
+
+      // Display tool routing: extract targetSpaceId + mention from partial args
+      if (displayToolNames.has(id) && partial) {
+        const tsId = partial.targetSpaceId;
+        if (typeof tsId === 'string' && UUID_RE.test(tsId) && !displayToolSpaces.has(id)) {
+          displayToolSpaces.set(id, tsId);
+          const dtName = displayToolNames.get(id)!;
+          await emitSmartSpaceEvent(tsId, 'tool-call.start', { toolCallId: id, toolName: dtName }, spaceCtx);
+
+          // Flush all accumulated partial args now that the target space is known.
+          // Earlier deltas were buffered while the UUID was being built character by character.
+          const flushed = stripRoutingFields(partial as Record<string, unknown>);
+          if (Object.keys(flushed).length > 0) {
+            await emitSmartSpaceEvent(tsId, 'tool-input-delta', { toolCallId: id, partialArgs: flushed }, spaceCtx);
+          }
+        }
+        // Stream partial args (stripped) to the display tool's target space
+        const dtSpace = displayToolSpaces.get(id);
+        if (dtSpace) {
+          await emitSmartSpaceEvent(dtSpace, 'tool-input-delta', {
+            toolCallId: id, partialArgs: stripRoutingFields(partial as Record<string, unknown>),
+          }, spaceCtx);
+        }
+      }
 
       // Stream sendSpaceMessage text to the target space in real-time
       const state = msgStreams.get(id);
@@ -149,8 +257,25 @@ export async function processStream(
       if (reasoningId) { await emitEvent('reasoning-end', { id: reasoningId }); reasoningId = null; }
       await emitEvent('tool-input-available', { toolCallId, toolName, input });
 
-      // Emit to space stream for visible tools
-      if (visibleTools?.has(toolName) && targetSpaceId) {
+      // Fallback: extract targetSpaceId from final input
+      // (for models that don't stream tool-input-delta, or if partial parsing missed it)
+      if (displayToolNames.has(toolCallId) && !displayToolSpaces.has(toolCallId)) {
+        const args = input as Record<string, unknown> | undefined;
+        if (args && typeof args.targetSpaceId === 'string' && args.targetSpaceId) {
+          displayToolSpaces.set(toolCallId, args.targetSpaceId);
+          await emitSmartSpaceEvent(args.targetSpaceId, 'tool-call.start', { toolCallId, toolName }, spaceCtx);
+        }
+      }
+
+      // Display tool: emit full args (stripped) to target space
+      const dtSpace = displayToolSpaces.get(toolCallId);
+      if (dtSpace) {
+        await emitSmartSpaceEvent(dtSpace, 'tool-call', {
+          toolCallId, toolName, args: stripRoutingFields(input as Record<string, unknown>),
+        }, spaceCtx);
+      }
+      // Legacy visible tools (non-displayTool)
+      else if (visibleTools?.has(toolName) && targetSpaceId) {
         await emitSmartSpaceEvent(targetSpaceId, 'tool-call', { toolCallId, toolName, args: input }, spaceCtx);
       }
 
@@ -163,8 +288,26 @@ export async function processStream(
       await emitEvent('tool-output-available', { toolCallId, toolName, output });
       toolResultIds.add(toolCallId);
 
-      // Emit to space stream for visible tools
-      if (visibleTools?.has(toolName) && targetSpaceId) {
+      // Display tool: emit result to target space, persist as message
+      const dtSpace = displayToolSpaces.get(toolCallId);
+      if (dtSpace) {
+        await emitSmartSpaceEvent(dtSpace, 'tool-call.result', { toolCallId, toolName, output }, spaceCtx);
+
+        const tc = toolCalls.get(toolCallId);
+        const cleanArgs = tc ? stripRoutingFields(tc.input as Record<string, unknown>) : {};
+        const part = buildToolCallPart(toolCallId, toolName, cleanArgs, 'complete', output);
+
+        try {
+          await persistDisplayToolMessage({
+            smartSpaceId: dtSpace, agentEntityId, runId, toolCallId, part,
+            emit: true, spaceCtx,
+          });
+        } catch (err) {
+          console.error(`[stream-processor] Failed to persist display tool message:`, err);
+        }
+      }
+      // Legacy visible tools (non-displayTool)
+      else if (visibleTools?.has(toolName) && targetSpaceId) {
         await emitSmartSpaceEvent(targetSpaceId, 'tool-call.result', { toolCallId, toolName, output }, spaceCtx);
       }
 
@@ -180,8 +323,13 @@ export async function processStream(
       const errorStr = error instanceof Error ? error.message : String(error);
       await emitEvent('tool-error', { toolCallId, toolName, error: errorStr });
 
-      // Emit to space stream for visible tools
-      if (visibleTools?.has(toolName) && targetSpaceId) {
+      // Display tool: emit error to target space
+      const dtSpace = displayToolSpaces.get(toolCallId);
+      if (dtSpace) {
+        await emitSmartSpaceEvent(dtSpace, 'tool-call.error', { toolCallId, toolName, error: errorStr }, spaceCtx);
+      }
+      // Legacy visible tools
+      else if (visibleTools?.has(toolName) && targetSpaceId) {
         await emitSmartSpaceEvent(targetSpaceId, 'tool-call.error', { toolCallId, toolName, error: errorStr }, spaceCtx);
       }
     }
@@ -206,6 +354,23 @@ export async function processStream(
   for (const [toolCallId, tc] of toolCalls) {
     if (!toolResultIds.has(toolCallId)) {
       pendingClientToolCalls.push({ toolCallId, toolName: tc.toolName, args: tc.input });
+
+      // Persist display client tool calls so they survive page refresh.
+      // Do NOT emit smartSpace.message — the live tool call is displayed via
+      // toolCalls state; emitting would clear it and break isRunning.
+      const dtSpace = displayToolSpaces.get(toolCallId);
+      if (dtSpace) {
+        const cleanArgs = stripRoutingFields(tc.input as Record<string, unknown>);
+        const part = buildToolCallPart(toolCallId, tc.toolName, cleanArgs, 'requires_action');
+        try {
+          await persistDisplayToolMessage({
+            smartSpaceId: dtSpace, agentEntityId, runId, toolCallId, part,
+            emit: false, spaceCtx,
+          });
+        } catch (err) {
+          console.error(`[stream-processor] Failed to persist client display tool message:`, err);
+        }
+      }
     }
   }
 

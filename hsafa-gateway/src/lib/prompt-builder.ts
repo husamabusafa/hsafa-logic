@@ -182,6 +182,8 @@ export async function buildModelMessages(ctx: RunContext) {
   systemParts.push('Your text output is internal — never shown to anyone. Keep it short (1-2 sentences summarizing what you did).');
   systemParts.push('To communicate, use sendSpaceMessage(spaceId, text). Do NOT retry — it returns {success:true} on delivery.');
   systemParts.push('Use getSpaceMessages to read context from any space you belong to.');
+  systemParts.push('');
+  systemParts.push('DISPLAY TOOLS: Some tools have a targetSpaceId parameter. ALWAYS provide targetSpaceId (use the trigger space ID) so the tool result is visible to the user. ALWAYS output targetSpaceId as the VERY FIRST property in the JSON arguments object — before title, message, or any other field. This is critical for streaming. Without targetSpaceId the tool runs silently and the user sees nothing.');
 
   // ── Trigger context ──
   systemParts.push('');

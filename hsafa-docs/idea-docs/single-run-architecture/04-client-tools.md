@@ -143,7 +143,7 @@ No browser involved. The "client" is a Node.js process using `@hsafa/node` SDK. 
 
 ## Client Tools + Space Tools Interaction
 
-**Direct cross-space UI** — an agent can route a client tool to another space using `targetSpaceId`. No agent-to-agent delegation needed:
+**Direct cross-space UI** — an agent can route a client tool to another space using `targetSpaceId`:
 ```
 Agent in Space A calls showApprovalForm({ targetSpaceId: spaceB, amount: 50000 })
 → UI renders in Space B, Space B's client handles interaction
@@ -151,4 +151,4 @@ Agent in Space A calls showApprovalForm({ targetSpaceId: spaceB, amount: 50000 }
 
 **Agent-to-agent** — an agent in Space A can call `sendSpaceMessage(spaceB, ..., mention: agentB, wait: { for: [{ type: "agent" }] })` which triggers an agent in Space B. That Space B agent might call a client tool (renders in Space B). The client tool flow works independently per space — Space B's subscribers handle Space B's client tools. Agent A just sees the final reply text when `wait` resolves.
 
-Use `targetSpaceId` for just showing UI. Use `mention` + `wait` when you need another agent to **reason** about something.
+Use `targetSpaceId` for showing UI in a space. Use `sendSpaceMessage` with `mention` + `wait` when you need another agent to **reason** about something and wait for their reply.

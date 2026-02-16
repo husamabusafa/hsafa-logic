@@ -27,6 +27,7 @@ export interface BuildAgentResult {
   config: AgentConfig;
   mcpClients: MCPClientWrapper[];
   visibleToolNames: Set<string>;
+  displayToolNames: Set<string>;
 }
 
 export class AgentBuildError extends Error {
@@ -61,6 +62,22 @@ export async function buildAgent(options: BuildAgentOptions): Promise<BuildAgent
     const configTools = (validatedConfig.tools ?? []).filter(
       (t: any) => t.executionType !== 'prebuilt'
     );
+
+    // Auto-inject targetSpaceId into inputSchema for displayTool: true tools
+    const displayToolNames = new Set<string>();
+    for (const t of configTools) {
+      if ((t as any).displayTool === true) {
+        displayToolNames.add(t.name);
+        const schema = ((t as any).inputSchema as Record<string, any>) || { type: 'object', properties: {} };
+        if (!schema.properties) schema.properties = {};
+        schema.properties.targetSpaceId = {
+          type: 'string',
+          description: 'Space to display this tool call in. MUST be provided first.',
+        };
+        // targetSpaceId is always optional — do NOT add to required
+        (t as any).inputSchema = schema;
+      }
+    }
 
     // Resolve static tools from agent config
     const staticTools = resolveTools(configTools, options.runContext);
@@ -125,7 +142,7 @@ export async function buildAgent(options: BuildAgentOptions): Promise<BuildAgent
       ...modelSettings,
     });
 
-    return { agent, config: validatedConfig, mcpClients, visibleToolNames };
+    return { agent, config: validatedConfig, mcpClients, visibleToolNames, displayToolNames };
   } catch (error) {
     throw new AgentBuildError(
       `Failed to build agent: ${error instanceof Error ? error.message : String(error)}`,

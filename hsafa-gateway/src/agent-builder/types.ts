@@ -239,6 +239,7 @@ export const ToolSchema = z.preprocess(
   ]).and(
     z.object({
       display: ToolDisplaySchema.optional(),
+      displayTool: z.boolean().optional(),
     })
   )
 );

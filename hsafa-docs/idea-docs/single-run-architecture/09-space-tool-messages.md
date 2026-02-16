@@ -1,10 +1,10 @@
-# Tool Space Messages — `displayTool` + Auto-Injected `targetSpaceId`
+# Tool Space Messages — `displayTool` + Auto-Injected `targetSpaceId` & `mention`
 
 ## The Idea
 
-A tool config flag — `displayTool: true`. When set, the gateway **auto-injects** a `targetSpaceId` property into the tool's input schema at build time. The tool creator never touches the input schema for this — just sets `displayTool: true`.
+A tool config flag — `displayTool: true`. When set, the gateway **auto-injects** `targetSpaceId` and `mention` properties into the tool's input schema at build time. The tool creator never touches the input schema for these — just sets `displayTool: true`.
 
-When the AI fills `targetSpaceId`, the gateway streams the tool call to that space as a real message. When the AI omits it, the tool executes silently. The AI decides where — any space it's a member of.
+When the AI fills `targetSpaceId`, the gateway streams the tool call to that space as a real message. When the AI also fills `mention`, the mentioned agent is triggered — just like `sendSpaceMessage` with `mention`. When the AI omits `targetSpaceId`, the tool executes silently. The AI decides where and who — any space it's a member of, any agent in that space.
 
 ---
 
@@ -12,8 +12,8 @@ When the AI fills `targetSpaceId`, the gateway streams the tool call to that spa
 
 ```
 Tool config has displayTool: true
-  → gateway auto-injects targetSpaceId into the tool's inputSchema at build time
-  → AI sees targetSpaceId as an optional param, fills it when it wants the tool visible
+  → gateway auto-injects targetSpaceId + mention into the tool's inputSchema at build time
+  → AI sees both as optional params, fills them when it wants the tool visible / wants to trigger an agent
 
 AI calls tool({ ..., targetSpaceId: "space-X" })
   → gateway sees targetSpaceId in args
@@ -21,26 +21,34 @@ AI calls tool({ ..., targetSpaceId: "space-X" })
   → executes the tool (server, client, or external)
   → streams result to space-X
   → persists as a space message with tool_call part
-  → strips targetSpaceId before passing args to execute()
+  → strips targetSpaceId and mention before passing args to execute()
+
+AI calls tool({ ..., targetSpaceId: "space-X", mention: "agent-entity-id" })
+  → same as above, PLUS:
+  → after the tool call message is persisted, the mentioned agent is triggered
+  → the mentioned agent gets a new run with the tool call message as context
 ```
 
 If the AI calls `generateImage({ prompt: "a sunset", targetSpaceId: "space-X" })`:
 1. Gateway intercepts `targetSpaceId` from the args
 2. Emits `tool-call.start` to space-X (card appears: "Generating image...")
 3. Streams partial args via `tool-input-delta` (space sees prompt streaming in)
-4. Executes the tool on the server (with `targetSpaceId` stripped from args)
+4. Executes the tool on the server (with `targetSpaceId` and `mention` stripped from args)
 5. Emits `tool-call.result` to space-X (card updates with the image)
 6. Persists a `SmartSpaceMessage` with a `tool_call` part
 
-If the AI calls `generateImage({ prompt: "a sunset" })` — no `targetSpaceId` — nothing happens in any space. The tool executes normally, invisibly.
+If the AI also provides `mention: "design-agent-entity-id"`:
+7. The design agent is triggered with a new run — it sees the generated image in the space context and can respond to it
 
-**The AI decides.** No targetSpaceId = silent tool call. With targetSpaceId = visible message.
+If the AI calls `generateImage({ prompt: "a sunset" })` — no `targetSpaceId` — nothing happens in any space. The tool executes normally, invisibly. `mention` without `targetSpaceId` is ignored (no space = nowhere to trigger from).
+
+**The AI decides.** No targetSpaceId = silent tool call. With targetSpaceId = visible message. With targetSpaceId + mention = visible message + agent triggered.
 
 ---
 
 ## Tool Config
 
-The tool creator just sets `displayTool: true`. No need to manually add `targetSpaceId` to the input schema — the gateway does it automatically:
+The tool creator just sets `displayTool: true`. No need to manually add `targetSpaceId` or `mention` to the input schema — the gateway does it automatically:
 
 ```json
 {
@@ -68,16 +76,17 @@ At build time, the gateway transforms this to what the AI sees:
     "type": "object",
     "properties": {
       "prompt": { "type": "string", "description": "Image description" },
-      "targetSpaceId": { "type": "string", "description": "Space to display this tool call in. MUST be provided first." }
+      "targetSpaceId": { "type": "string", "description": "Space to display this tool call in. MUST be provided first." },
+      "mention": { "type": "string", "description": "Entity ID of an agent to mention. This agent will be triggered after the tool call message is posted to the target space. Only works when targetSpaceId is provided." }
     },
     "required": ["prompt"]
   }
 }
 ```
 
-- `targetSpaceId` is **always optional** by default — the AI can skip it for silent execution
-- The gateway **strips** `targetSpaceId` from the args before passing to `execute()` — the tool itself never sees it
-- If `displayTool` is `false` or absent, no `targetSpaceId` is injected — the tool can never be a space message
+- Both `targetSpaceId` and `mention` are **always optional** — the AI can skip them for silent execution
+- The gateway **strips** both `targetSpaceId` and `mention` from the args before passing to `execute()` — the tool itself never sees them
+- If `displayTool` is `false` or absent, neither field is injected — the tool can never be a space message or trigger agents
 
 ### `displayTool` schema
 
@@ -87,7 +96,7 @@ A new **top-level** property on the tool config (alongside `name`, `executionTyp
 displayTool: boolean    (default: false)
 ```
 
-That's it. One boolean. The gateway handles the rest.
+That's it. One boolean. The gateway auto-injects both `targetSpaceId` and `mention` into the input schema.
 
 ### What about `display.customUI`?
 
@@ -109,7 +118,7 @@ Still works. `display.customUI` specifies the client component name for renderin
 }
 ```
 
-`displayTool` controls whether `targetSpaceId` is injected. `display.customUI` controls what component renders the tool call in the UI. They're independent.
+`displayTool` controls whether `targetSpaceId` and `mention` are injected. `display.customUI` controls what component renders the tool call in the UI. They're independent.
 
 ---
 
@@ -139,11 +148,13 @@ Still works. `display.customUI` specifies the client component name for renderin
 1. AI calls `generateImage({ prompt: "a sunset over mountains", targetSpaceId: "space-X" })`
 2. Gateway sees `targetSpaceId` → starts streaming to space-X
 3. Space-X shows card: **"generateImage"** — streaming input...
-4. Gateway strips `targetSpaceId`, executes image generation with `{ prompt: "a sunset over mountains" }`
+4. Gateway strips `targetSpaceId` and `mention`, executes image generation with `{ prompt: "a sunset over mountains" }`
 5. Result arrives → gateway emits `tool-call.result` to space-X
 6. Space card updates: shows the generated image
 7. Gateway persists message with `tool_call` part in space-X
 8. AI gets the normal result and continues
+
+**With mention:** AI calls `generateImage({ prompt: "a sunset", targetSpaceId: "space-X", mention: "design-agent-id" })` → same as above, plus the design agent is triggered after the image appears in space-X.
 
 **Without targetSpaceId:** AI calls `generateImage({ prompt: "a sunset" })` → tool executes silently, no space sees it.
 
@@ -205,9 +216,11 @@ Still works. `display.customUI` specifies the client component name for renderin
 1. AI calls `fetchWeatherData({ city: "New York", targetSpaceId: "ops-space" })`
 2. Gateway sees `targetSpaceId` → emits `tool-call.start` to ops-space
 3. Ops-space shows: **"fetchWeatherData"** — running...
-4. Gateway strips `targetSpaceId`, executes HTTP request with `{ city: "New York" }`
+4. Gateway strips `targetSpaceId` and `mention`, executes HTTP request with `{ city: "New York" }`
 5. Response arrives → gateway emits `tool-call.result` to ops-space
 6. Space card updates with the weather data
+
+**With mention:** AI calls `fetchWeatherData({ city: "New York", targetSpaceId: "ops-space", mention: "weather-agent-id" })` → same as above, plus the weather agent is triggered to analyze/respond.
 
 **Without targetSpaceId:** AI calls `fetchWeatherData({ city: "New York" })` → silent API call, result goes only to the AI.
 
@@ -246,24 +259,25 @@ Still works. `display.customUI` specifies the client component name for renderin
 
 ## Cross-Space Example
 
-The AI is triggered from Husam's space. It generates an image, shows it in the design space, and shows an approval form in the finance space — all in one run:
+The AI is triggered from Husam's space. It generates an image, shows it in the design space (and triggers the design agent to review it), shows an approval form in the finance space — all in one run:
 
 ```
-Trigger: Husam says "Create a campaign banner and get finance approval for $50K"
+Trigger: Husam says "Create a campaign banner, have design review it, and get finance approval for $50K"
 
-1. AI calls generateImage({ prompt: "campaign banner...", targetSpaceId: "design-space" })
+1. AI calls generateImage({ prompt: "campaign banner...", targetSpaceId: "design-space", mention: "design-agent-entity-id" })
    → Design space sees the image generating and appearing
+   → Design agent is triggered — sees the image in context and can give feedback
 
 2. AI calls showApprovalForm({ amount: 50000, reason: "Campaign budget", targetSpaceId: "finance-space" })
    → Finance space sees the approval form, run pauses
 
 3. Finance user approves → run resumes
 
-4. AI calls sendSpaceMessage({ spaceId: "husams-space", text: "Done! Banner created and budget approved." })
+4. AI calls sendSpaceMessage({ spaceId: "husams-space", text: "Done! Banner created, design notified, and budget approved." })
    → Husam sees the response in his space
 ```
 
-Three spaces, one run. The AI decided where everything goes.
+Three spaces, one run. The AI decided where everything goes and which agents to involve.
 
 ---
 
@@ -272,9 +286,19 @@ Three spaces, one run. The AI decided where everything goes.
 When a tool message is persisted as a `SmartSpaceMessage`, it becomes part of the space's conversation history:
 
 - **Other agents see it.** When another agent calls `readSpaceMessages` on that space, the tool message appears with its input and output.
-- **Mentioning works.** AI can `sendSpaceMessage` with `mention` after the tool call — the mentioned agent sees the tool message in context.
+- **Inline mention.** AI can `mention` directly on the tool call — no need for a separate `sendSpaceMessage`. The mentioned agent is triggered and sees the tool result in context.
+- **Separate mention still works.** AI can also `sendSpaceMessage` with `mention` after the tool call if it wants to add commentary.
 - **No special handling.** Tool messages are just messages.
 
+**Inline mention (one call does both):**
+```
+Agent A calls generateImage({ prompt: "dashboard mockup", targetSpaceId: "design-space", mention: agentB })
+  → appears as tool_call message in design-space
+  → Agent B triggered immediately, reads design-space messages, sees the image
+  → Agent B responds based on the image
+```
+
+**Separate mention (two calls, same result but with commentary):**
 ```
 Agent A calls generateImage({ prompt: "dashboard mockup", targetSpaceId: "design-space" })
   → appears as tool_call message in design-space
@@ -284,36 +308,44 @@ Agent A calls sendSpaceMessage({ spaceId: "design-space", text: "Review this moc
   → Agent B responds based on the image
 ```
 
+Both patterns work. Inline mention is more concise. Separate mention lets the AI add context text for the mentioned agent.
+
 ---
 
-## Gateway Behavior: `targetSpaceId` Injection + Stripping
+## Gateway Behavior: `targetSpaceId` + `mention` Injection & Stripping
 
 ### At build time (injection)
 
 When the gateway builds a tool with `displayTool: true`:
 
 1. Clone the tool's `inputSchema`
-2. Add `targetSpaceId` to `properties`:
+2. Add `targetSpaceId` and `mention` to `properties`:
    ```json
    "targetSpaceId": {
      "type": "string",
      "description": "Space to display this tool call in. MUST be provided first."
+   },
+   "mention": {
+     "type": "string",
+     "description": "Entity ID of an agent to mention. This agent will be triggered after the tool call message is posted to the target space. Only works when targetSpaceId is provided."
    }
    ```
-3. Do NOT add `targetSpaceId` to `required` — it's always optional
+3. Do NOT add either to `required` — both are always optional
 4. Pass the modified schema to the AI SDK
 
 The tool creator's original `inputSchema` is untouched. The injection only happens in the schema the AI sees.
 
-### At runtime (stripping)
+### At runtime (stripping + triggering)
 
-The gateway must **strip `targetSpaceId`** from the tool args before passing to `execute()`:
+The gateway must **strip `targetSpaceId` and `mention`** from the tool args before passing to `execute()`:
 
-1. During `tool-input-delta` processing: parse partial JSON, extract `targetSpaceId` for routing
-2. On `tool-call` complete: remove `targetSpaceId` from the input before the AI SDK calls `execute()`
-3. The tool's execute function never sees `targetSpaceId` — it gets clean args
+1. During `tool-input-delta` processing: parse partial JSON, extract `targetSpaceId` for routing (ignore `mention` during streaming — it's only used after the tool completes)
+2. On `tool-call` complete: remove `targetSpaceId` and `mention` from the input before the AI SDK calls `execute()`
+3. The tool's execute function never sees `targetSpaceId` or `mention` — it gets clean args
+4. After the tool result is persisted as a space message: if `mention` was provided AND `targetSpaceId` was provided, trigger the mentioned agent with a new run (same as `sendSpaceMessage` with `mention`)
+5. If `mention` is provided without `targetSpaceId`, it is ignored — there's no space message to trigger from
 
-**Variable interpolation:** For `request` tools, `targetSpaceId` must be excluded from `{{variable}}` interpolation — it's a routing field, not data.
+**Variable interpolation:** For `request` tools, `targetSpaceId` and `mention` must be excluded from `{{variable}}` interpolation — they are routing fields, not data.
 
 ---
 
@@ -329,8 +361,9 @@ The gateway must **strip `targetSpaceId`** from the tool args before passing to 
 | `submitToolResult` REST endpoint | ✅ Works | `POST /api/runs/:runId/tool-results` |
 | `useToolResult` hook | ✅ Works | `react-sdk/src/hooks/useToolResult.ts` |
 | `displayTool` config flag | ❌ Not yet | — |
-| `targetSpaceId` auto-injection | ❌ Not yet | — |
-| `targetSpaceId` stripping from args | ❌ Not yet | — |
+| `targetSpaceId` + `mention` auto-injection | ❌ Not yet | — |
+| `targetSpaceId` + `mention` stripping from args | ❌ Not yet | — |
+| Trigger mentioned agent after tool message | ❌ Not yet | — |
 | Persist tool call as space message | ❌ Not yet | — |
 | Input streaming for non-sendSpaceMessage tools | ❌ Not yet | — |
 
@@ -356,11 +389,11 @@ export const ToolConfigSchema = z.object({
 });
 ```
 
-### Step 2: Auto-inject `targetSpaceId` into input schema at build time
+### Step 2: Auto-inject `targetSpaceId` + `mention` into input schema at build time
 
 **File: `hsafa-gateway/src/agent-builder/builder.ts`**
 
-For every tool with `displayTool: true`, inject `targetSpaceId` into the input schema before passing to the AI SDK:
+For every tool with `displayTool: true`, inject both `targetSpaceId` and `mention` into the input schema before passing to the AI SDK:
 
 ```typescript
 const displayToolNames = new Set<string>();
@@ -369,14 +402,18 @@ for (const t of configTools) {
   if (t.displayTool === true) {
     displayToolNames.add(t.name);
 
-    // Auto-inject targetSpaceId into inputSchema
+    // Auto-inject targetSpaceId + mention into inputSchema
     const schema = (t.inputSchema as any) || { type: 'object', properties: {} };
     if (!schema.properties) schema.properties = {};
     schema.properties.targetSpaceId = {
       type: 'string',
       description: 'Space to display this tool call in. MUST be provided first.',
     };
-    // Do NOT add to required — always optional
+    schema.properties.mention = {
+      type: 'string',
+      description: 'Entity ID of an agent to mention. This agent will be triggered after the tool call message is posted to the target space. Only works when targetSpaceId is provided.',
+    };
+    // Do NOT add to required — both always optional
     t.inputSchema = schema;
   }
 }
@@ -384,11 +421,11 @@ for (const t of configTools) {
 
 Return `displayToolNames` in `BuildAgentResult`. Pass it to `processStream`.
 
-### Step 3: Strip `targetSpaceId` from tool args before execute
+### Step 3: Strip `targetSpaceId` + `mention` from tool args before execute
 
 **File: `hsafa-gateway/src/agent-builder/tool-builder.ts`**
 
-For tools with `displayTool: true`, wrap `execute()` to strip `targetSpaceId`:
+For tools with `displayTool: true`, wrap `execute()` to strip both routing fields:
 
 ```typescript
 // In buildTool, when displayTool is true:
@@ -396,6 +433,7 @@ const originalExecute = execute;
 execute = async (input: unknown, opts) => {
   const cleaned = { ...(input as Record<string, unknown>) };
   delete cleaned.targetSpaceId;
+  delete cleaned.mention;
   return originalExecute(cleaned, opts);
 };
 ```
@@ -413,7 +451,10 @@ displayTools?: Set<string>;
 // Track per-tool-call target space (extracted from partial JSON)
 const toolTargetSpaces = new Map<string, string>();  // toolCallId → targetSpaceId
 
-// On tool-input-delta: extract targetSpaceId from partial args
+// Track per-tool-call mention (extracted from partial JSON alongside targetSpaceId)
+const toolMentions = new Map<string, string>();  // toolCallId → mention entityId
+
+// On tool-input-delta: extract targetSpaceId and mention from partial args
 if (displayTools?.has(currentToolName) && partial) {
   const targetSpaceId = (partial as any).targetSpaceId;
   if (typeof targetSpaceId === 'string' && !toolTargetSpaces.has(id)) {
@@ -423,12 +464,19 @@ if (displayTools?.has(currentToolName) && partial) {
       toolCallId: id, toolName: currentToolName
     }, spaceCtx);
   }
+
+  // Extract mention (don't act on it yet — only used after tool completes)
+  const mention = (partial as any).mention;
+  if (typeof mention === 'string' && !toolMentions.has(id)) {
+    toolMentions.set(id, mention);
+  }
   
-  // Stream partial args (excluding targetSpaceId) to the target space
+  // Stream partial args (excluding targetSpaceId and mention) to the target space
   const targetSpace = toolTargetSpaces.get(id);
   if (targetSpace) {
     const cleanPartial = { ...partial };
     delete (cleanPartial as any).targetSpaceId;
+    delete (cleanPartial as any).mention;
     await emitSmartSpaceEvent(targetSpace, 'tool-input-delta', {
       toolCallId: id, partialArgs: cleanPartial
     }, spaceCtx);
@@ -440,16 +488,24 @@ const targetSpace = toolTargetSpaces.get(toolCallId);
 if (targetSpace) {
   const cleanArgs = { ...(input as any) };
   delete cleanArgs.targetSpaceId;
+  delete cleanArgs.mention;
   await emitSmartSpaceEvent(targetSpace, 'tool-call', {
     toolCallId, toolName, args: cleanArgs
   }, spaceCtx);
 }
 
-// On tool-result: emit result to target space
+// On tool-result: emit result to target space, then trigger mentioned agent
 if (targetSpace) {
   await emitSmartSpaceEvent(targetSpace, 'tool-call.result', {
     toolCallId, toolName, output
   }, spaceCtx);
+
+  // If mention was provided, trigger the mentioned agent after message is persisted
+  const mentionEntityId = toolMentions.get(toolCallId);
+  if (mentionEntityId) {
+    // Same trigger logic as sendSpaceMessage with mention
+    await triggerMentionedAgent(targetSpace, mentionEntityId, ...);
+  }
 }
 ```
 
@@ -530,12 +586,15 @@ Document `displayTool`:
 ```markdown
 ### `displayTool` (optional)
 
-When `true`, the gateway auto-injects a `targetSpaceId` parameter into the tool's input schema. The AI can then provide a space ID to display the tool call as a message in that space.
+When `true`, the gateway auto-injects `targetSpaceId` and `mention` parameters into the tool's input schema. The AI can then:
+- Provide `targetSpaceId` to display the tool call as a message in that space
+- Provide `mention` (an agent entity ID) to trigger that agent after the tool call message is posted
 
-- The AI sees `targetSpaceId` as an optional parameter
+Both are optional:
 - If the AI provides `targetSpaceId`, the tool call streams to that space as a real message
-- If the AI omits `targetSpaceId`, the tool executes silently
-- The gateway strips `targetSpaceId` before executing — the tool never sees it
+- If the AI also provides `mention`, the mentioned agent is triggered after the message is posted (same behavior as `sendSpaceMessage` with `mention`)
+- If the AI omits `targetSpaceId`, the tool executes silently (`mention` is ignored without a target space)
+- The gateway strips both fields before executing — the tool never sees them
 - Works with all execution types: basic, request, image-generator, etc.
 ```
 
@@ -580,7 +639,7 @@ For client tools waiting for input:
 }
 ```
 
-Note: `targetSpaceId` is NOT in `args` — it was stripped by the gateway. `args` only contains the tool's actual data.
+Note: `targetSpaceId` and `mention` are NOT in `args` — they were stripped by the gateway. `args` only contains the tool's actual data.
 
 ---
 
@@ -590,10 +649,11 @@ For a server-executed tool with `targetSpaceId`:
 
 ```
 tool-call.start     → { toolCallId, toolName }
-tool-input-delta    → { toolCallId, partialArgs }           (repeated, targetSpaceId stripped)
-tool-call           → { toolCallId, toolName, args }        (full args, targetSpaceId stripped)
+tool-input-delta    → { toolCallId, partialArgs }           (repeated, targetSpaceId+mention stripped)
+tool-call           → { toolCallId, toolName, args }        (full args, targetSpaceId+mention stripped)
 tool-call.result    → { toolCallId, toolName, output }      (execution done)
 smartSpace.message  → { message: {...}, streamId }          (persisted, dedup)
+  ... if mention was provided: mentioned agent triggered ...
 ```
 
 For a client tool with `targetSpaceId`:
@@ -613,20 +673,22 @@ smartSpace.message  → { message: {..., status: "complete"} } (updated)
 ## What Doesn't Change
 
 - **Tool execution** — all execution types work the same. Gateway just adds space streaming when `targetSpaceId` is present in args.
-- **`sendSpaceMessage`** — unchanged. Still the way agents send text messages.
+- **`sendSpaceMessage`** — unchanged. Still the way agents send text messages. Its `mention` field works independently.
 - **`waiting_tool` flow** — unchanged. Client tools still pause and resume the same way.
 - **Run stream** — still gets all events via `emitEvent`. Space events are additional.
-- **Auth** — agent membership in target space is validated before emitting.
+- **Auth** — agent membership in target space is validated before emitting. Mentioned agent membership in target space is validated before triggering.
+- **Mention behavior** — identical to `sendSpaceMessage` mention: validates agent, creates a new general run for the mentioned agent with `triggerType: 'space_message'` and `senderType: 'agent'`.
 
 ---
 
 ## Ship Order
 
 1. **`displayTool` flag** — add to tool config schema
-2. **Auto-inject `targetSpaceId`** — builder injects into inputSchema for displayTool tools
-3. **Strip `targetSpaceId` from args** — tool-builder wraps execute to remove it
+2. **Auto-inject `targetSpaceId` + `mention`** — builder injects both into inputSchema for displayTool tools
+3. **Strip `targetSpaceId` + `mention` from args** — tool-builder wraps execute to remove both routing fields
 4. **Stream tool events to target space** — stream-processor extracts `targetSpaceId` from partial JSON, emits to that space
 5. **Persist as space message** — create `SmartSpaceMessage` on tool result
-6. **Client tool space messages** — persist with `waiting` status, update on result
-7. **React SDK: `tool-input-delta`** — stream tool args to UI
-8. **Tool docs** — document `displayTool` and update per-type docs with examples
+6. **Trigger mentioned agent** — after tool message is persisted, if `mention` was provided, trigger the mentioned agent (same logic as `sendSpaceMessage` mention)
+7. **Client tool space messages** — persist with `waiting` status, update on result
+8. **React SDK: `tool-input-delta`** — stream tool args to UI
+9. **Tool docs** — document `displayTool` (both `targetSpaceId` and `mention`) and update per-type docs with examples

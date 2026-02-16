@@ -24,7 +24,7 @@ This means responding to a human in Space X and sending a message to Space Y are
 2. **[Space Tools](./02-space-tools.md)** — `readSpaceMessages`, unified `sendSpaceMessage` (send + mention + wait), `delegateToAgent` (admin-only), `getMyRuns`, concurrent run awareness, loop protection
 3. **[Admin Agent](./03-admin-agent.md)** — Admin is a regular agent, triggering rules, `delegateToAgent` for silent handoff
 4. **[Client Tool Calling](./04-client-tools.md)** — Browser (React SDK) + Node.js (Node SDK) client tools
-5. **[Composite Messages & Display Tools](./05-space-ui.md)** — Composite message model (parts accumulation), `displayTool` + `targetSpaceId` routing, cross-space UI pattern
+5. **[Composite Messages & Display Tools](./05-space-ui.md)** — Composite message model (parts accumulation), `displayTool` + `targetSpaceId` + `mention` routing, cross-space UI pattern
 6. **[Streaming](./06-streaming.md)** — Real LLM streaming via `tool-input-delta` interception, two streaming paths
 7. **[Scenarios](./07-scenarios.md)** — Complete end-to-end scenarios (cross-space, multi-agent, service trigger, plan, client tools, agent chains)
 8. **[Migration](./08-migration.md)** — What gets removed/added/changed, summary comparison table
@@ -59,10 +59,10 @@ Refactor `run-runner.ts`, `stream-processor.ts`, `agent-trigger.ts`, `prompt-bui
 Implement the 4 prebuilt tools (`readSpaceMessages`, `sendSpaceMessage`, `delegateToAgent`, `getMyRuns`). Add `adminAgentEntityId` to SmartSpace. Build unified prompt builder with admin/non-admin/single-agent variants. Service trigger API (`POST /api/agents/{id}/trigger`).
 
 ### Phase 3: Composite Messages + Display Tool Routing
-Replace per-tool-call message creation with composite message model (one message per run per space, parts accumulate). Add `displayTool` field to tool config. Auto-inject optional `targetSpaceId` for tools with `displayTool: true`. Update `stream-processor.ts` to route parts to `targetSpaceId` only when provided.
+Replace per-tool-call message creation with composite message model (one message per run per space, parts accumulate). Add `displayTool` field to tool config. Auto-inject optional `targetSpaceId` and `mention` for tools with `displayTool: true`. Update `stream-processor.ts` to route parts to `targetSpaceId` only when provided, and trigger mentioned agents.
 
 ### Phase 4: SDK Updates
-Update react-sdk (`useHsafaRuntime`) to handle composite messages, text-delta from tool-input interception, and `targetSpaceId` routing for display tools. Update node-sdk with service trigger support. Update ui-sdk to render composite message parts (text + custom tool UI inline).
+Update react-sdk (`useHsafaRuntime`) to handle composite messages, text-delta from tool-input interception, and `targetSpaceId` + `mention` routing for display tools. Update node-sdk with service trigger support. Update ui-sdk to render composite message parts (text + custom tool UI inline).
 
 ### Phase 5: Migration + Cleanup
 Remove old code (mentionAgent, routeToAgent, round-robin, reply stack, System Entity type). Run Prisma migrations. Update seeds and test scenarios.

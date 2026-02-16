@@ -42,7 +42,25 @@ const defaultPromptSchema = {
 
 const emptyObjectSchema = { type: 'object', properties: {} } as const;
 
+/**
+ * Wraps an execute function to strip displayTool routing field (targetSpaceId)
+ * before passing args to the actual tool execute.
+ */
+function wrapExecuteForDisplayTool<T extends (...args: any[]) => any>(
+  executeFn: T,
+  isDisplayTool: boolean
+): T {
+  if (!isDisplayTool) return executeFn;
+  return (async (input: unknown, ...rest: any[]) => {
+    const cleaned = { ...(input as Record<string, unknown>) };
+    delete cleaned.targetSpaceId;
+    return executeFn(cleaned, ...rest);
+  }) as unknown as T;
+}
+
 export function buildTool(config: ToolConfig, runContext?: PrebuiltToolContext) {
+  const isDisplayTool = !!(config as any).displayTool;
+
   const inputSchema =
     config.inputSchema ??
     (config.executionType === 'ai-agent' || config.executionType === 'image-generator' ? defaultPromptSchema : emptyObjectSchema);
@@ -59,7 +77,10 @@ export function buildTool(config: ToolConfig, runContext?: PrebuiltToolContext) 
     return tool({
       description: config.description,
       inputSchema: schema,
-      execute: async (input: unknown) => executeBasic(execution, input),
+      execute: wrapExecuteForDisplayTool(
+        async (input: unknown) => executeBasic(execution, input),
+        isDisplayTool
+      ),
     });
   }
 
@@ -67,7 +88,10 @@ export function buildTool(config: ToolConfig, runContext?: PrebuiltToolContext) 
     return tool({
       description: config.description,
       inputSchema: schema,
-      execute: async (input: unknown, options: ToolExecutionOptions) => executeRequest(config.execution, input, options),
+      execute: wrapExecuteForDisplayTool(
+        async (input: unknown, options: ToolExecutionOptions) => executeRequest(config.execution, input, options),
+        isDisplayTool
+      ),
     });
   }
 
@@ -76,7 +100,10 @@ export function buildTool(config: ToolConfig, runContext?: PrebuiltToolContext) 
     return tool({
       description: config.description,
       inputSchema: schema,
-      execute: async (input: unknown) => executeWaiting(execution, input),
+      execute: wrapExecuteForDisplayTool(
+        async (input: unknown) => executeWaiting(execution, input),
+        isDisplayTool
+      ),
     });
   }
 
@@ -84,7 +111,10 @@ export function buildTool(config: ToolConfig, runContext?: PrebuiltToolContext) 
     return tool({
       description: config.description,
       inputSchema: schema,
-      execute: async (input: unknown) => executeCompute(config.execution, input),
+      execute: wrapExecuteForDisplayTool(
+        async (input: unknown) => executeCompute(config.execution, input),
+        isDisplayTool
+      ),
     });
   }
 
@@ -92,7 +122,10 @@ export function buildTool(config: ToolConfig, runContext?: PrebuiltToolContext) 
     return tool({
       description: config.description,
       inputSchema: schema,
-      execute: (input: unknown, options: ToolExecutionOptions) => executeAiAgent(config.execution, input, options),
+      execute: wrapExecuteForDisplayTool(
+        (input: unknown, options: ToolExecutionOptions) => executeAiAgent(config.execution, input, options),
+        isDisplayTool
+      ),
     });
   }
 
@@ -100,7 +133,10 @@ export function buildTool(config: ToolConfig, runContext?: PrebuiltToolContext) 
     return tool({
       description: config.description,
       inputSchema: schema,
-      execute: async (input: unknown, options: ToolExecutionOptions) => executeImageGenerator(config.execution, input, options),
+      execute: wrapExecuteForDisplayTool(
+        async (input: unknown, options: ToolExecutionOptions) => executeImageGenerator(config.execution, input, options),
+        isDisplayTool
+      ),
     });
   }
 

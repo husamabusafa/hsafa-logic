@@ -120,7 +120,7 @@ if (toolName !== 'sendSpaceMessage') {
       type: 'tool_call',
       toolName,
       toolCallId,
-      args: stripRoutingFields(input),
+      args: stripRoutingFields(input), // strips targetSpaceId + mention
       result: null, // filled in when tool result arrives
     });
   }
@@ -142,8 +142,8 @@ The gateway relays run events to the trigger space's SSE channel in real-time. T
 run.created         → client creates empty composite message bubble
 reasoning-delta     → reasoning text accumulates (collapsible, if showAgentReasoning is on)
 tool-input-start    → for routed display tools (`displayTool: true` + `targetSpaceId`): tool card part appears
-tool-input-delta    → for sendSpaceMessage: text part streams. For routed display tools: args stream
-tool-output-available → for routed display tools: result appears. For client tools: UI renders inline
+tool-input-delta    → for sendSpaceMessage: text part streams. For routed display tools: args stream (targetSpaceId+mention stripped)
+tool-output-available → for routed display tools: result appears. If `mention` was provided, mentioned agent is triggered. For client tools: UI renders inline
 run.waiting_tool    → client tool waiting for user input (UI part in composite message)
 run.completed       → composite message finalized
 ```

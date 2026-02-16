@@ -772,6 +772,7 @@ Tool calls are internal by default. For tools configured with `displayTool: true
 - If the AI provides `targetSpaceId`, the tool call is routed into that space's composite message as a `tool_call` part.
 - If `targetSpaceId` is omitted, the tool executes normally and stays internal to the run stream.
 - The gateway strips `targetSpaceId` before calling `execute()`.
+- Agent mentioning/triggering is handled separately via `sendSpaceMessage` with `mention`.
 
 ### 10.2 Execution target
 

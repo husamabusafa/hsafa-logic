@@ -165,7 +165,7 @@ While waiting, if the employee asks for status, a **new run** is created. The ag
 
 # 🧰 Display Tools and Space Routing
 
-## `displayTool` + Auto-Injected `targetSpaceId`
+## `displayTool` + Auto-Injected `targetSpaceId` & `mention`
 
 Tool calls are internal by default. A tool becomes routable to SmartSpaces only when it is configured with:
 
@@ -176,19 +176,21 @@ Tool calls are internal by default. A tool becomes routable to SmartSpaces only 
 }
 ```
 
-When `displayTool: true`, the gateway auto-injects optional `targetSpaceId` into the tool schema seen by the model.
+When `displayTool: true`, the gateway auto-injects optional `targetSpaceId` and `mention` into the tool schema seen by the model.
 
 - If the AI provides `targetSpaceId`, the gateway streams and persists that tool call in the target SmartSpace as a `tool_call` part.
-- If the AI omits `targetSpaceId`, the tool executes normally and remains internal to the run stream.
-- The gateway strips `targetSpaceId` before calling `execute()`.
+- If the AI also provides `mention` (an agent entity ID), the mentioned agent is triggered after the tool call message is posted to the target space — same behavior as `sendSpaceMessage` with `mention`.
+- If the AI omits `targetSpaceId`, the tool executes normally and remains internal to the run stream (`mention` is ignored without a target space).
+- The gateway strips both `targetSpaceId` and `mention` before calling `execute()`.
 
 ### Routing Behavior
 
-| `displayTool` | `targetSpaceId` in call | Result |
-|---|---|---|
-| `false` / omitted | any | Internal execution only (no space message) |
-| `true` | omitted | Internal execution only (silent tool call) |
-| `true` | set | Tool call appears in that SmartSpace's composite message |
+| `displayTool` | `targetSpaceId` in call | `mention` in call | Result |
+|---|---|---|---|
+| `false` / omitted | any | any | Internal execution only (no space message) |
+| `true` | omitted | any | Internal execution only (silent tool call, `mention` ignored) |
+| `true` | set | omitted | Tool call part in target space |
+| `true` | set | set | Tool call part in target space + mentioned agent triggered |
 
 ### Internal / Prebuilt Tools
 
@@ -198,12 +200,12 @@ Prebuilt tools like goals, memory, planning, and context lookups are internal by
 
 # 🎨 Tool UI Configuration (Client-Side)
 
-> **Note:** The gateway decides **whether** a tool call is visible in a SmartSpace (`displayTool` + `targetSpaceId`). The client SDK decides **how** that routed tool call is rendered.
+> **Note:** The gateway decides **whether** a tool call is visible in a SmartSpace (`displayTool` + `targetSpaceId`) and **whether** to trigger an agent (`mention`). The client SDK decides **how** that routed tool call is rendered.
 
 ## Architecture
 
 **Gateway routing responsibilities:**
-- Inject `targetSpaceId` only for tools with `displayTool: true`
+- Inject `targetSpaceId` and `mention` only for tools with `displayTool: true`
 - Relay routed tool events (`tool-input-start`, `tool-input-delta`, `tool-output-available`) to the target SmartSpace
 - Persist routed tool calls as `tool_call` parts in composite messages
 
@@ -224,8 +226,9 @@ Prebuilt tools like goals, memory, planning, and context lookups are internal by
 }
 ```
 
-- `displayTool` controls routing capability (`targetSpaceId` injection)
+- `displayTool` controls routing capability (`targetSpaceId` + `mention` injection)
 - `targetSpaceId` in each call controls where (or whether) the tool appears
+- `mention` in each call controls whether an agent is triggered after the tool message is posted
 - `display.customUI` controls the component used for rendering
 
 ---
@@ -396,7 +399,7 @@ function DatabaseQueryToolUI({ args, result, status }: ToolUIProps) {
 
 ## `displayTool` + Custom UI Integration
 
-`displayTool` and `display.customUI` are complementary:
+`displayTool` (with `targetSpaceId` + `mention`) and `display.customUI` are complementary:
 
 ```json
 {
@@ -406,9 +409,10 @@ function DatabaseQueryToolUI({ args, result, status }: ToolUIProps) {
 }
 ```
 
-- `displayTool: true` enables optional `targetSpaceId` routing
+- `displayTool: true` enables optional `targetSpaceId` routing and `mention` triggering
 - A call with `targetSpaceId` renders a tool part in that SmartSpace
-- A call without `targetSpaceId` stays internal (no SmartSpace tool part)
+- A call with `targetSpaceId` + `mention` renders a tool part AND triggers the mentioned agent
+- A call without `targetSpaceId` stays internal (no SmartSpace tool part, `mention` ignored)
 - `display.customUI` selects the renderer when the part is shown
 
 ## Fallback Behavior

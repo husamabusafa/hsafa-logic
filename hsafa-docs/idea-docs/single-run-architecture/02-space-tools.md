@@ -101,7 +101,7 @@ This single tool replaces the old `sendSpaceMessage` (fire-and-forget) + `sendSp
 
 ### Composite Message
 
-Each `sendSpaceMessage` call adds a **text part** to the run's composite message for that space. Multiple `sendSpaceMessage` calls to the same space within one run accumulate into a single message (see [Composite Messages & Display Tools](./05-space-ui.md)). Client/UI tool calls can also add parts when the tool has `displayTool: true` and the AI provides `targetSpaceId`. The `text` argument streams via `tool-input-delta` to the target space in real-time.
+Each `sendSpaceMessage` call adds a **text part** to the run's composite message for that space. Multiple `sendSpaceMessage` calls to the same space within one run accumulate into a single message (see [Composite Messages & Display Tools](./05-space-ui.md)). Client/UI tool calls can also add parts when the tool has `displayTool: true` and the AI provides `targetSpaceId`. When a display tool call also includes `mention`, the mentioned agent is triggered after the tool message is posted — same behavior as `sendSpaceMessage` with `mention`. The `text` argument streams via `tool-input-delta` to the target space in real-time.
 
 ### Return Values
 

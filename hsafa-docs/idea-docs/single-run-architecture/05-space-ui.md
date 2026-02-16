@@ -51,22 +51,22 @@ Client tool results are filled in when the user interacts (e.g., clicks "Select"
 - **Same space** → parts accumulate into one composite message
 - **Different space** → separate composite message per space (each space gets its own message from this run)
 - **`sendSpaceMessage`** → adds a `text` part (the `text` argument streams via `tool-input-delta`)
-- **Tools with `displayTool: true`** → can add a `tool_call` part when the AI provides `targetSpaceId`
-- **No `targetSpaceId`** → tool executes normally but no space message part is created
+- **Tools with `displayTool: true`** → can add a `tool_call` part when the AI provides `targetSpaceId`. Can also `mention` an agent to trigger them after the tool message is posted.
+- **No `targetSpaceId`** → tool executes normally but no space message part is created (`mention` is ignored without a target space)
 - **`sendSpaceMessage` with `mention`** → finalizes the current composite message for that space, then triggers the mentioned agent's new run (which produces its own composite message)
 
 ---
 
-## Display Tools and Routing (`displayTool` + `targetSpaceId`)
+## Display Tools and Routing (`displayTool` + `targetSpaceId` + `mention`)
 
-Tool display is controlled by a top-level config flag:
+Tool display and agent triggering are controlled by a top-level config flag:
 
-- `displayTool: true` → gateway auto-injects optional `targetSpaceId` into that tool's input schema
+- `displayTool: true` → gateway auto-injects optional `targetSpaceId` and `mention` into that tool's input schema
 - `displayTool: false` (or omitted) → no injection, tool stays internal to the run stream
 
 ### How It Works
 
-The tool creator does **not** add `targetSpaceId` manually. They only set `displayTool: true`.
+The tool creator does **not** add `targetSpaceId` or `mention` manually. They only set `displayTool: true`.
 
 **Tool creator defines:**
 ```json
@@ -93,20 +93,25 @@ The tool creator does **not** add `targetSpaceId` manually. They only set `displ
     "targetSpaceId": {
       "type": "string",
       "description": "Optional: space to show this tool call in. If omitted, tool call is not shown in any space."
+    },
+    "mention": {
+      "type": "string",
+      "description": "Entity ID of an agent to mention. This agent will be triggered after the tool call message is posted to the target space. Only works when targetSpaceId is provided."
     }
   }
 }
 ```
 
-**Gateway strips** `targetSpaceId` from args before passing to the tool's `execute` function — the tool itself never sees it.
+**Gateway strips** `targetSpaceId` and `mention` from args before passing to the tool's `execute` function — the tool itself never sees them.
 
 ### Routing Rules
 
-| `displayTool` | `targetSpaceId` | Where the part appears |
-|---|---|---|
-| `false` / omitted | any | Nowhere (internal tool execution only) |
-| `true` | omitted | Nowhere (silent tool call) |
-| `true` | set | That specific space's composite message |
+| `displayTool` | `targetSpaceId` | `mention` | Where the part appears | Agent triggered? |
+|---|---|---|---|---|
+| `false` / omitted | any | any | Nowhere (internal tool execution only) | No |
+| `true` | omitted | any | Nowhere (silent tool call) | No (`mention` ignored) |
+| `true` | set | omitted | That specific space's composite message | No |
+| `true` | set | set | That specific space's composite message | Yes — mentioned agent gets a new run |
 
 ### Applies to All Tool Types
 
@@ -124,8 +129,10 @@ The tool creator does **not** add `targetSpaceId` manually. They only set `displ
 | `sendSpaceMessage(spaceA, "text")` | Text part in spaceA's composite message |
 | `showProductCard({ ... })` with `displayTool: true` (no targetSpaceId) | No space part (silent tool call) |
 | `showProductCard({ ..., targetSpaceId: spaceB })` | UI part in **spaceB's** composite message |
+| `showProductCard({ ..., targetSpaceId: spaceB, mention: agentC })` | UI part in **spaceB's** composite message + **agentC triggered** |
 | `queryBudgetAPI(...)` with `displayTool: true` (no targetSpaceId) | No space part (silent tool call) |
 | `queryBudgetAPI({ ..., targetSpaceId: spaceB })` with `displayTool: true` | Tool-call part in **spaceB's** composite message |
+| `queryBudgetAPI({ ..., targetSpaceId: spaceB, mention: agentD })` | Tool-call part in **spaceB's** + **agentD triggered** |
 | `readSpaceMessages(spaceB)` | Nowhere — internal only |
 
 ---
@@ -138,9 +145,10 @@ Since runs are general (not space-bound), UI visibility depends on **event relay
 2. Agent calls `sendSpaceMessage(spaceX, ...)` → `text-delta` events stream to Space X (text part)
 3. Agent calls `showProductCard(...)` (no targetSpaceId) → no space relay for that tool call
 4. Agent calls `showApprovalForm({ ..., targetSpaceId: spaceY })` → events relay to **Space Y**
-5. Space Y subscribers render the approval form. User clicks "Approve" → submits result.
-6. Run resumes, agent continues
-7. Agent calls `sendSpaceMessage(spaceX, "Budget approved!")` → text streams into Space X's composite message
+5. Agent calls `generateImage({ ..., targetSpaceId: spaceZ, mention: designAgent })` → events relay to **Space Z**, design agent triggered after image appears
+6. Space Y subscribers render the approval form. User clicks "Approve" → submits result.
+7. Run resumes, agent continues
+8. Agent calls `sendSpaceMessage(spaceX, "Budget approved!")` → text streams into Space X's composite message
 
 ### Streaming Order
 
@@ -177,7 +185,9 @@ Agent triggered from Space A (CEO's space)
 
 No agent-to-agent delegation needed for cross-space UI. The agent just routes the display tool directly.
 
-For cases where the agent needs another agent to **reason** about something in a different space, use `sendSpaceMessage` with `mention` + `wait` (triggers a new run for the other agent). But for just showing UI, `targetSpaceId` is simpler.
+To also **trigger another agent** to respond to the tool result, add `mention` to the tool call (e.g., `showApprovalForm({ ..., targetSpaceId: financeSpace, mention: financeAgentId })`). The mentioned agent is triggered after the tool message is posted — same behavior as `sendSpaceMessage` with `mention`.
+
+For cases where the agent needs another agent to **reason** about something in a different space, use `sendSpaceMessage` with `mention` + `wait` (triggers a new run for the other agent). But for just showing UI, `targetSpaceId` is simpler. For showing UI AND triggering an agent, `targetSpaceId` + `mention` on the tool call is the most concise option.
 
 ---
 

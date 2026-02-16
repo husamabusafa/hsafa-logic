@@ -189,6 +189,7 @@ export async function executeRun(runId: string): Promise<void> {
         agentEntityId: run.agentEntityId,
         visibleTools: built.visibleToolNames,
         targetSpaceId: run.triggerSpaceId ?? undefined,
+        displayTools: built.displayToolNames,
       },
     );
 
