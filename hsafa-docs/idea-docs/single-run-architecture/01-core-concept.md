@@ -164,10 +164,10 @@ The run is general, but the user in the trigger space still needs to see the age
 - `reasoning-delta` → shown as collapsible thinking (if `showAgentReasoning` is on)
 - `tool-input-delta` for `sendSpaceMessage` → text part streams into composite message
 - `tool-input-available` for client/UI tools → UI part renders inline in composite message
-- Tool calls with `minimal`/`full` visibility → tool card part appears in composite message
-- Hidden tools (`readSpaceMessages`, `getMyRuns`, etc.) → not relayed, invisible
+- Tools with `displayTool: true` and a provided `targetSpaceId` → tool_call part appears in that target space's composite message
+- Internal tools (`readSpaceMessages`, `getMyRuns`, etc.) → not relayed, invisible
 
-The agent's internal text (LLM text output) is NOT relayed — it's internal reasoning. The actual response comes via `sendSpaceMessage`, which streams the `text` argument in real-time via tool-input-delta interception. See [Composite Messages & Tool Visibility](./05-space-ui.md) for full details.
+The agent's internal text (LLM text output) is NOT relayed — it's internal reasoning. The actual response comes via `sendSpaceMessage`, which streams the `text` argument in real-time via tool-input-delta interception. See [Composite Messages & Display Tools](./05-space-ui.md) for full details.
 
 ```
 User sees in Space X (one composite message):

@@ -2,7 +2,7 @@
 
 Client tools are tools with no server-side `execute` function. The LLM decides to call the tool, the gateway pauses the run, and the **client** (browser or Node.js backend) provides the result.
 
-Client tools attach as `tool_call` parts to the run's **composite message** (see [Composite Messages & Tool Visibility](./05-space-ui.md)). By default they appear in the trigger space, but the agent can route them to any space using `targetSpaceId` or `targetSpaceIds` — these fields are **auto-injected** by the gateway into every tool's input schema at build time. The tool creator never adds them, and the gateway strips them before passing args to `execute`.
+Client tools can attach as `tool_call` parts to the run's **composite message** (see [Composite Messages & Display Tools](./05-space-ui.md)). This happens only when the tool is configured with `displayTool: true` and the AI provides `targetSpaceId` (auto-injected by the gateway). If `targetSpaceId` is omitted, the client tool call stays internal to the run stream.
 
 ## How It Works
 

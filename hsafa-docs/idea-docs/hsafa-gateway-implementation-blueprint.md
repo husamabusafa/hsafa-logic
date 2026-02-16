@@ -765,16 +765,13 @@ When `ToolResult` arrives:
 
 ## 10) Tool System Design
 
-### 10.1 Tool visibility modes (from idea doc)
+### 10.1 Display tool routing (`displayTool` + auto-injected `targetSpaceId`)
 
-Add `visibility` to tool calls (in `ToolCall` metadata):
+Tool calls are internal by default. For tools configured with `displayTool: true`, the gateway auto-injects optional `targetSpaceId` into the tool schema presented to the model.
 
-- `internal` (Prebuilt tools)
-  - never written into the SmartSpace timeline
-  - only stored as Run events
-- `additional`
-  - written into the SmartSpace timeline as an assistant tool-call part
-  - any SmartSpace member can see and respond
+- If the AI provides `targetSpaceId`, the tool call is routed into that space's composite message as a `tool_call` part.
+- If `targetSpaceId` is omitted, the tool executes normally and stays internal to the run stream.
+- The gateway strips `targetSpaceId` before calling `execute()`.
 
 ### 10.2 Execution target
 
@@ -1090,8 +1087,7 @@ The gateway uses composable Express middleware:
 - ✅ `delegateToAgent` (admin-only silent handoff)
 - ✅ Agent reasoning (GPT-5 with reasoning, collapsible UI)
 - ⬜ Composite message model (one message per run per space, parts accumulate)
-- ⬜ Tool visibility (hidden/minimal/full)
-- ⬜ `targetSpaceId` auto-injection for tool call routing
+- ⬜ `displayTool` routing (`displayTool: true` + auto-injected `targetSpaceId`) for tool space messages
 - ⬜ CLI (`@hsafa/cli`)
 - ⬜ Python SDK
 
@@ -1099,4 +1095,4 @@ The gateway uses composable Express middleware:
 
 ## Status
 
-- **Gateway core is complete.** Single-run architecture with general-purpose runs, `sendSpaceMessage` with real LLM streaming, admin agent pattern, service triggers, reasoning, client tools, and 2-key authentication are all implemented. SDKs for Node.js and React are built. Next steps: composite message model, tool visibility, CLI, and Python SDK.
+- **Gateway core is complete.** Single-run architecture with general-purpose runs, `sendSpaceMessage` with real LLM streaming, admin agent pattern, service triggers, reasoning, client tools, and 2-key authentication are all implemented. SDKs for Node.js and React are built. Next steps: composite message model, `displayTool` routing, CLI, and Python SDK.

@@ -31,8 +31,7 @@
 - `emitToSpace` function for streaming tool-input text deltas to target space SSE channels
 - Concurrent run notice in system prompt (via `prompt-builder.ts`)
 - **Composite message model** — one message per run per space, parts accumulate (text, tool_call, tool-card). Replaces per-tool-call message creation.
-- **Tool visibility** — `hidden` (default for server tools) | `minimal` | `full`. Prebuilt tools are always hidden. Client tools are always visible.
-- **`targetSpaceId` / `targetSpaceIds`** auto-injection — gateway injects optional routing fields into every tool's schema at build time, allowing agents to route tool calls (especially UI) to any space
+- **Display tool routing** — add top-level `displayTool` flag on tools. For tools with `displayTool: true`, gateway auto-injects optional `targetSpaceId` so the AI can route tool calls to a specific space.
 
 ## What Stays the Same
 
@@ -45,10 +44,10 @@
 
 ## What Changes
 
-- **`run-runner.ts`** — No longer auto-persists assistant messages to a space. The run just executes and completes. Composite messages are built incrementally by `sendSpaceMessage` (text parts) and visible tool calls (tool_call parts) during the run. On run completion, composite messages are finalized. No more mention chain handling, reply stack, or delegate signal processing.
+- **`run-runner.ts`** — No longer auto-persists assistant messages to a space. The run just executes and completes. Composite messages are built incrementally by `sendSpaceMessage` (text parts) and routed display tool calls (tool_call parts) during the run. On run completion, composite messages are finalized. No more mention chain handling, reply stack, or delegate signal processing.
 - **`prompt-builder.ts`** — Single unified prompt builder for ALL agents (admin and non-admin). Same structure: agent identity, space members, trigger context. No more separate admin/non-admin/multi-agent/goToSpace/plan-specific builders.
 - **`agent-trigger.ts`** — `triggerOneAgent` always triggers admin agent for human messages. Agent messages with `mention` trigger the mentioned agent. Agent messages without `mention` trigger nobody. New `triggerFromService` for service triggers.
-- **`builder.ts`** — Inject `sendSpaceMessage` (unified), `readSpaceMessages`, `getMyRuns` for all agents. Inject `delegateToAgent` only for admin agent. Auto-inject `targetSpaceId`/`targetSpaceIds` optional fields into every tool's input schema. Strip routing fields before passing to `execute`.
+- **`builder.ts`** — Inject `sendSpaceMessage` (unified), `readSpaceMessages`, `getMyRuns` for all agents. Inject `delegateToAgent` only for admin agent. For tools with `displayTool: true`, auto-inject optional `targetSpaceId` into input schema. Strip `targetSpaceId` before passing args to `execute`.
 - **`stream-processor.ts`** — LLM text output is logged but NOT emitted to any space. Intercepts `tool-input-delta` for `sendSpaceMessage` calls and streams the `text` field to the target space in real-time. Detects `delegateToAgent` signal (cancel admin run, re-trigger target agent). No more mention chain or reply stack signal detection.
 - **Entity model** — Only `human` and `agent` entity types. `system` type removed. Services interact via API without entity records.
 - **`useHsafaRuntime` (react-sdk)** — Handles `text-delta` events from `sendSpaceMessage` tool-input interception (same event shape as direct run streaming). Run events received via relay are attributed to the agent entity.
@@ -75,5 +74,5 @@
 | Concurrent runs | No awareness | `getMyRuns` + system prompt notice |
 | Space tools | 5 tools (send, sendAndWait, read, getMyRuns, routeToAgent) | 4 tools (sendSpaceMessage unified, readSpaceMessages, delegateToAgent admin-only, getMyRuns) |
 | Messages | One message per LLM response | Composite message per run per space (text + UI + tool-card parts) |
-| Tool visibility | All tools visible as cards | Configurable: hidden (default) / minimal / full. Client tools always visible |
+| Tool routing/display | All tools visible as cards | Explicit routing: tool appears only when `displayTool: true` and call includes `targetSpaceId`; otherwise internal |
 | Code complexity | 3+ prompt builders, mention chain, reply stack, delegate/route signals | 1 prompt builder, 1 run type, 4 space tools |

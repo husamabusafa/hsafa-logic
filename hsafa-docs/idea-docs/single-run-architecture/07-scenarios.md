@@ -18,7 +18,7 @@ Husam (Space X): "What's our Q4 budget status?"
 2. AI Assistant (internal reasoning): "I need budget data from the Finance space"
 
 3. AI Assistant calls readSpaceMessages(spaceY, 5)
-   → [relayed to Space X: tool card appears]
+   → internal tool call (no space part shown)
    → tool returns: [
        { sender: "Finance Agent", text: "Monthly report posted...", time: "..." },
        { sender: "Ahmad", text: "Can we get updated numbers?", time: "..." }
@@ -26,21 +26,22 @@ Husam (Space X): "What's our Q4 budget status?"
 
 4. AI Assistant calls sendSpaceMessage(spaceY, "What's the current Q4 budget status? Husam needs a summary.",
      mention: financeAgentEntityId, wait: { for: [{ type: "agent" }], timeout: 60 })
-   → [relayed to Space X: tool card shows "waiting for reply..."]
+   → message streams into Space Y; wait state is internal to the run
 
    --- In Space Y (Finance Team): ---
    a. AI Assistant's message streams into Space Y (real LLM streaming via tool-input-delta)
    b. Gateway creates a NEW GENERAL RUN for Finance Agent (mentioned agent)
       Trigger: { type: "space_message", senderType: "agent", senderName: "AI Assistant", mentionReason: "Q4 budget question" }
       Gateway relays this run's events to Space Y
-   c. Finance Agent calls queryBudgetAPI tool → [relayed to Space Y: tool card]
+   c. Finance Agent calls `queryBudgetAPI({ ..., targetSpaceId: spaceY })` (tool has `displayTool: true`)
+      → tool card appears in Space Y
    d. Finance Agent calls sendSpaceMessage(spaceY, "Q4 budget: $2.1M allocated, $1.7M spent, $400K remaining...")
       → streams into Space Y (real LLM tokens)
    e. Finance Agent's run completes
    --- Back in AI Assistant's run: ---
 
 5. sendSpaceMessage wait resolves: { reply: "Q4 budget: $2.1M allocated...", repliedBy: "Finance Agent" }
-   → [relayed to Space X: tool result appears]
+   → internal tool result; AI Assistant continues
 
 6. AI Assistant calls sendSpaceMessage(spaceX, "Here's the Q4 budget from our finance team: $2.1M allocated, $1.7M spent, with $400K remaining...")
    → streams into Space X (real LLM tokens)
@@ -55,7 +56,7 @@ AI Assistant:
   Here's the Q4 budget from our finance team: $2.1M allocated... (text part, REAL LLM streaming)
 ```
 
-`readSpaceMessages` is hidden (not visible to the user). The cross-space `sendSpaceMessage` with `wait` is also hidden tool mechanics — only the final text parts appear in the composite message.
+`readSpaceMessages` is internal (not visible to the user). The cross-space `sendSpaceMessage` with `wait` is also internal tool mechanics — only the final text parts appear in the composite message.
 
 **What users see in Space Y (streamed):**
 ```
@@ -92,10 +93,10 @@ Husam: "Roll back the last deployment, it broke the login page"
    Gateway relays this run's events to "Engineering Ops" space
 
 5. Deploy-Agent sees Husam's message directly — as if Ops-Agent was never involved
-6. Deploy-Agent calls checkDeployments HTTP tool → sees deploy #287
-   → [relayed: tool card appears]
-7. Deploy-Agent calls rollbackDeploy HTTP tool → success
-   → [relayed: tool card appears]
+6. Deploy-Agent calls `checkDeployments({ ..., targetSpaceId: opsSpace })` (tool has `displayTool: true`) → sees deploy #287
+   → tool card appears in Engineering Ops
+7. Deploy-Agent calls `rollbackDeploy({ ..., targetSpaceId: opsSpace })` (tool has `displayTool: true`) → success
+   → tool card appears in Engineering Ops
 8. Deploy-Agent calls sendSpaceMessage(opsSpace, "Done — I've rolled back deployment #287. The login page should be back to normal in about 2 minutes.")
    → streams into Engineering Ops (real LLM tokens)
 ```
@@ -116,8 +117,8 @@ The delegation is invisible — Husam sees Deploy-Agent respond directly to thei
 **Setup:**
 - Space: "Shopping Assistant"
 - Members: Sarah (human), Shop-Agent (agent, admin)
-- Agent has a client tool: `showProductCard` (no server-side execute)
-- Agent has a server tool: `searchProducts` (HTTP, visibility: `minimal`)
+- Agent has a client tool: `showProductCard` (no server-side execute, `displayTool: true`)
+- Agent has a server tool: `searchProducts` (HTTP, `displayTool: true`)
 
 **Flow:**
 
@@ -132,11 +133,11 @@ Sarah: "Show me some laptops under $1500"
 2. Agent calls sendSpaceMessage(shopSpace, "Let me search for laptops under $1,500 for you.")
    → text part streams into composite message via tool-input-delta
 
-3. Agent calls searchProducts HTTP tool → gets 3 results
-   → tool card part added to composite message (visibility: minimal → shows "searchProducts ✓")
+3. Agent calls `searchProducts({ query: "laptops under 1500", targetSpaceId: shopSpace })` → gets 3 results
+   → tool card part added to composite message (routed via `targetSpaceId` → shows "searchProducts ✓")
 
-4. Agent calls showProductCard({ productId: "mac-air", name: "MacBook Air M4", price: 1299 })
-5. Agent calls showProductCard({ productId: "thinkpad-x1", name: "ThinkPad X1", price: 1449 })
+4. Agent calls showProductCard({ productId: "mac-air", name: "MacBook Air M4", price: 1299, targetSpaceId: shopSpace })
+5. Agent calls showProductCard({ productId: "thinkpad-x1", name: "ThinkPad X1", price: 1449, targetSpaceId: shopSpace })
    → 2 client tool_call parts added to composite message → stream ends
 
 6. Gateway detects pending client tool calls → sets run status: waiting_tool
@@ -164,7 +165,7 @@ Sarah: "Show me some laptops under $1500"
 Sarah: Show me some laptops under $1500
 Shop-Agent:
   Let me search for laptops under $1,500 for you. (streamed text part)
-  [searchProducts ✓] (tool card part, minimal visibility)
+  [searchProducts ✓] (tool card part, routed with `targetSpaceId`)
   ┌─────────────────────────────┐  ┌─────────────────────────────┐
   │ MacBook Air M4       $1,299 │  │ ThinkPad X1 Carbon   $1,449 │
   │ [image]                     │  │ [image]                     │
@@ -180,7 +181,7 @@ Shop-Agent:
   "id": "msg-123", "spaceId": "shopSpace", "entityId": "shop-agent", "runId": "run-abc",
   "parts": [
     { "type": "text", "text": "Let me search for laptops under $1,500 for you." },
-    { "type": "tool_call", "toolName": "searchProducts", "toolCallId": "call-0", "visibility": "minimal", "status": "done" },
+    { "type": "tool_call", "toolName": "searchProducts", "toolCallId": "call-0", "args": { "query": "laptops under 1500" }, "status": "done" },
     { "type": "tool_call", "toolName": "showProductCard", "toolCallId": "call-1", "args": { "productId": "mac-air", "name": "MacBook Air M4", "price": 1299 }, "result": { "selected": "mac-air" } },
     { "type": "tool_call", "toolName": "showProductCard", "toolCallId": "call-2", "args": { "productId": "thinkpad-x1", "name": "ThinkPad X1", "price": 1449 }, "result": { "selected": null } },
     { "type": "text", "text": "Great choice! The MacBook Air M4 at $1,299 is excellent. Want me to add it to your cart?" }
@@ -287,13 +288,12 @@ Husam (Space X): "Tell Ahmad the meeting is moved to 3 PM, get his confirmation"
 2. AI Assistant reasons: "I need to message Ahmad's space and wait for his reply"
 3. AI Assistant calls sendSpaceMessage(spaceY, "Hey Ahmad, the meeting got moved to 3 PM. Can you confirm?",
      wait: { for: [{ type: "entity", entityId: "entity-ahmad" }], timeout: 90 })
-   → [relayed to Space X: tool card shows "waiting for reply..."]
+   → no tool card in Space X (internal wait mechanics)
    → Message streams into Space Y (real LLM tokens via tool-input-delta)
    → No agent mentioned — this is a message for Ahmad (human) to read
 
 4. Ahmad sees the message in Space Y, types: "Yes, 3 PM works for me"
    → AI Assistant's wait resolves: { reply: "Yes, 3 PM works for me", repliedBy: "Ahmad" }
-   → [relayed to Space X: tool result appears]
 
 5. AI Assistant calls sendSpaceMessage(spaceX, "Ahmad confirmed — he'll be at the 3 PM meeting.")
    → streams into Space X (real LLM tokens)
@@ -302,7 +302,7 @@ Husam (Space X): "Tell Ahmad the meeting is moved to 3 PM, get his confirmation"
 **What Husam sees (Space X):**
 ```
 Husam: Tell Ahmad the meeting is moved to 3 PM, get his confirmation
-AI Assistant: [thinking...] [tool: sendSpaceMessage → waiting... ✓]
+AI Assistant: [thinking...]
   Ahmad confirmed — he'll be at the 3 PM meeting. (real LLM streaming)
 ```
 

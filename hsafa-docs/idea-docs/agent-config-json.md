@@ -56,7 +56,8 @@ Every tool has these common fields:
 | `inputSchema` | JSON Schema | varies | Parameters the tool accepts. |
 | `executionType` | string | no (defaults to `"basic"`) | Determines how the tool runs. |
 | `execution` | object | depends on type | Type-specific execution config. |
-| `display` | object | no | UI display hints (`mode`, `showInput`, `showOutput`, `customUI`). |
+| `displayTool` | boolean | no | When `true`, gateway auto-injects optional `targetSpaceId` into the tool schema for space routing. |
+| `display` | object | no | UI rendering hints (for example `customUI`). |
 
 ### Execution Types
 

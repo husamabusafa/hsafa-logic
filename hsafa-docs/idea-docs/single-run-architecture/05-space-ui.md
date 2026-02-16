@@ -1,8 +1,8 @@
-# Composite Messages & Tool Visibility
+# Composite Messages & Display Tools
 
 ## The Composite Message Model
 
-A run produces a **single composite message per space**. Every visible tool call within a run adds a **part** to that message. The human sees one cohesive message — not separate bubbles for each tool call.
+A run produces a **single composite message per space**. Every display-enabled tool call within a run can add a **part** to that message. The human sees one cohesive message — not separate bubbles for each tool call.
 
 ### How Parts Accumulate
 
@@ -10,10 +10,10 @@ A run produces a **single composite message per space**. Every visible tool call
 Run triggered from Shopping Space
 
 Agent calls sendSpaceMessage(shopSpace, "Here are some laptops:")     → text part
-Agent calls showProductCard({ name: "MacBook Pro", price: 1299 })     → UI part (client tool)
-Agent calls showProductCard({ name: "Dell XPS 15", price: 1199 })     → UI part (client tool)
+Agent calls showProductCard({ name: "MacBook Pro", price: 1299, targetSpaceId: shopSpace })     → UI part (client tool)
+Agent calls showProductCard({ name: "Dell XPS 15", price: 1199, targetSpaceId: shopSpace })     → UI part (client tool)
 Agent calls sendSpaceMessage(shopSpace, "Want me to add any?")        → text part
-Agent calls searchInventory({ query: "laptop" })                      → hidden (server tool)
+Agent calls searchInventory({ query: "laptop", targetSpaceId: opsSpace }) → tool part in opsSpace (displayTool: true)
 
 Run completes → message finalized
 ```
@@ -51,66 +51,29 @@ Client tool results are filled in when the user interacts (e.g., clicks "Select"
 - **Same space** → parts accumulate into one composite message
 - **Different space** → separate composite message per space (each space gets its own message from this run)
 - **`sendSpaceMessage`** → adds a `text` part (the `text` argument streams via `tool-input-delta`)
-- **Client/UI tools** → add a `tool_call` part (rendered inline by the client SDK). Defaults to the **trigger space's** message, but can target any space via `targetSpaceId` (see Tool Call Routing below)
-- **Server tools with visibility** → same routing rules. `hidden` tools are not added as parts. `minimal`/`full` tools appear as tool-card parts in the target space
+- **Tools with `displayTool: true`** → can add a `tool_call` part when the AI provides `targetSpaceId`
+- **No `targetSpaceId`** → tool executes normally but no space message part is created
 - **`sendSpaceMessage` with `mention`** → finalizes the current composite message for that space, then triggers the mentioned agent's new run (which produces its own composite message)
 
 ---
 
-## Tool Visibility
+## Display Tools and Routing (`displayTool` + `targetSpaceId`)
 
-Not all tools should be visible to the human. Each tool has a visibility level that controls whether it appears as a part in the composite message.
+Tool display is controlled by a top-level config flag:
 
-### Visibility Levels
-
-| Level | What the human sees | Use for |
-|-------|-------------------|---------|
-| `hidden` | Nothing — tool call is invisible | Internal tools (`readSpaceMessages`, `getMyRuns`, helper tools) |
-| `minimal` | Tool name + status (calling → done) | Server tools where you want transparency (`queryBudgetAPI`, `searchInventory`) |
-| `full` | Tool name, arguments, and result | Debug/admin visibility |
-
-### Default Visibility by Tool Type
-
-| Tool | Visibility | Reason |
-|------|-----------|--------|
-| `sendSpaceMessage` | Special — streams `text` as a text part, tool mechanics invisible | The message IS the visible output |
-| `delegateToAgent` | `hidden` | Silent handoff, run gets canceled |
-| `skipResponse` | `hidden` | Silent, no output |
-| `readSpaceMessages` | `hidden` | Internal data gathering |
-| `getMyRuns` | `hidden` | Internal awareness |
-| Client/UI tools | Always visible | The whole point is custom UI |
-| Server-side tools (HTTP, MCP, etc.) | Configurable per tool: `hidden` \| `minimal` \| `full` | Owner decides |
-
-### Tool Visibility Configuration
-
-Tool visibility is set per tool in the agent's tool config:
-
-```json
-{
-  "name": "queryBudgetAPI",
-  "executionType": "http",
-  "visibility": "minimal",
-  ...
-}
-```
-
-Default is `hidden` for server-side tools. Prebuilt tools and client tools have fixed visibility (see table above).
-
----
-
-## Tool Call Routing (`targetSpaceId`)
-
-By default, tool call parts appear in the **trigger space's** composite message. But the agent can route any tool call to a specific space (or multiple spaces) using `targetSpaceId` or `targetSpaceIds`.
+- `displayTool: true` → gateway auto-injects optional `targetSpaceId` into that tool's input schema
+- `displayTool: false` (or omitted) → no injection, tool stays internal to the run stream
 
 ### How It Works
 
-The gateway **auto-injects** `targetSpaceId` and `targetSpaceIds` as optional parameters into every tool's input schema at build time. The tool creator never adds them manually.
+The tool creator does **not** add `targetSpaceId` manually. They only set `displayTool: true`.
 
 **Tool creator defines:**
 ```json
 {
   "name": "showApprovalForm",
   "executionType": "basic",
+  "displayTool": true,
   "execution": { "mode": "no-execution" },
   "inputSchema": {
     "properties": {
@@ -129,33 +92,28 @@ The gateway **auto-injects** `targetSpaceId` and `targetSpaceIds` as optional pa
     "description": { "type": "string" },
     "targetSpaceId": {
       "type": "string",
-      "description": "Optional: space to show this tool call in. Defaults to trigger space."
-    },
-    "targetSpaceIds": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "Optional: show this tool call in multiple spaces."
+      "description": "Optional: space to show this tool call in. If omitted, tool call is not shown in any space."
     }
   }
 }
 ```
 
-**Gateway strips** `targetSpaceId`/`targetSpaceIds` from the args before passing to the tool's `execute` function — the tool itself never sees them.
+**Gateway strips** `targetSpaceId` from args before passing to the tool's `execute` function — the tool itself never sees it.
 
 ### Routing Rules
 
-| `targetSpaceId` | `targetSpaceIds` | Where the part appears |
+| `displayTool` | `targetSpaceId` | Where the part appears |
 |---|---|---|
-| Omitted | Omitted | Trigger space (default) |
-| Set | — | That specific space's composite message |
-| — | Set | Each listed space gets the part in its own composite message |
+| `false` / omitted | any | Nowhere (internal tool execution only) |
+| `true` | omitted | Nowhere (silent tool call) |
+| `true` | set | That specific space's composite message |
 
 ### Applies to All Tool Types
 
 - **Client/UI tools** → UI renders in the target space. That space's client handles the interaction (`run.waiting_tool` relayed there).
-- **Server tools with `minimal`/`full` visibility** → tool card appears in the target space's composite message.
+- **Server tools** → tool call/result card appears in the target space when `targetSpaceId` is set.
 - **`sendSpaceMessage`** → already has its own `spaceId`, so `targetSpaceId` is not injected (not needed).
-- **Prebuilt tools** (`readSpaceMessages`, `getMyRuns`, etc.) → always `hidden`, so routing is irrelevant.
+- **Prebuilt tools** (`readSpaceMessages`, `getMyRuns`, etc.) → internal by design unless explicitly modeled as display tools.
 
 ---
 
@@ -164,12 +122,11 @@ The gateway **auto-injects** `targetSpaceId` and `targetSpaceIds` as optional pa
 | Scenario | Where it appears |
 |----------|------------------|
 | `sendSpaceMessage(spaceA, "text")` | Text part in spaceA's composite message |
-| `showProductCard({ ... })` (no targetSpaceId) | UI part in the **trigger space's** composite message |
+| `showProductCard({ ... })` with `displayTool: true` (no targetSpaceId) | No space part (silent tool call) |
 | `showProductCard({ ..., targetSpaceId: spaceB })` | UI part in **spaceB's** composite message |
-| `showAlert({ ..., targetSpaceIds: [spaceA, spaceB] })` | UI part in **both** spaceA and spaceB composite messages |
-| `queryBudgetAPI(...)` (server tool, `minimal`) | Tool-card part in the **trigger space's** composite message |
-| `queryBudgetAPI({ ..., targetSpaceId: spaceB })` (`minimal`) | Tool-card part in **spaceB's** composite message |
-| `readSpaceMessages(spaceB)` (prebuilt, `hidden`) | Nowhere — invisible |
+| `queryBudgetAPI(...)` with `displayTool: true` (no targetSpaceId) | No space part (silent tool call) |
+| `queryBudgetAPI({ ..., targetSpaceId: spaceB })` with `displayTool: true` | Tool-call part in **spaceB's** composite message |
+| `readSpaceMessages(spaceB)` | Nowhere — internal only |
 
 ---
 
@@ -179,8 +136,8 @@ Since runs are general (not space-bound), UI visibility depends on **event relay
 
 1. Run triggered by Space X → gateway notes `triggerSpaceId = spaceX`
 2. Agent calls `sendSpaceMessage(spaceX, ...)` → `text-delta` events stream to Space X (text part)
-3. Agent calls `showProductCard(...)` (no targetSpaceId) → events relay to Space X (default)
-4. Agent calls `showApprovalForm({ ..., targetSpaceId: spaceY })` → events relay to **Space Y** instead
+3. Agent calls `showProductCard(...)` (no targetSpaceId) → no space relay for that tool call
+4. Agent calls `showApprovalForm({ ..., targetSpaceId: spaceY })` → events relay to **Space Y**
 5. Space Y subscribers render the approval form. User clicks "Approve" → submits result.
 6. Run resumes, agent continues
 7. Agent calls `sendSpaceMessage(spaceX, "Budget approved!")` → text streams into Space X's composite message
@@ -199,7 +156,7 @@ All parts within the same space appear in one message bubble.
 
 ## Cross-Space UI Pattern
 
-With `targetSpaceId`, cross-space UI is simple — the agent directly routes tool calls to any space it's a member of:
+With `targetSpaceId`, cross-space UI is simple — the agent directly routes display tools to any space it's a member of:
 
 ```
 Agent triggered from Space A (CEO's space)
@@ -218,7 +175,7 @@ Agent triggered from Space A (CEO's space)
    → text part appended to spaceA's composite message
 ```
 
-No agent-to-agent delegation needed for cross-space UI. The agent just routes the tool call directly.
+No agent-to-agent delegation needed for cross-space UI. The agent just routes the display tool directly.
 
 For cases where the agent needs another agent to **reason** about something in a different space, use `sendSpaceMessage` with `mention` + `wait` (triggers a new run for the other agent). But for just showing UI, `targetSpaceId` is simpler.
 

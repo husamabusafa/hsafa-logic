@@ -107,9 +107,9 @@ if (toolName === 'sendSpaceMessage') {
   spaceMessageStreams.delete(id);
 }
 
-// On tool-call complete — add tool_call part for visible tools
-if (toolName !== 'sendSpaceMessage' && getToolVisibility(toolName) !== 'hidden') {
-  const targetSpaceId = input.targetSpaceId || triggerSpaceId;
+// On tool-call complete — add tool_call part for display tools routed to a space
+if (toolName !== 'sendSpaceMessage') {
+  const targetSpaceId = typeof input.targetSpaceId === 'string' ? input.targetSpaceId : null;
   if (targetSpaceId) {
     const compositeMsg = await getOrCreateCompositeMessage({
       runId,
@@ -122,7 +122,6 @@ if (toolName !== 'sendSpaceMessage' && getToolVisibility(toolName) !== 'hidden')
       toolCallId,
       args: stripRoutingFields(input),
       result: null, // filled in when tool result arrives
-      visibility: getToolVisibility(toolName),
     });
   }
 }
@@ -142,9 +141,9 @@ The gateway relays run events to the trigger space's SSE channel in real-time. T
 ```
 run.created         → client creates empty composite message bubble
 reasoning-delta     → reasoning text accumulates (collapsible, if showAgentReasoning is on)
-tool-input-start    → for visible tools (minimal/full): tool card part appears
-tool-input-delta    → for sendSpaceMessage: text part streams. For visible tools: args stream
-tool-output-available → for visible tools: result appears. For client tools: UI renders inline
+tool-input-start    → for routed display tools (`displayTool: true` + `targetSpaceId`): tool card part appears
+tool-input-delta    → for sendSpaceMessage: text part streams. For routed display tools: args stream
+tool-output-available → for routed display tools: result appears. For client tools: UI renders inline
 run.waiting_tool    → client tool waiting for user input (UI part in composite message)
 run.completed       → composite message finalized
 ```
@@ -175,7 +174,7 @@ Husam: What's the Q4 budget?
 
 AI Assistant (one composite message, parts appear in order):
   [thinking...] (reasoning, if showAgentReasoning is on)
-  [tool: readSpaceMessages ✓] (if visibility is minimal/full)
+  [tool: queryBudgetAPI ✓] (if tool has `displayTool: true` and call includes `targetSpaceId`)
   Here's the Q4 budget: $2.1M allocated, $1.7M spent... (text part, REAL LLM streaming)
   [Budget Chart] (client tool UI part, rendered inline)
   Would you like me to break this down by department? (text part, REAL LLM streaming)
@@ -204,18 +203,18 @@ For `sendSpaceMessage`-originated text-deltas, the event includes the `entityId`
 
 ## Why This Works for Multiple Tool Calls
 
-The AI SDK tool loop continues after each tool call. An agent can call multiple tools in one run, and all visible parts accumulate into composite messages:
+The AI SDK tool loop continues after each tool call. An agent can call multiple tools in one run, and all routed display parts accumulate into composite messages:
 
 ```
-Step 1: Agent calls readSpaceMessages(financeSpace) → hidden (internal)
+Step 1: Agent calls readSpaceMessages(financeSpace) → internal only (no space part)
 Step 2: Agent calls sendSpaceMessage(spaceX, "Here's the budget...") → text part streams to Space X
-Step 3: Agent calls showBudgetChart({ data: [...] }) → UI part in Space X (trigger space, default)
+Step 3: Agent calls showBudgetChart({ data: [...], targetSpaceId: spaceX }) → UI part in Space X
 Step 4: Agent calls sendSpaceMessage(spaceX, "Want a breakdown?") → text part appended to Space X message
 Step 5: Agent calls showApprovalForm({ targetSpaceId: spaceY, amount: 50000 }) → UI part routed to Space Y
 Step 6: Agent calls sendSpaceMessage(spaceY, "FYI, budget reviewed") → text part in Space Y message
 Step 7: Agent finishes (text output = internal summary, not posted)
 ```
 
-Space X gets one composite message with 3 parts: [text, chart, text]. Space Y gets a separate composite message with 2 parts: [approval form, text]. Tool calls can be routed to any space via `targetSpaceId` (auto-injected by gateway). Each `sendSpaceMessage` call streams independently. Client tool parts render inline.
+Space X gets one composite message with 3 parts: [text, chart, text]. Space Y gets a separate composite message with 2 parts: [approval form, text]. Tool calls can be routed to any space via `targetSpaceId` (auto-injected for tools with `displayTool: true`). Each `sendSpaceMessage` call streams independently. Client tool parts render inline.
 
-See [Composite Messages & Tool Visibility](./05-space-ui.md) for the full model including routing rules.
+See [Composite Messages & Display Tools](./05-space-ui.md) for the full model including routing rules.
