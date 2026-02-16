@@ -4,7 +4,7 @@
 
 A run is bound to a space. When the agent generates text, it's automatically persisted as a message in that space. The run "belongs to" the space.
 
-Problem: this creates a fundamental asymmetry. Responding to "your" space is automatic, but talking to another space requires a different mechanism (`goToSpace` child run). Plan runs are a third special case with no space context at all. Three models for the same thing.
+Problem: this creates a fundamental asymmetry. Responding to "your" space is automatic, but talking to another space requires a different mechanism (a separate child run). Plan runs are a third special case with no space context at all. Three models for the same thing.
 
 ## The New Model
 
@@ -147,7 +147,7 @@ Use sendSpaceMessage to post updates or alerts to the relevant spaces.
 | Aspect | Space-Bound Run | General Run |
 |--------|----------------|-------------|
 | Responding to trigger space | Automatic (text → message in space) | Explicit: `sendSpaceMessage(triggerSpaceId, text)` |
-| Talking to another space | Different mechanism (goToSpace) | Same: `sendSpaceMessage(otherSpaceId, text)` |
+| Talking to another space | Required a separate child run | Same: `sendSpaceMessage(otherSpaceId, text)` |
 | Plan runs | Special case (no space) | Same: general run, uses tools |
 | Service-triggered runs | System entity sends message in space | Direct API trigger — no space needed |
 | Agent's mental model | "I'm in Space X, I can reach out to Space Y" | "I can talk to any space. Here's why I was triggered." |

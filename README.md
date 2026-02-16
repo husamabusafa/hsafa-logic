@@ -71,15 +71,15 @@ vs
 
 ---
 
-### 🧳 Agents Can Move Across Contexts
+### 🧳 Agents Communicate Across Contexts
 Hsafa agents are not stuck in one thread.
 
 An agent can:
-- enter a new space
-- understand the situation instantly
-- respond naturally
-- execute tasks
-- coordinate with agents already inside
+- send messages to any space it belongs to
+- mention other agents to trigger collaboration
+- wait for replies (from agents or humans)
+- read messages from any space for context
+- orchestrate multi-space workflows in a single run
 
 This enables **cross-team workflows** and real organizational intelligence.
 
@@ -203,8 +203,8 @@ If you want the full architecture and product philosophy:
 - **Tools as an Interaction Model**  
   [`hsafa-docs/idea-docs/tools-design-doc.md`](./hsafa-docs/idea-docs/tools-design-doc.md)
 
-- **Cross-Space Agents (goToSpace)**  
-  [`hsafa-docs/idea-docs/go-to-space-feature.md`](./hsafa-docs/idea-docs/go-to-space-feature.md)
+- **Single-Run Architecture (General Runs + Space Tools + Admin Agent)**  
+  [`hsafa-docs/idea-docs/single-run-architecture/`](./hsafa-docs/idea-docs/single-run-architecture/)
 
 - **Reasoning UX (Optional Transparency)**  
   [`hsafa-docs/idea-docs/reasoning-design-doc.md`](./hsafa-docs/idea-docs/reasoning-design-doc.md)

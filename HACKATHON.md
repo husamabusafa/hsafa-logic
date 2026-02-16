@@ -15,7 +15,7 @@ That question led to Hsafa — not a chatbot framework, but an **operating syste
 Hsafa is a runtime for building **persistent, autonomous, collaborative AI agents** that operate like digital workers. It comes with 3 published SDKs (`@hsafa/node` · `@hsafa/react` · `@hsafa/ui`) so any app can integrate in minutes.
 
 - **SmartSpaces** — Shared workspaces where humans and agents collaborate in persistent timelines with permanent memory.
-- **Cross-Space Mobility** — Agents move between spaces carrying full context, like a person walking between rooms.
+- **Cross-Space Communication** — Agents interact with any space via `sendSpaceMessage` — send, mention other agents, and wait for replies — all within a single general-purpose run.
 - **Multi-Agent Networks** — Specialized agents (researcher, planner, executor) coordinate in shared spaces, forming teams and workflows.
 - **Autonomous Scheduling** — Agents create their own cron-style plans, deciding when to wake up and what to do — running indefinitely.
 - **Persistent Goals & Memory** — Goals, memory, and progress persist across sessions for weeks or months of continuous operation.
@@ -23,7 +23,7 @@ Hsafa is a runtime for building **persistent, autonomous, collaborative AI agent
 - **Reasoning Transparency** — Optional collapsible "Thinking…" blocks showing the agent's chain-of-thought reasoning in real time.
 - **Full SDK Ecosystem** — Node.js (`@hsafa/node`), React (`@hsafa/react`), and drop-in UI (`@hsafa/ui`) SDKs. Any client can connect.
 
-**Example:** A human tells an agent to notify their manager about a leave request. The agent moves to the Manager's space, speaks naturally (remembering the full origin conversation), gets approval, then returns to deliver the decision — all autonomously.
+**Example:** A human tells an agent to send a leave request to their manager. The agent calls `sendSpaceMessage` to the Manager's space with `wait` for a human reply. The manager sees the message, replies "Approved." The agent's wait resolves and it sends the decision back to the employee's space — all in one general-purpose run, fully autonomous.
 
 ---
 
@@ -50,7 +50,7 @@ Hsafa ships **4 SDKs** (3 published on npm, 1 coming soon) designed to make inte
 
 - **Hsafa Gateway** — TypeScript/Node.js runtime with Prisma, PostgreSQL, and Redis. Handles agent execution via Vercel AI SDK v6's `ToolLoopAgent`, SSE streaming, tool orchestration, and message persistence.
 - **Agent Builder** — Configuration-driven: agents defined via JSON configs (model, tools, instructions). Builder resolves tools, MCP clients, and prebuilt tools automatically.
-- **Prebuilt Tool Registry** — Server-side tools (setGoals, setMemory, createPlan, goToSpace) with direct DB access, auto-injected into every agent run.
+- **Prebuilt Tool Registry** — Server-side tools (setGoals, setMemory, createPlan, sendSpaceMessage, readSpaceMessages, delegateToAgent) with direct DB access, auto-injected into every agent run.
 - **SSE Streaming Pipeline** — AI model → gateway → Redis → SSE → client SDKs. Real-time text, reasoning, tool calls with partial JSON parsing.
 - **Auth Model** — Secret key (`sk_...`) for backends, public key (`pk_...`) + JWT for browsers. Anti-impersonation enforcement.
 - **Three SDKs** — `@hsafa/node` (class-based), `@hsafa/react` (hooks + context), `@hsafa/ui` (prebuilt chat components via `@assistant-ui/react`).
@@ -70,7 +70,7 @@ Hsafa ships **4 SDKs** (3 published on npm, 1 coming soon) designed to make inte
 
 ## Accomplishments that we're proud of
 
-- **Agents that move between contexts** — goToSpace works end-to-end: an agent navigates spaces, speaks naturally with full memory, and returns. No existing framework does this.
+- **Agents that communicate across contexts** — A single general-purpose run can read from and send messages to any space via `sendSpaceMessage`. Agents collaborate cross-space with mention + wait, all with real LLM streaming. No existing framework does this.
 - **Full prebuilt tool system** — Agents autonomously set goals, manage memory, create plans, and navigate spaces with proper access control.
 - **Three production-ready SDKs** — Published to npm. A developer can build a multi-agent chat UI in under 50 lines of code.
 - **A real architectural vision** — Not an LLM wrapper. A complete runtime with persistent state, multi-entity collaboration, distributed tools, and a security model.

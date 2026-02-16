@@ -33,11 +33,10 @@ This means responding to a human in Space X and sending a message to Space Y are
 
 ## Superseded Docs
 
-These older idea-docs are **superseded** by this architecture. They describe the old model and should not be used for implementation:
+These older idea-docs have been **updated** to reflect this architecture:
 
-- `go-to-space-feature.md` — replaced by general runs + `sendSpaceMessage` (no goToSpace child runs)
-- `multi-agent-triggering.md` — replaced by `sendSpaceMessage` with `mention` + admin agent pattern (no mention chains, no reply stack)
-- `system-prompts.md` — replaced by unified prompt builder in `03-admin-agent.md` (no space-bound prompts, no auto-persist)
+- `multi-agent-triggering.md` — now documents the admin agent + `sendSpaceMessage` with `mention` + `wait` pattern
+- `system-prompts.md` — now documents the unified prompt builder with trigger context injection
 
 These docs remain valid and complementary:
 
@@ -54,7 +53,7 @@ These docs remain valid and complementary:
 ## Implementation Phases
 
 ### Phase 1: Core Runtime Refactor (Gateway)
-Refactor `run-runner.ts`, `stream-processor.ts`, `agent-trigger.ts`, `prompt-builder.ts`, `builder.ts` to implement general-purpose runs, unified `sendSpaceMessage` with real streaming, event relay, and admin agent triggering. Remove goToSpace, auto-persist, mention chains, reply stack, System Entity.
+Refactor `run-runner.ts`, `stream-processor.ts`, `agent-trigger.ts`, `prompt-builder.ts`, `builder.ts` to implement general-purpose runs, unified `sendSpaceMessage` with real streaming, event relay, and admin agent triggering. Remove auto-persist, mention chains, reply stack, System Entity.
 
 ### Phase 2: Space Tools + Admin Agent
 Implement the 4 prebuilt tools (`readSpaceMessages`, `sendSpaceMessage`, `delegateToAgent`, `getMyRuns`). Add `adminAgentEntityId` to SmartSpace. Build unified prompt builder with admin/non-admin/single-agent variants. Service trigger API (`POST /api/agents/{id}/trigger`).
@@ -66,4 +65,4 @@ Replace per-tool-call message creation with composite message model (one message
 Update react-sdk (`useHsafaRuntime`) to handle composite messages, text-delta from tool-input interception, and `targetSpaceId` routing for display tools. Update node-sdk with service trigger support. Update ui-sdk to render composite message parts (text + custom tool UI inline).
 
 ### Phase 5: Migration + Cleanup
-Remove old code (goToSpace, mentionAgent, routeToAgent, round-robin, reply stack, System Entity type). Run Prisma migrations. Update seeds and test scenarios.
+Remove old code (mentionAgent, routeToAgent, round-robin, reply stack, System Entity type). Run Prisma migrations. Update seeds and test scenarios.

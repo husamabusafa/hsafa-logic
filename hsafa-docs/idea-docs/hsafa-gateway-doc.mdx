@@ -157,7 +157,7 @@ A Human Entity asks an Agent Entity (in the Employee SmartSpace) to send a leave
 5. The Agent's `wait` resolves with the manager's reply.
 6. The Agent calls `sendSpaceMessage(employeeSpace, "Your leave request was approved!")` — streams back to the employee.
 
-All of this happens in **one general-purpose run**. No child runs, no goToSpace. The agent uses `sendSpaceMessage` with `wait` for cross-space request-response.
+All of this happens in **one general-purpose run**. The agent uses `sendSpaceMessage` with `wait` for cross-space request-response.
 
 While waiting, if the employee asks for status, a **new run** is created. The agent can call `getMyRuns` to see it already has a run waiting on the manager's reply, and respond accordingly.
 

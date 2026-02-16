@@ -21,7 +21,7 @@ When a human sends a message, the **admin agent** is always triggered. The admin
 1. **Respond directly** — use `sendSpaceMessage` to reply
 2. **Delegate** — call `delegateToAgent(targetAgentEntityId)` to silently hand off. Admin's run is canceled and removed. The target agent gets a **new run** with the **original human message** as the trigger — as if the admin was never involved.
 3. **Mention + wait** — use `sendSpaceMessage` with `mention` + `wait` to get another agent's input, then continue reasoning/responding
-4. **Skip** — call `skipResponse` if the message doesn't need an agent response
+4. **Do nothing** — if the message doesn't need a response, simply don't call `sendSpaceMessage`. The run completes silently.
 
 ### Agent Messages → Mentioned Agent Only
 
@@ -77,7 +77,7 @@ You are the admin agent for this space — human messages come to you first. You
 - Respond directly using sendSpaceMessage
 - Delegate to another agent using delegateToAgent(entityId) — your run will be silently canceled and the target agent will receive the original human message as their trigger
 - Mention another agent using sendSpaceMessage with mention — your message will appear in the space and the mentioned agent will be triggered
-- Skip using skipResponse if no response is needed
+- If no response is needed, simply do nothing — your run will complete silently
 
 Use sendSpaceMessage to respond when ready.
 ```
@@ -171,12 +171,12 @@ Admin Agent reasons: "I need data from Finance and Data agents to compile this."
 → sendSpaceMessage(opsSpace, "Here's the quarterly business review: ...")
 ```
 
-### Admin skips
+### Admin does nothing
 ```
 Husam: "Thanks!"
 
 Admin Agent reasons: "No action needed."
-→ skipResponse()
+→ Run completes silently. No message sent.
 ```
 
 ---
@@ -197,7 +197,7 @@ If a space has one agent, that agent IS the admin automatically. Human messages 
 | Reply stack | Blocking `wait` on `sendSpaceMessage` |
 | Mention chain metadata | Not needed — explicit `mention` + `wait` handles sequencing |
 | Round-robin picker | Admin agent always receives human messages |
-| 4 agent options (respond/mention/delegate/skip) | 3 options: respond (with optional mention/wait), delegate, or skip |
+| 4 agent options (respond/mention/delegate/skip) | 3 options: respond (with optional mention/wait), delegate, or do nothing |
 
 ## `delegateToAgent` vs `mention`
 

@@ -1,37 +1,35 @@
-> **⚠️ SUPERSEDED** — This document describes the old system prompt model with 3 separate prompt types (Regular, GoToSpace, Plan). It has been fully replaced by the **Single-Run Architecture** (`single-run-architecture/`). In the new model, there is **one unified prompt builder** for all agents — the only variation is the trigger context (space_message, plan, or service) and whether the agent is admin. The agent's LLM text output is internal; all communication happens via `sendSpaceMessage`. See `single-run-architecture/03-admin-agent.md`.
+# System Prompts — Unified Prompt Builder
+
+## Overview
+
+The gateway builds **one unified system prompt** for all agents. The only variations are:
+
+1. **Trigger context** — what caused this run (`space_message`, `plan`, or `service`)
+2. **Admin vs non-admin** — admin agents get the `delegateToAgent` tool and a brief explanation of delegation
+
+The agent's LLM text output is **internal** (reasoning/planning). All visible communication happens through `sendSpaceMessage`.
 
 ---
 
-# System Prompts Overview (DEPRECATED)
+## Prompt Structure
 
-The gateway builds **three** distinct system prompts depending on how a run is triggered. All three share the same underlying context (goals, memories, plans, spaces) but differ in **what the agent is told about its situation** and **how its response is handled**.
+Every agent — admin or not, regardless of trigger type — gets the same structure:
 
----
-
-## 1. Regular Run
-
-**When:** A message is sent to a space the agent is in (human or another agent triggers it).
-
-**Key characteristics:**
-- Agent **is in a specific space** and knows which one
-- Agent's response is **automatically posted as a message** in that space
-- Agent sees the **full conversation history** (last 50 messages) from the space
-- Agent is told who triggered the run (e.g. "This run was triggered by a message from Husam")
-- Other agents in the space are **triggered** after the agent responds
-
-**System prompt structure:**
 ```
-Current time: 2026-02-11T21:00:00.000Z
+You are [Agent Name].
+[Agent's system instruction from config — their role, personality, expertise]
 
-You are {agentName}. You are a single entity that operates across multiple spaces...
-You are currently in "{spaceName}" (id: ...). Any response you produce in this run
-will be automatically posted as a message in this space.
+SPACE: "[Space Name]"
+MEMBERS:
+- Husam (human)
+- Finance Agent (agent, entity: xxx) — handles budgets, expenses
+- You (entity: zzz)
 
-This run was triggered by a message from {name} ({type}).
-Members of this space: ...
+TRIGGER: [trigger context — see below]
 
-Messages from other participants are prefixed with [Name] for identification.
-Do NOT prefix your own responses with your name or any tag.
+[Admin instruction — only if admin in multi-agent space]
+
+Use sendSpaceMessage to respond when ready.
 
 GOALS:
 - ...
@@ -42,161 +40,122 @@ MEMORIES:
 PLANS (your scheduled triggers):
 - ...
 
-SPACES (you can go to any of them):
-- ...
-
-BACKGROUND — Recent activity in your other spaces:
-- ...
+⚠ You currently have N other active runs:
+- run-xyz (plan: Morning Report, running, started 30s ago)
+Use getMyRuns for full details if needed. Avoid duplicating work already in progress.
 ```
-
-**Message format:** System prompt + full conversation history (as user/assistant turns)
 
 ---
 
-## 2. GoToSpace Run
+## Trigger Context Variations
 
-**When:** The agent calls the `goToSpace` tool from another run (regular or plan).
+### `space_message` — A message in a space
 
-**Key characteristics:**
-- Agent **is in a target space** but was sent there from an origin space
-- Agent's response is **automatically posted as a message** in the target space
-- Agent sees **recent messages from both** the origin space (last 10) and target space (last 15)
-- Agent gets a specific **instruction** for what to do in the target space
-- Other agents are **NOT triggered** (isolated task run)
-- Has a `parentRunId` linking back to the originating run
-
-**System prompt structure:**
 ```
-You are {agentName}.
-Current time: 2026-02-11T21:00:00.000Z
+TRIGGER: This run was triggered by a message from Husam in "Husam's Chat":
+"What's our Q4 budget status?"
 
-You are a single entity that operates across multiple spaces. You move between
-spaces to talk to people, just like a person walks between rooms. You are NOT
-a message relay, NOT a notification system, and NOT executing a dispatched task.
-You are simply continuing your own natural flow of conversation.
-
-ORIGIN SPACE — Where you came from:
-Space: "{originSpaceName}" (id: ...)
-Members: ...
-Recent messages:
-  [2026-02-11T20:55:00.000Z] Husam: Can you check with the team?
-  [2026-02-11T20:55:30.000Z] Agent: Sure, heading there now.
-
-TARGET SPACE — Where you are now:
-Space: "{targetSpaceName}" (id: ...)
-Members: ...
-Recent messages:
-  [2026-02-11T20:50:00.000Z] Alice: The report is ready.
-
-YOUR TASK (from your own decision, not someone else's order):
-{instruction}
-
-GOALS:
-- ...
-
-MEMORIES:
-- ...
-
-PLANS (your scheduled triggers):
-- ...
+Use sendSpaceMessage to respond when ready.
 ```
 
-**Message format:** System prompt + single user message ("Go ahead.")
+When triggered by an agent mention:
+```
+TRIGGER: This run was triggered by a message from Ops Agent (agent) in "Engineering Ops":
+"Finance, can you pull the Q4 numbers?"
+Mention reason: "Need Q4 financial data for the weekly report"
+
+Use sendSpaceMessage to respond when ready.
+```
+
+### `plan` — A scheduled plan
+
+```
+TRIGGER: This run was triggered by your scheduled plan "Morning Report".
+Use sendSpaceMessage to post updates to the relevant spaces.
+```
+
+### `service` — An external service
+
+```
+TRIGGER: This run was triggered by service "Jira":
+{ "event": "ticket_created", "ticketId": "PROJ-123", "priority": "critical", ... }
+
+Use sendSpaceMessage to post updates or alerts to the relevant spaces.
+```
 
 ---
 
-## 3. Plan Trigger Run
+## Admin Agent Prompt (Multi-Agent Space)
 
-**When:** The plan scheduler detects a plan with `nextRunAt <= now` and triggers the agent.
+The admin agent gets a brief additional instruction:
 
-**Key characteristics:**
-- Agent is **NOT in any space** — must use `goToSpace` to interact
-- Agent's response is **NOT posted anywhere** automatically
-- Agent sees **no conversation history** (there is none — it was triggered by a timer)
-- Agent is told the **plan name, description, and instruction**
-- Other agents are **NOT triggered**
-- After the run, the plan is updated (one-time → completed, recurring → rescheduled)
-
-**System prompt structure:**
 ```
-You are {agentName}.
-Current time: 2026-02-11T21:00:00.000Z
-
-======================================================================
-YOU WERE TRIGGERED BY A PLAN
-======================================================================
-
-You are not in any specific space right now. You were triggered automatically
-by one of your scheduled plans.
-
-Plan name: {planName}
-Plan description: {planDescription}
-
-Your task:
-{planInstruction}
-
-======================================================================
-HOW TO ACT
-======================================================================
-
-You are NOT in any space. Your response will NOT be posted anywhere automatically.
-To interact with people or spaces, you MUST use the goToSpace tool.
-You can go to multiple spaces if needed — just call goToSpace multiple times.
-If the plan requires no interaction (e.g. updating your own goals or memories),
-you can do that directly without going to a space.
-
-RULES:
-- Do NOT say "I was triggered by a plan" to people. Act naturally.
-- If you need to talk to someone, go to the relevant space and speak naturally.
-- After completing the task, consider if your plans need updating.
-
-GOALS:
-- ...
-
-MEMORIES:
-- ...
-
-PLANS (your scheduled triggers):
-- ...
-
-SPACES (you can go to any of them):
-- ...
-
-BACKGROUND — Recent activity in your other spaces:
-- ...
+You are the admin agent for this space — human messages come to you first. You can:
+- Respond directly using sendSpaceMessage
+- Delegate to another agent using delegateToAgent(entityId) — your run will be silently canceled and the target agent will receive the original human message as their trigger
+- Mention another agent using sendSpaceMessage with mention — your message will appear in the space and the mentioned agent will be triggered
+- If no response is needed, simply do nothing — your run will complete silently
 ```
 
-**Message format:** System prompt + single user message ("Your plan has triggered. Execute it now.")
+Non-admin agents do NOT see `delegateToAgent` in their toolset or prompt.
 
 ---
 
-## Comparison Table
+## Single-Agent Space Prompt
 
-| Feature | Regular Run | GoToSpace Run | Plan Trigger Run |
-|---|---|---|---|
-| **Trigger** | Message in space | `goToSpace` tool call | Plan scheduler (timer) |
-| **Agent location** | In a specific space | In target space (from origin) | Not in any space |
-| **Response posted** | Yes, to current space | Yes, to target space | No (must use goToSpace) |
-| **Conversation history** | Last 50 messages | Origin (10) + Target (15) | None |
-| **Triggers other agents** | Yes | No | No |
-| **Has instruction** | No (responds to conversation) | Yes (from goToSpace call) | Yes (from plan) |
-| **User message** | Real conversation | "Go ahead." | "Your plan has triggered. Execute it now." |
+```
+You are [Agent Name].
+[Agent's system instruction from config]
+
+SPACE: "[Space Name]"
+MEMBERS:
+- Husam (human)
+- You (entity: zzz)
+
+TRIGGER: This run was triggered by a message from Husam in "Personal Assistant":
+"What's our Q4 budget status?"
+
+Use sendSpaceMessage to respond when ready.
+```
+
+No `delegateToAgent`, no admin instruction. The agent is always triggered directly.
 
 ---
 
-## Shared Context (all three)
+## Shared Context (All Prompts)
 
 All system prompts include the same agent context blocks:
 
 - **Current time** — ISO timestamp of when the run starts
 - **Goals** — Active (non-completed) goals, ordered by priority
 - **Memories** — Last 50 memories, ordered by most recently updated
-- **Plans** — Active plans (pending/running) with next run time and remaining time. Shows a warning if no plans exist.
-- **Spaces** — All spaces the agent is a member of (with members listed). Only shown if the agent is in more than one space.
-- **Cross-space digest** — Last 2 messages from each other space (with timestamps). Shown for background awareness.
+- **Plans** — Active plans (pending/running) with next run time and remaining time
+- **Concurrent run notice** — If the agent has other active runs, a brief summary is injected
 
-The order is always: Goals → Memories → Plans → Spaces → Cross-space digest.
+The order is always: Goals → Memories → Plans → Concurrent run notice (if any).
 
 ---
 
-> **Note:** A SmartSpace can contain any combination of participants — humans, AI agents, Node.js services, or all of them together. The system prompts currently use human-oriented language (e.g. "talk to people", "speak naturally"), but the underlying model is fully entity-agnostic. The prompt wording does not need to change for this to work — agents already see each member's type label (human/agent/system) and adapt accordingly.
+## Comparison: Old vs New
+
+| Aspect | Old (3 Prompt Types) | New (Unified) |
+|--------|---------------------|---------------|
+| **Prompt types** | Regular, Cross-Space, Plan — 3 separate builders | One builder with trigger context injection |
+| **Agent's text output** | Auto-posted as a message in the space | Internal reasoning only — agent uses `sendSpaceMessage` |
+| **Cross-space** | Required a separate child run | Same run — `sendSpaceMessage(otherSpaceId, text)` |
+| **Plan runs** | Special case (no space, must use separate tool to interact) | Same model — general run, uses `sendSpaceMessage` |
+| **Service triggers** | System entity sends message in space | Direct API trigger — no entity or space needed |
+| **Who responds first?** | Random (round-robin) | Deterministic (admin agent) |
+| **Conversation history** | Included as user/assistant turns | Agent reads history via `readSpaceMessages` when needed |
+| **Admin prompt** | Separate multi-agent prompt with 4 options | Same structure as all agents, just adds `delegateToAgent` |
+
+---
+
+## Key Design Points
+
+- **No space-bound runs.** Runs are general-purpose. The agent is not "in" a space — it interacts with spaces via tools.
+- **No auto-persist.** The LLM's text output is internal. The agent must explicitly call `sendSpaceMessage` to communicate.
+- **One prompt builder.** `prompt-builder.ts` builds the same structure for admin, non-admin, single-agent, multi-agent, all trigger types.
+- **Concurrent run awareness.** The prompt includes a notice if the agent has other active runs, so it can avoid duplicate work.
+
+> **See also:** [Single-Run Architecture](./single-run-architecture/) for the full design.

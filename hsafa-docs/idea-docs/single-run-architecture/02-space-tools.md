@@ -393,7 +393,7 @@ Run-2 starts. System prompt includes:
   "⚠ You have 1 other active run: run-1 (plan: morning-report, running)"
 
 Ops-Agent (run-2) reasons: "I'm already running the morning report in run-1. This trigger is redundant."
-Ops-Agent calls skipResponse() → run-2 canceled. No duplicate work.
+→ Run-2 completes silently without sending any messages. No duplicate work.
 ```
 
 ### Agent Defers to Active Run

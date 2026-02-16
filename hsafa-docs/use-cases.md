@@ -488,7 +488,7 @@ Posts to `#leadership` on Slack and emails the VP Eng (HTTP tool → email gatew
 | **HTTP tools** | Direct integration with every company system, no middleware needed |
 | **Compute tools** | Policy checks, metric calculations, budget math |
 | **Reasoning** | Complex decisions (should I rollback? is this PTO safe to approve?) benefit from chain-of-thought |
-| **skipResponse** | Agent skips irrelevant events (e.g., a Jira comment that doesn't need action) |
+| **Silent completion** | Agent simply doesn't send a message for irrelevant events (e.g., a Jira comment that doesn't need action) — the run completes silently |
 | **Plan triggers** | Scheduled daily/weekly runs (morning scan, EOD wrap-up, Friday report) |
 | **No human-in-the-loop** | Humans are SmartSpace members but purely observers — they can intervene anytime but don't need to |
 

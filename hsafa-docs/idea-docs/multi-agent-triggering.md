@@ -1,335 +1,193 @@
-> **⚠️ SUPERSEDED** — This document describes the old mention-chain / reply-stack / round-robin model. It has been fully replaced by the **Single-Run Architecture** (`single-run-architecture/`). In the new model: human messages always go to the **admin agent**, agents use `sendSpaceMessage` with an optional `mention` field (+ optional `wait`) for agent-to-agent collaboration, and `delegateToAgent` provides silent handoff. No reply stack, no round-robin, no `mentionAgent` prebuilt tool. See `single-run-architecture/03-admin-agent.md` and `single-run-architecture/02-space-tools.md`.
+# Multi-Agent Triggering — Admin Agent + Unified `sendSpaceMessage`
+
+## Overview
+
+When a human sends a message in a multi-agent space, the **admin agent** is always triggered first. The admin decides what to do: respond directly, delegate silently, mention another agent, or skip. Agent-to-agent collaboration uses a single unified tool — `sendSpaceMessage` — with optional `mention` (trigger an agent) and optional `wait` (block for a reply).
+
+No round-robin. No reply stack. No mention chains. No `mentionAgent` tool.
 
 ---
 
-# Multi-Agent Triggering — Mention Chain (DEPRECATED)
+## Triggering Rules
 
-## Problem
+### Human Messages → Admin Agent
 
-When a human sends a message in a multi-agent space, **all agents** get triggered simultaneously. Each agent responds, and each response re-triggers the others, creating a cascade of redundant messages. It doesn't feel like a group chat — it feels like every person in the room shouting at once.
+When a human sends a message, the **admin agent** (`adminAgentEntityId` on SmartSpace) is always triggered. The admin has three options:
 
-## Design: Pick One → Mention Chain
+1. **Respond directly** — `sendSpaceMessage(spaceId, text)` to reply
+2. **Delegate silently** — `delegateToAgent(targetAgentEntityId)` to hand off. Admin's run is canceled and removed. Target agent gets a **new run** with the **original human message** as the trigger — as if the admin was never involved.
+3. **Mention + coordinate** — `sendSpaceMessage` with `mention` (+ optional `wait`) to get another agent's input, then continue reasoning/responding
+4. **Do nothing** — if the message doesn't need a response, the agent simply doesn't call `sendSpaceMessage`. The run completes silently.
 
-### Core Idea
+### Agent Messages → Mentioned Agent Only
 
-A non-agent message (human or service) triggers **one** agent. That agent decides what to do. If it responds, it can **mention** another agent to hand off the conversation — and only that mentioned agent runs next. The chain continues until an agent responds (or skips) **without mentioning** anyone **and** there are no agents waiting on the reply stack.
+When an agent sends a message via `sendSpaceMessage`:
 
-### Flow
+- **With `mention`** → the mentioned agent is triggered with a `space_message` trigger (`senderType: agent`)
+- **Without `mention`** → **no agent is triggered**. The message is posted for humans to read.
 
-```
-Human sends message
-       │
-       ▼
-  Pick ONE agent            ← round-robin, last-spoke, or relevance-based
-       │
-       ▼
-  Agent evaluates
-       │
-  ┌────┼────────────┐
-  │    │             │
-  ▼    ▼             ▼
-Skip  Respond        Delegate
-  │   (post msg)     (silent, hand off)
-  │      │                │
-  │      │                ▼
-  │      │           Target agent runs
-  │      │           (same 3 choices)
-  │      │
-  │   Mentioned another
-  │   agent in response?
-  │      │
-  │   ┌──┴───┐
-  │   │      │
-  │  Yes     No
-  │   │      │
-  │   ▼      │
-  │  That    │
-  │  agent   │
-  │  runs    │
-  │  next    │
-  │          │
-  └────┬─────┘
-       │
-       ▼
-  Reply stack empty?
-       │
-  ┌────┴────┐
-  │         │
-  No       Yes
-  │         │
-  ▼         ▼
- Pop agent  Done.
- from stack Chain stops.
- Re-trigger
- (same 3
-  choices)
-```
+### No Other Triggering
 
-### Three Outcomes per Agent
+- Agent messages NEVER trigger the admin agent
+- Agent messages NEVER trigger round-robin
+- Only explicit `mention` triggers agents from agent messages
+- Human messages ALWAYS go to admin — deterministic
 
-1. **Respond** — The agent posts a message. If the response **mentions another agent** (via a structured annotation, not just text), that agent gets triggered next. If no mention → check reply stack (pop waiting agent, or stop if empty).
+---
 
-2. **Delegate** — The agent has nothing to say itself, but knows who should handle it. Calls `delegate(targetAgentEntityId, reason)`. Current run canceled silently (no message posted). Target agent gets a run with the delegation context. The delegated agent inherits the delegator's position — if someone was waiting for the delegator on the reply stack, they'll now be waiting for the delegated agent instead.
+## `sendSpaceMessage` — Unified Communication Tool
 
-3. **Skip** — The agent decides it has nothing to add. No message posted. System checks reply stack — if an agent is waiting, it gets re-triggered (it will see that the mentioned agent skipped and can act accordingly). If stack is empty, nobody responds.
-
-### How Mentions Work
-
-When an agent responds, it can call `mentionAgent` to trigger another agent next:
-
-```
-Agent A responds: "Here's the summary. @Research Agent can you find sources for this?"
-                                        ^^^^^^^^^^^^^^^^
-                                        Parsed as a mention → triggers Research Agent
-```
-
-**Implementation**: A prebuilt tool `mentionAgent`:
+One tool for all agent communication. Sends a message to any space the agent is a member of. Optionally **mentions** another agent to trigger them, and optionally **waits** for a reply.
 
 ```json
-{
-  "name": "mentionAgent",
-  "description": "After your response, trigger another agent to continue the conversation. Set expectReply=true if you need to continue your task after they respond — you will be automatically re-triggered when they finish.",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "targetAgentEntityId": {
-        "type": "string",
-        "description": "Entity ID of the agent to trigger next"
-      },
-      "reason": {
-        "type": "string",
-        "description": "Brief context for why this agent should respond"
-      },
-      "expectReply": {
-        "type": "boolean",
-        "description": "If true, you will be re-triggered after the target agent finishes (respond or skip). Use when you need their output to continue your task.",
-        "default": false
-      }
-    },
-    "required": ["targetAgentEntityId"]
-  }
-}
+sendSpaceMessage({
+  spaceId: "space-X",
+  text: "What's the Q4 budget status?",
+  mention: "finance-agent-entity-id",
+  wait: { for: [{ type: "agent" }], timeout: 60 }
+})
 ```
 
-### The Reply Stack
+### `mention` and `wait` Are Independent
 
-When `expectReply: true` is used, the system maintains a **reply stack** — a list of agents waiting to be triggered back. This enables dynamic multi-hop chains:
+| mention | wait | Behavior |
+|---------|------|----------|
+| No | No | Fire-and-forget. Message posted, no agent triggered, no blocking. |
+| Yes | No | Trigger agent, don't wait. Agent responds on its own. |
+| No | Yes | Post message, wait for a reply (e.g., wait for human). |
+| Yes | Yes | Trigger agent AND wait for their reply (most common for cross-space asks). |
 
-```
-Reply stack: []
+### Wait Conditions
 
-1. HR Agent mentions Finance Agent (expectReply: true)
-   → stack: [HR]
-   → Finance Agent runs
+The `wait.for` array specifies conditions — the tool blocks until **any one** matches (OR logic):
 
-2. Finance Agent mentions Data Agent (expectReply: true)
-   → stack: [HR, Finance]
-   → Data Agent runs
+- `{ type: "any" }` — any message
+- `{ type: "agent" }` — any agent reply
+- `{ type: "human" }` — any human reply
+- `{ type: "entity", entityId: "..." }` — a specific entity's reply
 
-3. Data Agent responds (no mention)
-   → stack: [HR, Finance]
-   → Pop Finance from stack → Finance Agent re-triggered
-   
-4. Finance Agent responds (no mention)
-   → stack: [HR]
-   → Pop HR from stack → HR Agent re-triggered
+---
 
-5. HR Agent responds (no mention)
-   → stack: []
-   → Chain stops. Done.
-```
+## `delegateToAgent` — Admin-Only Silent Handoff
 
-Each agent picks up where it left off, seeing the full conversation including what the agents it asked have said.
+When the admin decides it shouldn't handle a message, it calls `delegateToAgent` for an invisible handoff:
 
-### Chain Rules
+1. Admin's run is **canceled and removed**
+2. A new run is created for the target agent with the **same trigger context** (original human message)
+3. The target agent sees the human message directly — no trace of admin involvement
 
-| Event | What happens next |
-|-------|-------------------|
-| Human/service message | Pick ONE agent → run |
-| Agent responds **with mention** (`expectReply: false`) | Mentioned agent runs. Chain continues from them. |
-| Agent responds **with mention** (`expectReply: true`) | Mentioned agent runs. After they finish, **caller is re-triggered**. |
-| Agent responds **without mention** | Pop reply stack → re-trigger waiting agent. If stack empty → **chain stops**. |
-| Agent delegates | Target agent runs (no message posted by delegator). Inherits delegator's position in reply stack. |
-| Agent skips | Pop reply stack → re-trigger waiting agent. If stack empty → **no one responds**. |
+**When to use `delegateToAgent` vs `mention`:**
 
-### Loop Protection
+| | `delegateToAgent` | `sendSpaceMessage` with `mention` |
+|-|-------------------|------------------------------------|
+| **Who** | Admin only | Any agent |
+| **Admin's run** | Canceled and removed | Continues running |
+| **Target agent sees** | Original human message | Agent's new message as trigger |
+| **Visible in space** | Nothing — silent handoff | Admin's message appears |
+| **Use when** | Admin doesn't want to be involved | Admin wants to coordinate or wait for a reply |
 
-- **Max chain depth**: configurable (default 10). Total agent runs in one chain, including re-triggers.
-- **No self-mention**: agent cannot mention itself.
-- **No circular mentions**: agent A cannot mention agent B if B already mentioned A earlier in the same chain (prevents A→B→A loops). Re-triggers from the reply stack are allowed — they are system-initiated, not agent-initiated.
-- **Reply stack max size**: configurable (default 5). Prevents unbounded nesting.
+---
 
-### Reply Stack — Storage
+## Example Conversations
 
-The reply stack is stored in the **chain metadata** passed between runs:
-
-```json
-{
-  "chainId": "uuid",
-  "chainDepth": 3,
-  "replyStack": [
-    { "entityId": "hr-agent-id", "reason": "waiting for salary data" },
-    { "entityId": "finance-agent-id", "reason": "waiting for raw data" }
-  ],
-  "mentionedPairs": ["hr->finance", "finance->data"]
-}
-```
-
-### Picking the First Agent
-
-For v1, keep it simple:
-
-- **Round-robin**: rotate which agent evaluates first per space (stored in space metadata).
-- Later: relevance-based (match message against agent descriptions).
-
-### Changes Needed
-
-#### `agent-trigger.ts`
-- Replace `triggerAgentsInSmartSpace()` with `triggerOneAgent()` — picks one agent, creates a run at depth 0.
-- New function `triggerMentionedAgent(targetEntityId, chain)` — creates a run for the mentioned agent with chain context.
-
-#### New prebuilt tool: `mentionAgent`
-- Does NOT cancel the run (unlike delegate — the agent still posts its message).
-- After the run completes, `run-runner.ts` checks if `mentionAgent` was called.
-- If yes → trigger that specific agent with chain metadata.
-- If no → done, no further triggering.
-
-#### Existing prebuilt tool: `delegate` (repurposed)
-- Same as before: cancels current run, spawns run for target agent.
-- The delegator posts no message.
-
-#### `prompt-builder.ts`
-- System prompt includes: "You are the agent evaluating this message. You can respond, delegate to another agent, or skip."
-- List of other agents in the space with their names, descriptions, and entity IDs.
-- For chain runs: "You were mentioned by [Agent Name]: [reason]" or "Delegated to you by [Agent Name]: [reason]".
-
-#### `run-runner.ts`
-- After agent completes: check if `mentionAgent` was called in the tool calls.
-  - Yes → `triggerMentionedAgent()` with chain tracking.
-  - No → done. Do NOT call `triggerAgentsInSmartSpace()`.
-- Handle `delegate` same as `skipResponse` but spawn a new run for the target.
-
-### Example Conversations
-
-#### Simple: one agent responds
+### Simple: admin responds directly
 
 ```
-حسام: "good morning!"
+Husam: "Good morning!"
 
-→ Demo Agent picked first (round-robin)
-→ Demo Agent responds: "Good morning حسام!"
-  → no mention, stack empty
-→ Chain stops. 1 message. Research Agent never runs.
+→ Admin (Ops-Agent) triggered
+→ Ops-Agent: sendSpaceMessage(opsSpace, "Good morning Husam! Here's today's status: ...")
+→ Done. One run.
 ```
 
-#### Hand-off: delegate to the right agent
+### Delegation: admin hands off to specialist
 
 ```
-حسام: "what's the weather like?"
+Husam: "What's our Q4 budget status?"
 
-→ Research Agent picked first (round-robin)
-→ Research Agent calls delegate(Demo Agent, "has MCP tools for weather")
-→ Research Agent's run canceled silently
+→ Admin (Ops-Agent) triggered
+→ Ops-Agent reasons: "This is a finance question."
+→ Ops-Agent calls delegateToAgent(financeAgentEntityId)
+→ Admin's run canceled silently
 
-→ Demo Agent runs
-→ Demo Agent responds with weather data from MCP
-  → no mention, stack empty
-→ Chain stops. 1 agent message total.
+→ Finance Agent triggered with original message: "What's our Q4 budget status?"
+→ Finance Agent: sendSpaceMessage(opsSpace, "Q4 budget: $2.1M allocated, $1.7M spent...")
+→ Done. Husam sees Finance Agent respond directly.
 ```
 
-#### Fire-and-forget mention: two agents both respond
+### Mention + wait: admin coordinates
 
 ```
-حسام: "research quantum computing and make me an image about it"
+Husam: "Prepare the quarterly business review"
 
-→ Demo Agent picked first (round-robin)
-→ Demo Agent responds: "Here's the image!" + generateImage
-  → calls mentionAgent(Research Agent, "user wants research too", expectReply: false)
-→ Demo Agent's message posted
-
-→ Research Agent triggered
-→ Research Agent responds: "Here's what I found..."
-  → no mention, stack empty
-→ Chain stops. 2 messages total.
+→ Admin (Ops-Agent) triggered
+→ Ops-Agent: sendSpaceMessage(opsSpace, "On it. Let me gather the data.",
+    mention: financeAgentEntityId, wait: { for: [{ type: "agent" }] })
+→ Finance Agent triggered, responds with Q4 numbers
+→ Ops-Agent's wait resolves
+→ Ops-Agent: sendSpaceMessage(opsSpace, "Now getting metrics.",
+    mention: dataAgentEntityId, wait: { for: [{ type: "agent" }] })
+→ Data Agent responds with metrics
+→ Ops-Agent: sendSpaceMessage(opsSpace, "Here's the quarterly business review: ...")
+→ Done. Three runs, clean sequential flow.
 ```
 
-#### Reply stack: agent needs another agent's output to continue
+### Agent chain within a space
 
 ```
-حسام: "prepare the monthly payroll report"
+Manager: "Write a blog post about AI in healthcare"
 
-→ HR Agent picked first
-  stack: []
-→ HR Agent responds: "I'll prepare the report. Let me get the salary data first."
-  → calls mentionAgent(Finance Agent, "need January salary sheet", expectReply: true)
-  stack: [HR]
+→ Editor-Agent (admin) triggered
+→ Editor-Agent: sendSpaceMessage(contentSpace, "Great topic! Writer, please draft this.",
+    mention: writerAgentEntityId, wait: { for: [{ type: "entity", entityId: writerAgentEntityId }] })
 
-→ Finance Agent triggered
-→ Finance Agent responds: "Here's the salary data: ..."
-  → no mention
-  stack: [HR] → pop HR
-→ HR Agent re-triggered
+→ Writer-Agent triggered, drafts the post
+→ Writer-Agent: sendSpaceMessage(contentSpace, "Draft ready. SEO, can you review?",
+    mention: seoAgentEntityId, wait: { for: [{ type: "agent" }] })
 
-→ HR Agent responds: "Here's the complete payroll report based on the salary data..."
-  → no mention, stack empty
-→ Chain stops. 3 messages total.
+→ SEO-Agent responds with keyword suggestions
+→ Writer-Agent's wait resolves, applies suggestions
+→ Writer-Agent: sendSpaceMessage(contentSpace, "Here's the final draft: [blog post]")
+
+→ Editor-Agent's wait resolves
+→ Editor-Agent: sendSpaceMessage(contentSpace, "Post looks great. Publishing now.")
+→ Done. Four general runs. Natural agent chain via mention + wait.
 ```
 
-#### Nested reply stack: multi-hop request chain
+### Cross-space collaboration
 
 ```
-حسام: "prepare the quarterly business review"
+Husam (Space X): "What's our Q4 budget status?"
 
-→ HR Agent picked first
-  stack: []
-→ HR Agent responds: "I'll compile the review. Getting financial data first."
-  → calls mentionAgent(Finance Agent, "need Q4 numbers", expectReply: true)
-  stack: [HR]
-
-→ Finance Agent triggered
-→ Finance Agent responds: "I need the raw data first."
-  → calls mentionAgent(Data Agent, "need Q4 raw sales data", expectReply: true)
-  stack: [HR, Finance]
-
-→ Data Agent triggered
-→ Data Agent responds: "Here's the Q4 raw data: ..."
-  → no mention
-  stack: [HR, Finance] → pop Finance
-→ Finance Agent re-triggered
-
-→ Finance Agent responds: "Here are the Q4 financials based on the data: ..."
-  → no mention
-  stack: [HR] → pop HR
-→ HR Agent re-triggered
-
-→ HR Agent responds: "Here's the complete quarterly business review: ..."
-  → no mention, stack empty
-→ Chain stops. 5 messages total. Each agent got exactly what it needed.
+→ AI Assistant (admin of Space X) triggered
+→ AI Assistant: sendSpaceMessage(spaceY, "What's the current Q4 budget status?",
+    mention: financeAgentEntityId, wait: { for: [{ type: "agent" }], timeout: 60 })
+→ Finance Agent (Space Y) triggered, responds with budget data
+→ AI Assistant's wait resolves
+→ AI Assistant: sendSpaceMessage(spaceX, "Here's the Q4 budget: $2.1M allocated...")
+→ Done. Two runs. Cross-space request-response in one agent execution.
 ```
 
-#### Cross-space collaboration (via goToSpace + mention)
+---
 
-```
-[In HR Space]
-HR Agent triggered by plan: "monthly check-in with finance"
+## Loop Protection
 
-→ HR Agent calls goToSpace(Finance Space, "need to ask about budget status")
-→ [In Finance Space] HR Agent posts: "Hey, what's the status on this month's budget?"
-  → calls mentionAgent(Finance Agent, "need budget update", expectReply: true)
+- Agent can only read/send to spaces where it has membership (validated server-side)
+- `wait` has a max timeout (120s)
+- Circular dependency detection: if Agent A mentions Agent B with `wait`, and Agent B mentions Agent A with `wait`, Agent A's new run can call `getMyRuns` to detect the loop and break it
+- Max tool loop steps (from agent config `loop.maxSteps`) limits total tool calls per run
 
-→ Finance Agent responds: "Budget is 80% allocated, here's the breakdown..."
-  → no mention
-→ HR Agent re-triggered in Finance Space
-→ HR Agent responds: "Thanks, I'll factor this into the report."
-  → no mention, stack empty
-→ Chain stops.
-```
+---
 
-### Benefits
+## What This Replaces
 
-- **No cascade** — each step in the chain is intentional and directed
-- **Natural group chat** — agents hand off to each other like real people
-- **Request-response built in** — `expectReply: true` lets agents ask for things and continue after
-- **Dynamic nesting** — reply stack supports arbitrary depth (with configurable max)
-- **Self-regulating** — chain stops naturally when no one is mentioned and stack is empty
-- **Works cross-space** — goToSpace + mention enables inter-space agent collaboration
+| Old Concept | Replaced By |
+|-------------|-------------|
+| Round-robin picker | Admin agent always receives human messages |
+| `mentionAgent` prebuilt tool | Built into `sendSpaceMessage` via `mention` field |
+| `routeToAgent` / `delegate` prebuilt tool | `delegateToAgent` (admin-only, clearer semantics) |
+| Reply stack | Blocking `wait` on `sendSpaceMessage` |
+| Mention chain metadata | Not needed — explicit `mention` + `wait` handles sequencing |
+| 4 agent options (respond/mention/delegate/skip) | 3 options: respond (with optional mention/wait), delegate, or skip |
+
+> **See also:** [Single-Run Architecture](./single-run-architecture/) for the full design.
