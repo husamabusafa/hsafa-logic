@@ -94,10 +94,11 @@ IDENTITY:
 
 Tells the agent exactly why it's running:
 
-**Space message trigger:**
+**Space message trigger (explicit @mention):**
 ```
 TRIGGER:
   type: space_message
+  triggerSource: mention
   space: "Project Alpha" (id: space-xyz)
   sender: Husam (human, id: ent-husam-01)
   message: "@DataAnalyst pull the Q4 revenue numbers"
@@ -106,7 +107,25 @@ TRIGGER:
   senderExpectsReply: true
 ```
 
-`senderExpectsReply` is `true` when the sender used `wait: true` on their message, and `false` when they did not. In 2-entity spaces (auto-trigger), the triggered agent uses this to decide whether a reply is expected or the message is informational.
+**Proactive router trigger (no explicit mention):**
+```
+TRIGGER:
+  type: space_message
+  triggerSource: proactive_router
+  space: "Team Chat" (id: space-abc)
+  sender: Ahmad (human, id: ent-ahmad-01)
+  message: "nobody knows how to fix it"
+  messageId: msg-a3
+  timestamp: "2026-02-18T15:10:00Z"
+  senderExpectsReply: false
+```
+
+`triggerSource` is always present:
+- `mention` — agent was explicitly @mentioned
+- `auto` — 2-entity space auto-trigger (no @mention needed)
+- `proactive_router` — gateway router decided this agent might help; agent must decide whether to respond
+
+`senderExpectsReply` is `true` when the sender used `wait: true`, and `false` otherwise. Agents triggered via `proactive_router` always receive `senderExpectsReply: false`.
 
 **Plan trigger:**
 ```
@@ -181,6 +200,7 @@ MEMORIES:
 
 PLANS:
   - "Daily Report" (recurring, cron: 0 9 * * *, next: 2026-02-19T09:00:00Z, in 17h 53m)
+  - "Follow up with Designer" (one-time, scheduledAt: 2026-02-18T17:07:00Z, in 2h 00m)  [created via runAfter: "2 hours"]
 
 ACTIVE RUNS:
   - Run abc-123 (this run) — triggered by Husam in "Project Alpha"

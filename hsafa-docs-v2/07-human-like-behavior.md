@@ -159,7 +159,7 @@ The architecture provides the **context** for emotional realism (knowing who you
 | Agent can't wait | `send_message(wait: true)` enables real pauses |
 | Agent is stateless | Goals, memories, run history persist across runs |
 | Agent can't multitask | Concurrent runs with mutual awareness |
-| Agent can't plan ahead | Plan system with cron and one-time schedules |
+| Agent can't plan ahead | Plan system: `runAfter` for relative timing ("in 2 hours"), `cron` for recurring schedules |
 
 ---
 

@@ -124,6 +124,22 @@ When replies arrive:
 
 ---
 
+### SmartSpace — Add `proactiveRouterEnabled`
+
+**Add:**
+
+```prisma
+model SmartSpace {
+  // ... existing fields ...
+
+  proactiveRouterEnabled  Boolean  @default(false)  @map("proactive_router_enabled")  // ← NEW
+}
+```
+
+**Why:** Opt-in flag per space. When `true`, the gateway calls the proactive router AI after processing normal `@mention` triggers on each incoming message. Spaces with only human members, or spaces with exactly 2 members, never use this even if the flag is set — those cases are handled by auto-trigger instead.
+
+---
+
 ## Unchanged Models
 
 These models are **unchanged** in v2:
