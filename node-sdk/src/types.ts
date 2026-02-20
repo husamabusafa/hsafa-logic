@@ -139,21 +139,27 @@ export interface StreamEvent {
 }
 
 export type EventType =
-  | 'smartSpace.message'
-  | 'smartSpace.member.joined'
-  | 'smartSpace.member.left'
+  // Space message events
+  | 'space.message'             // persisted DB message (human or agent)
+  | 'space.message.streaming'   // send_message text delta (phase: start | delta | done)
+  | 'space.message.failed'      // send_message errored during streaming
+  | 'space.member.joined'
+  | 'space.member.left'
+  // Run lifecycle
   | 'run.created'
   | 'run.started'
   | 'run.completed'
   | 'run.failed'
-  | 'run.canceled'
+  | 'run.cancelled'
   | 'run.waiting_tool'
+  // Agent status
   | 'agent.active'
   | 'agent.inactive'
-  | 'tool-call.start'
-  | 'tool-input-delta'
-  | 'tool-call.complete'
-  | 'tool-call.error'
+  // Visible tool call events
+  | 'tool.started'    // tool invocation began
+  | 'tool.streaming'  // partial args for visible custom tools
+  | 'tool.done'       // tool completed with result
+  | 'tool.error'      // tool execution failed
   | (string & {});
 
 // =============================================================================

@@ -225,7 +225,7 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
 
     // Emit to space SSE stream
     await emitSmartSpaceEvent(req.params.smartSpaceId, {
-      type: 'smartSpace.message',
+      type: 'space.message',
       message: {
         id: message.id,
         smartSpaceId: message.smartSpaceId,
