@@ -35,6 +35,22 @@ services:
     networks:
       - hsafa-network
 
+  migrate:
+    build:
+      context: ./hsafa-gateway
+      dockerfile: Dockerfile
+      target: development
+    container_name: hsafa-migrate
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hsafa}:${POSTGRES_PASSWORD:-hsafa123}@postgres:5432/${POSTGRES_DB:-hsafa_db}
+    command: npx prisma migrate deploy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - hsafa-network
+    restart: "no"
+
   gateway:
     build:
       context: ./hsafa-gateway
@@ -46,19 +62,22 @@ services:
       PORT: ${GATEWAY_PORT:-3000}
       DATABASE_URL: postgresql://${POSTGRES_USER:-hsafa}:${POSTGRES_PASSWORD:-hsafa123}@postgres:5432/${POSTGRES_DB:-hsafa_db}
       REDIS_URL: redis://:${REDIS_PASSWORD:-redis123}@redis:6379
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      HSAFA_SECRET_KEY: ${HSAFA_SECRET_KEY:-dev_secret_key}
+      HSAFA_PUBLIC_KEY: ${HSAFA_PUBLIC_KEY:-dev_public_key}
+      JWT_SECRET: ${JWT_SECRET:-dev_jwt_secret_change_in_prod}
+      JWT_ENTITY_CLAIM: ${JWT_ENTITY_CLAIM:-sub}
     ports:
-      - "${GATEWAY_PORT:-3000}:3000"
+      - "${GATEWAY_PORT:-3000}:${GATEWAY_PORT:-3000}"
     volumes:
       - ./hsafa-gateway:/app
-      - /app/node_modules
+      - gateway_node_modules:/app/node_modules
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - hsafa-network
     restart: unless-stopped
@@ -67,6 +86,8 @@ volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  gateway_node_modules:
     driver: local
 
 networks:

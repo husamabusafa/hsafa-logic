@@ -1,0 +1,346 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum EntityType {
+  human
+  agent
+}
+
+enum RunStatus {
+  queued
+  running
+  waiting_tool   // Only for interactive UI tools (forms, approvals). No waiting_reply — runs are stateless.
+  completed
+  failed
+  canceled
+}
+
+enum ToolCallStatus {
+  requested
+  dispatched
+  completed
+  failed
+  expired
+}
+
+enum PlanStatus {
+  pending
+  running
+  completed
+  canceled
+}
+
+// =============================================================================
+// ENTITY - Unified identity (Human or Agent)
+// =============================================================================
+
+model Entity {
+  id          String     @id @default(uuid()) @db.Uuid
+  type        EntityType
+  externalId  String?    @unique @map("external_id")
+  displayName String?    @map("display_name")
+  metadata    Json?      @db.JsonB
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // For Agent Entities - link to agent config
+  agentId String? @unique @map("agent_id") @db.Uuid
+  agent   Agent?  @relation(fields: [agentId], references: [id])
+
+  // Relationships
+  smartSpaceMemberships SmartSpaceMembership[]
+  messages              SmartSpaceMessage[]
+  runs                  Run[]
+  clients               Client[]
+  memories              Memory[]
+  plans                 Plan[]
+  goals                 Goal[]
+
+  @@index([type])
+  @@index([externalId])
+  @@map("entities")
+}
+
+// =============================================================================
+// SMART SPACE - Shared context space (timeline of events/messages)
+// v2: No adminAgentEntityId. All agents are equal.
+// =============================================================================
+
+model SmartSpace {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String?
+  description String?
+  metadata    Json?    @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships SmartSpaceMembership[]
+  messages    SmartSpaceMessage[]
+
+  @@index([createdAt])
+  @@map("smart_spaces")
+}
+
+// =============================================================================
+// SMART SPACE MEMBERSHIP
+// v2: Added lastProcessedMessageId (agents) and lastSeenMessageId (humans)
+// =============================================================================
+
+model SmartSpaceMembership {
+  id           String   @id @default(uuid()) @db.Uuid
+  smartSpaceId String   @map("smart_space_id") @db.Uuid
+  entityId     String   @map("entity_id") @db.Uuid
+  role         String?
+  joinedAt     DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
+
+  // v2: Read-state tracking
+  lastProcessedMessageId String? @map("last_processed_message_id") @db.Uuid // For agents: last message processed in a run
+  lastSeenMessageId      String? @map("last_seen_message_id") @db.Uuid      // For humans: last message seen in the UI
+
+  smartSpace SmartSpace @relation(fields: [smartSpaceId], references: [id], onDelete: Cascade)
+  entity     Entity     @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([smartSpaceId, entityId])
+  @@index([entityId])
+  @@map("smart_space_memberships")
+}
+
+// =============================================================================
+// SMART SPACE MESSAGE - Messages/events in a SmartSpace
+// =============================================================================
+
+model SmartSpaceMessage {
+  id           String   @id @default(uuid()) @db.Uuid
+  smartSpaceId String   @map("smart_space_id") @db.Uuid
+  entityId     String   @map("entity_id") @db.Uuid
+  role         String   // user, assistant, system, tool
+  content      String?  @db.Text
+  metadata     Json?    @db.JsonB
+  seq          BigInt
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  smartSpace SmartSpace @relation(fields: [smartSpaceId], references: [id], onDelete: Cascade)
+  entity     Entity     @relation(fields: [entityId], references: [id])
+
+  // If this message was produced by a Run
+  runId String? @map("run_id") @db.Uuid
+  run   Run?    @relation(fields: [runId], references: [id])
+
+  @@unique([smartSpaceId, seq])
+  @@index([smartSpaceId, createdAt])
+  @@index([entityId])
+  @@map("smart_space_messages")
+}
+
+// =============================================================================
+// AGENT - Agent configuration (separate from Entity identity)
+// =============================================================================
+
+model Agent {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  description String?
+  configJson  Json     @map("config_json") @db.JsonB
+  configHash  String?  @map("config_hash")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entity Entity?
+  runs   Run[]
+
+  @@index([createdAt])
+  @@map("agents")
+}
+
+// =============================================================================
+// RUN - One execution of an Agent
+// v2: Added activeSpaceId (set by enter_space). Runs are general-purpose.
+//     No waiting_reply. triggerMentionReason removed (no mentions in v2).
+// =============================================================================
+
+model Run {
+  id            String    @id @default(uuid()) @db.Uuid
+  agentEntityId String    @map("agent_entity_id") @db.Uuid
+  agentId       String    @map("agent_id") @db.Uuid
+  triggeredById String?   @map("triggered_by_id") @db.Uuid
+  status        RunStatus
+  startedAt     DateTime? @map("started_at") @db.Timestamptz(6)
+  completedAt   DateTime? @map("completed_at") @db.Timestamptz(6)
+  errorMessage  String?   @map("error_message")
+  metadata      Json?     @db.JsonB
+
+  // v2: Active space context (set by enter_space tool, not a FK)
+  activeSpaceId String? @map("active_space_id") @db.Uuid
+
+  // Trigger context
+  triggerType           String?  @map("trigger_type")              // 'space_message' | 'plan' | 'service'
+  triggerSpaceId        String?  @map("trigger_space_id") @db.Uuid
+  triggerMessageId      String?  @map("trigger_message_id") @db.Uuid
+  triggerMessageContent String?  @map("trigger_message_content") @db.Text
+  triggerSenderEntityId String?  @map("trigger_sender_entity_id") @db.Uuid
+  triggerSenderName     String?  @map("trigger_sender_name")
+  triggerSenderType     String?  @map("trigger_sender_type")      // 'human' | 'agent'
+  triggerServiceName    String?  @map("trigger_service_name")
+  triggerPayload        Json?    @map("trigger_payload") @db.JsonB
+  triggerPlanId         String?  @map("trigger_plan_id") @db.Uuid
+  triggerPlanName       String?  @map("trigger_plan_name")
+  triggerPlanInstruction String? @map("trigger_plan_instruction") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  agentEntity Entity @relation(fields: [agentEntityId], references: [id])
+  agent       Agent  @relation(fields: [agentId], references: [id])
+
+  events   RunEvent[]
+  toolCalls ToolCall[]
+  messages SmartSpaceMessage[]
+
+  @@index([agentEntityId, createdAt])
+  @@index([agentEntityId, status])
+  @@index([agentEntityId, triggerMessageId])
+  @@index([status, updatedAt])
+  @@map("runs")
+}
+
+// =============================================================================
+// RUN EVENTS - Streaming events within a Run
+// =============================================================================
+
+model RunEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  runId     String   @map("run_id") @db.Uuid
+  seq       BigInt
+  type      String
+  payload   Json     @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, seq])
+  @@index([runId, createdAt])
+  @@map("run_events")
+}
+
+// =============================================================================
+// TOOL CALLS - Tool calls within a Run (used for waiting_tool / client tools)
+// =============================================================================
+
+model ToolCall {
+  id          String         @id @default(uuid()) @db.Uuid
+  runId       String         @map("run_id") @db.Uuid
+  seq         BigInt
+  callId      String         @map("call_id")
+  toolName    String         @map("tool_name")
+  args        Json           @db.JsonB
+  status      ToolCallStatus
+  output      Json?          @db.JsonB
+  requestedAt DateTime       @default(now()) @map("requested_at") @db.Timestamptz(6)
+  completedAt DateTime?      @map("completed_at") @db.Timestamptz(6)
+  errorMessage String?       @map("error_message")
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, callId])
+  @@index([runId, seq])
+  @@map("tool_calls")
+}
+
+// =============================================================================
+// CLIENT - Connection points (web, mobile, node backend, etc.)
+// =============================================================================
+
+model Client {
+  id           String    @id @default(uuid()) @db.Uuid
+  entityId     String    @map("entity_id") @db.Uuid
+  clientKey    String    @unique @map("client_key")
+  clientType   String?   @map("client_type")
+  displayName  String?   @map("display_name")
+  capabilities Json      @default(dbgenerated("'{}'::jsonb")) @db.JsonB
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt   DateTime? @map("last_seen_at") @db.Timestamptz(6)
+
+  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@index([entityId])
+  @@index([clientType])
+  @@map("clients")
+}
+
+// =============================================================================
+// MEMORY - Long-term agent memory (persists across Runs)
+// =============================================================================
+
+model Memory {
+  id        String   @id @default(uuid()) @db.Uuid
+  entityId  String   @map("entity_id") @db.Uuid
+  key       String
+  value     String   @db.Text
+  metadata  Json?    @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([entityId, key])
+  @@index([entityId])
+  @@map("memories")
+}
+
+// =============================================================================
+// PLAN - Agent scheduled executions
+// =============================================================================
+
+model Plan {
+  id           String     @id @default(uuid()) @db.Uuid
+  entityId     String     @map("entity_id") @db.Uuid
+  name         String
+  instruction  String?    @db.Text
+  isRecurring  Boolean    @default(false) @map("is_recurring")
+  cron         String?
+  scheduledAt  DateTime?  @map("scheduled_at") @db.Timestamptz(6)
+  nextRunAt    DateTime?  @map("next_run_at") @db.Timestamptz(6)
+  lastRunAt    DateTime?  @map("last_run_at") @db.Timestamptz(6)
+  status       PlanStatus @default(pending)
+  completedAt  DateTime?  @map("completed_at") @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@index([entityId, status])
+  @@index([nextRunAt, status])
+  @@map("plans")
+}
+
+// =============================================================================
+// GOAL - Agent objectives
+// =============================================================================
+
+model Goal {
+  id          String   @id @default(uuid()) @db.Uuid
+  entityId    String   @map("entity_id") @db.Uuid
+  description String   @db.Text
+  status      String   @default("active") // active, completed, abandoned
+  priority    Int      @default(0)
+  metadata    Json?    @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@index([entityId, status])
+  @@index([entityId, priority])
+  @@map("goals")
+}
