@@ -39,7 +39,6 @@ export interface SmartSpace {
   description?: string | null;
   metadata?: Record<string, unknown> | null;
   showAgentReasoning?: boolean;
-  adminAgentEntityId?: string | null;
   createdAt: string;
 }
 
@@ -62,12 +61,15 @@ export interface Membership {
   entityId: string;
   role?: string | null;
   joinedAt: string;
+  lastProcessedMessageId?: string | null;
+  lastSeenMessageId?: string | null;
   entity?: Entity;
 }
 
 export interface Run {
   id: string;
   smartSpaceId?: string | null;
+  activeSpaceId?: string | null;
   agentEntityId: string;
   agentId: string;
   triggeredById?: string | null;
@@ -76,15 +78,16 @@ export interface Run {
   // Trigger context
   triggerType?: 'space_message' | 'plan' | 'service' | null;
   triggerSpaceId?: string | null;
+  triggerMessageId?: string | null;
   triggerMessageContent?: string | null;
   triggerSenderEntityId?: string | null;
   triggerSenderName?: string | null;
   triggerSenderType?: 'human' | 'agent' | null;
-  triggerMentionReason?: string | null;
   triggerServiceName?: string | null;
   triggerPayload?: unknown;
   triggerPlanId?: string | null;
   triggerPlanName?: string | null;
+  triggerPlanInstruction?: string | null;
   createdAt: string;
   completedAt?: string | null;
   errorMessage?: string | null;
@@ -139,19 +142,18 @@ export type EventType =
   | 'smartSpace.message'
   | 'smartSpace.member.joined'
   | 'smartSpace.member.left'
-  | 'start'
-  | 'text-start'
-  | 'text-delta'
-  | 'text-end'
-  | 'finish'
+  | 'run.created'
+  | 'run.started'
+  | 'run.completed'
+  | 'run.failed'
+  | 'run.canceled'
+  | 'run.waiting_tool'
   | 'agent.active'
   | 'agent.inactive'
   | 'tool-call.start'
-  | 'tool-call'
-  | 'tool-call.result'
+  | 'tool-input-delta'
+  | 'tool-call.complete'
   | 'tool-call.error'
-  | 'message.user'
-  | 'message.assistant'
   | (string & {});
 
 // =============================================================================
@@ -187,7 +189,6 @@ export interface CreateSmartSpaceParams {
   description?: string;
   metadata?: Record<string, unknown>;
   showAgentReasoning?: boolean;
-  adminAgentEntityId?: string;
 }
 
 export interface UpdateSmartSpaceParams {
@@ -195,7 +196,6 @@ export interface UpdateSmartSpaceParams {
   description?: string;
   metadata?: Record<string, unknown>;
   showAgentReasoning?: boolean;
-  adminAgentEntityId?: string | null;
 }
 
 export interface AddMemberParams {

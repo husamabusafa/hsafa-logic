@@ -75,13 +75,6 @@ class SetupResource {
       }
     }
 
-    // 4. Set admin agent if specified
-    if (params.adminAgentEntityId) {
-      await this.spaces.update(smartSpace.id, {
-        adminAgentEntityId: params.adminAgentEntityId,
-      });
-    }
-
     return {
       smartSpace,
       entities: createdEntities,

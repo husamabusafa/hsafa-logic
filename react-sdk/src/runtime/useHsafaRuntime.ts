@@ -49,13 +49,6 @@ export interface ThreadListAdapter {
 
 // ─── Streaming state ─────────────────────────────────────────────────────────
 
-interface StreamingEntry {
-  id: string;       // toolCallId used as streamId
-  entityId: string;
-  text: string;
-  active: boolean;  // true while text-delta events are flowing
-}
-
 interface ToolCallEntry {
   toolCallId: string;
   toolName: string;
@@ -192,7 +185,6 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
   const { smartSpaceId, entityId, smartSpaces = [], onSwitchThread, onNewThread } = options;
 
   const [rawMessages, setRawMessages] = useState<SmartSpaceMessage[]>([]);
-  const [streaming, setStreaming] = useState<StreamingEntry[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([]);
   const [membersById, setMembersById] = useState<Record<string, Entity>>({});
   const [loaded, setLoaded] = useState(false);
@@ -206,7 +198,7 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
 
   // ── Load messages ──
   useEffect(() => {
-    if (!smartSpaceId) { setRawMessages([]); setStreaming([]); setLoaded(false); return; }
+    if (!smartSpaceId) { setRawMessages([]); setLoaded(false); return; }
     setLoaded(false);
     client.messages.list(smartSpaceId, { limit: 100 })
       .then(({ messages }) => { setRawMessages(messages); setLoaded(true); })
@@ -226,9 +218,10 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
   }, [client, smartSpaceId]);
 
   // ── SSE subscription ──
-  // Only 4 events matter on the space stream:
-  //   text-start / text-delta / text-end / finish  → streaming
-  //   smartSpace.message                           → persisted message
+  // v2 events on the space stream:
+  //   smartSpace.message  → persisted message (text arrives here, not as streaming deltas)
+  //   tool-call.*         → visible tool call lifecycle
+  //   agent.active/inactive → loading indicator
   useEffect(() => {
     if (!smartSpaceId || !loaded) return;
     const stream = client.spaces.subscribe(smartSpaceId);
@@ -250,36 +243,6 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         });
       }
     }).catch(() => {});
-
-    // text-start → create streaming entry
-    stream.on('text-start', (e: StreamEvent) => {
-      const id = e.data?.id as string;
-      if (!id) return;
-      setStreaming((prev) =>
-        prev.some((s) => s.id === id) ? prev : [...prev, { id, entityId: e.entityId || '', text: '', active: true }]
-      );
-    });
-
-    // text-delta → append text
-    stream.on('text-delta', (e: StreamEvent) => {
-      const id = e.data?.id as string;
-      const delta = (e.data?.delta as string) || '';
-      if (!id || !delta) return;
-      setStreaming((prev) => {
-        const exists = prev.find((s) => s.id === id);
-        if (exists) return prev.map((s) => s.id === id ? { ...s, text: s.text + delta } : s);
-        return [...prev, { id, entityId: e.entityId || '', text: delta, active: true }];
-      });
-    });
-
-    // text-end / finish → mark inactive
-    const markDone = (e: StreamEvent) => {
-      const id = (e.data?.id as string) || (e.data?.streamId as string) || '';
-      if (!id) return;
-      setStreaming((prev) => prev.map((s) => s.id === id ? { ...s, active: false } : s));
-    };
-    stream.on('text-end', markDone);
-    stream.on('finish', markDone);
 
     // tool-call.start → create tool call entry (running)
     stream.on('tool-call.start', (e: StreamEvent) => {
@@ -314,8 +277,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       ));
     });
 
-    // tool-call.result → update with result, mark complete
-    stream.on('tool-call.result', (e: StreamEvent) => {
+    // tool-call.complete → update with result, mark complete (v2 event name)
+    stream.on('tool-call.complete', (e: StreamEvent) => {
       const toolCallId = e.data?.toolCallId as string;
       const output = e.data?.output;
       if (!toolCallId) return;
@@ -383,7 +346,6 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
 
       setRawMessages((prev) => prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]);
       if (streamId) {
-        setStreaming((prev) => prev.filter((s) => s.id !== streamId));
         // Clear matching tool call entry to avoid duplicate display
         setToolCalls((prev) => prev.filter((tc) => tc.toolCallId !== streamId));
       }
@@ -392,7 +354,6 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
     return () => {
       stream.close();
       streamRef.current = null;
-      setStreaming([]);
       setToolCalls([]);
       persistedRef.current.clear();
       activeRunsRef.current.clear();
@@ -401,7 +362,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
   }, [client, smartSpaceId, loaded]);
 
   // ── Build message list ──
-  const isRunning = streaming.some((s) => s.active) || toolCalls.some((tc) => tc.status === 'running');
+  // v2: no text streaming — isRunning is true while agents are active or tool calls are in flight
+  const isRunning = activeAgents.length > 0 || toolCalls.some((tc) => tc.status === 'running');
 
   const messages = useMemo<ThreadMessageLike[]>(() => {
     // Build set of active tool call IDs to skip their persisted duplicates
@@ -439,18 +401,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       metadata: { custom: { entityId: tc.entityId, runId: tc.runId } },
     }));
 
-    const live = streaming
-      .filter((s) => s.text && !persistedRef.current.has(s.id))
-      .map((s): ThreadMessageLike => ({
-        id: s.id,
-        role: 'assistant',
-        content: [{ type: 'text', text: s.text }],
-        createdAt: new Date(),
-        metadata: { custom: { entityId: s.entityId } },
-      }));
-
-    return [...persisted, ...tcMessages, ...live];
-  }, [rawMessages, streaming, toolCalls, entityId]);
+    return [...persisted, ...tcMessages];
+  }, [rawMessages, toolCalls, entityId]);
 
   // ── Send message ──
   const onNew = useCallback(

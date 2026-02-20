@@ -53,14 +53,14 @@ export class MessagesResource {
       const activeToolCalls = new Map<string, { id: string; name: string; input: unknown; output?: unknown }>();
       let settled = false;
 
-      // Subscribe to space stream for text deltas
+      // Subscribe to space stream for persisted messages (v2: no text streaming, text arrives as smartSpace.message)
       const spaceStream = new SSEStream({
-        url: this.http.buildUrl(`/api/smart-spaces/${smartSpaceId}/stream`, { since: '$' }),
+        url: this.http.buildUrl(`/api/smart-spaces/${smartSpaceId}/stream`),
         headers: this.http.getAuthHeaders(),
         reconnect: false,
       });
 
-      // Subscribe to run stream for completion signals
+      // Subscribe to run stream for completion signals and tool events
       const runStream = new SSEStream({
         url: this.http.buildUrl(`/api/runs/${runId}/stream`),
         headers: this.http.getAuthHeaders(),
@@ -81,30 +81,36 @@ export class MessagesResource {
         runStream.close();
       };
 
-      // Space stream: accumulate text deltas
-      spaceStream.on('text.delta', (event: StreamEvent) => {
-        const delta = (event.data as Record<string, unknown>).delta;
-        if (typeof delta === 'string') {
-          text += delta;
-        }
+      // Space stream: collect agent text from persisted messages (v2 — no text streaming)
+      spaceStream.on('smartSpace.message', (event: StreamEvent) => {
+        const msg = (event.data as Record<string, unknown>)?.message as Record<string, unknown> | undefined;
+        if (!msg) return;
+        const role = msg.role as string;
+        const agentEntityId = event.agentEntityId || (msg.entityId as string);
+        // Only collect agent (assistant) messages, not the human message we just sent
+        if (role !== 'assistant' && role !== 'agent') return;
+        const content = msg.content as string | undefined;
+        if (content) text += (text ? '\n' : '') + content;
       });
 
-      // Run stream: tool events
-      runStream.on('tool-input-available', (event: StreamEvent) => {
+      // Run stream: tool events (v2 names)
+      runStream.on('tool-call.start', (event: StreamEvent) => {
         const data = event.data as Record<string, unknown>;
         const callId = String(data.toolCallId || '');
+        if (!callId) return;
         activeToolCalls.set(callId, {
           id: callId,
           name: String(data.toolName || ''),
-          input: data.input,
+          input: undefined,
         });
       });
 
-      runStream.on('tool-output-available', (event: StreamEvent) => {
+      runStream.on('tool-call.complete', (event: StreamEvent) => {
         const data = event.data as Record<string, unknown>;
         const callId = String(data.toolCallId || '');
         const existing = activeToolCalls.get(callId);
         if (existing) {
+          existing.input = data.input ?? existing.input;
           existing.output = data.output;
         }
       });
