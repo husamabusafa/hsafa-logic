@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the schema changes needed for v2. The changes are minimal — the core data model (entities, spaces, messages, runs, goals, memories, plans) remains the same. The changes reflect the removal of admin agent logic and the addition of active space state + reply waiting.
+This document describes the schema changes needed for v2. The changes are minimal — the core data model (entities, spaces, messages, runs, goals, memories, plans) remains the same. The changes reflect the removal of admin agent logic and the addition of active space state.
 
 ---
 
@@ -25,27 +25,24 @@ adminAgent           Entity?  @relation("AdminAgent", fields: [adminAgentEntityI
 adminSpaces      SmartSpace[] @relation("AdminAgent")
 ```
 
-**Why:** No admin agent concept in v2. All agents are equal. Triggering is mention-based.
+**Why:** No admin agent concept in v2. All agents are equal. Every message triggers all other agent members (sender excluded).
 
 ---
 
-### 2. RunStatus — Add `waiting_reply`
-
-**Change:**
+### 2. RunStatus — Unchanged
 
 ```prisma
 enum RunStatus {
   queued
   running
   waiting_tool
-  waiting_reply    // ← NEW: paused on send_message(wait: true)
   completed
   failed
   canceled
 }
 ```
 
-**Why:** Distinguishes between waiting for a UI tool result (`waiting_tool`) and waiting for a space message reply (`waiting_reply`).
+**Note:** There is no `waiting_reply` status. Runs are stateless — agents don't pause for chat messages. Every message triggers a fresh run. The only pause is `waiting_tool` for interactive UI components.
 
 ---
 
@@ -69,58 +66,23 @@ model Run {
 
 ---
 
-### 4. Run Metadata — Wait State
+### 4. Run Metadata
 
-When a run enters `waiting_reply`, the wait state is stored in run metadata (JSON):
+Run metadata stores contextual information about the run:
 
 ```json
 {
-  "waitState": {
+  "triggerContext": {
+    "type": "space_message",
     "spaceId": "space-abc",
     "messageId": "msg-xyz",
-    "toolCallId": "call-123",
-    "waitingFor": [
-      {
-        "entityId": "entity-designer",
-        "entityName": "Designer",
-        "entityType": "agent",
-        "responded": false
-      }
-    ],
-    "startedAt": "2026-02-18T12:34:00Z",
-    "timeout": 300000,
-    "replies": []
+    "senderEntityId": "entity-husam",
+    "senderName": "Husam"
   }
 }
 ```
 
-When replies arrive:
-
-```json
-{
-  "waitState": {
-    "spaceId": "space-abc",
-    "messageId": "msg-xyz",
-    "toolCallId": "call-123",
-    "waitingFor": [
-      { "entityId": "entity-designer", "entityName": "Designer", "entityType": "agent", "responded": true }
-    ],
-    "startedAt": "2026-02-18T12:34:00Z",
-    "timeout": 300000,
-    "replies": [
-      {
-        "entityId": "entity-designer",
-        "entityName": "Designer",
-        "text": "Looks good, approved!",
-        "messageId": "msg-reply-1",
-        "timestamp": "2026-02-18T12:34:45Z"
-      }
-    ]
-  }
-}
-```
-
-**Why metadata, not a table?** Wait state is transient — it's only needed while the run is paused. Once the run resumes, the replies become part of the tool result. No need for a separate table.
+**Note:** There is no `waitState` in run metadata. Runs are stateless — they don't pause for chat messages. All conversational state lives in the space timeline and agent memories/goals.
 
 ---
 
@@ -226,20 +188,17 @@ The `configJson` stored in the Agent model changes:
 ## Migration SQL
 
 ```sql
--- 1. Add waiting_reply to RunStatus enum
-ALTER TYPE "RunStatus" ADD VALUE 'waiting_reply' AFTER 'waiting_tool';
-
--- 2. Add activeSpaceId to runs
+-- 1. Add activeSpaceId to runs
 ALTER TABLE "runs" ADD COLUMN "active_space_id" UUID;
 
--- 3. Remove adminAgentEntityId from smart_spaces
+-- 2. Remove adminAgentEntityId from smart_spaces
 ALTER TABLE "smart_spaces" DROP COLUMN IF EXISTS "admin_agent_entity_id";
 
--- 4. Add lastProcessedMessageId and lastSeenMessageId to memberships
+-- 3. Add lastProcessedMessageId and lastSeenMessageId to memberships
 ALTER TABLE "smart_space_memberships" ADD COLUMN "last_processed_message_id" UUID;
 ALTER TABLE "smart_space_memberships" ADD COLUMN "last_seen_message_id" UUID;
 
--- Note: proactiveRouterEnabled is NOT added (removed from design)
+-- Note: No waiting_reply status added. RunStatus enum unchanged.
 ```
 
 Or via Prisma migration:

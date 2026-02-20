@@ -72,7 +72,7 @@ For **plan/service triggers**, there is no active space initially. The agent mus
 An agent can enter multiple spaces during a single run:
 
 ```
-1. Agent triggered by mention in Space A
+1. Agent triggered by message in Space A
    → activeSpaceId = Space A (auto)
 
 2. Agent responds in Space A

@@ -60,33 +60,33 @@ Designer Run:
 
   3. Agent calls send_message({ text: "Here's the mockup! Key elements: hero banner, CTA button, testimonials section." })
      → Message posted to space
-     → Triggers Developer (Designer excluded as sender, chainDepth=1)
+     → Triggers Developer (Designer excluded as sender)
 
   Run completes.
 
-Developer Run (from Husam's message, chainDepth=0):
+Developer Run (from Husam's message):
   TRIGGER: Husam (human) in "Project Alpha": "Create a landing page mockup..."
   1. Agent reasons: this is a design task, not a dev task yet. I'll stay silent.
   Run completes (no message sent).
 
-Developer Run (from Designer's message, chainDepth=1):
+Developer Run (from Designer's message):
   TRIGGER: Designer (agent) in "Project Alpha": "Here's the mockup! Key elements: hero banner..."
   1. Agent reads space history — sees the mockup details.
   2. Agent calls send_message({ text: "The layout looks doable. Hero banner and CTA are straightforward. Testimonials section will need a carousel — I'd estimate 2 days." })
-     → Triggers Designer (chainDepth=2)
+     → Triggers Designer
 
   Run completes.
 
-Designer Run (from Developer's message, chainDepth=2):
+Designer Run (from Developer's message):
   1. Agent reasons: Developer gave a feasibility assessment. No further design input needed.
   Run completes (no message sent).
 ```
 
-**Key:** Every message triggers all other agent members. Agents independently decide whether to respond. Chain depth prevents infinite loops — at `MAX_CHAIN_DEPTH` (default 5), messages stop triggering.
+**Key:** Every message triggers all other agent members. Agents independently decide whether to respond.
 
 ---
 
-## Scenario 3: Agent Waits for Human Approval
+## Scenario 3: Agent Asks for Human Approval
 
 **Setup:** Space "Deployments" — Sarah (human), DeployBot (agent).
 
@@ -97,42 +97,42 @@ Sarah: "Deploy v2.1 to production"
 
 → Gateway triggers all agent members: DeployBot
 
-DeployBot Run:
+DeployBot Run 1:
   TRIGGER: Sarah (human) in "Deployments": "Deploy v2.1 to production"
   ACTIVE SPACE: "Deployments" (auto-set)
 
   1. Agent calls send_message({
-       text: "I'll deploy v2.1 to production. This will affect 3 services. Confirm by replying 'yes'.",
-       wait: true
+       text: "I'll deploy v2.1 to production. This will affect 3 services. Confirm by replying 'yes'."
      })
      → Message posted to space
-     → Run enters waiting_reply (waits for any reply)
 
-  ... Sarah reads the message ...
+  Run completes.
 
 Sarah: "yes"
 
-→ Gateway detects waiting_reply run for this space
-→ Sarah's reply resolves the wait → run resumes
+→ Gateway triggers DeployBot
 
-DeployBot Run (resumed):
-  Tool result from send_message: {
-    reply: { entityName: "Sarah", text: "yes", timestamp: "..." },
-    status: "resolved"
-  }
+DeployBot Run 2:
+  TRIGGER: Sarah (human) in "Deployments": "yes"
+  Context:
+    [SEEN] Sarah: "Deploy v2.1 to production"
+    [SEEN] DeployBot: "...Confirm by replying 'yes'."
+    [NEW]  Sarah: "yes"  ← TRIGGER
 
-  2. Agent reasons: Sarah approved
-  3. Agent calls deployService({ version: "2.1", target: "production" })
+  1. Agent reasons: "I asked for confirmation, Sarah said yes."
+  2. Agent calls deployService({ version: "2.1", target: "production" })
      → Deployment starts (visible tool card in space)
 
-  4. Agent calls send_message({ text: "Deployment complete! All 3 services running v2.1." })
+  3. Agent calls send_message({ text: "Deployment complete! All 3 services running v2.1." })
 
   Run completes.
 ```
 
+**Key:** No waiting, no pausing. Two short runs. The second run reads context, sees its own question + Sarah's answer, and proceeds.
+
 ---
 
-## Scenario 4: Agent Collaboration via Wait and Reply
+## Scenario 4: Multi-Agent Collaboration
 
 **Setup:** Space "Research" — Husam (human), Researcher (agent), Summarizer (agent).
 
@@ -144,40 +144,49 @@ Husam: "Find the top 5 AI papers from last week and summarize them"
 → Gateway triggers ALL agent members: Researcher, Summarizer
 
 Researcher Run:
+  TRIGGER: Husam (human) in "Research": "Find the top 5 AI papers..."
   1. Agent calls searchPapers({ query: "AI", period: "last_week", limit: 5 })
      → Returns 5 papers
 
   2. Agent calls send_message({
-       text: "Found 5 papers. Summarizer, can you summarize these? [paper list]",
-       wait: true
+       text: "Found 5 papers:\n1. Paper A — ...\n2. Paper B — ...\n[full list]"
      })
-     → Message posted, run pauses (waiting_reply), messageId = "msg-papers"
+     → Message posted to space, triggers Summarizer
 
-Summarizer Run (from Husam's message, chainDepth=0):
+  Run completes.
+
+Summarizer Run (from Husam's message):
   TRIGGER: Husam (human) in "Research": "Find the top 5 AI papers..."
   1. Agent reasons: Researcher is better suited for finding papers. I'll stay silent.
   Run completes.
 
-Summarizer Run (from Researcher's message, chainDepth=1):
-  TRIGGER: Researcher (agent) in "Research": "Found 5 papers. Summarizer, can you summarize these?"
-  1. Agent reads the paper list from the trigger message
+Summarizer Run (from Researcher's message):
+  TRIGGER: Researcher (agent) in "Research": "Found 5 papers: ..."
+  Context:
+    [SEEN] Husam: "Find the top 5 AI papers..."
+    [NEW]  Researcher: "Found 5 papers: ..."  ← TRIGGER
+
+  1. Agent reads the paper list from context
   2. Agent calls send_message({
-       text: "Here are the summaries:\n1. Paper A: ...\n2. Paper B: ...",
-       messageId: "msg-papers"
+       text: "Here are the summaries:\n1. Paper A: ...\n2. Paper B: ..."
      })
-     → Gateway resumes Researcher's waiting run
-  
+
   Run completes.
 
-Researcher Run (resumed):
-  Receives reply: "Here are the summaries: ..."
+Researcher Run (from Summarizer's message):
+  TRIGGER: Summarizer (agent) in "Research": "Here are the summaries: ..."
+  Context:
+    [SEEN] Husam: "Find the top 5 AI papers..."
+    [SEEN] Researcher: "Found 5 papers: ..."
+    [NEW]  Summarizer: "Here are the summaries: ..."
 
-  3. Agent calls send_message({ text: "Here's your research report:\n\n[formatted summaries]\n\nLet me know if you want me to dig deeper into any of these." })
+  1. Agent reasons: Summaries are done. Husam has everything he needs.
+  2. Agent calls send_message({ text: "Research complete! Here's your full report:\n\n[formatted summaries]\n\nLet me know if you want me to dig deeper into any of these." })
 
   Run completes.
 ```
 
-**Key:** Both agents were triggered by the same human message. Researcher posted its findings and waited. Summarizer's run (triggered by Researcher's message at chainDepth=1) saw the findings and used `messageId` to reply, which resumed Researcher's run.
+**Key:** Both agents were triggered by the same human message. Each message triggers new runs. No waiting, no `messageId` threading — just agents reading context and contributing naturally.
 
 ---
 
@@ -302,32 +311,44 @@ SupportBot Run 2:
 ```
 Husam: "Help me plan a trip to Tokyo"
 
+→ Triggers AssistantBot
+
 AssistantBot Run 1:
-  1. send_message({ text: "I'd love to help! When are you thinking of going, and for how long?", wait: true })
-  → Pauses
+  Context: [NEW] Husam: "Help me plan a trip to Tokyo"
+  1. send_message({ text: "I'd love to help! When are you thinking of going, and for how long?" })
+  Run completes.
 
 Husam: "First week of April, about 5 days"
 
-→ Reply resolves wait
+→ Triggers AssistantBot
 
-AssistantBot Run 1 (resumed):
-  2. Reasons: April, 5 days, Tokyo
-  3. send_message({ text: "Great timing — cherry blossom season! Here's a rough itinerary:\n\nDay 1: Shinjuku & Shibuya\nDay 2: Asakusa & Akihabara\n...\n\nWant me to find hotels and flights?", wait: true })
-  → Pauses again
+AssistantBot Run 2:
+  Context:
+    [SEEN] Husam: "Help me plan a trip to Tokyo"
+    [SEEN] AssistantBot: "When are you thinking of going...?"
+    [NEW]  Husam: "First week of April, about 5 days"
+  1. Reasons: April, 5 days, Tokyo
+  2. send_message({ text: "Great timing — cherry blossom season! Here's a rough itinerary:\n\nDay 1: Shinjuku & Shibuya\nDay 2: Asakusa & Akihabara\n...\n\nWant me to find hotels and flights?" })
+  Run completes.
 
 Husam: "Yes, budget around $150/night for hotels"
 
-→ Reply resolves wait
+→ Triggers AssistantBot
 
-AssistantBot Run 1 (resumed):
-  4. calls searchHotels({ city: "Tokyo", dates: "2026-04-01 to 2026-04-06", maxPrice: 150 })
-  5. calls searchFlights({ destination: "NRT", dates: "2026-04-01 to 2026-04-06" })
-  6. send_message({ text: "Found 3 great options:\n\n🏨 Hotels:\n1. ...\n\n✈️ Flights:\n1. ...\n\nWant me to book any of these?" })
-
-  Run completes (no wait this time — agent delivered the final answer).
+AssistantBot Run 3:
+  Context:
+    [SEEN] Husam: "Help me plan a trip to Tokyo"
+    [SEEN] AssistantBot: "When are you thinking of going...?"
+    [SEEN] Husam: "First week of April, about 5 days"
+    [SEEN] AssistantBot: "Great timing — cherry blossom season!..."
+    [NEW]  Husam: "Yes, budget around $150/night"
+  1. calls searchHotels({ city: "Tokyo", dates: "2026-04-01 to 2026-04-06", maxPrice: 150 })
+  2. calls searchFlights({ destination: "NRT", dates: "2026-04-01 to 2026-04-06" })
+  3. send_message({ text: "Found 3 great options:\n\n🏨 Hotels:\n1. ...\n\n✈️ Flights:\n1. ...\n\nWant me to book any of these?" })
+  Run completes.
 ```
 
-**Key:** Single run with multiple wait cycles. The agent maintains full context across the entire conversation — it doesn't lose track of "Tokyo, April, 5 days, $150 budget" between turns.
+**Key:** Three short runs, each reading the full conversation context. The agent doesn't lose track of "Tokyo, April, 5 days, $150 budget" — the entire timeline is in `[SEEN]` context every run. No waiting, no pausing, no state management.
 
 ---
 

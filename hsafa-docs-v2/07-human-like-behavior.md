@@ -14,7 +14,7 @@ The agent always knows **why** it is running.
 
 | Trigger | Intent |
 |---------|--------|
-| Husam mentions the agent in "Project Alpha" | "Husam needs something from me in Project Alpha" |
+| Husam sends a message in "Project Alpha" | "Husam needs something from me in Project Alpha" |
 | Daily Report plan fires at 9am | "It's time for the daily report" |
 | Jira webhook triggers with payload | "A Jira event happened that I need to process" |
 
@@ -22,7 +22,7 @@ This isn't inferred — it's explicitly provided in the trigger context. The age
 
 **v1 gap**: In v1, the agent received role-based history and had to infer intent from the last user message. In multi-agent spaces, it was unclear whether the agent was being addressed or just overhearing.
 
-**v2 fix**: The trigger block explicitly states who triggered the agent and what they said. Mentions make intent unambiguous.
+**v2 fix**: The trigger block explicitly states who triggered the agent and what they said. All agents in the space are triggered — each independently decides whether to respond.
 
 ---
 
@@ -101,22 +101,27 @@ Each run is independent but aware of the others. The agent can:
 
 ---
 
-### 6. Waiting & Patience
+### 6. Conversational Continuity
 
-The `wait` mechanism makes agents patient — like humans who ask a question and wait for an answer:
+Agents have natural back-and-forth conversations — not by "waiting" but by **re-reading context** each time they're triggered:
 
 ```
-Agent: "@Designer can you review the mockup?" (wait: true)
-  ... agent waits ...
-Designer: "Looks great, ship it!"
-Agent: "Perfect, deploying now."
+Agent Run 1: "Can you review the mockup?"
+  Run ends.
+
+[Designer: "Looks great, ship it!"] → triggers Agent
+
+Agent Run 2:
+  Context: [SEEN] Agent asked for review. [NEW] Designer approved.
+  "Perfect, deploying now."
+  Run ends.
 ```
 
-Without wait, agents are fire-and-forget. With wait, they can:
+This is how humans work in group chats — you send a message, come back when there's a reply, and pick up from context. Agents do the same:
 
-- Have **real conversations** (ask → wait → respond → ask again).
-- **Block on dependencies** ("I need the data before I can proceed").
-- **Collaborate** ("Let me check with the team and get back to you").
+- Have **real conversations** across multiple runs, each reading the full timeline.
+- **Track dependencies** via memories ("I need budget numbers to finish the report").
+- **Collaborate** naturally — every message triggers all agents, who read context and contribute.
 
 ---
 
@@ -156,7 +161,7 @@ The architecture provides the **context** for emotional realism (knowing who you
 | Agent repeats itself | Timeline history with its own previous messages |
 | Agent confuses entities | Named senders with types, not generic "user" role |
 | Agent ignores time | Timestamps on every message |
-| Agent can't wait | `send_message(wait: true)` enables real pauses. `messageId` enables reply-based resume. |
+| Agent can't have multi-turn conversations | Stateless runs with `[SEEN]`/`[NEW]` context — each run reads the full timeline |
 | Agent is stateless | Goals, memories, run history persist across runs |
 | Agent can't multitask | Concurrent runs with mutual awareness |
 | Agent can't plan ahead | Plan system: `runAfter` for relative timing ("in 2 hours"), `cron` for recurring schedules |
@@ -171,7 +176,7 @@ A good test for whether the architecture is working: **if you replaced the agent
 - A human enters a space → `enter_space`
 - A human reads the chat history → `read_messages`
 - A human sends a message → `send_message`
-- A human waits for a reply → `send_message(wait: true)`
+- A human comes back when there's a reply → new run triggered, reads context
 - A human sends a message and all relevant agents respond
 - A human uses a tool → tool call
 - A human sets a reminder → `set_plans`

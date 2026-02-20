@@ -6,7 +6,7 @@ Hsafa v2 is built on **simplicity**, **generalization**, and **human-like intera
 
 The system removes all special-case logic — admin agents, delegate tools, mention tools, space IDs inside every tool call — and replaces it with a **clean, universal communication model**.
 
-An AI agent in Hsafa v2 behaves like a human participant: it enters spaces, reads context, sends messages, waits for replies, uses tools, and manages its own schedule. The architecture enforces no artificial boundaries between what a human can do and what an agent can do.
+An AI agent in Hsafa v2 behaves like a human participant: it enters spaces, reads context, sends messages, reads responses, uses tools, and manages its own schedule. The architecture enforces no artificial boundaries between what a human can do and what an agent can do.
 
 ---
 
@@ -35,7 +35,7 @@ Everything in v2 is built on five primitives:
 | `spaceId` in every tool call | Removed. The active space is stateful context. |
 | `displayTool` + `targetSpaceId` injection | Removed. Tools use a simple `visible: true/false` flag. |
 | Role-based history (`user`/`assistant`) | Replaced by structured chronological event context. |
-| No waiting mechanism | `send_message` supports `wait = true` to pause until replies arrive. |
+| No waiting mechanism | Stateless runs — each message triggers a fresh run, context provides continuity. |
 
 ---
 
@@ -55,7 +55,7 @@ A tool is a capability. It doesn't know about spaces, mentions, or routing. The 
 
 ### 4. Conversation Is First-Class
 
-Agents can wait for replies. They can have back-and-forth conversations with humans and other agents. A run doesn't have to be fire-and-forget — it can pause, wait, resume, and continue reasoning. A single `send_message` tool handles both new messages and replies.
+Agents have natural back-and-forth conversations with humans and other agents. Every message triggers a fresh run — the agent reads the full timeline, sees what's new, and responds. Multi-turn conversations emerge from context, not from run-level pausing. A single `send_message({ text })` tool handles all communication.
 
 ### 5. Context Over Roles
 
@@ -74,7 +74,7 @@ The goal is not to make agents *pretend* to be human through prompt engineering.
 | [01](./01-trigger-system.md) | Trigger System | How agents get triggered: space messages (all agents), plans, services. |
 | [02](./02-spaces-and-context.md) | Spaces & Active Context | `enter_space`, stateful space context, space lifecycle. |
 | [03](./03-tool-system.md) | Tool System | Generalized tools: execution types, visibility, configuration. |
-| [04](./04-messaging-and-waiting.md) | Messaging & Waiting | `send_message`, `wait`, reply resolution, conversation loops. |
+| [04](./04-messaging-and-waiting.md) | Messaging & Conversations | `send_message`, stateless runs, context-driven conversations. |
 | [05](./05-context-model.md) | Context Model | Structured event history, trigger context, no role-based history. |
 | [06](./06-run-awareness.md) | Run Awareness | Concurrent runs, paused runs, run history, deduplication. |
 | [07](./07-human-like-behavior.md) | Human-Like Behavior | Intent awareness, memory, continuity, personality. |

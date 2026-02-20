@@ -26,7 +26,7 @@ Every tool has an `executionType` that determines how it runs:
 | `ai-agent` | `gateway` |
 | `image-generator` | `gateway` |
 | `compute` | `gateway` or `internal` |
-| `waiting` | Removed (replaced by `send_message` with `wait`) |
+| `waiting` | Removed (stateless runs — no run-level waiting for messages) |
 | `prebuilt` | Internal gateway tools (not configurable) |
 
 ---
@@ -153,9 +153,9 @@ These tools are automatically injected into every agent. They are not configurab
 | Tool | Description |
 |------|-------------|
 | `enter_space` | Set the active space context. |
-| `send_message` | Send a message to the active space. Supports `wait: true` to pause until replies arrive. If `messageId` is provided, acts as a reply and resumes waiting runs. |
+| `send_message` | Send a message to the active space. |
 | `read_messages` | Read recent messages from the active space (or a specified space). Supports `offset` to read earlier history. |
-| `stop_run` | Cancel one of the agent's own active or waiting runs by ID. |
+| `stop_run` | Cancel one of the agent's own active runs by ID. |
 | `get_my_runs` | List agent's active/recent runs. |
 | `set_goals` | Create/update agent goals. |
 | `delete_goals` | Delete agent goals. |
@@ -213,7 +213,7 @@ The frontend receives the `tool-call.complete` event with the full structured pa
 ### Use Cases
 
 Visible tools are for **displaying information or interactive UI** in a space:
-- Approval dialog (`getApproval` — pauses run, waits for user input)
+- Approval dialog (`getApproval` — pauses run with `waiting_tool`, user submits result)
 - Product card (`fetchProduct`)
 - Weather widget (`getWeather`)
 - Map embed (`showLocation`)
@@ -225,13 +225,13 @@ Visible tools are for **displaying information or interactive UI** in a space:
 
 Visible tools come in two variants based on whether the run needs to wait for user interaction:
 
-### Display-Only (`executionType: "gateway"` + `visibility: "visible"`)
+### Display-Only (`executionType: "gateway"` + `visible: true`)
 
 The tool executes on the gateway. The result is stored as a `SmartSpaceMessage` and streamed to the active space. **The run continues immediately** — no waiting.
 
 Examples: weather widget, chart render, product card, fetch summary.
 
-### Interactive (`executionType: "space"` + `visibility: "visible"`)
+### Interactive (`executionType: "space"` + `visible: true`)
 
 The tool call is streamed to the active space. **The run pauses** (`waiting_tool` status). The frontend renders the tool's custom UI and the user interacts with it. The frontend submits the result back to the gateway and the run resumes.
 

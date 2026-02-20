@@ -137,7 +137,6 @@ eventSource.onmessage = (event) => {
 | `run.started` | Space channel | Run began execution |
 | `run.completed` | Space channel | Run finished successfully |
 | `run.failed` | Space channel | Run errored |
-| `run.waiting_reply` | Space channel | Run paused, waiting for reply |
 | `run.cancelled` | Space channel | Run was cancelled |
 
 ### Agent Status Events
@@ -274,7 +273,6 @@ Our SSE events are compatible in structure with Vercel AI SDK's UI Message Strea
 | `finish` | `run.completed` | We have run-level lifecycle |
 | `abort` | `run.cancelled` | Same concept |
 | — | `agent.active` / `agent.inactive` | Hsafa-specific: agent presence |
-| — | `run.waiting_reply` | Hsafa-specific: agent paused |
 
 ### Key Differences
 

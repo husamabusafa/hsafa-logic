@@ -18,7 +18,7 @@ This isn't just about reading old messages. It's about understanding:
 - Why was I triggered to run?
 - Why did I send that message in this space?
 - Why did I send a message in a *different* space?
-- What was I waiting for when I paused?
+- What was I working on in my previous run?
 - What have I already processed vs. what is new?
 
 ---
@@ -37,7 +37,6 @@ TRIGGER:
   message: "Pull the Q4 revenue numbers"
   messageId: msg-g7h8
   timestamp: "2026-02-18T15:06:55Z"
-  senderExpectsReply: true
 ```
 
 The agent never has to guess why it's running. The reason is always the first thing it reads.
@@ -109,30 +108,28 @@ The agent always sees its own concurrent runs:
 ```
 ACTIVE RUNS:
   - Run abc-123 (this run) — triggered by Husam in "Project Alpha"
-  - Run def-456 (waiting_reply) — sent "Please review the mockup", waiting in "Design Team"
+  - Run def-456 (running) — processing Designer's review in "Design Team"
 ```
 
 When the agent sees Run def-456, it knows:
-- It is currently waiting for Designer's reply
-- It sent a message asking for a review
-- That run is paused — not lost, not forgotten
+- It is currently processing a review request
+- That run is active in a different space
 
-This prevents the agent from starting a duplicate task or being confused by why it has a paused run.
+This prevents the agent from starting a duplicate task or being confused about its concurrent workload.
 
 ---
 
-### Layer 6 — Reply Threading (Why did that reply come in?)
+### Layer 6 — Conversational Flow (How does the conversation connect?)
 
-When an agent calls `send_message` with a `messageId`, the message is linked as a reply. This means that in history, each reply is traceable to the specific message it was responding to:
+The chronological timeline with `[SEEN]`/`[NEW]` markers naturally shows conversational flow:
 
 ```
 SPACE HISTORY:
   [msg:a1b2] You: "Can you review the mockup?"  [SEEN]
-  [msg:c3d4] Designer: "Looks good, approved!"  [SEEN]
-              [reply to msg:a1b2]
+  [msg:c3d4] Designer: "Looks good, approved!"  [NEW]  ← TRIGGER
 ```
 
-The agent reading this doesn't just see a sequence of messages. It sees a conversation graph — who responded to what, and why each message exists.
+The agent reading this sees the sequence: it asked a question, Designer answered. The temporal ordering and the `[SEEN]`/`[NEW]` boundary make the conversational link obvious — no explicit reply threading needed.
 
 ---
 
@@ -162,7 +159,7 @@ An agent wakes up for a new run. Before it takes any action, it already knows:
 | What did I do here before? | `[SEEN]` messages in timeline |
 | What's new since I last ran? | `[NEW]` messages in timeline |
 | Why did I send that cross-space message? | Origin metadata on the message |
-| What other tasks am I working on? | Active runs block |
+| What else am I doing right now? | Active runs block |
 | What did I decide weeks ago? | Memory block |
 | What are my ongoing goals? | Goals block |
 

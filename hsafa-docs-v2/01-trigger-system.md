@@ -21,7 +21,6 @@ This is the primary trigger mechanism.
 - **No router.** No hidden AI decides which agents should run.
 - **The sender is always excluded.** An entity's message triggers every agent *except* itself.
 - Each triggered agent independently decides whether to respond (send a message) or stay silent (end the run without sending anything).
-- The trigger context includes `senderExpectsReply` (derived from whether the sender used `wait: true`). Agents use this to decide whether a reply is expected or the message is informational only.
 
 ### What the Triggered Agent Receives
 
@@ -32,12 +31,10 @@ Every triggered agent's run context includes:
 | `triggerType` | `"space_message"` |
 | `triggerSpaceId` | Space where the message was posted |
 | `triggerMessageContent` | Full message text |
-| `triggerMessageId` | Message ID (for use with `send_message(messageId)` to reply) |
+| `triggerMessageId` | Message ID (used for deduplication) |
 | `triggerSenderEntityId` | Entity that sent the message |
 | `triggerSenderName` | Display name of the sender |
 | `triggerSenderType` | `"human"` or `"agent"` |
-| `senderExpectsReply` | `true` if the sender used `wait: true`, `false` otherwise |
-| `chainDepth` | How deep in a trigger chain this run is (see Loop Protection) |
 
 ### Multi-Agent Spaces
 
@@ -62,28 +59,71 @@ Analyst: "Here's the Q4 breakdown: ..."
 
 Agents that have nothing to contribute simply end their run without calling `send_message`. No `skipResponse` tool needed — silence is the default.
 
-### Loop Protection (Chain Depth)
+### Trigger Debounce (Run Coordination)
 
-Since agent messages trigger other agents, cascading loops are possible (A sends → triggers B → B sends → triggers A → ...). The gateway prevents this with **chain depth tracking**:
+When multiple messages arrive rapidly in a space, the gateway **batches** them into a single run per agent instead of spawning one run per message. This mirrors how humans behave — you don't reply after every single message in a group chat. You wait a beat, read everything new, then respond.
 
-1. Human messages start at `chainDepth = 0`.
-2. When an agent sends a message during a run with `chainDepth = N`, the resulting triggers have `chainDepth = N + 1`.
-3. If `chainDepth >= MAX_CHAIN_DEPTH` (default: 5), **no agents are triggered** by that message. The message is still posted to the space — it just doesn't create new runs.
+**How it works:**
 
-This limits the maximum cascade to 5 levels deep. In practice, most conversations resolve in 1-2 levels (human → agent → agent response). The agent is informed of `chainDepth` in its trigger context so it can reason about whether to continue the chain or stay silent.
+1. A message arrives that would trigger Agent A in Space S.
+2. If Agent A has **no pending timer** for Space S → start a debounce timer (default: 2 seconds).
+3. If Agent A **already has a timer** running for Space S → reset the timer (wait another 2 seconds from now).
+4. When the timer fires → create **one run**. The trigger message is the **latest** message. All messages from the debounce window appear as `[NEW]` in the space history.
+5. If Agent A **already has an active run** in Space S → queue the trigger (run after current completes).
+
+**Example — 3 votes arrive within 1 second:**
 
 ```
-Husam: "Summarize the report"                          chainDepth = 0
-  → triggers Analyst
+[00:00.0] Ahmad: "Option A"    → starts 2s timer for VoteBot
+[00:00.3] Sarah: "Option B"    → resets timer
+[00:01.1] Husam: "Option A"    → resets timer
+[00:03.1] Timer fires → ONE run starts
 
-Analyst: "Here's the summary. Designer, thoughts?"     chainDepth = 1
-  → triggers Designer, Developer
+VoteBot Run:
+  TRIGGER: Husam in "Team Vote": "Option A"
+  Context:
+    [SEEN] VoteBot: "Team vote: Option A or B?"
+    [NEW]  Ahmad: "Option A"
+    [NEW]  Sarah: "Option B"
+    [NEW]  Husam: "Option A"  ← TRIGGER
 
-Designer: "The charts look good."                      chainDepth = 2
-  → triggers Analyst, Developer
-
-... continues until chainDepth = MAX_CHAIN_DEPTH, then messages stop triggering.
+  → Counts: 3/3 votes. A wins 2-1.
+  → send_message("Vote results: Option A wins 2-1.")
+  Run ends.
 ```
+
+One run. One response. All messages processed together.
+
+**Example — Multi-agent discussion batching:**
+
+```
+Space: Husam + Architect + SecurityBot + DevOps
+
+Architect: "Suggest OAuth2 with JWT"       [00:05.0]
+SecurityBot: "Use short-lived tokens"      [00:06.2]
+
+→ Both messages trigger DevOps. Debounce merges into ONE run.
+
+DevOps Run:
+  Context:
+    [SEEN] Husam: "Redesign auth"
+    [NEW]  Architect: "OAuth2 + JWT"
+    [NEW]  SecurityBot: "Short-lived tokens"
+  → Sees BOTH suggestions, responds once: "I can set up Keycloak."
+```
+
+**Configuration:**
+
+```typescript
+const TRIGGER_DEBOUNCE_MS = 2000;  // default: 2 seconds
+// Can be per-space for flexibility:
+// 1:1 spaces → 500ms (fast response)
+// Multi-agent spaces → 3000ms (let messages accumulate)
+```
+
+**Why this prevents infinite agent-to-agent loops:**
+
+Even if agents respond to each other, there's a natural 2-second cooldown between exchanges. Each round, the agent reads MORE context (the full conversation) and naturally recognizes when the discussion has concluded. Combined with the system prompt instruction *"If you have nothing to contribute, end without sending a message"*, conversations settle within 2-3 exchanges.
 
 ---
 
@@ -185,10 +225,6 @@ Like plans, service-triggered runs have **no trigger space**. The agent uses `en
 ### No Queuing Conflicts
 
 Multiple triggers can fire simultaneously for the same agent. Each trigger creates an independent run. The agent is informed of concurrent runs via run awareness (see [06-run-awareness.md](./06-run-awareness.md)).
-
-### No Cascading Loops
-
-Loop protection via chain depth (see above). When `chainDepth >= MAX_CHAIN_DEPTH`, messages are still posted but no runs are created. This is simple and predictable — no pair tracking or chain metadata needed.
 
 ---
 

@@ -54,18 +54,18 @@ Send a message to the active space. This is the primary communication tool.
 |----------|-------|
 | **Execution type** | Gateway (streamed) |
 | **Visible** | Yes (always — it's a message) |
-| **Triggers agents** | Yes — triggers all other agent members in the space (sender excluded, chain depth incremented) |
+| **Triggers agents** | Yes — triggers all other agent members in the space (sender excluded) |
 
 **Input:**
 ```json
 {
-  "text": "string (required) — message content",
-  "messageId": "string (optional) — if provided, this message is a reply to the specified message, and any waiting_reply run waiting on that messageId is resumed",
-  "wait": "boolean (optional, default false) — if true, pause this run until a reply arrives"
+  "text": "string (required) — message content"
 }
 ```
 
-**Output (no wait):**
+One parameter. That's it.
+
+**Output:**
 ```json
 {
   "success": true,
@@ -74,24 +74,7 @@ Send a message to the active space. This is the primary communication tool.
 }
 ```
 
-**Output (wait = true):** Run pauses with `waiting_reply` status. When a reply arrives, the run resumes and the tool result becomes:
-```json
-{
-  "reply": {
-    "entityName": "Husam",
-    "text": "Approved.",
-    "messageId": "msg-reply-456",
-    "timestamp": "2026-02-18T15:10:00Z"
-  },
-  "status": "resolved"
-}
-```
-
-**Behavior summary:**
-- `send_message({ text })` → new message, triggers other agents
-- `send_message({ text, messageId })` → reply to a message, resumes waiting runs + triggers other agents
-- `send_message({ text, wait: true })` → new message, pauses run until someone replies
-- `send_message({ text, messageId, wait: true })` → reply + pause for follow-up
+**When to use:** This is the agent's only way to communicate. The run continues immediately after posting. Conversational continuity happens through context — the next message in the space triggers a fresh run that reads the full timeline.
 
 ---
 
@@ -140,7 +123,7 @@ Read recent messages from a space.
 
 ### `stop_run`
 
-Immediately end the current run. The agent uses this when it determines it has nothing to contribute.
+Cancel one of the agent's own active runs by ID. Used to cancel stale or superseded runs when a higher-priority task arrives.
 
 | Property | Value |
 |----------|-------|
@@ -150,13 +133,18 @@ Immediately end the current run. The agent uses this when it determines it has n
 **Input:**
 ```json
 {
-  "reason": "string (optional) — why the run is ending"
+  "runId": "string (required) — ID of the run to cancel. Must be one of your own runs."
 }
 ```
 
-**Output:** Run terminates. No message is sent.
+**Output:**
+```json
+{ "success": true, "canceledRunId": "run-def-456" }
+```
 
-**Note:** In practice, the agent can also just stop generating (end the tool loop) without calling `stop_run`. Both approaches result in a silent completion. `stop_run` is useful when the agent wants to record an explicit reason.
+**When to use:** When the agent sees a stale or superseded run in its ACTIVE RUNS block and wants to cancel it. For example, an urgent message arrived while an older task was still processing.
+
+**Note:** To end the *current* run silently, the agent simply stops generating (ends the tool loop) without sending a message. No explicit tool call needed.
 
 ---
 
@@ -172,7 +160,7 @@ Query the agent's own run history.
 **Input:**
 ```json
 {
-  "status": "string (optional) — filter by status: running, waiting_reply, waiting_tool, completed, cancelled",
+  "status": "string (optional) — filter by status: running, waiting_tool, completed, cancelled",
   "limit": "number (optional, default 10)"
 }
 ```
@@ -187,24 +175,21 @@ Query the agent's own run history.
       "triggerType": "space_message",
       "triggerSummary": "Husam: 'Pull the Q4 numbers'",
       "activeSpaceId": "space-xyz",
-      "chainDepth": 0,
       "startedAt": "2026-02-18T15:06:55Z"
     },
     {
       "runId": "run-def",
-      "status": "waiting_reply",
+      "status": "running",
       "triggerType": "space_message",
       "triggerSummary": "Designer: 'Here's the mockup'",
       "activeSpaceId": "space-abc",
-      "chainDepth": 1,
-      "startedAt": "2026-02-18T15:04:00Z",
-      "waitingFor": "any reply in space-abc"
+      "startedAt": "2026-02-18T15:04:00Z"
     }
   ]
 }
 ```
 
-**When to use:** Concurrent run awareness. The agent can check if it already has an active or paused run for the same task, avoiding duplicate work.
+**When to use:** Concurrent run awareness. The agent can check if it already has an active run for the same task, avoiding duplicate work.
 
 ---
 
@@ -289,6 +274,52 @@ Goals are injected into the system prompt of every future run, under a `GOALS:` 
 
 ---
 
+### `delete_goals`
+
+Delete one or more of the agent's goals by ID.
+
+| Property | Value |
+|----------|-------|
+| **Execution type** | Gateway (immediate) |
+| **Visible** | No |
+
+**Input:**
+```json
+{
+  "goalIds": ["goal-1", "goal-2"]
+}
+```
+
+**Output:**
+```json
+{ "success": true, "deleted": 2 }
+```
+
+---
+
+### `delete_memories`
+
+Delete one or more of the agent's stored memories by key.
+
+| Property | Value |
+|----------|-------|
+| **Execution type** | Gateway (immediate) |
+| **Visible** | No |
+
+**Input:**
+```json
+{
+  "keys": ["project_alpha_deadline", "designer_prefers_png"]
+}
+```
+
+**Output:**
+```json
+{ "success": true, "deleted": 2 }
+```
+
+---
+
 ### `set_plans`
 
 Create or update scheduled/conditional plans that trigger the agent automatically.
@@ -304,27 +335,81 @@ Create or update scheduled/conditional plans that trigger the agent automaticall
   "plans": [
     {
       "name": "Daily Report",
-      "type": "cron",
-      "schedule": "0 9 * * *",
+      "cron": "0 9 * * *",
       "instruction": "Generate and post the daily metrics summary"
     },
     {
       "name": "Follow Up",
-      "type": "runAfter",
-      "delay": "2h",
+      "runAfter": "2 hours",
       "instruction": "Check if Husam responded to the mockup review request"
+    },
+    {
+      "name": "Pre-launch checklist",
+      "scheduledAt": "2026-03-01T08:00:00Z",
+      "instruction": "Run the pre-launch checks before the product goes live"
     }
   ]
 }
 ```
 
-**Plan types:**
+**Plan scheduling (mutually exclusive — use one per plan):**
 
-| Type | Description |
-|------|-------------|
+| Field | Description |
+|-------|-------------|
+| `runAfter` | One-shot trigger after a relative delay (e.g., `"2 hours"`, `"30 minutes"`, `"1 day"`) |
+| `scheduledAt` | One-shot trigger at a specific ISO timestamp |
 | `cron` | Recurring schedule (standard cron expression) |
-| `runAfter` | One-shot trigger after a relative delay (e.g., "2h", "30m") |
-| `condition` | Trigger when a condition becomes true (polled periodically) |
+
+---
+
+### `get_plans`
+
+Read the agent's current plans.
+
+| Property | Value |
+|----------|-------|
+| **Execution type** | Gateway (immediate) |
+| **Visible** | No |
+
+**Input:**
+```json
+{
+  "status": "string (optional) — filter by status: active, completed, expired. Omit for all."
+}
+```
+
+**Output:**
+```json
+{
+  "plans": [
+    { "id": "plan-abc", "name": "Daily Report", "cron": "0 9 * * *", "nextRunAt": "2026-02-19T09:00:00Z", "status": "active" },
+    { "id": "plan-def", "name": "Follow Up", "scheduledAt": "2026-02-18T17:07:00Z", "status": "completed" }
+  ]
+}
+```
+
+---
+
+### `delete_plans`
+
+Delete one or more of the agent's plans by ID.
+
+| Property | Value |
+|----------|-------|
+| **Execution type** | Gateway (immediate) |
+| **Visible** | No |
+
+**Input:**
+```json
+{
+  "planIds": ["plan-abc", "plan-def"]
+}
+```
+
+**Output:**
+```json
+{ "success": true, "deleted": 2 }
+```
 
 ---
 
@@ -332,15 +417,19 @@ Create or update scheduled/conditional plans that trigger the agent automaticall
 
 | Tool | Purpose | Visible | Triggers Agents | Pauses Run |
 |------|---------|---------|-----------------|------------|
-| `enter_space` | Set active space | No | No | No |
-| `send_message` | Send message to space | Yes | Yes (other agents) | If `wait: true` |
+| `enter_space` | Set active space + load history | No | No | No |
+| `send_message` | Send message to space | Yes | Yes (other agents) | No |
 | `read_messages` | Read space history | No | No | No |
-| `stop_run` | End current run | No | No | Yes (terminates) |
+| `stop_run` | Cancel an active run by ID | No | No | Yes (terminates) |
 | `get_my_runs` | Query own run history | No | No | No |
 | `set_memories` | Store persistent memories | No | No | No |
 | `get_memories` | Read stored memories | No | No | No |
+| `delete_memories` | Delete memories by key | No | No | No |
 | `set_goals` | Define agent goals | No | No | No |
+| `delete_goals` | Delete goals by ID | No | No | No |
 | `set_plans` | Create scheduled triggers | No | No | No |
+| `get_plans` | Read current plans | No | No | No |
+| `delete_plans` | Delete plans by ID | No | No | No |
 
 ---
 

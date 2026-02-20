@@ -4,7 +4,7 @@ Architecture docs for the next generation of Hsafa Gateway.
 
 ## Core Idea
 
-Make AI agents behave like humans: they enter spaces, read context, send messages, wait for replies, use tools, and manage their own schedules. No special-case logic — everything is built on spaces, tools, and context awareness.
+Make AI agents behave like humans: they enter spaces, read context, send messages, use tools, and manage their own schedules. No special-case logic — everything is built on spaces, tools, and context awareness. Runs are stateless — every message triggers a fresh run with full context.
 
 ## Documents
 
@@ -14,12 +14,12 @@ Make AI agents behave like humans: they enter spaces, read context, send message
 | 01 | [Trigger System](./01-trigger-system.md) | All-agent triggering, plans, services |
 | 02 | [Spaces & Active Context](./02-spaces-and-context.md) | `enter_space`, stateful context, space switching |
 | 03 | [Tool System](./03-tool-system.md) | Execution types, `visible: true/false`, built-in tools, MCP |
-| 04 | [Messaging & Waiting](./04-messaging-and-waiting.md) | Unified `send_message` (with `messageId` for replies, `wait` for pausing) |
+| 04 | [Messaging & Conversations](./04-messaging-and-waiting.md) | `send_message({ text })`, stateless runs, context-driven conversations |
 | 05 | [Context Model](./05-context-model.md) | Structured timeline, no role-based history, trigger context |
-| 06 | [Run Awareness](./06-run-awareness.md) | Concurrent runs, `waiting_reply`, deduplication, limits |
+| 06 | [Run Awareness](./06-run-awareness.md) | Concurrent runs, deduplication, limits |
 | 07 | [Human-Like Behavior](./07-human-like-behavior.md) | Intent, memory, continuity, the seven pillars |
 | 08 | [Data Model](./09-data-model.md) | Schema changes, migration SQL, agent config changes |
-| 09 | [Implementation Blueprint](./10-implementation-blueprint.md) | 11-step ordered build plan, test scenarios |
+| 09 | [Implementation Blueprint](./10-implementation-blueprint.md) | 9-step ordered build plan, test scenarios |
 | 10 | [Examples & Scenarios](./11-examples-and-scenarios.md) | 10 real-world flows with full trace |
 | 11 | [Streaming & Redis](./12-streaming-and-redis.md) | SSE events, Redis Pub/Sub, resumable streams, dedup |
 | 12 | [Context Continuity](./13-context-continuity.md) | How agents always know the full context of their actions |
@@ -31,7 +31,10 @@ Make AI agents behave like humans: they enter spaces, read context, send message
 - `delegateToAgent` tool
 - `skipResponse` tool
 - `mentionAgent` tool
-- `send_reply` tool (merged into `send_message`)
+- `send_reply` tool
+- `wait: true` / `messageId` on `send_message`
+- `waiting_reply` run status
+- `continue_waiting` / `resume_run` tools
 - `@mention`-based triggering
 - Proactive router
 - `spaceId` in tool parameters
@@ -41,10 +44,10 @@ Make AI agents behave like humans: they enter spaces, read context, send message
 
 ## Key Additions in v2
 
-- **All-agent triggering** — every message triggers all other agent members (sender excluded), with chain depth protection
+- **All-agent triggering** — every message triggers all other agent members (sender excluded)
+- **Trigger debounce** — rapid messages batched into a single run per agent (2s default window)
 - `enter_space` — stateful space context
-- `send_message(wait: true)` — pause run until replies arrive
-- `send_message(messageId)` — reply to a message and resume waiting runs
-- `waiting_reply` run status
-- Structured chronological event context
+- **Stateless runs** — every message triggers a fresh run, context provides conversational continuity
+- `send_message({ text })` — one tool, one parameter
+- Structured chronological event context with `[SEEN]`/`[NEW]` markers
 - Simple `visible: true/false` tool configuration

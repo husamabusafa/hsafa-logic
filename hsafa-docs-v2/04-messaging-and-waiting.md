@@ -1,8 +1,10 @@
-# 04 — Messaging & Waiting
+# 04 — Messaging & Conversations
 
 ## Overview
 
-Agents have one messaging tool: `send_message`. It posts a message to the active space and supports `wait: true` to pause the sender's run until replies arrive. If an optional `messageId` is provided, the message acts as a **reply** — resuming any waiting run that was waiting on that message.
+Agents have one messaging tool: `send_message({ text })`. It posts a message to the active space. That's it — no waiting, no reply threading, no pausing.
+
+**Conversational continuity comes from context, not from run state.** Every message triggers a fresh run. The agent reads the full space timeline (with `[SEEN]`/`[NEW]` markers), its memories and goals, and reasons about what to do. This is exactly how humans work in group chats — you come back, read what's new, and respond.
 
 ---
 
@@ -13,21 +15,13 @@ Agents have one messaging tool: `send_message`. It posts a message to the active
 ```json
 {
   "name": "send_message",
-  "description": "Post a message to the active space. If messageId is provided, acts as a reply and resumes waiting runs. Supports wait to pause until replies arrive.",
+  "description": "Post a message to the active space.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "text": {
         "type": "string",
         "description": "Message text."
-      },
-      "messageId": {
-        "type": "string",
-        "description": "Optional. If provided, this message is a reply to the specified message. The gateway will resume any waiting_reply run that was waiting on this messageId."
-      },
-      "wait": {
-        "type": "boolean",
-        "description": "If true, pause this run until replies arrive in the active space. Default: false."
       }
     },
     "required": ["text"]
@@ -35,221 +29,302 @@ Agents have one messaging tool: `send_message`. It posts a message to the active
 }
 ```
 
+One tool. One parameter.
+
 ### Behavior
 
-1. Message is posted to the active space (with streaming).
-2. **The message triggers all other agent members in the space** (sender excluded). Chain depth is inherited from the current run and incremented (see [01-trigger-system.md](./01-trigger-system.md) for loop protection).
-3. If `messageId` is provided: the gateway checks for `waiting_reply` runs whose `waitState.messageId` matches. If found, the reply is recorded and the waiting run is resumed (see Wait Resolution below).
-4. If `wait: true`: this run pauses until replies arrive in the space (see Waiting Logic below).
-5. If `wait: false`: this run continues immediately after posting.
+1. Message is posted to the active space (with streaming via tool-input-delta).
+2. Message is persisted as a `SmartSpaceMessage` in the DB.
+3. **The message triggers all other agent members in the space** (sender excluded).
+4. The run continues immediately after posting — it can send more messages, call other tools, or end.
 
-### As a New Message (no `messageId`)
-
-```json
-{ "text": "Here's the analysis you requested.", "wait": false }
-```
-
-Posts to the active space. Triggers all other agent members (sender excluded). No waiting runs affected.
-
-### As a Reply (`messageId` provided)
-
-```json
-{ "text": "Here are the summaries you asked for.", "messageId": "msg-xyz" }
-```
-
-Posts to the active space AND resumes any `waiting_reply` run that was waiting on `msg-xyz`. The agent finds the `messageId` in the space history (every message in the timeline has an ID).
-
----
-
-## Waiting Logic
-
-`send_message` supports `wait: true`, which pauses the sender's run until replies arrive.
-
-### Who Does the Sender Wait For?
-
-Since there are no mentions, **`wait: true` always waits for any entity in the space to reply.** The first reply from any entity resolves the wait.
-
-### Rules
-
-1. **Any reply resolves**: The first message posted to the same space by any other entity after the sender's message resolves the wait.
-2. **Timeout**: Configurable (default: 5 minutes). Run resumes with timeout indicator.
-
-### What "Reply" Means
-
-A reply is any message posted to the **same space** by **any other entity** after the sender's message. The gateway watches the space message stream.
-
----
-
-## Wait Resolution
-
-When a reply arrives (or timeout occurs), the waiting run resumes.
-
-### Incoming Reply Processing
-
-When a new message arrives in a space, the gateway:
-
-1. Checks for `waiting_reply` runs in that space.
-2. For each waiting run, checks if the message sender is different from the waiting agent.
-3. If match: records the reply and resumes the run.
-
-### Explicit Resume via `messageId`
-
-Separately, when an agent calls `send_message` with a `messageId`, the gateway:
-
-1. Finds `waiting_reply` runs whose `waitState.messageId` matches.
-2. Records the reply and resumes the waiting run.
-
-This is how agents explicitly reply to each other's waiting messages. Both mechanisms (automatic reply detection and explicit `messageId` resume) can coexist.
-
-### Tool Result on Success
+### Tool Result
 
 ```json
 {
-  "reply": {
-    "entityId": "entity-sarah-id",
-    "entityName": "Sarah",
-    "entityType": "human",
-    "text": "Looks good! Ship it.",
-    "timestamp": "2026-02-18T12:34:56Z"
-  },
-  "waitDuration": 12400,
-  "status": "resolved"
-}
-```
-
-### Tool Result on Timeout
-
-```json
-{
-  "reply": null,
-  "waitDuration": 300000,
-  "status": "timeout"
+  "success": true,
+  "messageId": "msg-abc-123",
+  "status": "delivered"
 }
 ```
 
 ---
 
-## Implementation: How Waiting Works
+## How Conversations Work (Stateless Runs)
 
-### Run State
+There is no `wait`, no `resume`, no reply threading. Instead:
 
-When `wait: true` is called:
+1. **Agent sends a message** → run ends (or continues with other work).
+2. **Someone responds** → triggers a new run for all agents (including the original sender).
+3. **New run reads context** → sees its own previous message + the new response → acts accordingly.
 
-1. Message posted to active space (streaming).
-2. Current run transitions to `waiting_reply` status.
-3. Run metadata stores wait state:
-   ```json
-   {
-     "waitState": {
-       "spaceId": "space-abc",
-       "messageId": "msg-xyz",
-       "toolCallId": "call-123",
-       "startedAt": "2026-02-18T12:34:00Z",
-       "timeout": 300000,
-       "reply": null
-     }
-   }
-   ```
+The space timeline IS the conversation state. The agent re-reads it fresh every run.
 
-### Implementation Options for Reply Detection
+### Why This Works
 
-**Option A: Redis Pub/Sub** — Subscribe to the space's message channel, filter for matching senders. Clean and real-time.
+The agent's context at the start of every run includes:
 
-**Option B: Polling** — Periodically check for new messages after the wait message. Simpler but less responsive.
+```
+SPACE HISTORY ("Deployments"):
+  [SEEN] [msg-001] [14:00] DeployBot (agent, you): "Deploy v2.1? Confirm yes or no."
+  [NEW]  [msg-002] [14:05] Sarah (human): "yes"  ← TRIGGER
+```
 
-**Option C: Database trigger** — Use Postgres LISTEN/NOTIFY when a message is inserted for the waited space.
+The agent sees:
+- Its own previous question (`[SEEN]`)
+- Sarah's answer (`[NEW]`, marked as trigger)
+- The temporal relationship (question → answer)
 
-Recommended: **Option A** for production, **Option B** as fallback.
+The LLM naturally reasons: *"I asked for confirmation, Sarah said yes. I should proceed with deployment."*
+
+No explicit "wait/resume" needed — the context makes the conversational link obvious.
 
 ---
 
 ## Conversation Patterns
 
-### Pattern 1: Agent waits for human approval
+### Pattern 1: Agent Asks, Human Answers
 
 ```
-Agent Run:
-  1. send_message("Deploy v2.1? Reply yes/no.", wait: true)
-     [trigger space auto-set as active]
-     → Run pauses, waits for any reply
+[Sarah: "Deploy v2.1 to production"]
+  → Triggers DeployBot
 
-Sarah: "yes"
-  → Gateway detects reply in the space → resumes run
+DeployBot Run 1:
+  Context: [NEW] Sarah: "Deploy v2.1 to production"
+  1. send_message("I'll deploy v2.1. This affects 3 services. Confirm by replying yes.")
+  Run ends.
 
-Agent Run (resumed):
-  2. Receives reply: { text: "yes", entityName: "Sarah" }
-  3. Proceeds with deployment
+[Sarah: "yes"]
+  → Triggers DeployBot
+
+DeployBot Run 2:
+  Context:
+    [SEEN] DeployBot: "...Confirm by replying yes."
+    [NEW]  Sarah: "yes"  ← TRIGGER
+  1. Reasons: "I asked for confirmation, Sarah said yes."
+  2. deployService({ version: "2.1", target: "production" })
+  3. send_message("Deployment complete! All 3 services running v2.1.")
+  Run ends.
 ```
 
-### Pattern 2: Agent asks a question, waits, continues
+### Pattern 2: Multi-Turn Back-and-Forth
 
 ```
-Agent Run:
-  1. send_message("What's your budget for the project?", wait: true)
-     → Run pauses
+[Husam: "What's your budget for the project?"]
+  → Triggers Agent
 
-Husam: "$50,000"
-  → Reply detected → run resumes
+Agent Run 1:
+  Context: [NEW] Husam asked about budget
+  1. send_message("What's your budget for the project?")
+  Run ends.
 
-Agent Run (resumed):
-  2. Receives reply: { text: "$50,000" }
-  3. Calls searchVendors({ maxBudget: 50000 })
-  4. send_message("Found 3 vendors within budget: ...")
+Wait — actually, Husam asked the agent. Let's fix:
+
+[Husam: "Find me hotels in Tokyo"]
+  → Triggers Agent
+
+Agent Run 1:
+  1. send_message("What's your budget per night?")
+  Run ends.
+
+[Husam: "$150"]
+  → Triggers Agent
+
+Agent Run 2:
+  Context:
+    [SEEN] Husam: "Find me hotels in Tokyo"
+    [SEEN] Agent: "What's your budget per night?"
+    [NEW]  Husam: "$150"
+  1. searchHotels({ city: "Tokyo", maxPrice: 150 })
+  2. send_message("Found 3 great options: ...")
+  Run ends.
 ```
 
-### Pattern 3: Agent replies to another agent's waiting message
+Each "turn" is a separate run. The agent reconstructs the full conversation from context.
+
+### Pattern 3: Multi-Agent Discussion
 
 ```
-Agent A Run:
-  1. send_message("I've prepared the data. Analysts, please review.", wait: true)
-     → Run pauses, messageId = "msg-abc"
+Space "Architecture" — Husam, Architect (agent), SecurityBot (agent), DevOps (agent)
 
-[Agent B is triggered by Husam's next message in the space]
+[Husam: "We need to redesign the auth system"]
+  → Triggers: Architect, SecurityBot, DevOps
 
-Agent B Run:
-  1. Reads space history, sees Agent A's message (msg-abc) and that Agent A is waiting
-  2. send_message("Data looks correct. Approved.", messageId: "msg-abc")
-     → Gateway resumes Agent A's run
+Architect Run:
+  1. send_message("I'd suggest OAuth2 with JWT. Gives us SSO and token refresh.")
+  Run ends.
 
-Agent A Run (resumed):
-  3. Receives reply: { text: "Data looks correct. Approved." }
-  4. Continues processing
+SecurityBot Run:
+  1. send_message("From security: use short-lived tokens (15 min) with refresh rotation.")
+  Run ends.
+
+DevOps Run:
+  1. Reads context — waits to see the direction.
+  Run ends (silent).
+
+[Architect's message triggers SecurityBot + DevOps]
+
+SecurityBot Run:
+  Context: Architect proposed OAuth2 + JWT
+  1. send_message("OAuth2 is good. Add PKCE for public clients, store refresh tokens server-side only.")
+  Run ends.
+
+DevOps Run:
+  Context: Architect + Security discussion
+  1. send_message("I can set up Keycloak — supports OAuth2 + PKCE out of the box. ETA: 2 days.")
+  Run ends.
+
+[SecurityBot's message triggers Architect + DevOps]
+
+Architect Run:
+  1. send_message("Great alignment. I'll draft the architecture doc.")
+  Run ends.
 ```
+
+Three agents had a natural multi-turn discussion. No waiting, no threading, no coordination tools. Each agent reads the full context and contributes when relevant.
+
+### Pattern 4: Collecting Responses Over Time
+
+```
+[Request: "Team vote: Option A or B?"]
+
+Agent Run 1:
+  1. send_message("Team vote: should we go with Option A or B? Everyone please reply.")
+  Run ends.
+
+[Ahmad: "Option A"] → Triggers Agent
+
+Agent Run 2:
+  Context: Agent asked for votes. [NEW] Ahmad: "A"
+  1. Counts votes in history: 1/3.
+  2. Stays silent (not enough votes yet).
+  Run ends.
+
+[Sarah: "Option B"] → Triggers Agent
+
+Agent Run 3:
+  Context: Vote question + Ahmad: A + [NEW] Sarah: B
+  1. Counts: 2/3.
+  2. Stays silent.
+  Run ends.
+
+[Husam: "Option A"] → Triggers Agent
+
+Agent Run 4:
+  Context: Vote question + Ahmad: A + Sarah: B + [NEW] Husam: A
+  1. Counts: 3/3. A wins 2-1.
+  2. send_message("Vote results: Option A wins (2-1). Proceeding with A.")
+  Run ends.
+```
+
+The agent counts votes by reading the space history. No `continue_waiting`, no race conditions.
+
+### Pattern 5: Long-Running Workflow with Memory
+
+For complex workflows that span many interactions, the agent uses **memories and goals** to bridge runs:
+
+```
+Agent Run 1 (triggered by: "Generate the Q4 report"):
+  1. Pulls revenue data, user metrics
+  2. send_message("Started the Q4 report. I need budget numbers from Finance — can someone share?")
+  3. set_memories([
+       { key: "q4_report", value: "waiting for budget from Finance. Data so far: revenue $2.1M, users 45K" }
+     ])
+  4. set_goals([{ id: "q4", description: "Complete Q4 report", status: "active" }])
+  Run ends.
+
+[Later — Finance: "Budget is $500K"]
+  → Triggers Agent
+
+Agent Run 2:
+  Context:
+    [SEEN] Agent: "Started Q4 report. Need budget numbers..."
+    [NEW]  Finance: "Budget is $500K"
+  Memories: q4_report = "waiting for budget... Data: revenue $2.1M, users 45K"
+  Goals: "Complete Q4 report" (active)
+
+  1. Reasons: "I was waiting for budget numbers, they arrived. I have all the data now."
+  2. Generates full report using stored data + new budget
+  3. send_message("Q4 Report: Revenue $2.1M, Users 45K, Budget $500K. [full analysis]")
+  4. set_goals([{ id: "q4", status: "completed" }])
+  5. set_memories — clears q4_report key
+  Run ends.
+```
+
+**Memories are more robust than in-run state** — if the server crashes during a waiting run, all in-run state is lost. Memories survive in the DB.
 
 ---
 
-## Multiple Sequential Waits
+## Why No Waiting?
 
-An agent can wait multiple times in a single run:
+### The Problems with Waiting (Removed)
 
-```
-1. send_message("What city do you want to visit?", wait: true)
-   → waits → human replies "Tokyo" → resumes
+The previous design had `wait: true`, `continue_waiting`, `resume_run`, and `messageId` reply threading. This created:
 
-2. send_message("Budget per night for hotels?", wait: true)
-   → waits → human replies "$150" → resumes
+1. **Race conditions** — reply arrives while run is `running` (between resume and `continue_waiting`)
+2. **Threading burden** — humans must explicitly thread replies (they won't)
+3. **Extra runs** — `resume_run` needed a whole run just to route a message to a sibling
+4. **Complex state** — `waitState`, `lastResumedAt`, `waitCycle`, `toolCallId`, catch-up checks
+5. **Edge cases** — multiple replies, gap handling, timeout management
 
-3. Calls searchHotels({ city: "Tokyo", maxPrice: 150 })
-4. send_message("Found 3 great options: ...")
-```
+### Why Context Works Better
 
-Each wait is a pause-resume cycle. The run stays alive across all waits.
+| Waiting Model | Stateless Model |
+|---------------|-----------------|
+| Run pauses, holds state | Run ends, state goes to memories/goals |
+| Reply must be threaded with `messageId` | Human just sends a normal message |
+| Race condition if reply arrives during processing | No race — each message is a fresh run |
+| `continue_waiting` for multiple replies | Agent just counts messages in history |
+| `resume_run` for unthreaded replies | Problem doesn't exist — every message triggers a fresh run |
+| 7 interrelated mechanisms | 0 — context replaces all of them |
+
+### The Human Analogy
+
+Humans don't "pause" in WhatsApp:
+1. Send a message
+2. Go do other things
+3. Come back when there's a notification
+4. Read the new messages
+5. Respond based on full context
+
+The agent does exactly this — every message triggers a fresh run that reads the full timeline.
 
 ---
 
-## Wait Limits
+## Interactive UI Tools (Still Pause)
 
-- **Max wait duration**: Configurable per-agent or globally (default: 5 minutes).
-- **Max sequential waits per run**: Configurable (default: 10). Prevents infinite wait loops.
-- **Max concurrent `waiting_reply` runs per agent**: Configurable (default: 5).
+**Important:** Interactive `space` tools (forms, approval buttons, file pickers) still pause the run with `waiting_tool` status. This is different from chat-level conversation:
+
+- **`waiting_tool`** = waiting for structured UI input from a rendered component. The run must pause because the tool call needs a specific result.
+- **Chat messages** = handled by context across runs. No pausing needed.
+
+```
+Agent Run:
+  1. Calls getApproval({ message: "Deploy to prod?", options: ["Approve", "Reject"] })
+     → Tool UI rendered in space
+     → Run pauses (waiting_tool)
+
+  [User clicks "Approve"]
+     → Run resumes with tool result: { choice: "Approve" }
+
+  2. Proceeds with deployment.
+  Run ends.
+```
+
+This is the only case where a run pauses — and it's waiting for a UI interaction, not a chat message.
 
 ---
 
 ## Removed Concepts
 
-| v1 | v2 |
-|----|----|
-| `sendSpaceMessage(spaceId, text, mention)` | `send_message(text)` — space from active context, no mentions |
-| `send_reply` (separate tool) | Merged into `send_message` — provide `messageId` to make it a reply |
-| `mention` parameter (entity ID) | Removed. All agents triggered automatically. No mention parsing. |
-| No wait mechanism | `wait: true` pauses run until any reply arrives |
+| Previous | Now |
+|----------|-----|
+| `send_message(text, messageId, wait)` | `send_message(text)` — one parameter |
+| `wait: true` (pause run) | Removed. Runs don't pause for messages. |
+| `messageId` (reply threading) | Removed. No threading needed — context links messages. |
+| `continue_waiting` tool | Removed. Agent reads message history instead. |
+| `resume_run` tool | Removed. Every message triggers a fresh run. |
+| `waiting_reply` run status | Removed. Only `waiting_tool` remains for UI interactions. |
+| `waitState` metadata | Removed entirely. |
+| `senderExpectsReply` | Removed. The agent reads the question in context. |
+| Race conditions, catch-up checks | Don't exist in the stateless model. |
