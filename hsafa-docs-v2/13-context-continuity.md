@@ -34,7 +34,7 @@ TRIGGER:
   type: space_message
   space: "Project Alpha" (id: space-xyz)
   sender: Husam (human, id: ent-husam-01)
-  message: "@DataAnalyst pull the Q4 revenue numbers"
+  message: "Pull the Q4 revenue numbers"
   messageId: msg-g7h8
   timestamp: "2026-02-18T15:06:55Z"
   senderExpectsReply: true
@@ -52,7 +52,7 @@ Instead of anonymous `assistant:` / `user:` message pairs, the agent sees a name
 SPACE HISTORY ("Project Alpha"):
   [msg:a1b2] [14:50] Husam (human, id:ent-husam-01): "Let's finalize the Q4 report"  [SEEN]
   [msg:c3d4] [14:51] You (agent): "I'll prepare the revenue breakdown"  [SEEN]
-  [msg:g7h8] [15:06] Husam (human, id:ent-husam-01): "@DataAnalyst pull the numbers"  [NEW] ← TRIGGER
+  [msg:g7h8] [15:06] Husam (human, id:ent-husam-01): "Pull the Q4 revenue numbers"  [NEW] ← TRIGGER
 ```
 
 When the agent sees `[msg:c3d4]` — its own past message — it knows:
@@ -109,7 +109,7 @@ The agent always sees its own concurrent runs:
 ```
 ACTIVE RUNS:
   - Run abc-123 (this run) — triggered by Husam in "Project Alpha"
-  - Run def-456 (waiting_reply) — sent "@Designer review mockup", waiting in "Design Team"
+  - Run def-456 (waiting_reply) — sent "Please review the mockup", waiting in "Design Team"
 ```
 
 When the agent sees Run def-456, it knows:
@@ -123,11 +123,11 @@ This prevents the agent from starting a duplicate task or being confused by why 
 
 ### Layer 6 — Reply Threading (Why did that reply come in?)
 
-Every `send_reply` carries `replyToMessageId`. This means that in history, each reply is always traceable to the specific message it was responding to:
+When an agent calls `send_message` with a `messageId`, the message is linked as a reply. This means that in history, each reply is traceable to the specific message it was responding to:
 
 ```
 SPACE HISTORY:
-  [msg:a1b2] You: "@Designer can you review the mockup?"  [SEEN]
+  [msg:a1b2] You: "Can you review the mockup?"  [SEEN]
   [msg:c3d4] Designer: "Looks good, approved!"  [SEEN]
               [reply to msg:a1b2]
 ```

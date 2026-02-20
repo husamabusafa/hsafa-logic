@@ -33,13 +33,13 @@ Every tool has an `executionType` that determines how it runs:
 
 ## Tool Visibility
 
-Each tool's configuration declares whether its result should appear in the active space:
+Each tool's configuration declares whether its result should appear in the active space using a simple boolean:
 
 ```json
 {
   "name": "fetchWeather",
   "executionType": "gateway",
-  "visibility": "visible",
+  "visible": true,
   "execution": {
     "url": "https://api.weather.com/current",
     "method": "GET"
@@ -47,15 +47,14 @@ Each tool's configuration declares whether its result should appear in the activ
 }
 ```
 
-### Visibility Options
+### Visibility
 
 | Value | Behavior |
 |-------|----------|
-| `"visible"` | Tool call + result are posted to the **active space** as a message. Streamed in real-time. |
-| `"hidden"` | Tool executes silently. Result is only available to the agent internally. |
-| `"result-only"` | Only the result is posted to the active space (no "calling tool..." indicator). |
+| `true` | Tool call + result are posted to the **active space** as a message. Streamed in real-time. |
+| `false` | Tool executes silently. Result is only available to the agent internally. |
 
-**Default**: `"hidden"` for `internal` tools, `"visible"` for `gateway` and `external` tools, `"visible"` for `space` tools.
+**Default**: `false` for `internal` tools, `true` for `gateway`, `external`, and `space` tools.
 
 ### No Active Space
 
@@ -71,7 +70,7 @@ If the agent hasn't called `enter_space` and a visible tool executes, the result
   "description": "string",
   "inputSchema": { /* JSON Schema */ },
   "executionType": "gateway | external | space | internal",
-  "visibility": "visible | hidden | result-only",
+  "visible": true,
   "execution": { /* type-specific config */ },
   "display": {
     "customUI": "component-name"
@@ -151,23 +150,22 @@ If the agent hasn't called `enter_space` and a visible tool executes, the result
 
 These tools are automatically injected into every agent. They are not configurable — they exist at the gateway level.
 
-| Tool | Type | Visibility | Description |
-|------|------|-----------|-------------|
-| `enter_space` | internal | hidden | Set the active space context. |
-| `send_message` | internal | hidden | Send a message to the active space. Always triggers new runs for @mentioned agents. |
-| `send_reply` | internal | hidden | Send a reply. Resumes waiting runs for @mentioned agents instead of starting new ones. |
-| `read_messages` | internal | hidden | Read recent messages from the active space (or a specified space). Supports `offset` to read earlier history. |
-| `stop_run` | internal | hidden | Cancel one of the agent's own active or waiting runs by ID. |
-| `set_goals` | internal | hidden | Create/update agent goals. |
-| `delete_goals` | internal | hidden | Delete agent goals. |
-| `set_memories` | internal | hidden | Create/update agent memories. |
-| `delete_memories` | internal | hidden | Delete agent memories. |
-| `set_plans` | internal | hidden | Create/update agent plans. |
-| `delete_plans` | internal | hidden | Delete agent plans. |
-| `get_plans` | internal | hidden | Read agent's previous/completed plans. |
-| `get_my_runs` | internal | hidden | List agent's active/recent runs. |
+| Tool | Description |
+|------|-------------|
+| `enter_space` | Set the active space context. |
+| `send_message` | Send a message to the active space. Supports `wait: true` to pause until replies arrive. If `messageId` is provided, acts as a reply and resumes waiting runs. |
+| `read_messages` | Read recent messages from the active space (or a specified space). Supports `offset` to read earlier history. |
+| `stop_run` | Cancel one of the agent's own active or waiting runs by ID. |
+| `get_my_runs` | List agent's active/recent runs. |
+| `set_goals` | Create/update agent goals. |
+| `delete_goals` | Delete agent goals. |
+| `set_memories` | Create/update agent memories. |
+| `delete_memories` | Delete agent memories. |
+| `set_plans` | Create/update agent plans. |
+| `delete_plans` | Delete agent plans. |
+| `get_plans` | Read agent's previous/completed plans. |
 
-Built-in tools are always `hidden` — their execution is infrastructure, not user-facing content.
+Built-in tools are always invisible (`visible: false`) — their execution is infrastructure, not user-facing content.
 
 ---
 
@@ -200,7 +198,7 @@ What they are **not** is the same content type. A visible tool call is **not** r
 | Content type | Plain text | Structured input/output |
 | Frontend rendering | Text bubble | Custom UI component |
 | Can be replied to | ✅ | ❌ |
-| @mentions parsed | ✅ | ❌ |
+| Can trigger agents | Yes (all other agent members, sender excluded) | No |
 
 ### Streaming
 
@@ -268,8 +266,9 @@ MCP (Model Context Protocol) tools are loaded from external MCP servers at agent
 
 In v2, there are no "special" tools with hard-coded gateway behavior:
 
-- No `delegateToAgent` (use mentions instead).
+- No `delegateToAgent` (agents are independent — all run on every message).
 - No `skipResponse` (agent simply doesn't send a message if it has nothing to say).
-- No `displayTool` flag with `targetSpaceId` injection (visibility is config-based, space is run state).
+- No `displayTool` flag with `targetSpaceId` injection (`visible: true/false` is config-based, space is run state).
+- No `@mention` parameter on any tool (all agents triggered automatically).
 
 Every tool follows the same pipeline: configure → build → execute → optionally post result to active space.

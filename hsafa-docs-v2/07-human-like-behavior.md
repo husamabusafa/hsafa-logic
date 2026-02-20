@@ -77,9 +77,9 @@ The agent knows exactly who is in each space:
 This enables:
 
 - **Addressing specific people**: "Husam, here's what you asked for."
-- **Knowing who to mention**: "@Designer can you review this?"
 - **Understanding group dynamics**: "Both Husam and Ahmad need to approve."
 - **Avoiding confusion**: The agent knows whether a message came from a human or another agent.
+- **Selective response**: With multiple agents in a space, each reads the context and decides independently whether to respond.
 
 ---
 
@@ -152,14 +152,15 @@ The architecture provides the **context** for emotional realism (knowing who you
 
 | Anti-Pattern | How v2 Prevents It |
 |-------------|-------------------|
-| Agent doesn't know why it's talking | Trigger context is always explicit |
+| Agent doesn't know why it's talking | Trigger context is always explicit. All other agents in the space get triggered (sender excluded). |
 | Agent repeats itself | Timeline history with its own previous messages |
 | Agent confuses entities | Named senders with types, not generic "user" role |
 | Agent ignores time | Timestamps on every message |
-| Agent can't wait | `send_message(wait: true)` enables real pauses |
+| Agent can't wait | `send_message(wait: true)` enables real pauses. `messageId` enables reply-based resume. |
 | Agent is stateless | Goals, memories, run history persist across runs |
 | Agent can't multitask | Concurrent runs with mutual awareness |
 | Agent can't plan ahead | Plan system: `runAfter` for relative timing ("in 2 hours"), `cron` for recurring schedules |
+| Agent responds when not needed | Each agent independently decides whether to respond or stay silent |
 
 ---
 
@@ -171,7 +172,7 @@ A good test for whether the architecture is working: **if you replaced the agent
 - A human reads the chat history → `read_messages`
 - A human sends a message → `send_message`
 - A human waits for a reply → `send_message(wait: true)`
-- A human @mentions someone → `@AgentName` in text
+- A human sends a message and all relevant agents respond
 - A human uses a tool → tool call
 - A human sets a reminder → `set_plans`
 - A human remembers something → `set_memories`

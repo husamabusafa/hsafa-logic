@@ -124,22 +124,6 @@ When replies arrive:
 
 ---
 
-### SmartSpace — Add `proactiveRouterEnabled`
-
-**Add:**
-
-```prisma
-model SmartSpace {
-  // ... existing fields ...
-
-  proactiveRouterEnabled  Boolean  @default(false)  @map("proactive_router_enabled")  // ← NEW
-}
-```
-
-**Why:** Opt-in flag per space. When `true`, the gateway calls the proactive router AI after processing normal `@mention` triggers on each incoming message. Spaces with only human members, or spaces with exactly 2 members, never use this even if the flag is set — those cases are handled by auto-trigger instead.
-
----
-
 ## Unchanged Models
 
 These models are **unchanged** in v2:
@@ -157,7 +141,7 @@ These models are **unchanged** in v2:
 | `Plan` | Same. |
 | `Goal` | Same. |
 
-### SmartSpaceMembership — Add `lastProcessedMessageId`
+### SmartSpaceMembership — Add `lastProcessedMessageId` and `lastSeenMessageId`
 
 **Add:**
 
@@ -165,11 +149,16 @@ These models are **unchanged** in v2:
 model SmartSpaceMembership {
   // ... existing fields ...
 
-  lastProcessedMessageId  String?  @map("last_processed_message_id") @db.Uuid  // ← NEW
+  lastProcessedMessageId  String?  @map("last_processed_message_id") @db.Uuid  // ← NEW (agents)
+  lastSeenMessageId       String?  @map("last_seen_message_id") @db.Uuid       // ← NEW (humans)
 }
 ```
 
-**Why:** Tracks the last message the agent processed in this space. Used by the gateway when building the space history block to mark messages as `[SEEN]` or `[NEW]`. Updated after each run completes. Enables agents to focus on what's new without re-processing old context.
+**`lastProcessedMessageId` (for agents):** Tracks the last message the agent processed in this space. Used by the gateway when building the space history block to mark messages as `[SEEN]` or `[NEW]`. Updated after each run completes.
+
+**`lastSeenMessageId` (for humans):** Tracks the last message the human has seen in this space. Updated via `POST /api/spaces/:spaceId/read` when the user opens the space or scrolls to the latest message. Used by the chat UI to show unread badges and "new messages" dividers.
+
+Both fields serve the same purpose — tracking read state — but for different entity types. This is the same pattern as WhatsApp/Slack read receipts.
 
 ---
 
@@ -189,7 +178,7 @@ The `configJson` stored in the Agent model changes:
 **Add:**
 ```json
 {
-  "visibility": "visible | hidden | result-only"
+  "visible": true
 }
 ```
 
@@ -200,7 +189,7 @@ The `configJson` stored in the Agent model changes:
   "name": "fetchWeather",
   "description": "Get current weather for a city",
   "executionType": "gateway",
-  "visibility": "visible",
+  "visible": true,
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -220,8 +209,9 @@ The `configJson` stored in the Agent model changes:
 
 | Field | Reason |
 |-------|--------|
-| `displayTool` | Replaced by `visibility` |
-| `display.mode` (`full`/`minimal`/`hidden`) | Replaced by top-level `visibility` |
+| `displayTool` | Replaced by `visible: true/false` |
+| `display.mode` (`full`/`minimal`/`hidden`) | Replaced by top-level `visible` boolean |
+| `visibility` (string enum) | Simplified to `visible` boolean |
 
 ### Kept
 
@@ -244,6 +234,12 @@ ALTER TABLE "runs" ADD COLUMN "active_space_id" UUID;
 
 -- 3. Remove adminAgentEntityId from smart_spaces
 ALTER TABLE "smart_spaces" DROP COLUMN IF EXISTS "admin_agent_entity_id";
+
+-- 4. Add lastProcessedMessageId and lastSeenMessageId to memberships
+ALTER TABLE "smart_space_memberships" ADD COLUMN "last_processed_message_id" UUID;
+ALTER TABLE "smart_space_memberships" ADD COLUMN "last_seen_message_id" UUID;
+
+-- Note: proactiveRouterEnabled is NOT added (removed from design)
 ```
 
 Or via Prisma migration:

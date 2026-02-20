@@ -6,7 +6,7 @@ This document provides a concrete, ordered implementation plan for v2. Each step
 
 ---
 
-## Ship Order (13 Steps)
+## Ship Order (11 Steps)
 
 ### Step 1: Schema Migration
 
@@ -63,7 +63,7 @@ registerPrebuiltTool('enterSpace', {
 
 ### Step 3: Refactor `send-space-message.ts` → `send-message.ts`
 
-**Goal:** Remove `spaceId` and `mention` params. Add `wait` param. Read active space from run state. Parse `@mentions` from text.
+**Goal:** Remove `spaceId` and `mention` params. Add `wait` and `messageId` params. Read active space from run state. No mention parsing.
 
 **Rename:** `send-space-message.ts` → `send-message.ts`
 
@@ -71,6 +71,7 @@ registerPrebuiltTool('enterSpace', {
 ```json
 {
   "text": "string (required)",
+  "messageId": "string (optional — if provided, acts as a reply and resumes waiting runs)",
   "wait": "boolean (optional, default false)"
 }
 ```
@@ -78,102 +79,58 @@ registerPrebuiltTool('enterSpace', {
 **Logic:**
 ```typescript
 execute: async (input, context) => {
-  const { text, wait } = input;
+  const { text, messageId, wait } = input;
   
-  // 1. Get activeSpaceId from run metadata
-  const run = await prisma.run.findUnique({ where: { id: context.runId } });
-  const spaceId = run.activeSpaceId;
-  if (!spaceId) return { error: 'No active space. For plan/service triggers call enter_space first. For space_message triggers this should have been auto-set.' };
-  
-  // 2. Parse @mentions from text
-  const mentions = parseMentions(text, spaceMembers);
-  
-  // 3. Post message to space (with streaming)
-  const dbMessage = await createSmartSpaceMessage({ ... });
-  
-  // 4. Trigger mentioned agents
-  for (const mention of mentions) {
-    await triggerByMention({ spaceId, targetEntityId: mention.entityId, ... });
-  }
-  
-  // 5. If wait: true, return __waitSignal (handled by run-runner)
-  if (wait && mentions.length > 0) {
-    return {
-      __waitSignal: true,
-      messageId: dbMessage.id,
-      waitingFor: mentions.map(m => ({ entityId: m.entityId, entityName: m.name })),
-      spaceId,
-    };
-  }
-  
-  return { success: true, messageId: dbMessage.id };
-}
-```
-
-**Helper function:** `parseMentions(text, spaceMembers)` — extracts `@Name` patterns, resolves against space members.
-
-**Update registry.ts:** Change import from `send-space-message.js` to `send-message.js`. Change registration key from `sendSpaceMessage` to `sendMessage`.
-
----
-
-### Step 3b: Create `send-reply.ts` Prebuilt Tool
-
-**Goal:** Same as `send_message` but resumes `waiting_reply` runs instead of triggering new ones.
-
-**New file:** `hsafa-gateway/src/agent-builder/prebuilt-tools/send-reply.ts`
-
-**Logic:**
-```typescript
-execute: async (input, context) => {
-  const { text, wait } = input;
-
   // 1. Get activeSpaceId from run state
   const run = await prisma.run.findUnique({ where: { id: context.runId } });
   const spaceId = run.activeSpaceId;
-  if (!spaceId) return { error: 'No active space. For plan/service triggers call enter_space first. For space_message triggers this should have been auto-set.' };
-
-  // 2. Parse @mentions from text
-  const mentions = parseMentions(text, spaceMembers);
-
-  // 3. Post message to space (same streaming pipeline as send_message)
+  if (!spaceId) return { error: 'No active space. Call enter_space first.' };
+  
+  // 2. Post message to space (with streaming)
   const dbMessage = await createSmartSpaceMessage({ ... });
-
-  // 4. For each mention: check for waiting_reply run, resume or trigger new
-  for (const mention of mentions) {
-    const waitingRun = await findWaitingReplyRun({
-      spaceId,
-      waitingForEntityId: mention.entityId,
-      replierEntityId: context.agentEntityId,
+  
+  // 3. Trigger all other agent members (sender excluded, chain depth incremented)
+  const currentRun = await prisma.run.findUnique({ where: { id: context.runId } });
+  await triggerAllAgents({
+    spaceId,
+    senderEntityId: context.agentEntityId,
+    senderName: context.agentName,
+    senderType: 'agent',
+    messageContent: text,
+    messageId: dbMessage.id,
+    senderExpectsReply: !!wait,
+    chainDepth: (currentRun.metadata?.chainDepth ?? 0) + 1,
+  });
+  
+  // 4. If messageId provided: check for waiting_reply runs to resume
+  if (messageId) {
+    const waitingRuns = await prisma.run.findMany({
+      where: { status: 'waiting_reply' },
+      // Filter: waitState.messageId === messageId (JSON query)
     });
-
-    if (waitingRun) {
-      // Resume the waiting run — inject reply as tool result, no new run
-      await resumeWaitingRun(waitingRun.id, {
+    for (const wr of waitingRuns) {
+      await resumeWaitingRun(wr.id, {
         reply: { entityId: context.agentEntityId, entityName: context.agentName, text, messageId: dbMessage.id }
       });
-    } else {
-      // No waiting run — trigger new run (same as send_message)
-      await triggerByMention({ spaceId, targetEntityId: mention.entityId, ... });
     }
   }
-
-  // 5. If wait: true, pause this run (same as send_message)
+  
+  // 5. If wait: true, return __waitSignal (handled by run-runner)
   if (wait) {
     return {
       __waitSignal: true,
       messageId: dbMessage.id,
-      waitingFor: mentions.length > 0
-        ? mentions.map(m => ({ entityId: m.entityId, entityName: m.name }))
-        : [{ type: 'any' }],  // any entity
       spaceId,
     };
   }
-
+  
   return { success: true, messageId: dbMessage.id };
 }
 ```
 
-**Register in `registry.ts`:** `await import('./send-reply.js');` with key `sendReply`.
+**No mention parsing.** Triggering is automatic — every message triggers all other agent members (sender excluded), with chain depth protection.
+
+**Update registry.ts:** Change import from `send-space-message.js` to `send-message.js`. Change registration key from `sendSpaceMessage` to `sendMessage`.
 
 ---
 
@@ -187,7 +144,8 @@ execute: async (input, context) => {
 ```json
 {
   "spaceId": "string (optional — defaults to active space)",
-  "limit": "number (optional, default 50)"
+  "limit": "number (optional, default 50)",
+  "offset": "number (optional, for paging back)"
 }
 ```
 
@@ -213,67 +171,96 @@ execute: async (input, context) => {
 **Delete:**
 - `hsafa-gateway/src/agent-builder/prebuilt-tools/delegate-agent.ts`
 - `hsafa-gateway/src/agent-builder/prebuilt-tools/skip-response.ts`
+- `hsafa-gateway/src/agent-builder/prebuilt-tools/mention-agent.ts`
+- `hsafa-gateway/src/agent-builder/prebuilt-tools/send-reply.ts` (if it exists — merged into send-message)
 
 **Update `registry.ts`:**
-- Remove `await import('./delegate-agent.js');`
-- Remove `await import('./skip-response.js');` (if present — may already be removed)
+- Remove all imports for deleted tools.
 
 ---
 
 ### Step 6: Refactor `agent-trigger.ts`
 
-**Goal:** Replace admin-based triggering with mention-based + 2-entity auto-trigger.
+**Goal:** Replace all triggering logic with simple "trigger all other agent members."
 
 **Remove:**
-- `triggerAdminAgent` function entirely
-- `delegateToAgent` function entirely
+- `triggerAdminAgent` function
+- `triggerByMentions` / `triggerMentionedAgent` function
+- `autoTriggerIfTwoEntity` function
+- All mention parsing, pair tracking
 
 **Add:**
 
 ```typescript
+const MAX_CHAIN_DEPTH = 5;
+
 /**
- * Parse @mentions from message text and trigger each mentioned agent.
+ * Trigger ALL other agent members of a space.
+ * Called for ANY message (human or agent). Sender is excluded.
  */
-export async function triggerByMentions(options: {
+export async function triggerAllAgents(options: {
   spaceId: string;
   senderEntityId: string;
   senderName: string;
   senderType: 'human' | 'agent';
   messageContent: string;
+  messageId: string;
+  senderExpectsReply: boolean;
+  chainDepth: number;
 }): Promise<void> {
-  // 1. Load space members (agents only)
-  // 2. Parse @Name patterns from messageContent
-  // 3. Resolve each @Name to an agent entity ID via displayName match
-  // 4. For each resolved agent: call createAndExecuteRun with space_message trigger
-  //    → set activeSpaceId = spaceId on the run record (auto-entry)
-  // 5. Self-mention blocked, depth limit enforced
-}
-
-/**
- * Check if space qualifies for auto-trigger (1 human + 1 agent).
- * If so, trigger the agent.
- */
-export async function autoTriggerIfTwoEntity(options: {
-  spaceId: string;
-  senderEntityId: string;
-  senderName: string;
-  messageContent: string;
-}): Promise<boolean> {
-  // 1. Count total members in space
-  // 2. If total_members === 2: trigger the OTHER entity (skip sender)
-  //    Works for: human+agent, agent+agent, human+human
-  // 3. Otherwise: return false
+  // 1. Chain depth check — if at max, no triggers
+  if (options.chainDepth >= MAX_CHAIN_DEPTH) return;
+  
+  // 2. Load all agent members of the space, EXCLUDE the sender
+  const agentMembers = await prisma.smartSpaceMembership.findMany({
+    where: {
+      smartSpaceId: options.spaceId,
+      entity: { type: 'agent' },
+      entityId: { not: options.senderEntityId },  // exclude sender
+    },
+    include: { entity: true }
+  });
+  
+  // 3. For each agent: dedup check (agentEntityId + messageId)
+  // 4. For each agent: createAndExecuteRun with space_message trigger
+  for (const member of agentMembers) {
+    await createAndExecuteRun({
+      agentEntityId: member.entityId,
+      triggerType: 'space_message',
+      triggerSpaceId: options.spaceId,
+      triggerMessageId: options.messageId,
+      triggerMessageContent: options.messageContent,
+      triggerSenderEntityId: options.senderEntityId,
+      triggerSenderName: options.senderName,
+      senderExpectsReply: options.senderExpectsReply,
+      chainDepth: options.chainDepth,  // passed to run metadata
+      activeSpaceId: options.spaceId,  // auto-entry
+    });
+  }
 }
 ```
 
 **Update route handler** (`smart-spaces.ts` message route):
 ```typescript
-// Old: await triggerAdminAgent({ ... });
-// New:
-const autoTriggered = await autoTriggerIfTwoEntity({ spaceId, senderEntityId, senderName, messageContent });
-if (!autoTriggered) {
-  await triggerByMentions({ spaceId, senderEntityId, senderName, senderType: 'human', messageContent });
-}
+// After persisting message:
+await triggerAllAgents({
+  spaceId, senderEntityId, senderName,
+  senderType: senderEntity.type,  // 'human' or 'agent'
+  messageContent, messageId,
+  senderExpectsReply: false,
+  chainDepth: 0,  // human messages start at 0
+});
+```
+
+**In `send_message` tool** (when agent sends a message):
+```typescript
+// After posting message to space:
+await triggerAllAgents({
+  ...messageDetails,
+  senderEntityId: context.agentEntityId,
+  senderType: 'agent',
+  chainDepth: currentRun.chainDepth + 1,  // increment from parent run
+});
 ```
 
 ---
@@ -283,9 +270,9 @@ if (!autoTriggered) {
 **Goal:** Remove delegate handling. Add `waiting_reply` handling. Track active space.
 
 **Remove:**
-- Section 6 (delegate signal handling)
-- `delegateSignal` from processStream destructuring
+- Delegate signal handling
 - `delegateToAgent` import
+- Mention-related chain metadata
 
 **Add after processStream:**
 ```typescript
@@ -301,15 +288,14 @@ if (waitSignal) {
           spaceId: waitSignal.spaceId,
           messageId: waitSignal.messageId,
           toolCallId: waitSignal.toolCallId,
-          waitingFor: waitSignal.waitingFor,
           startedAt: new Date().toISOString(),
           timeout: 300000,
-          replies: [],
+          reply: null,
         },
       },
     },
   });
-  await emitEvent('run.waiting_reply', { waitingFor: waitSignal.waitingFor });
+  await emitEvent('run.waiting_reply', {});
   await emitAgentStatus(run.agentEntityId, 'inactive', { runId });
   return;
 }
@@ -318,8 +304,8 @@ if (waitSignal) {
 **Add resume logic:**
 When `executeRun` is called on a `waiting_reply` run:
 1. Read `waitState` from metadata.
-2. Inject the replies as a tool result (the `send_message` tool call gets the reply data as its result).
-3. Continue execution.
+2. Inject the reply as a tool result (the `send_message` tool call gets the reply data as its result).
+3. Continue execution with fresh AI invocation (system prompt history approach).
 
 ---
 
@@ -329,121 +315,60 @@ When `executeRun` is called on a `waiting_reply` run:
 
 **Remove:**
 - `displayToolSpaces` map
-- `displayToolNames` map
-- `stripRoutingFields` function (or simplify — no routing fields)
+- `displayToolNames` set (replaced by `visibleToolNames`)
+- `stripRoutingFields` function
 - `DelegateAgentSignal` type and detection
-- `persistDisplayToolMessage` for display tools (keep for space/client tools)
+- `MentionAgentSignal` type and detection
 
 **Change:**
-- `options.displayTools` → remove parameter
-- `msgStreams` → read space from run's `activeSpaceId` (passed in options), not from tool args
 - Visible tool events → emit to `activeSpaceId` from options
+- `visibleToolNames` computed from `tool.visible` boolean config
 
 **New options shape:**
 ```typescript
 options?: {
   agentEntityId?: string;
-  activeSpaceId?: string;       // replaces targetSpaceId + displayTools
-  visibleToolNames?: Set<string>;  // from tool config visibility
+  activeSpaceId?: string;
+  visibleToolNames?: Set<string>;  // from tool config visible: true
 }
 ```
 
 ---
 
-### Step 9: Refactor `prompt-builder.ts`
+### Step 9: Refactor `prompt-builder.ts` and `builder.ts`
 
-**Goal:** Structured context model. Remove admin/multi-agent branching.
+**Goal:** Structured context model. Remove admin/multi-agent branching. Simplify tool injection.
 
-**Remove:**
+**prompt-builder.ts — Remove:**
 - Admin agent instructions block
 - `isAdminAgent` / `isMultiAgentSpace` conditionals
+- Mention instructions ("include @AgentName")
 
-**Refactor `buildModelMessages`:**
-
+**prompt-builder.ts — Update instructions:**
 ```typescript
-// Identity
-systemParts.push(`IDENTITY:`);
-systemParts.push(`  name: "${agentDisplayName}"`);
-systemParts.push(`  entityId: "${run.agentEntityId}"`);
-systemParts.push(`  currentTime: "${new Date().toISOString()}"`);
-
-// Trigger (same as v1 formatTriggerContext, no admin logic)
-
-// Active space
-if (activeSpaceId) {
-  systemParts.push(`ACTIVE SPACE: "${activeSpaceName}" (id: ${activeSpaceId})`);
-} else {
-  systemParts.push(`ACTIVE SPACE: none (call enter_space to set one)`);
-}
-
-// Space history as timeline
-for (const msg of messages) {
-  const ts = msg.createdAt.toISOString();
-  const sender = msg.entity?.displayName || 'Unknown';
-  const type = msg.entity?.type || 'unknown';
-  const isTrigger = msg.id === triggerMessageId;
-  systemParts.push(`  [${ts}] ${sender} (${type}): "${msg.content}"${isTrigger ? '  ← TRIGGER' : ''}`);
-}
-
-// Spaces list with [ACTIVE] tag
-
-// Agent context (goals, memories, plans — unchanged)
-
-// Active runs (with details, not just count)
-
-// Instructions (simplified — no admin/multi-agent branching)
 systemParts.push('INSTRUCTIONS:');
 systemParts.push('- Your text output is internal reasoning. Keep it brief.');
-systemParts.push('- Use send_message to communicate. The trigger space is already active — call enter_space only to switch to a different space.');
+systemParts.push('- Use send_message to communicate. The trigger space is already active — call enter_space only to switch spaces.');
 systemParts.push('- Use read_messages to load conversation history.');
-systemParts.push('- Include @AgentName in your message to trigger another agent.');
-systemParts.push('- Set wait=true to pause until replies arrive.');
+systemParts.push('- If you have nothing to contribute, end this run without sending a message.');
+systemParts.push('- Set wait=true to pause until a reply arrives.');
+systemParts.push('- Provide messageId to reply to a specific message and resume any waiting run.');
 ```
 
----
-
-### Step 10: Refactor `builder.ts`
-
-**Goal:** Remove displayTool injection, remove admin/multi-agent filtering.
-
-**Remove:**
-- `displayToolNames` set
-- `targetSpaceId` injection loop
+**builder.ts — Remove:**
+- `displayToolNames` set and `targetSpaceId` injection loop
 - `isMultiAgent` / `isAdmin` prebuilt tool filtering
 - `delegateToAgent` conditional
 
-**Change:**
-- All prebuilt tools are injected unconditionally (no admin/multi-agent gates).
-- `visibleToolNames` computed from `tool.visibility` config (not `display.mode`).
+**builder.ts — Change:**
+- All prebuilt tools injected unconditionally.
+- `visibleToolNames` computed from `tool.visible === true` (boolean, not string mode).
 
 ---
 
-### Step 11: Refactor `run-context.ts`
+### Step 10: Implement Reply Detection
 
-**Goal:** Remove admin detection. Add active runs detail.
-
-**Remove:**
-- `isAdminAgent` computation and field
-- `isMultiAgentSpace` computation and field
-- `adminAgentEntityId` references
-
-**Change `otherActiveRunCount`** → **`activeRuns`** (array with details):
-```typescript
-activeRuns: Array<{
-  runId: string;
-  status: string;
-  triggerType: string | null;
-  triggerSummary: string | null;
-  activeSpaceId: string | null;
-  waitingFor?: Array<{ entityId: string; entityName: string }>;
-}>;
-```
-
----
-
-### Step 12: Implement Reply Detection
-
-**Goal:** When a message arrives in a space, check if any `waiting_reply` run is waiting for this sender. If so, record the reply and potentially resume the run.
+**Goal:** When a message arrives in a space, check if any `waiting_reply` run is waiting in that space. If so, record the reply and resume the run.
 
 **New file:** `hsafa-gateway/src/lib/reply-detector.ts`
 
@@ -457,22 +382,23 @@ export async function checkForWaitingRuns(options: {
   messageId: string;
 }): Promise<void> {
   // 1. Find runs with status = 'waiting_reply' that have waitState.spaceId = spaceId
-  // 2. For each: check if senderEntityId is in waitState.waitingFor
-  // 3. If match: append reply to waitState.replies, mark entity as responded
-  // 4. If all waitingFor entities have responded: resume the run (call executeRun)
-  // 5. Handle timeout separately (via a scheduled job or TTL check)
+  // 2. For each: check sender is different from the waiting agent
+  // 3. If match: record reply, resume the run (call executeRun)
+  // 4. Handle timeout separately (via a scheduled job or TTL check)
 }
 ```
 
 **Wire into message route** (`smart-spaces.ts`):
 ```typescript
-// After persisting message and triggering mentions:
+// After persisting message and triggering agents:
 await checkForWaitingRuns({ spaceId, senderEntityId, senderName, messageContent, messageId });
 ```
 
+**Also wire into `send_message` tool:** When `messageId` is provided, directly check for matching `waitState.messageId` and resume (explicit reply mechanism).
+
 ---
 
-### Step 13: Update SDKs
+### Step 11: Update SDKs
 
 **react-sdk/src/types.ts:**
 - Remove `adminAgentEntityId` from SmartSpace type
@@ -509,13 +435,16 @@ cd use-case-app && npx tsc --noEmit     # ✅
 
 | Scenario | Expected Behavior |
 |----------|-------------------|
-| Human sends message in 2-entity space (no mention) | Agent auto-triggered |
-| Human sends `@Agent1 help` in multi-agent space | Only Agent1 triggered |
-| Human sends `@Agent1 and @Agent2 check this` | Both agents triggered (independent runs) |
-| Agent calls `send_message("@Agent2 review", wait: true)` | Agent2 triggered, run pauses, resumes when Agent2 replies |
-| Agent calls `send_message("thoughts?", wait: true)` (no mention) | Run pauses, resumes when any human replies |
+| Human sends message in space with 1 agent | Agent triggered (chainDepth=0) |
+| Human sends message in space with 3 agents | All 3 agents triggered (independent runs, chainDepth=0) |
+| Agent sends message in space with 2 other agents | Both other agents triggered (sender excluded, chainDepth incremented) |
+| Chain depth reaches MAX_CHAIN_DEPTH | Message posted but no agents triggered |
+| Agent calls `send_message("thoughts?", wait: true)` | Run pauses, resumes when any entity replies |
+| Agent calls `send_message("Approved.", messageId: "msg-xyz")` | Resumes waiting run whose waitState.messageId = msg-xyz |
 | Wait timeout | Run resumes with `status: "timeout"` result |
 | Plan triggers agent | No active space initially, agent must `enter_space` |
 | Agent enters Space A, sends message, enters Space B, sends message | Messages go to correct spaces |
-| Concurrent runs: same agent triggered twice | Both runs execute, each sees the other in context |
+| Concurrent runs: same agent triggered twice by different messages | Both runs execute, each sees the other in context |
 | Agent calls visible tool after `enter_space` | Tool result posted to active space |
+| Agent has nothing to say | Run ends without sending a message — no skipResponse tool needed |
+| Same message triggers same agent twice (dedup) | Second trigger is dropped (agentEntityId + messageId key) |

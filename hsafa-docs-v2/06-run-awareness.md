@@ -141,17 +141,17 @@ When an agent is triggered, the gateway checks for **existing active runs** with
 
 ### Rules
 
-1. If the agent already has a `running` run triggered by the same space + same sender + similar message content → **skip** the new trigger (prevent duplicate work).
-2. If the agent has a `waiting_reply` run in the same space → the new trigger may be the **reply** that resolves the wait (don't skip — process it).
+1. If the agent already has a `running` run triggered by the **same message** (same `triggerMessageId`) → **skip** (prevent duplicate work from the same message).
+2. If the agent has a `waiting_reply` run in the same space → the new trigger is allowed (the agent can handle both).
 3. If the agent has a `waiting_tool` run → new triggers are allowed (the agent can multitask).
 
 ### Dedup Key
 
 ```
-agentEntityId + triggerSpaceId + triggerSenderEntityId
+agentEntityId + triggerMessageId
 ```
 
-If a run with this key is already `running`, the new trigger is dropped with a log message. The sender doesn't see an error — the agent is already processing their request.
+Since every message triggers all other agent members (sender excluded), `triggerMessageId` is the natural dedup key. One run per agent per triggering message.
 
 ---
 

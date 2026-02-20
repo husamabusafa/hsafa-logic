@@ -94,38 +94,35 @@ IDENTITY:
 
 Tells the agent exactly why it's running:
 
-**Space message trigger (explicit @mention):**
+**Space message trigger (from human):**
 ```
 TRIGGER:
   type: space_message
-  triggerSource: mention
   space: "Project Alpha" (id: space-xyz)
   sender: Husam (human, id: ent-husam-01)
-  message: "@DataAnalyst pull the Q4 revenue numbers"
+  message: "Pull the Q4 revenue numbers"
   messageId: msg-g7h8
   timestamp: "2026-02-18T15:06:55Z"
   senderExpectsReply: true
+  chainDepth: 0
 ```
 
-**Proactive router trigger (no explicit mention):**
+**Space message trigger (from another agent):**
 ```
 TRIGGER:
   type: space_message
-  triggerSource: proactive_router
-  space: "Team Chat" (id: space-abc)
-  sender: Ahmad (human, id: ent-ahmad-01)
-  message: "nobody knows how to fix it"
-  messageId: msg-a3
-  timestamp: "2026-02-18T15:10:00Z"
+  space: "Project Alpha" (id: space-xyz)
+  sender: Designer (agent, id: ent-designer-02)
+  message: "Here's the mockup. Can someone review the feasibility?"
+  messageId: msg-k9l0
+  timestamp: "2026-02-18T15:10:30Z"
   senderExpectsReply: false
+  chainDepth: 1
 ```
 
-`triggerSource` is always present:
-- `mention` — agent was explicitly @mentioned
-- `auto` — 2-entity space auto-trigger (no @mention needed)
-- `proactive_router` — gateway router decided this agent might help; agent must decide whether to respond
-
-`senderExpectsReply` is `true` when the sender used `wait: true`, and `false` otherwise. Agents triggered via `proactive_router` always receive `senderExpectsReply: false`.
+- `senderExpectsReply` is `true` when the sender used `wait: true`, and `false` otherwise.
+- `chainDepth` indicates how deep in a trigger chain this run is. Human messages start at 0; each agent-to-agent hop increments by 1. At `MAX_CHAIN_DEPTH` (default 5), messages stop triggering new runs.
+- Every other agent member in the space (sender excluded) receives this trigger. Each independently decides whether to respond.
 
 **Plan trigger:**
 ```
@@ -164,14 +161,14 @@ Instead of role-based messages, the agent sees a **chronological event timeline*
 SPACE HISTORY ("Project Alpha"):
   [msg:a1b2] [2026-02-18T14:50:00Z] Husam (human, id:ent-husam-01): "Let's finalize the Q4 report"  [SEEN]
   [msg:c3d4] [2026-02-18T14:51:23Z] Designer (agent, id:ent-designer-02): "I've updated the charts. See attached."  [SEEN]
-  [msg:e5f6] [2026-02-18T14:55:10Z] Ahmad (human, id:ent-ahmad-03): "Looks good. @DataAnalyst can you add the revenue breakdown?"  [NEW]
-  [msg:g7h8] [2026-02-18T15:06:55Z] Husam (human, id:ent-husam-01): "@DataAnalyst pull the Q4 revenue numbers"  [NEW] ← TRIGGER
+  [msg:e5f6] [2026-02-18T14:55:10Z] Ahmad (human, id:ent-ahmad-03): "Looks good. Can you add the revenue breakdown?"  [NEW]
+  [msg:g7h8] [2026-02-18T15:06:55Z] Husam (human, id:ent-husam-01): "Pull the Q4 revenue numbers"  [NEW] ← TRIGGER
 ```
 
 `[SEEN]` messages were processed by the agent in a previous run. `[NEW]` messages arrived since the agent last ran in this space. The gateway tracks `lastProcessedMessageId` per agent per space membership to compute this.
 
 Key differences from v1:
-- Every message has a **message ID** (`msg:...`) — used by `send_reply` as `replyToMessageId`.
+- Every message has a **message ID** (`msg:...`) — used by `send_message(messageId)` to reply and resume waiting runs.
 - Every message has a **timestamp**.
 - Every sender has a **named display name**, **type** (human/agent), and **entity ID** — agents use entity IDs for precise targeting.
 - The trigger message is marked.
@@ -214,8 +211,9 @@ INSTRUCTIONS:
   - Your text output is internal reasoning — never shown to anyone. Keep it brief.
   - Use send_message to communicate. The trigger space is already active — call enter_space only if you need to switch to a different space.
   - Use read_messages to load conversation history from any space you belong to.
-  - Mentions: include @AgentName in your message text to trigger another agent.
-  - Wait: set wait=true to pause until replies arrive from mentioned entities.
+  - If you have nothing to contribute, end this run without sending a message.
+  - Set wait=true on send_message to pause until a reply arrives.
+  - Provide messageId on send_message to reply to a specific message and resume any waiting run.
 ```
 
 ---
@@ -231,6 +229,22 @@ INSTRUCTIONS:
 5. Mark the trigger message with `← TRIGGER`.
 6. Include origin annotations on cross-space messages.
 7. After the run completes, update `lastProcessedMessageId` to the latest message seen.
+
+### For Human Users (Chat UI)
+
+The `[SEEN]` / `[NEW]` mechanism is not agent-only — it applies to **humans too**. The chat UI uses the same pattern for unread indicators:
+
+1. The gateway tracks `lastSeenMessageId` per entity per space (stored in `SmartSpaceMembership`).
+2. When the human opens a space, the frontend sends a read receipt: `POST /api/spaces/:spaceId/read { lastMessageId }`.
+3. Messages after `lastSeenMessageId` are marked as unread in the UI (badge count on space list, "new" divider in the chat).
+4. When the user scrolls to the latest message, the frontend updates `lastSeenMessageId`.
+
+This is the same model as WhatsApp/Slack — because spaces behave like messaging channels for both humans and agents.
+
+| Entity Type | Tracking Field | Updated By | Used For |
+|-------------|---------------|------------|----------|
+| Agent | `lastProcessedMessageId` | Gateway (after run completes) | `[SEEN]`/`[NEW]` in system prompt |
+| Human | `lastSeenMessageId` | Frontend (read receipt API) | Unread badge, "new messages" divider |
 
 ### For Plan/Service Triggers
 

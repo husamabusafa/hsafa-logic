@@ -35,7 +35,7 @@ This mirrors how humans work: you open a chat window, and everything you do is w
 2. Gateway validates the agent is a member of that space.
 3. The run's **active space** is updated to `spaceId`.
 4. All subsequent `send_message` calls go to this space.
-5. All subsequent tool calls with `visible: true` have their results posted to this space.
+5. All subsequent tool calls with `visible: true` configuration have their results posted to this space.
 6. The agent can call `enter_space` again to switch to a different space mid-run.
 
 ### Implementation
@@ -55,7 +55,7 @@ When `send_message` is called without an explicit target, it uses `activeSpaceId
 
 ## Automatic Space Entry
 
-For **space_message triggers**, the trigger space is automatically set as the active space at the start of the run. The agent doesn't need to call `enter_space` if it only wants to respond in the space where it was mentioned.
+For **space_message triggers**, the trigger space is automatically set as the active space at the start of the run. The agent doesn't need to call `enter_space` if it only wants to respond in the space where it was triggered.
 
 For **plan/service triggers**, there is no active space initially. The agent must call `enter_space` before sending any messages.
 
@@ -160,5 +160,6 @@ This lets the agent (and other agents) understand **why** a cross-space message 
 | v1 | v2 |
 |----|----|
 | `sendSpaceMessage(spaceId, text, mention)` | `enter_space(spaceId)` + `send_message(text)` |
-| `displayTool` + `targetSpaceId` auto-injection | Tool visibility is config-based; results go to active space |
+| `displayTool` + `targetSpaceId` auto-injection | Tool `visible: true/false` config; results go to active space |
 | Space ID in every prebuilt tool call | Active space is implicit run state |
+| `@mention` in tool parameter | Removed. Every message triggers all other agent members (sender excluded). |

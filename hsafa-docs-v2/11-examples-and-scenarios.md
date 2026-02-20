@@ -38,50 +38,51 @@ Assistant Run:
 
 ---
 
-## Scenario 2: Multi-Agent Space with Mentions
+## Scenario 2: Multi-Agent Space (All Agents Triggered)
 
 **Setup:** Space "Project Alpha" — Husam (human), Ahmad (human), Designer (agent), Developer (agent).
 
 ### Flow
 
 ```
-Husam: "@Designer create a landing page mockup for the new product"
+Husam: "Create a landing page mockup for the new product"
 
-→ Gateway parses @Designer → resolves to Designer's entity ID
-→ Triggers Designer
+→ Gateway triggers ALL agent members: Designer, Developer
+→ Two independent runs created
 
 Designer Run:
-  TRIGGER: Husam (human) in "Project Alpha": "@Designer create a landing page mockup..."
+  TRIGGER: Husam (human) in "Project Alpha": "Create a landing page mockup..."
   ACTIVE SPACE: "Project Alpha" (auto-set)
 
-  1. Agent calls generateImage({ prompt: "Modern landing page mockup..." })
-     → Image generated, result posted to space (visible)
+  1. Agent reasons: this is a design task — I should respond.
+  2. Agent calls generateImage({ prompt: "Modern landing page mockup..." })
+     → Image generated, result posted to space (visible: true)
 
-  2. Agent calls send_message({ text: "Here's the mockup! Key elements: hero banner, CTA button, testimonials section. @Developer can you review the feasibility?" })
+  3. Agent calls send_message({ text: "Here's the mockup! Key elements: hero banner, CTA button, testimonials section." })
      → Message posted to space
-     → Gateway parses @Developer → triggers Developer
-
-Developer Run:
-  TRIGGER: Designer (agent) in "Project Alpha": "Here's the mockup!... @Developer can you review the feasibility?"
-  ACTIVE SPACE: "Project Alpha" (auto-set)
-
-  SPACE HISTORY:
-    [14:00] Husam (human): "@Designer create a landing page mockup..."
-    [14:01] Designer (agent): [tool_call: generateImage → image result]
-    [14:01] Designer (agent): "Here's the mockup!... @Developer can you review the feasibility?"  ← TRIGGER
-
-  1. Agent reasons about the mockup description
-  2. Agent calls send_message({ text: "The layout looks doable. Hero banner and CTA are straightforward. Testimonials section will need a carousel component — I'd estimate 2 days." })
-     → Message posted to space
+     → Triggers Developer (Designer excluded as sender, chainDepth=1)
 
   Run completes.
+
+Developer Run (from Husam's message, chainDepth=0):
+  TRIGGER: Husam (human) in "Project Alpha": "Create a landing page mockup..."
+  1. Agent reasons: this is a design task, not a dev task yet. I'll stay silent.
+  Run completes (no message sent).
+
+Developer Run (from Designer's message, chainDepth=1):
+  TRIGGER: Designer (agent) in "Project Alpha": "Here's the mockup! Key elements: hero banner..."
+  1. Agent reads space history — sees the mockup details.
+  2. Agent calls send_message({ text: "The layout looks doable. Hero banner and CTA are straightforward. Testimonials section will need a carousel — I'd estimate 2 days." })
+     → Triggers Designer (chainDepth=2)
+
+  Run completes.
+
+Designer Run (from Developer's message, chainDepth=2):
+  1. Agent reasons: Developer gave a feasibility assessment. No further design input needed.
+  Run completes (no message sent).
 ```
 
-**Space timeline (what everyone sees):**
-1. Husam: "@Designer create a landing page mockup..."
-2. Designer: [generateImage tool card with result]
-3. Designer: "Here's the mockup!... @Developer can you review the feasibility?"
-4. Developer: "The layout looks doable... I'd estimate 2 days."
+**Key:** Every message triggers all other agent members. Agents independently decide whether to respond. Chain depth prevents infinite loops — at `MAX_CHAIN_DEPTH` (default 5), messages stop triggering.
 
 ---
 
@@ -94,7 +95,7 @@ Developer Run:
 ```
 Sarah: "Deploy v2.1 to production"
 
-→ 2-entity space → auto-trigger DeployBot
+→ Gateway triggers all agent members: DeployBot
 
 DeployBot Run:
   TRIGGER: Sarah (human) in "Deployments": "Deploy v2.1 to production"
@@ -105,19 +106,18 @@ DeployBot Run:
        wait: true
      })
      → Message posted to space
-     → Run enters waiting_reply (waiting for any human — no mention)
+     → Run enters waiting_reply (waits for any reply)
 
   ... Sarah reads the message ...
 
 Sarah: "yes"
 
 → Gateway detects waiting_reply run for this space
-→ Sarah is a human in the space → matches "any human" wait condition
-→ Reply recorded, run resumes
+→ Sarah's reply resolves the wait → run resumes
 
 DeployBot Run (resumed):
   Tool result from send_message: {
-    replies: [{ entityName: "Sarah", text: "yes", timestamp: "..." }],
+    reply: { entityName: "Sarah", text: "yes", timestamp: "..." },
     status: "resolved"
   }
 
@@ -132,37 +132,42 @@ DeployBot Run (resumed):
 
 ---
 
-## Scenario 4: Agent-to-Agent Collaboration with Wait
+## Scenario 4: Agent Collaboration via Wait and Reply
 
 **Setup:** Space "Research" — Husam (human), Researcher (agent), Summarizer (agent).
 
 ### Flow
 
 ```
-Husam: "@Researcher find the top 5 AI papers from last week"
+Husam: "Find the top 5 AI papers from last week and summarize them"
 
-→ Triggers Researcher
+→ Gateway triggers ALL agent members: Researcher, Summarizer
 
 Researcher Run:
   1. Agent calls searchPapers({ query: "AI", period: "last_week", limit: 5 })
      → Returns 5 papers
 
   2. Agent calls send_message({
-       text: "@Summarizer can you summarize these papers? [paper list]",
+       text: "Found 5 papers. Summarizer, can you summarize these? [paper list]",
        wait: true
      })
-     → Triggers Summarizer
-     → Researcher's run pauses (waiting_reply for Summarizer)
+     → Message posted, run pauses (waiting_reply), messageId = "msg-papers"
 
-Summarizer Run:
-  TRIGGER: Researcher (agent) in "Research": "@Summarizer can you summarize these papers?..."
-  
-  1. Agent reads the paper list from the trigger message
-  2. Agent calls send_message({ text: "Here are the summaries:\n1. Paper A: ...\n2. Paper B: ..." })
-  
+Summarizer Run (from Husam's message, chainDepth=0):
+  TRIGGER: Husam (human) in "Research": "Find the top 5 AI papers..."
+  1. Agent reasons: Researcher is better suited for finding papers. I'll stay silent.
   Run completes.
 
-→ Summarizer's message resolves Researcher's wait
+Summarizer Run (from Researcher's message, chainDepth=1):
+  TRIGGER: Researcher (agent) in "Research": "Found 5 papers. Summarizer, can you summarize these?"
+  1. Agent reads the paper list from the trigger message
+  2. Agent calls send_message({
+       text: "Here are the summaries:\n1. Paper A: ...\n2. Paper B: ...",
+       messageId: "msg-papers"
+     })
+     → Gateway resumes Researcher's waiting run
+  
+  Run completes.
 
 Researcher Run (resumed):
   Receives reply: "Here are the summaries: ..."
@@ -172,7 +177,7 @@ Researcher Run (resumed):
   Run completes.
 ```
 
-**Key:** Researcher didn't fire-and-forget. It waited for Summarizer, then composed a final response incorporating both its own search results and Summarizer's summaries.
+**Key:** Both agents were triggered by the same human message. Researcher posted its findings and waited. Summarizer's run (triggered by Researcher's message at chainDepth=1) saw the findings and used `messageId` to reply, which resumed Researcher's run.
 
 ---
 
@@ -260,10 +265,10 @@ ProjectBot Run:
 
 ```
 [Same second:]
-Husam: "@SupportBot my account is locked"
-Ahmad: "@SupportBot I can't access the billing page"
+Husam: "My account is locked"
+Ahmad: "I can't access the billing page"
 
-→ Two independent runs triggered
+→ Each message triggers SupportBot → two independent runs
 
 SupportBot Run 1:
   TRIGGER: Husam — "my account is locked"
@@ -326,7 +331,7 @@ AssistantBot Run 1 (resumed):
 
 ---
 
-## Scenario 9: Agent Decides Not to Respond
+## Scenario 9: Agent Decides Not to Respond (Selective Silence)
 
 **Setup:** Space "General" — Husam, Ahmad, HelperBot.
 
@@ -335,22 +340,37 @@ AssistantBot Run 1 (resumed):
 ```
 Husam: "Hey Ahmad, how was your weekend?"
 
-→ No @mention of HelperBot
-→ HelperBot is NOT triggered (mention-based triggering)
-→ Nothing happens — the message is just a human conversation
-
-Ahmad: "Great! Went hiking. @HelperBot what's the weather forecast for next Saturday?"
-
-→ @HelperBot mentioned → HelperBot triggered
+→ Gateway triggers all agent members: HelperBot
 
 HelperBot Run:
-  1. calls fetchWeather({ date: "2026-02-22" })
-  2. send_message({ text: "Next Saturday looks clear — 18°C, light breeze. Perfect hiking weather!" })
+  TRIGGER: Husam (human) in "General": "Hey Ahmad, how was your weekend?"
+  
+  1. Agent reasons: this is casual conversation between humans. I have nothing to contribute.
+  
+  Run completes (no message sent).
+
+Ahmad: "Great! Went hiking."
+
+→ Ahmad is human → triggers HelperBot again
+
+HelperBot Run:
+  1. Agent reasons: still casual conversation. Stay silent.
+  
+  Run completes (no message sent).
+
+Husam: "That sounds fun! What's the weather forecast for next Saturday?"
+
+→ Gateway triggers HelperBot
+
+HelperBot Run:
+  1. Agent reasons: weather question — this is my domain.
+  2. calls fetchWeather({ date: "2026-02-22" })
+  3. send_message({ text: "Next Saturday looks clear — 18°C, light breeze. Perfect hiking weather!" })
 
   Run completes.
 ```
 
-**Key:** No `skipResponse` tool needed. The agent is simply not triggered when not mentioned. The architecture prevents unnecessary agent intervention.
+**Key:** HelperBot is triggered by every message (human or agent), but it independently decides whether to respond. For casual conversation, it stays silent. For weather questions, it contributes. No `skipResponse` tool needed — silence is the default behavior when the agent doesn't call `send_message`.
 
 ---
 
@@ -385,7 +405,7 @@ HelperBot Run:
       "name": "fetchJiraTickets",
       "description": "Fetch Jira tickets with filters",
       "executionType": "gateway",
-      "visibility": "visible",
+      "visible": true,
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -405,7 +425,7 @@ HelperBot Run:
       "name": "confirmDeployment",
       "description": "Show deployment confirmation dialog to the user",
       "executionType": "space",
-      "visibility": "visible",
+      "visible": true,
       "inputSchema": {
         "type": "object",
         "properties": {

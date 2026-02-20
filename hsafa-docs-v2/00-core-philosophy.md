@@ -12,12 +12,11 @@ An AI agent in Hsafa v2 behaves like a human participant: it enters spaces, read
 
 ## Core Primitives
 
-Everything in v2 is built on six primitives:
+Everything in v2 is built on five primitives:
 
 | Primitive | Purpose |
 |-----------|---------|
-| **Mentions** | Universal trigger mechanism. Any entity can trigger any agent by @mentioning it. |
-| **Spaces** | Shared context environments where entities communicate. |
+| **Spaces** | Shared context environments where entities communicate. Every message triggers all other agent members (sender excluded). |
 | **Plans** | Scheduled or conditional triggers that agents define for themselves. |
 | **Runs** | A single execution of an agent — from trigger to completion. |
 | **Tools** | Generic, space-agnostic capabilities. No tool is special. |
@@ -30,10 +29,11 @@ Everything in v2 is built on six primitives:
 | v1 Concept | v2 Replacement |
 |------------|----------------|
 | Admin agent | Removed. No special agent role. |
-| `delegateToAgent` tool | Removed. Agents mention other agents instead. |
+| `delegateToAgent` tool | Removed. No delegation — all agents run independently. |
+| `@mention`-based triggering | Removed. Every message triggers all other agent members in the space (sender excluded). |
 | `sendSpaceMessage(spaceId, text, mention)` | Replaced by `enter_space(spaceId)` + `send_message(text)`. |
 | `spaceId` in every tool call | Removed. The active space is stateful context. |
-| `displayTool` + `targetSpaceId` injection | Removed. Tools are space-agnostic; visibility is configured, not routed. |
+| `displayTool` + `targetSpaceId` injection | Removed. Tools use a simple `visible: true/false` flag. |
 | Role-based history (`user`/`assistant`) | Replaced by structured chronological event context. |
 | No waiting mechanism | `send_message` supports `wait = true` to pause until replies arrive. |
 
@@ -43,7 +43,7 @@ Everything in v2 is built on six primitives:
 
 ### 1. No Special Cases
 
-Every agent is equal. There is no admin, no router, no orchestrator baked into the architecture. Agents coordinate through the same mechanisms humans use: messages and mentions.
+Every agent is equal. There is no admin, no router, no orchestrator baked into the architecture. Every message in a space triggers all other agent members (sender excluded) — each agent independently decides whether to respond.
 
 ### 2. Space-Stateful Context
 
@@ -55,7 +55,7 @@ A tool is a capability. It doesn't know about spaces, mentions, or routing. The 
 
 ### 4. Conversation Is First-Class
 
-Agents can wait for replies. They can have back-and-forth conversations with humans and other agents. A run doesn't have to be fire-and-forget — it can pause, wait, resume, and continue reasoning.
+Agents can wait for replies. They can have back-and-forth conversations with humans and other agents. A run doesn't have to be fire-and-forget — it can pause, wait, resume, and continue reasoning. A single `send_message` tool handles both new messages and replies.
 
 ### 5. Context Over Roles
 
@@ -71,7 +71,7 @@ The goal is not to make agents *pretend* to be human through prompt engineering.
 
 | Doc | Title | Description |
 |-----|-------|-------------|
-| [01](./01-trigger-system.md) | Trigger System | How agents get triggered: mentions, plans, services. |
+| [01](./01-trigger-system.md) | Trigger System | How agents get triggered: space messages (all agents), plans, services. |
 | [02](./02-spaces-and-context.md) | Spaces & Active Context | `enter_space`, stateful space context, space lifecycle. |
 | [03](./03-tool-system.md) | Tool System | Generalized tools: execution types, visibility, configuration. |
 | [04](./04-messaging-and-waiting.md) | Messaging & Waiting | `send_message`, `wait`, reply resolution, conversation loops. |
