@@ -59,71 +59,91 @@ Analyst: "Here's the Q4 breakdown: ..."
 
 Agents that have nothing to contribute simply end their run without calling `send_message`. No `skipResponse` tool needed — silence is the default.
 
-### Trigger Debounce (Run Coordination)
+### Run Coordination (`absorb_run`)
 
-When multiple messages arrive rapidly in a space, the gateway **batches** them into a single run per agent instead of spawning one run per message. This mirrors how humans behave — you don't reply after every single message in a group chat. You wait a beat, read everything new, then respond.
+When an agent has multiple active runs, the runs can **coordinate mid-flight**. A run can absorb another run — canceling it and inheriting its full context. This lets the agent behave like **one entity thinking**, not multiple disconnected processes.
 
 **How it works:**
 
-1. A message arrives that would trigger Agent A in Space S.
-2. If Agent A has **no pending timer** for Space S → start a debounce timer (default: 2 seconds).
-3. If Agent A **already has a timer** running for Space S → reset the timer (wait another 2 seconds from now).
-4. When the timer fires → create **one run**. The trigger message is the **latest** message. All messages from the debounce window appear as `[NEW]` in the space history.
-5. If Agent A **already has an active run** in Space S → queue the trigger (run after current completes).
+1. A new run starts and sees its ACTIVE RUNS block listing other running runs.
+2. The agent (LLM) reasons: "Is another run doing the same or related task?"
+3. If yes → call `absorb_run(runId)`. The target run is immediately canceled (LLM generation aborted). The tool returns the target's full snapshot: trigger context + actions taken so far.
+4. The absorbing run now has **both intents** and acts on everything in one coherent action.
 
-**Example — 3 votes arrive within 1 second:**
+**Prompt guidance:** The system prompt instructs agents: *"If you see active runs with related purposes in the same space, the run with the LATEST trigger should absorb the older ones."*
 
-```
-[00:00.0] Ahmad: "Option A"    → starts 2s timer for VoteBot
-[00:00.3] Sarah: "Option B"    → resets timer
-[00:01.1] Husam: "Option A"    → resets timer
-[00:03.1] Timer fires → ONE run starts
-
-VoteBot Run:
-  TRIGGER: Husam in "Team Vote": "Option A"
-  Context:
-    [SEEN] VoteBot: "Team vote: Option A or B?"
-    [NEW]  Ahmad: "Option A"
-    [NEW]  Sarah: "Option B"
-    [NEW]  Husam: "Option A"  ← TRIGGER
-
-  → Counts: 3/3 votes. A wins 2-1.
-  → send_message("Vote results: Option A wins 2-1.")
-  Run ends.
-```
-
-One run. One response. All messages processed together.
-
-**Example — Multi-agent discussion batching:**
+**Example — Correction mid-flight:**
 
 ```
-Space: Husam + Architect + SecurityBot + DevOps
+[00:00] Husam: "Tell Muhammad the meeting is at 3pm"    → Run A starts
+[00:05] Husam: "Tell him don't forget the documents"    → Run B starts
 
-Architect: "Suggest OAuth2 with JWT"       [00:05.0]
-SecurityBot: "Use short-lived tokens"      [00:06.2]
+Run B context:
+  ACTIVE RUNS:
+    - Run A (running) — Husam: "Tell Muhammad the meeting is at 3pm"
+    - Run B (this run) — Husam: "Tell him don't forget the documents"
 
-→ Both messages trigger DevOps. Debounce merges into ONE run.
+Run B reasoning: "Run A is about the same task — messaging Muhammad. I should absorb it."
+Run B calls: absorb_run({ runId: "run-a-id" })
 
-DevOps Run:
-  Context:
-    [SEEN] Husam: "Redesign auth"
-    [NEW]  Architect: "OAuth2 + JWT"
-    [NEW]  SecurityBot: "Short-lived tokens"
-  → Sees BOTH suggestions, responds once: "I can set up Keycloak."
+Returns: {
+  trigger: "Husam: 'Tell Muhammad the meeting is at 3pm'",
+  actionsTaken: []  // caught before Run A sent anything
+}
+
+Run B now sends ONE message to Muhammad:
+  "Hey Muhammad, the meeting is at 3pm. Also, don't forget the documents."
 ```
 
-**Configuration:**
+**Example — Absorb after partial work:**
 
-```typescript
-const TRIGGER_DEBOUNCE_MS = 2000;  // default: 2 seconds
-// Can be per-space for flexibility:
-// 1:1 spaces → 500ms (fast response)
-// Multi-agent spaces → 3000ms (let messages accumulate)
 ```
+Run A already sent a message before Run B absorbs it:
+
+absorb_run returns: {
+  trigger: "Husam: 'Tell Muhammad the meeting is at 3pm'",
+  actionsTaken: [
+    { tool: "send_message", space: "Muhammad Space", text: "Meeting is at 3pm." }
+  ]
+}
+
+Run B sees Run A already told Muhammad about the meeting.
+Run B just adds: "Also, don't forget the documents."
+```
+
+**Example — Voting:**
+
+```
+[00:00.0] Ahmad: "Option A"    → VoteBot Run 1 starts
+[00:00.3] Sarah: "Option B"    → VoteBot Run 2 starts
+[00:01.1] Husam: "Option A"    → VoteBot Run 3 starts
+
+Run 3 (latest trigger) sees Run 1 and Run 2 in ACTIVE RUNS.
+Run 3 calls: absorb_run(Run1), absorb_run(Run2)
+Run 3 context now has all 3 votes.
+Run 3: "Vote results: Option A wins 2-1."
+```
+
+**Example — Steering a different-purpose run:**
+
+```
+[00:00] Husam: "Generate the Q4 report"          → Run A starts (complex)
+[00:08] Husam: "The deadline is March 1 not Feb 28" → Run B starts (correction)
+
+Run B absorbs Run A → gets Run A's purpose + any partial work.
+Run B generates the full report WITH the correct deadline.
+Both purposes fulfilled in one run.
+```
+
+**Rules:**
+- **Same agent only** — you can only absorb your own runs
+- **Active runs only** — can't absorb completed or canceled runs
+- **First caller wins** — if two runs try to absorb each other simultaneously, optimistic locking ensures only the first succeeds; the second gets "run already canceled"
+- **Abort immediately** — when absorbed, the target run's LLM generation is aborted mid-stream and any pending tool calls are canceled
 
 **Why this prevents infinite agent-to-agent loops:**
 
-Even if agents respond to each other, there's a natural 2-second cooldown between exchanges. Each round, the agent reads MORE context (the full conversation) and naturally recognizes when the discussion has concluded. Combined with the system prompt instruction *"If you have nothing to contribute, end without sending a message"*, conversations settle within 2-3 exchanges.
+Each new run sees the **full conversation history** in its context. When Agent A is re-triggered by Agent B's response, Agent A reads the entire exchange and naturally recognizes "this conversation has concluded — I have nothing to add." The system prompt reinforces: *"If you have nothing to contribute, end without sending a message."* Conversations settle within 2-3 exchanges through LLM judgment alone.
 
 ---
 

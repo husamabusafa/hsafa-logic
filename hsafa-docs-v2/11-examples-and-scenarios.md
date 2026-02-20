@@ -474,3 +474,137 @@ HelperBot Run:
   }
 }
 ```
+
+---
+
+## Scenario 11: Run Absorption — Correction Mid-Flight
+
+**Setup:** Space "Family" — Husam (human) + FamilyBot (agent). FamilyBot is also a member of Space "Muhammad's Space" — Muhammad (human) + FamilyBot (agent).
+
+### Flow
+
+```
+[00:00] Husam in "Family": "Tell Muhammad the meeting is at 3pm"
+→ FamilyBot Run A starts
+  TRIGGER: Husam (human) in "Family": "Tell Muhammad the meeting is at 3pm"
+  ACTIVE SPACE: "Family" (auto-set)
+  ACTIVE RUNS: [Run A (this run)]
+
+[00:05] Husam in "Family": "Also tell him don't forget the documents"
+→ FamilyBot Run B starts
+  TRIGGER: Husam (human) in "Family": "Also tell him don't forget the documents"
+  ACTIVE SPACE: "Family" (auto-set)
+  ACTIVE RUNS: [Run A (running), Run B (this run)]
+
+Run B reasoning:
+  "Run A is about the same task — messaging Muhammad. My message adds to it.
+   I should absorb Run A and handle everything in one coherent message."
+
+Run B calls: absorb_run({ runId: "run-a-id" })
+→ Run A canceled (LLM generation aborted)
+→ Returns: {
+    trigger: { senderName: "Husam", messageContent: "Tell Muhammad the meeting is at 3pm" },
+    actionsTaken: []  // Run A hadn't sent anything yet
+  }
+
+Run B now has both intents:
+  1. Original: "Tell Muhammad the meeting is at 3pm"
+  2. Addition: "Also tell him don't forget the documents"
+
+Run B calls: enter_space({ spaceId: "muhammad-space-id" })
+Run B calls: send_message({ text: "Hey Muhammad, the meeting is at 3pm. Also, don't forget to bring the documents!" })
+→ One message. Both intents fulfilled.
+Run B ends.
+```
+
+### Key Points
+
+- **No debounce delay** — Run A started immediately. Run B started immediately.
+- **Mid-flight coordination** — Run B absorbed Run A while Run A was still processing.
+- **Agent decided** — The LLM in Run B chose to absorb based on context, not a gateway rule.
+- **One coherent message** — Muhammad gets a single, natural message instead of two fragmented ones.
+
+---
+
+## Scenario 12: Run Absorption — After Partial Work
+
+**Setup:** Same as Scenario 11, but Run A is faster and already sent a message.
+
+### Flow
+
+```
+[00:00] Husam in "Family": "Tell Muhammad the meeting is at 3pm"
+→ FamilyBot Run A starts
+  Run A calls: enter_space("muhammad-space-id")
+  Run A calls: send_message("Hey Muhammad, the meeting is at 3pm.")
+  → Message delivered to Muhammad's Space
+
+[00:08] Husam in "Family": "Actually it's 4pm not 3pm"
+→ FamilyBot Run B starts
+  ACTIVE RUNS: [Run A (running — finishing up), Run B (this run)]
+
+Run B calls: absorb_run({ runId: "run-a-id" })
+→ Returns: {
+    trigger: { messageContent: "Tell Muhammad the meeting is at 3pm" },
+    actionsTaken: [
+      { tool: "enter_space", input: { spaceId: "muhammad-space-id" } },
+      { tool: "send_message", input: { text: "Hey Muhammad, the meeting is at 3pm." } }
+    ]
+  }
+
+Run B sees: "Run A already told Muhammad 3pm. But Husam corrected to 4pm."
+Run B calls: enter_space("muhammad-space-id")
+Run B calls: send_message("Correction — the meeting is at 4pm, not 3pm. Sorry about that!")
+Run B ends.
+```
+
+### Key Points
+
+- **Adapts to partial work** — Run B didn't repeat the original message. It saw what Run A did and sent only the correction.
+- **Natural behavior** — Just like a human would say "actually, correction..." after realizing they gave wrong info.
+
+---
+
+## Scenario 13: Voting with Run Absorption
+
+**Setup:** Space "Team Vote" — Ahmad (human), Sarah (human), Husam (human), VoteBot (agent).
+
+### Flow
+
+```
+VoteBot: "Vote: Option A or Option B?"
+
+[00:00.0] Ahmad: "Option A"    → VoteBot Run 1 starts
+[00:00.3] Sarah: "Option B"    → VoteBot Run 2 starts
+[00:01.1] Husam: "Option A"    → VoteBot Run 3 starts
+
+Run 3 context:
+  ACTIVE RUNS:
+    - Run 1 (running) — Ahmad: "Option A"
+    - Run 2 (running) — Sarah: "Option B"
+    - Run 3 (this run) — Husam: "Option A"
+
+Run 3 reasoning:
+  "All three runs are about the same vote. I have the latest trigger.
+   I should absorb the other two and tally the results."
+
+Run 3 calls: absorb_run({ runId: "run-1-id" })
+→ Returns: { trigger: { senderName: "Ahmad", messageContent: "Option A" }, actionsTaken: [] }
+
+Run 3 calls: absorb_run({ runId: "run-2-id" })
+→ Returns: { trigger: { senderName: "Sarah", messageContent: "Option B" }, actionsTaken: [] }
+
+Run 3 now has all votes:
+  Ahmad: Option A
+  Sarah: Option B
+  Husam: Option A
+
+Run 3 calls: send_message({ text: "Vote closed! Results: Option A wins 2-1 (Ahmad + Husam vs Sarah)." })
+Run 3 ends.
+```
+
+### Key Points
+
+- **3 runs → 1 action** — Two runs absorbed, one run handles everything.
+- **Latest trigger absorbs** — Run 3 (latest) absorbed Runs 1 and 2 (older).
+- **No wasted compute** — Absorbed runs are canceled before they send duplicate responses.

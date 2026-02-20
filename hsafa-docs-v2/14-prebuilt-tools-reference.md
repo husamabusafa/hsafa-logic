@@ -148,6 +148,64 @@ Cancel one of the agent's own active runs by ID. Used to cancel stale or superse
 
 ---
 
+### `absorb_run`
+
+Cancel another of the agent's own active runs and inherit its full context. Used when a newer run supersedes or supplements an older one, allowing the agent to act as **one entity** across multiple triggers.
+
+| Property | Value |
+|----------|-------|
+| **Execution type** | Gateway (immediate) |
+| **Visible** | No |
+
+**Input:**
+```json
+{
+  "runId": "string (required) — ID of the run to absorb. Must be one of your own active runs."
+}
+```
+
+**Output:**
+```json
+{
+  "success": true,
+  "absorbedRunId": "run-abc-123",
+  "absorbed": {
+    "trigger": {
+      "type": "space_message",
+      "spaceId": "space-xyz",
+      "spaceName": "Family Space",
+      "senderName": "Husam",
+      "messageContent": "Tell Muhammad the meeting is at 3pm"
+    },
+    "actionsTaken": [
+      { "tool": "enter_space", "input": { "spaceId": "space-muhammad" } },
+      { "tool": "send_message", "input": { "text": "Hey Muhammad, meeting at 3pm." } }
+    ]
+  }
+}
+```
+
+**Fields:**
+- `absorbed.trigger` — the absorbed run's original trigger context (why it was running)
+- `absorbed.actionsTaken` — every tool call the absorbed run executed before being canceled (may be empty if caught early)
+
+**When to use:**
+- The agent sees an active run with a **related purpose** in the ACTIVE RUNS block
+- The current run's trigger is a correction, addition, or supersession of the other run's trigger
+- Multiple runs were triggered by rapid messages about the same topic
+
+**Prompt guidance:** *"If you see active runs with related purposes in the same space, the run with the LATEST trigger should absorb the older ones."*
+
+**What happens to the absorbed run:**
+1. Status set to `canceled`
+2. LLM generation aborted immediately
+3. Pending tool calls canceled
+4. Full snapshot (trigger + actions) returned to the caller
+
+**Race condition:** If two runs try to absorb each other simultaneously, only the first succeeds (optimistic locking on run status). The second receives an error: `{ "success": false, "error": "run already canceled" }`.
+
+---
+
 ### `get_my_runs`
 
 Query the agent's own run history.
@@ -421,6 +479,7 @@ Delete one or more of the agent's plans by ID.
 | `send_message` | Send message to space | Yes | Yes (other agents) | No |
 | `read_messages` | Read space history | No | No | No |
 | `stop_run` | Cancel an active run by ID | No | No | Yes (terminates) |
+| `absorb_run` | Cancel + inherit another run's context | No | No | No |
 | `get_my_runs` | Query own run history | No | No | No |
 | `set_memories` | Store persistent memories | No | No | No |
 | `get_memories` | Read stored memories | No | No | No |

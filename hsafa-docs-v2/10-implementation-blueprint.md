@@ -155,8 +155,74 @@ execute: async (input, context) => {
 
 **No `continue_waiting` or `resume_run` to implement** — these don't exist in the stateless model.
 
+**Add new prebuilt tool:** `absorb-run.ts`
+
+```typescript
+/**
+ * absorb_run — Cancel another of the agent's own runs and return its full snapshot.
+ * Allows runs to coordinate mid-flight by merging related work.
+ */
+export const absorbRunTool = {
+  name: 'absorb_run',
+  description: 'Cancel another of your active runs and inherit its context. Use when you see a related run in ACTIVE RUNS that you should merge with.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      runId: { type: 'string', description: 'ID of the run to absorb. Must be one of your own active runs.' }
+    },
+    required: ['runId']
+  },
+  executionType: 'gateway',
+  visible: false,
+  execute: async (input: { runId: string }, context: RunContext) => {
+    // 1. Verify the target run belongs to the same agent
+    const targetRun = await prisma.run.findUnique({ where: { id: input.runId } });
+    if (!targetRun) return { success: false, error: 'Run not found' };
+    if (targetRun.agentEntityId !== context.agentEntityId) {
+      return { success: false, error: 'Can only absorb your own runs' };
+    }
+    if (targetRun.status !== 'running' && targetRun.status !== 'queued') {
+      return { success: false, error: `Run already ${targetRun.status}` };
+    }
+
+    // 2. Cancel the target run (optimistic lock — check status again in transaction)
+    const canceled = await prisma.run.updateMany({
+      where: { id: input.runId, status: { in: ['running', 'queued'] } },
+      data: { status: 'canceled', canceledAt: new Date(), cancelReason: 'absorbed' }
+    });
+    if (canceled.count === 0) {
+      return { success: false, error: 'Run already canceled (race condition)' };
+    }
+
+    // 3. Abort the target run's LLM generation if in progress
+    await abortRunGeneration(input.runId);
+
+    // 4. Collect the target run's snapshot
+    const triggerContext = targetRun.metadata?.trigger;
+    const toolCalls = await prisma.runToolCall.findMany({
+      where: { runId: input.runId },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    return {
+      success: true,
+      absorbedRunId: input.runId,
+      absorbed: {
+        trigger: triggerContext,
+        actionsTaken: toolCalls.map(tc => ({
+          tool: tc.toolName,
+          input: tc.input,
+          output: tc.output
+        }))
+      }
+    };
+  }
+};
+```
+
 **Update `registry.ts`:**
 - Remove all imports for deleted tools.
+- Add import and registration for `absorb-run.ts`.
 
 ---
 
@@ -173,17 +239,10 @@ execute: async (input, context) => {
 **Add:**
 
 ```typescript
-// In-memory debounce timers: Map<"agentEntityId:spaceId", NodeJS.Timeout>
-const debounceTimers = new Map<string, NodeJS.Timeout>();
-
-// Pending trigger context per agent+space (always the latest message)
-const pendingTriggers = new Map<string, TriggerOptions>();
-
-const TRIGGER_DEBOUNCE_MS = 2000; // 2 seconds default
-
 /**
- * Schedule triggering ALL other agent members of a space.
- * Uses debounce: rapid messages are batched into a single run per agent.
+ * Trigger ALL other agent members of a space.
+ * Called for ANY message (human or agent). Sender is excluded.
+ * No debounce — runs coordinate mid-flight via absorb_run.
  */
 export async function triggerAllAgents(options: {
   spaceId: string;
@@ -203,44 +262,19 @@ export async function triggerAllAgents(options: {
     include: { entity: true }
   });
 
-  // 2. For each agent: debounce the trigger
+  // 2. For each agent: dedup check (agentEntityId + messageId)
+  // 3. For each agent: createAndExecuteRun with space_message trigger
   for (const member of agentMembers) {
-    const key = `${member.entityId}:${options.spaceId}`;
-
-    // Store latest trigger context (overwrites previous)
-    pendingTriggers.set(key, {
+    await createAndExecuteRun({
       agentEntityId: member.entityId,
-      spaceId: options.spaceId,
-      messageId: options.messageId,
-      messageContent: options.messageContent,
-      senderEntityId: options.senderEntityId,
-      senderName: options.senderName,
+      triggerType: 'space_message',
+      triggerSpaceId: options.spaceId,
+      triggerMessageId: options.messageId,
+      triggerMessageContent: options.messageContent,
+      triggerSenderEntityId: options.senderEntityId,
+      triggerSenderName: options.senderName,
+      activeSpaceId: options.spaceId,  // auto-entry
     });
-
-    // Reset debounce timer
-    const existing = debounceTimers.get(key);
-    if (existing) clearTimeout(existing);
-
-    debounceTimers.set(key, setTimeout(async () => {
-      debounceTimers.delete(key);
-      const trigger = pendingTriggers.get(key);
-      pendingTriggers.delete(key);
-      if (!trigger) return;
-
-      // Dedup check: agentEntityId + messageId
-      // Create run with the latest trigger message
-      // All messages from the debounce window are [NEW] in space history
-      await createAndExecuteRun({
-        agentEntityId: trigger.agentEntityId,
-        triggerType: 'space_message',
-        triggerSpaceId: trigger.spaceId,
-        triggerMessageId: trigger.messageId,
-        triggerMessageContent: trigger.messageContent,
-        triggerSenderEntityId: trigger.senderEntityId,
-        triggerSenderName: trigger.senderName,
-        activeSpaceId: trigger.spaceId,  // auto-entry
-      });
-    }, TRIGGER_DEBOUNCE_MS));
   }
 }
 ```
@@ -309,6 +343,7 @@ systemParts.push('- Use send_message to communicate. The trigger space is alread
 systemParts.push('- Use read_messages to load conversation history.');
 systemParts.push('- If you have nothing to contribute, end this run without sending a message.');
 systemParts.push('- Runs are stateless. Use set_memories and set_goals to persist state across runs.');
+systemParts.push('- If you see active runs with related purposes in the same space, the run with the LATEST trigger should absorb the older ones using absorb_run.');
 ```
 
 **prompt-builder.ts — Add [SEEN]/[NEW] markers:**

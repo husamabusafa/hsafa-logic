@@ -146,9 +146,9 @@ Since every message triggers all other agent members (sender excluded), `trigger
 
 ## Concurrent Run Coordination
 
-An agent can have multiple runs active simultaneously. The context model ensures each run knows about the others:
+An agent can have multiple runs active simultaneously. The context model ensures each run knows about the others.
 
-### Scenario: Agent Receives Two Requests Simultaneously
+### Independent Runs (Different Purposes)
 
 ```
 Run 1: Husam in "Project Alpha": "pull Q4 report"
@@ -165,7 +165,50 @@ Run 2 context:
     - Run 2 (this run) — Ahmad asked about deployment
 ```
 
-Each run can see the other and reason about whether to coordinate or work independently.
+Each run sees the other. Since the purposes are unrelated, both proceed independently.
+
+### Mid-Flight Absorption (Related Purposes)
+
+When runs share a related purpose, the newer run can **absorb** the older one using `absorb_run`. This cancels the older run and returns its full snapshot (trigger context + actions taken so far). The absorbing run then handles both intents as one coherent action.
+
+```
+Run A: Husam: "Tell Muhammad the meeting is at 3pm"      (started 00:00)
+Run B: Husam: "Tell him don't forget the documents"      (started 00:05)
+
+Run B context:
+  ACTIVE RUNS:
+    - Run A (running) — "Tell Muhammad the meeting is at 3pm"
+    - Run B (this run) — "Tell him don't forget the documents"
+
+Run B reasoning: "Run A is about the same task. I should absorb it."
+Run B calls: absorb_run({ runId: "run-a-id" })
+
+→ Run A canceled. Run B receives Run A's trigger + actions.
+→ Run B sends ONE message: "Meeting at 3pm. Don't forget the docs."
+```
+
+### Absorption After Partial Work
+
+If the absorbed run already took actions (e.g., sent a message), the absorbing run sees what was done and adapts:
+
+```
+absorb_run returns:
+  actionsTaken: [
+    { tool: "send_message", text: "Meeting is at 3pm." }
+  ]
+
+Run B sees Run A already sent the meeting info.
+Run B just adds: "Also, don't forget the documents."
+```
+
+### Race Conditions
+
+If two runs try to absorb each other simultaneously:
+- **First caller wins** — optimistic locking on run status
+- The second call fails: `{ success: false, error: "run already canceled" }`
+- The losing run proceeds independently (it still has its own trigger context)
+
+**Prompt guidance:** The system prompt instructs: *"If you see active runs with related purposes in the same space, the run with the LATEST trigger should absorb the older ones."* This ensures the run with the most recent context takes charge.
 
 ---
 
@@ -199,6 +242,7 @@ The gateway emits run lifecycle events to the run's SSE stream:
 | `run.completed` | Run finishes successfully |
 | `run.failed` | Run encounters an error |
 | `run.canceled` | Run is canceled |
+| `run.absorbed` | Run is canceled via `absorb_run` (includes `absorbedByRunId`) |
 
 ### Space-Level Events
 

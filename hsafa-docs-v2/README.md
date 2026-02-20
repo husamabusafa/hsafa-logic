@@ -24,6 +24,7 @@ Make AI agents behave like humans: they enter spaces, read context, send message
 | 11 | [Streaming & Redis](./12-streaming-and-redis.md) | SSE events, Redis Pub/Sub, resumable streams, dedup |
 | 12 | [Context Continuity](./13-context-continuity.md) | How agents always know the full context of their actions |
 | 13 | [Prebuilt Tools Reference](./14-prebuilt-tools-reference.md) | All built-in tools with input/output schemas |
+| 14 | [Run Coordination](./16-run-coordination.md) | How multiple runs act as one entity via `absorb_run` |
 
 ## Key Removals from v1
 
@@ -45,7 +46,7 @@ Make AI agents behave like humans: they enter spaces, read context, send message
 ## Key Additions in v2
 
 - **All-agent triggering** — every message triggers all other agent members (sender excluded)
-- **Trigger debounce** — rapid messages batched into a single run per agent (2s default window)
+- **`absorb_run`** — mid-flight run coordination; a run can absorb another run's context and take over
 - `enter_space` — stateful space context
 - **Stateless runs** — every message triggers a fresh run, context provides conversational continuity
 - `send_message({ text })` — one tool, one parameter
