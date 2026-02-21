@@ -127,7 +127,7 @@ export async function processStream(
 
       // ── Agent text — internal planning, never streamed ───────────────────
       case 'text-delta':
-        internalText += (part.textDelta as string) ?? '';
+        internalText += (part.text as string) ?? '';
         break;
 
       // ── Reasoning tokens — internal, ignored ────────────────────────────
@@ -138,7 +138,7 @@ export async function processStream(
         break;
 
       // ── Tool call begins — args will follow as deltas ────────────────────
-      case 'tool-call-streaming-start': {
+      case 'tool-input-start': {
         const toolCallId = part.toolCallId as string;
         const toolName = part.toolName as string;
         const spaceId = getActiveSpaceId();
@@ -189,9 +189,9 @@ export async function processStream(
       }
 
       // ── Partial args arriving ────────────────────────────────────────────
-      case 'tool-call-delta': {
+      case 'tool-input-delta': {
         const toolCallId = part.toolCallId as string;
-        const delta = (part.argsTextDelta as string) ?? '';
+        const delta = (part.inputTextDelta as string) ?? '';
         const tool = active.get(toolCallId);
         if (!tool || !delta) break;
 
@@ -246,7 +246,7 @@ export async function processStream(
       case 'tool-call': {
         const toolCallId = part.toolCallId as string;
         const toolName = part.toolName as string;
-        const args = part.args as unknown;
+        const args = part.input as unknown;
 
         toolCalls.push({ toolCallId, toolName, args });
 
@@ -266,7 +266,7 @@ export async function processStream(
       case 'tool-result': {
         const toolCallId = part.toolCallId as string;
         const toolName = part.toolName as string;
-        const result = part.result as unknown;
+        const result = part.output as unknown;
         const tool = active.get(toolCallId);
 
         if (tool?.isVisible && tool.spaceId) {

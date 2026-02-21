@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/db.js';
 import { requireSecretKey } from '../middleware/auth.js';
+import { createAndExecuteRun } from '../lib/agent-trigger.js';
 
 export const agentsRouter = Router();
 
@@ -138,23 +139,19 @@ agentsRouter.post('/:agentId/trigger', requireSecretKey(), async (req: Request, 
       return;
     }
 
-    // TODO: createAndExecuteRun — will be implemented with run-runner feature
-    // For now, create a queued run
-    const run = await prisma.run.create({
-      data: {
-        agentEntityId: agent.entity.id,
-        agentId: agent.id,
-        status: 'queued',
-        triggerType: 'service',
-        triggerServiceName: serviceName,
-        triggerPayload: payload ?? undefined,
-      },
+    const runId = await createAndExecuteRun({
+      agentEntityId: agent.entity.id,
+      agentId: agent.id,
+      triggerType: 'service',
+      triggerServiceName: serviceName,
+      triggerPayload: payload ?? undefined,
+      // No activeSpaceId — agent must call enter_space first
     });
 
     res.status(201).json({
-      runId: run.id,
+      runId,
       agentEntityId: agent.entity.id,
-      status: run.status,
+      status: 'queued',
     });
   } catch (error) {
     console.error('Trigger agent error:', error);

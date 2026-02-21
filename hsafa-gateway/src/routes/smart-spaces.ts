@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/db.js';
 import { redis } from '../lib/redis.js';
 import { requireAuth, requireSecretKey, requireMembership } from '../middleware/auth.js';
+import { triggerAllAgents } from '../lib/agent-trigger.js';
 import { createSmartSpaceMessage } from '../lib/smartspace-db.js';
 import { emitSmartSpaceEvent } from '../lib/smartspace-events.js';
 
@@ -238,8 +239,18 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
       },
     });
 
-    // TODO: triggerAllAgents — will be implemented with agent-trigger feature
-    // v2: Every message triggers ALL other agent members (sender excluded)
+    // v2: Trigger ALL other agent members in the space (sender excluded)
+    // Fire-and-forget — do NOT await (run executes in background)
+    triggerAllAgents({
+      spaceId: req.params.smartSpaceId,
+      senderEntityId: entityId,
+      senderName: sender.displayName ?? entityId,
+      senderType: sender.type as 'human' | 'agent',
+      messageContent: content,
+      messageId: message.id,
+    }).catch((err: unknown) => {
+      console.error('[smart-spaces] triggerAllAgents error:', err);
+    });
 
     res.status(201).json({
       id: message.id,
