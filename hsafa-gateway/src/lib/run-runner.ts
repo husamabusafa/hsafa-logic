@@ -1,10 +1,14 @@
 // =============================================================================
 // Run Runner
 // =============================================================================
-// Main agentic loop. Ties builder → prompt-builder → streamText → stream-processor
-// together. Called by agent-trigger (fire-and-forget) and the service trigger route.
+// Orchestrates a run lifecycle. Ties builder → prompt-builder → streamText →
+// stream-processor together. The AI SDK manages the tool-call loop internally
+// via stopWhen; the stream-processor intercepts fullStream events across all
+// steps for real-time Redis emission.
+//
+// Called by agent-trigger (fire-and-forget) and the service trigger route.
 
-import { streamText, type LanguageModel } from 'ai';
+import { streamText, stepCountIs, type LanguageModel } from 'ai';
 import { prisma } from './db.js';
 import { emitSmartSpaceEvent, emitRunEvent } from './smartspace-events.js';
 import { processStream } from './stream-processor.js';
@@ -16,8 +20,8 @@ import type { RunContext } from '../agent-builder/types.js';
 // Constants
 // =============================================================================
 
-/** Max tool-call loops per run before forcing a stop (prevents infinite loops) */
-const MAX_TOOL_LOOPS = 20;
+/** Max tool-call steps per run before forcing a stop (prevents infinite loops) */
+const MAX_TOOL_STEPS = 20;
 
 // =============================================================================
 // Active run registry (in-process AbortControllers)
@@ -38,16 +42,15 @@ export function getAbortController(runId: string): AbortController | undefined {
  * Execute a run by ID. Handles the full agent lifecycle:
  * 1. Transition to 'running', emit agent.active
  * 2. Build agent (tools + model) and prompt
- * 3. streamText → processStream (collect tool calls)
- * 4. Execute tool calls → inject results
- * 5. Loop back to step 3 if finishReason === 'tool-calls'
- * 6. On natural stop: update status → 'completed', update lastProcessedMessageId
- * 7. On error: update status → 'failed'
- * 8. Always emit agent.inactive
+ * 3. streamText with stopWhen — SDK manages the tool-call loop across steps
+ * 4. processStream consumes fullStream (emits Redis events for all steps)
+ * 5. On natural stop: update status → 'completed', update lastProcessedMessageId
+ * 6. On error: update status → 'failed'
+ * 7. Always emit agent.inactive
  */
 export async function executeRun(runId: string): Promise<void> {
   // ── Load run ───────────────────────────────────────────────────────────────
-  let run = await prisma.run.findUnique({
+  const run = await prisma.run.findUnique({
     where: { id: runId },
     include: {
       agent: { select: { id: true, name: true } },
@@ -115,115 +118,57 @@ export async function executeRun(runId: string): Promise<void> {
       buildPrompt({ runId, agentEntityId, agentName, agentId }),
     ]);
 
-    // ── 3–5. Agentic tool-call loop ───────────────────────────────────────────
-    // Model messages accumulate tool calls and results across loop iterations.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const modelMessages: any[] = [];
-    let loopCount = 0;
+    // Emit run.started
+    await emitRunEvent(runId, {
+      type: 'run.started',
+      runId,
+      agentEntityId,
+    });
 
-    while (loopCount < MAX_TOOL_LOOPS) {
-      loopCount++;
+    // ── 3. streamText — SDK manages the tool-call loop via stopWhen ──────────
+    // fullStream yields events across ALL steps so the stream-processor can
+    // intercept send_message deltas and visible tool events in real-time.
+    // Tools without execute functions (space/external) stop the loop
+    // automatically — this is how waiting_tool will work.
+    const streamResult = streamText({
+      model: builtAgent.model as LanguageModel,
+      system: builtPrompt.systemPrompt,
+      messages: [],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      tools: builtAgent.tools as any,
+      abortSignal: abortController.signal,
+      stopWhen: stepCountIs(MAX_TOOL_STEPS),
+      prepareStep: async ({ stepNumber }) => {
+        // Check if run was canceled between steps (e.g. by stop_run)
+        if (stepNumber > 0) {
+          const currentRun = await prisma.run.findUnique({
+            where: { id: runId },
+            select: { status: true },
+          });
+          if (currentRun?.status === 'canceled') {
+            abortController.abort();
+          }
+        }
+        return {};
+      },
+    });
 
-      // Check if run was canceled mid-loop (e.g. by stop_run)
-      const currentRun = await prisma.run.findUnique({
-        where: { id: runId },
-        select: { status: true },
-      });
-      if (currentRun?.status === 'canceled') {
-        console.log(`[run-runner] Run ${runId} was canceled, stopping loop`);
-        return;
-      }
+    // ── 4. Process the full multi-step stream ────────────────────────────────
+    // Emits Redis events (space.message.streaming, tool.started, etc.) and
+    // collects tool calls for the run channel. The SDK handles message
+    // accumulation and tool result injection internally.
+    const result = await processStream(streamResult.fullStream, {
+      runId,
+      agentEntityId,
+      getActiveSpaceId,
+      visibleTools: builtAgent.visibleToolNames,
+    });
 
-      // Emit run.started on first iteration
-      if (loopCount === 1) {
-        await emitRunEvent(runId, {
-          type: 'run.started',
-          runId,
-          agentEntityId,
-        });
-      }
-
-      // Call the LLM
-      const streamResult = streamText({
-        model: builtAgent.model as LanguageModel,
-        system: builtPrompt.systemPrompt,
-        messages: modelMessages,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        tools: builtAgent.tools as any,
-        abortSignal: abortController.signal,
-        // No stopWhen/maxSteps — we manage the loop manually so the
-        // stream-processor can intercept send_message deltas in real-time.
-      });
-
-      // Process the stream (emits Redis events, collects tool calls)
-      const result = await processStream(streamResult.fullStream, {
-        runId,
-        agentEntityId,
-        getActiveSpaceId,
-        visibleTools: builtAgent.visibleToolNames,
-      });
-
-      if (result.finishReason === 'error') {
-        throw new Error(`Stream error in run ${runId}`);
-      }
-
-      // If no tool calls → agent is done (natural stop)
-      if (result.toolCalls.length === 0 || result.finishReason !== 'tool-calls') {
-        break;
-      }
-
-      // Detect client/space tools (no execute function) — transition to waiting_tool
-      // For now: if all tool calls are against known non-prebuilt tools that
-      // are space/external execution type, we'd set waiting_tool.
-      // The simplified MVP: just execute all tools that have results.
-      // Tools without execute functions in the AI SDK will produce no result —
-      // the SDK skips them. This means we only loop when there are results.
-
-      // Append assistant message with tool calls to model messages
-      const toolCallParts = result.toolCalls.map((tc) => ({
-        type: 'tool-call' as const,
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        input: tc.args,
-      }));
-
-      modelMessages.push({
-        role: 'assistant',
-        content: [
-          ...(result.internalText ? [{ type: 'text' as const, text: result.internalText }] : []),
-          ...toolCallParts,
-        ],
-      });
-
-      // The AI SDK already executed the tools via the execute functions.
-      // Collect results from the stream's tool results.
-      // The stream-processor collected toolCalls but not results directly —
-      // however since execute() runs inside the SDK, results are emitted as
-      // tool-result events that the stream-processor also sees.
-      // We need to get the actual results to inject into modelMessages.
-      // The AI SDK's streamText collects results accessible via result.toolResults.
-      const toolResults = await streamResult.toolResults;
-
-      if (toolResults.length > 0) {
-        // Append tool results as a tool message
-        modelMessages.push({
-          role: 'tool',
-          content: toolResults.map((tr) => ({
-            type: 'tool-result' as const,
-            toolCallId: tr.toolCallId,
-            toolName: tr.toolName,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            output: (tr as any).output ?? (tr as any).result,
-          })),
-        });
-      }
+    if (result.finishReason === 'error') {
+      throw new Error(`Stream error in run ${runId}`);
     }
 
-    if (loopCount >= MAX_TOOL_LOOPS) {
-      console.warn(`[run-runner] Run ${runId} hit MAX_TOOL_LOOPS (${MAX_TOOL_LOOPS})`);
-    }
-
-    // ── 6. Mark completed + update lastProcessedMessageId ────────────────────
+    // ── 5. Mark completed + update lastProcessedMessageId ────────────────────
     await prisma.run.update({
       where: { id: runId },
       data: { status: 'completed', completedAt: new Date() },
@@ -245,7 +190,7 @@ export async function executeRun(runId: string): Promise<void> {
       });
     }
   } catch (err) {
-    // ── 7. Handle errors ──────────────────────────────────────────────────────
+    // ── 6. Handle errors ──────────────────────────────────────────────────────
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`[run-runner] Run ${runId} failed:`, errMsg);
 
@@ -273,7 +218,7 @@ export async function executeRun(runId: string): Promise<void> {
       });
     }
   } finally {
-    // ── 8. Always emit agent.inactive ─────────────────────────────────────────
+    // ── 7. Always emit agent.inactive ─────────────────────────────────────────
     activeAbortControllers.delete(runId);
     await emitAgentStatusToAllSpaces(agentEntityId, agentName, 'inactive', runId);
   }

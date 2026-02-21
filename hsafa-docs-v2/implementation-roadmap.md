@@ -118,31 +118,32 @@ Ref: `05-context-model.md`, `13-context-continuity.md`
 ---
 
 ## Step 5 — Run Runner ✅
-**`src/lib/run-runner.ts`** (333 lines)
+**`src/lib/run-runner.ts`** (~280 lines)
 
-The main agentic loop. Ties everything together.
+Orchestrates a run lifecycle. Uses AI SDK's `streamText` with `stopWhen` for the tool-call loop — the SDK manages message accumulation and tool result injection internally. The stream-processor intercepts `fullStream` events across all steps for real-time Redis emission.
 
 ```
 1. Load run from DB, guard against re-execution (must be 'queued')
 2. Transition to 'running', emit agent.active to all agent's spaces
 3. Set up AbortController + activeSpaceId closure (mutable)
 4. Build agent (Step 2) + build prompt (Step 4) in parallel
-5. Agentic tool-call loop (max 20 iterations):
-   a. Check for mid-loop cancellation
-   b. Call streamText() with tools + abortSignal
-   c. processStream() → collect tool calls + finish reason
-   d. If no tool calls or finishReason !== 'tool-calls' → break
-   e. Append assistant message (tool-call parts) + tool results to modelMessages
-   f. Loop back to step b
-6. Mark completed, update lastProcessedMessageId for agent in active space
-7. Emit run.completed to run channel + active space
-8. On error: mark failed, emit run.failed
-9. Finally: always emit agent.inactive to all spaces, clean up AbortController
+5. streamText({ stopWhen: stepCountIs(20), prepareStep: ... })
+   - SDK loops internally: call LLM → execute tools → inject results → repeat
+   - fullStream emits events across ALL steps (tool-input-start, tool-input-delta, etc.)
+   - prepareStep checks for mid-run cancellation between steps
+   - Tools without execute (space/external) stop the loop automatically
+6. processStream(fullStream) → emits Redis events for all steps
+7. Mark completed, update lastProcessedMessageId for agent in active space
+8. Emit run.completed to run channel + active space
+9. On error: mark failed, emit run.failed
+10. Finally: always emit agent.inactive to all spaces, clean up AbortController
 ```
 
-**Bugs fixed during validation:**
-- AI SDK v6 model messages use `input` (not `args`) for tool-call parts
-- AI SDK v6 model messages use `output` (not `content`) for tool-result parts
+**Why `stopWhen` instead of manual loop:**
+- SDK handles model message format internally — eliminates `input`/`args` and `output`/`content` format bugs
+- `fullStream` still emits `tool-input-delta` events across all steps — stream-processor interception works unchanged
+- `prepareStep` provides a clean hook for cancellation checks between steps
+- ~50 fewer lines, zero manual message building
 
 ---
 
