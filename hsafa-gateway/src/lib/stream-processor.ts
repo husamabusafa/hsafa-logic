@@ -250,8 +250,21 @@ export async function processStream(
         const toolCallId = part.toolCallId as string;
         const toolName = part.toolName as string;
         const args = part.input as unknown;
+        const tool = active.get(toolCallId);
 
         toolCalls.push({ toolCallId, toolName, args });
+
+        // For visible non-send_message tools, emit final args to the space
+        if (tool?.isVisible && tool.spaceId && !tool.isSendMessage) {
+          await toSpace(tool.spaceId, {
+            type: 'tool.streaming',
+            streamId: toolCallId,
+            runId,
+            agentEntityId,
+            toolName,
+            partialArgs: args,
+          });
+        }
 
         // Notify run channel that args are fully available
         await toRun({

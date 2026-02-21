@@ -18,8 +18,48 @@ async function main() {
     },
     instructions: `You are a helpful assistant. Keep responses concise and friendly.
 When asked a question, provide a clear and direct answer.
-If the user asks you to perform an action, do your best to help.`,
-    tools: [],
+If the user asks you to perform an action, do your best to help.
+
+You have the following tools:
+- getCurrentWeather: Fetches live weather data for a city. Use it when the user asks about weather.
+- confirmAction: Shows a confirmation dialog to the user. Use it when you need the user to explicitly approve or reject an action before proceeding (e.g. deleting something, making a purchase, sending an email). Always provide a clear title and message. Wait for the user's response before continuing.`,
+    tools: [
+      {
+        name: 'getCurrentWeather',
+        description: 'Get current weather conditions for a city. Returns temperature, humidity, wind, and conditions.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            city: { type: 'string', description: 'City name (e.g. "London", "New York", "Tokyo")' },
+          },
+          required: ['city'],
+        },
+        executionType: 'gateway',
+        visible: true,
+        execution: {
+          url: 'https://wttr.in/{{input.city}}?format=j1',
+          method: 'GET',
+          timeout: 10000,
+        },
+      },
+      {
+        name: 'confirmAction',
+        description: 'Ask the user to confirm or reject an action. The run pauses until the user responds. Use for any destructive or irreversible actions.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: 'Short title of the action requiring confirmation' },
+            message: { type: 'string', description: 'Detailed description of what will happen if confirmed' },
+            confirmLabel: { type: 'string', description: 'Label for the confirm button (default: "Confirm")' },
+            rejectLabel: { type: 'string', description: 'Label for the reject button (default: "Cancel")' },
+          },
+          required: ['title', 'message'],
+        },
+        executionType: 'space',
+        visible: true,
+        display: { customUI: 'confirmAction' },
+      },
+    ],
   };
 
   const assistant = await prisma.agent.upsert({

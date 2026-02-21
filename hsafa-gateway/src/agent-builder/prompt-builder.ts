@@ -280,7 +280,26 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
     parts.push('');
   }
 
-  // ── 7. Instructions ────────────────────────────────────────────────────────
+  // ── 7. Client Tool Results (from previous waiting_tool cycle) ───────────────
+  const runMetadata = run.metadata as Record<string, unknown> | null;
+  const clientToolResults = runMetadata?.clientToolResults as Record<string, unknown> | undefined;
+  if (clientToolResults && Object.keys(clientToolResults).length > 0) {
+    parts.push('PREVIOUS TOOL RESULTS (from user interaction):');
+    // Also load the tool call records so we can show tool name + args alongside results
+    const toolCallRecords = await prisma.toolCall.findMany({
+      where: { runId },
+      orderBy: { seq: 'asc' },
+    });
+    for (const tc of toolCallRecords) {
+      const result = clientToolResults[tc.callId];
+      parts.push(`  - ${tc.toolName}(${JSON.stringify(tc.args)})`);
+      parts.push(`    result: ${JSON.stringify(result)}`);
+    }
+    parts.push('  Continue based on the user\'s responses above. Do NOT call the same tools again.');
+    parts.push('');
+  }
+
+  // ── 8. Instructions ────────────────────────────────────────────────────────
   parts.push('INSTRUCTIONS:');
   parts.push('  - Your text output is internal reasoning — never shown to anyone. Keep it brief.');
   parts.push(

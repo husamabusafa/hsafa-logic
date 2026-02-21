@@ -349,6 +349,39 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       ));
     });
 
+    // run.waiting_tool → agent paused waiting for user input on client tools
+    // Finalize tool call args from the event and ensure they're in 'running' state
+    stream.on('run.waiting_tool', (e: StreamEvent) => {
+      const tcs = e.data?.toolCalls as Array<{ callId: string; toolName: string; args: unknown }> | undefined;
+      if (!Array.isArray(tcs)) return;
+      const rid = e.runId || (e.data?.runId as string);
+      setToolCalls(prev => {
+        let updated = prev;
+        for (const tc of tcs) {
+          const exists = updated.some(t => t.toolCallId === tc.callId);
+          if (exists) {
+            // Update args to final values
+            updated = updated.map(t =>
+              t.toolCallId === tc.callId
+                ? { ...t, args: tc.args as Record<string, unknown>, runId: rid || t.runId }
+                : t
+            );
+          } else {
+            // Create entry if we missed tool.started (e.g. page refresh)
+            updated = [...updated, {
+              toolCallId: tc.callId,
+              toolName: tc.toolName,
+              entityId: e.agentEntityId || '',
+              runId: rid,
+              args: tc.args as Record<string, unknown>,
+              status: 'running' as const,
+            }];
+          }
+        }
+        return updated;
+      });
+    });
+
     // agent.active / agent.inactive → track which agents have running runs
     stream.on('agent.active', (e: StreamEvent) => {
       const eid = e.agentEntityId || (e.data?.agentEntityId as string);
