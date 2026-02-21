@@ -104,12 +104,17 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
       where: { id: run.activeSpaceId },
       select: { id: true, name: true },
     });
-    const autoSetNote = run.triggerType === 'space_message' ? ' [auto-set from trigger]' : '';
     parts.push(
-      `  "${activeSpace?.name ?? run.activeSpaceId}" (id: ${run.activeSpaceId})${autoSetNote}`,
+      `  ✅ You ARE in space "${activeSpace?.name ?? run.activeSpaceId}" (id: ${run.activeSpaceId})`,
+    );
+    parts.push(
+      '  You can call send_message immediately — no need to call enter_space.',
     );
   } else {
-    parts.push('  none (call enter_space to enter a space first)');
+    parts.push('  ⚠️ You are NOT in any space.');
+    parts.push(
+      '  You MUST call enter_space with a spaceId from YOUR SPACES below before you can send_message.',
+    );
   }
   parts.push('');
 
@@ -183,17 +188,15 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
     },
   });
 
-  parts.push('YOUR SPACES:');
+  parts.push('YOUR SPACES (send_message only reaches members of the ACTIVE space):');
   for (const m of memberships) {
     const space = m.smartSpace;
     const isActive = space.id === run.activeSpaceId ? ' [ACTIVE]' : '';
-    const memberNames = space.memberships
-      .map((sm) => {
-        const isYou = sm.entityId === agentEntityId;
-        return isYou ? 'You' : `${sm.entity.displayName ?? 'Unknown'} (${sm.entity.type})`;
-      })
+    const otherMembers = space.memberships
+      .filter((sm) => sm.entityId !== agentEntityId)
+      .map((sm) => `${sm.entity.displayName ?? 'Unknown'} (${sm.entity.type})`)
       .join(', ');
-    parts.push(`  - "${space.name ?? space.id}" (id: ${space.id})${isActive} — ${memberNames}`);
+    parts.push(`  - "${space.name ?? space.id}" (id: ${space.id})${isActive} — members: You, ${otherMembers || 'none'}`);
   }
   parts.push('');
 
@@ -302,9 +305,29 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
   // ── 8. Instructions ────────────────────────────────────────────────────────
   parts.push('INSTRUCTIONS:');
   parts.push('  - Your text output is internal reasoning — never shown to anyone. Keep it brief.');
+
+  // Space-specific instructions based on whether active space is set
+  if (run.activeSpaceId) {
+    parts.push(
+      '  - You are ALREADY in a space. You can call send_message directly to reply to the ACTIVE space.',
+    );
+  } else {
+    parts.push(
+      '  - You are NOT in any space. You MUST call enter_space(spaceId) before send_message.',
+    );
+  }
+
+  // Critical routing instruction
   parts.push(
-    '  - Use send_message to communicate. The trigger space is already active — call enter_space only to switch to a different space.',
+    '  - ROUTING: send_message ONLY delivers to members of your ACTIVE space. Look at YOUR SPACES to see who is in each space.',
   );
+  parts.push(
+    '  - To message someone in a DIFFERENT space: call enter_space(theirSpaceId) first, then send_message. For example, if Ahmad asks you to "tell Husam something", find the space where Husam is a member, enter_space to that space, then send_message there.',
+  );
+  parts.push(
+    '  - After delivering a message to another space, you may want to enter_space back to the original space to confirm delivery to the requester.',
+  );
+
   parts.push('  - Use read_messages to load conversation history from any space you belong to.');
   parts.push(
     '  - If you have nothing to contribute, end this run without calling send_message.',
@@ -314,6 +337,9 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
   );
   parts.push(
     '  - send_message returns {success:true} when delivered — do NOT retry on success.',
+  );
+  parts.push(
+    '  - If any tool returns {success:false}, read the error message and take corrective action.',
   );
 
   // Inject custom agent instructions from config (after system instructions)

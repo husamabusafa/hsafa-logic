@@ -28,7 +28,7 @@ registerPrebuiltTool('send_message', {
           return {
             success: false,
             error:
-              'No active space. Call enter_space first before sending a message.',
+              'No active space. You MUST call enter_space(spaceId) first with a valid space ID from YOUR SPACES, then call send_message again.',
           };
         }
 
