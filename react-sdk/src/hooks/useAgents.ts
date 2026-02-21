@@ -7,7 +7,7 @@ import type { Agent, CreateAgentParams } from '../types.js';
 export interface UseAgentsReturn {
   agents: Agent[];
   isLoading: boolean;
-  create: (params: CreateAgentParams) => Promise<{ agentId: string; configHash: string; created: boolean }>;
+  create: (params: CreateAgentParams) => Promise<{ agent: Agent & { entityId?: string } }>;
   remove: (agentId: string) => Promise<void>;
   refresh: () => Promise<void>;
 }

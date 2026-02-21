@@ -26,7 +26,7 @@ export class RunsResource {
     return this.http.get(`/api/runs/${runId}`);
   }
 
-  async create(params: CreateRunParams): Promise<{ runId: string; status: string; streamUrl: string }> {
+  async create(params: CreateRunParams): Promise<{ run: Run }> {
     return this.http.post('/api/runs', params);
   }
 

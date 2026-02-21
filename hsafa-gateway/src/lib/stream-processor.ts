@@ -139,7 +139,8 @@ export async function processStream(
 
       // ── Tool call begins — args will follow as deltas ────────────────────
       case 'tool-input-start': {
-        const toolCallId = part.toolCallId as string;
+        // fullStream (TextStreamPart) uses .id, not .toolCallId
+        const toolCallId = (part.id ?? part.toolCallId) as string;
         const toolName = part.toolName as string;
         const spaceId = getActiveSpaceId();
         const isSendMessage = toolName === TOOL_SEND_MESSAGE;
@@ -190,8 +191,9 @@ export async function processStream(
 
       // ── Partial args arriving ────────────────────────────────────────────
       case 'tool-input-delta': {
-        const toolCallId = part.toolCallId as string;
-        const delta = (part.inputTextDelta as string) ?? '';
+        // fullStream (TextStreamPart) uses .id and .delta
+        const toolCallId = (part.id ?? part.toolCallId) as string;
+        const delta = ((part.delta ?? part.inputTextDelta) as string) ?? '';
         const tool = active.get(toolCallId);
         if (!tool || !delta) break;
 
@@ -215,6 +217,7 @@ export async function processStream(
                   agentEntityId,
                   phase: 'delta',
                   delta: textDelta,
+                  text: newText,
                 });
               }
             }

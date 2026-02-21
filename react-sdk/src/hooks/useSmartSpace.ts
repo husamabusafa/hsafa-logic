@@ -87,51 +87,65 @@ export function useSmartSpace(smartSpaceId: string | null | undefined): UseSmart
     const stream = client.spaces.subscribe(smartSpaceId, { afterSeq });
     streamRef.current = stream;
 
-    stream.on('smartSpace.message', (event: StreamEvent) => {
-      const msg = event.data?.message as SmartSpaceMessage | undefined;
-      if (msg) {
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === msg.id)) return prev;
-          return [...prev, msg];
-        });
-      }
+    stream.on('space.message', (event: StreamEvent) => {
+      const raw = event.data?.message as Record<string, unknown> | undefined;
+      if (!raw?.id) return;
+      const msg: SmartSpaceMessage = {
+        id: raw.id as string,
+        smartSpaceId: (raw.smartSpaceId as string) || smartSpaceId || '',
+        entityId: (raw.entityId as string) || event.entityId || null,
+        seq: (raw.seq as string) || String(event.seq || '0'),
+        role: (raw.role as string) || 'user',
+        content: (raw.content as string) || null,
+        metadata: (raw.metadata as Record<string, unknown>) || null,
+        createdAt: (raw.createdAt as string) || new Date().toISOString(),
+      };
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
     });
 
-    stream.on('run.created', (event: StreamEvent) => {
-      const data = event.data;
-      const runId = (data.runId as string) || '';
-      const agentEntityId = (data.agentEntityId as string) || '';
-      const agentId = data.agentId as string | undefined;
+    // agent.active → track running agents as active runs
+    stream.on('agent.active', (event: StreamEvent) => {
+      const agentEntityId = event.agentEntityId || (event.data?.agentEntityId as string) || '';
+      const runId = event.runId || (event.data?.runId as string) || '';
+      if (!runId || !agentEntityId) return;
 
       setRuns((prev) => {
         if (prev.some((r) => r.id === runId)) return prev;
         return [
           ...prev,
-          { id: runId, agentEntityId, agentId, status: 'running', text: '', toolCalls: [] },
+          { id: runId, agentEntityId, status: 'running', text: '', toolCalls: [] },
         ];
       });
     });
 
-    stream.on('text.delta', (event: StreamEvent) => {
-      const runId = event.runId || (event.data.runId as string);
-      const delta = (event.data.delta as string) || (event.data.text as string) || '';
-      if (!runId || !delta) return;
+    // space.message.streaming → live text delta from send_message
+    stream.on('space.message.streaming', (event: StreamEvent) => {
+      const phase = event.data?.phase as string;
+      const delta = (event.data?.delta as string) || '';
+      const runId = event.runId || (event.data?.runId as string);
+      if (!runId) return;
 
-      setRuns((prev) =>
-        prev.map((r) =>
-          r.id === runId ? { ...r, text: r.text + delta } : r
-        )
-      );
+      if (phase === 'delta' && delta) {
+        setRuns((prev) =>
+          prev.map((r) =>
+            r.id === runId ? { ...r, text: r.text + delta } : r
+          )
+        );
+      }
     });
 
-    stream.on('tool-input-available', (event: StreamEvent) => {
-      const runId = event.runId || (event.data.runId as string);
+    // tool.started → new tool call in-flight
+    stream.on('tool.started', (event: StreamEvent) => {
+      const runId = event.runId || (event.data?.runId as string);
       if (!runId) return;
 
       const toolCall = {
-        toolCallId: (event.data.toolCallId as string) || '',
-        toolName: (event.data.toolName as string) || '',
-        input: event.data.input,
+        toolCallId: (event.data?.streamId as string) || '',
+        toolName: (event.data?.toolName as string) || '',
+        input: undefined,
         output: undefined,
         status: 'running' as const,
       };
@@ -145,9 +159,10 @@ export function useSmartSpace(smartSpaceId: string | null | undefined): UseSmart
       );
     });
 
-    stream.on('tool-output-available', (event: StreamEvent) => {
-      const runId = event.runId || (event.data.runId as string);
-      const toolCallId = (event.data.toolCallId as string) || '';
+    // tool.done → tool call completed with result
+    stream.on('tool.done', (event: StreamEvent) => {
+      const runId = event.runId || (event.data?.runId as string);
+      const toolCallId = (event.data?.streamId as string) || '';
       if (!runId || !toolCallId) return;
 
       setRuns((prev) =>
@@ -157,7 +172,7 @@ export function useSmartSpace(smartSpaceId: string | null | undefined): UseSmart
                 ...r,
                 toolCalls: r.toolCalls.map((tc) =>
                   tc.toolCallId === toolCallId
-                    ? { ...tc, output: event.data.output, status: 'complete' as const }
+                    ? { ...tc, output: event.data?.result, status: 'complete' as const }
                     : tc
                 ),
               }
@@ -178,8 +193,14 @@ export function useSmartSpace(smartSpaceId: string | null | undefined): UseSmart
       setRuns((prev) => prev.filter((r) => r.id !== runId));
     });
 
-    stream.on('run.canceled', (event: StreamEvent) => {
-      const runId = event.runId || (event.data.runId as string);
+    stream.on('run.cancelled', (event: StreamEvent) => {
+      const runId = event.runId || (event.data?.runId as string);
+      if (!runId) return;
+      setRuns((prev) => prev.filter((r) => r.id !== runId));
+    });
+
+    stream.on('agent.inactive', (event: StreamEvent) => {
+      const runId = event.runId || (event.data?.runId as string);
       if (!runId) return;
       setRuns((prev) => prev.filter((r) => r.id !== runId));
     });

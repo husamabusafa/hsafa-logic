@@ -95,7 +95,7 @@ runsRouter.post('/', requireSecretKey(), async (req: Request, res: Response) => 
       },
     });
 
-    res.status(201).json(run);
+    res.status(201).json({ run });
   } catch (error) {
     console.error('Create run error:', error);
     res.status(500).json({ error: 'Failed to create run' });
@@ -116,7 +116,7 @@ runsRouter.get('/:runId', requireAuth(), async (req: Request, res: Response) => 
       return;
     }
 
-    res.json(run);
+    res.json({ run });
   } catch (error) {
     console.error('Get run error:', error);
     res.status(500).json({ error: 'Failed to get run' });
@@ -137,7 +137,7 @@ runsRouter.get('/', requireSecretKey(), async (req: Request, res: Response) => {
       take: Math.min(Number(limit) || 20, 100),
     });
 
-    res.json(runs);
+    res.json({ runs });
   } catch (error) {
     console.error('List runs error:', error);
     res.status(500).json({ error: 'Failed to list runs' });
@@ -195,10 +195,10 @@ runsRouter.get('/:runId/events', requireAuth(), async (req: Request, res: Respon
       orderBy: { seq: 'asc' },
     });
 
-    res.json(events.map((e) => ({
+    res.json({ events: events.map((e) => ({
       ...e,
       seq: Number(e.seq),
-    })));
+    })) });
   } catch (error) {
     console.error('Get run events error:', error);
     res.status(500).json({ error: 'Failed to get run events' });
@@ -273,19 +273,73 @@ runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res:
       return;
     }
 
-    // Store result in run metadata
-    const metadata = (run.metadata as Record<string, unknown>) ?? {};
-    const clientToolResults = (metadata.clientToolResults as Record<string, unknown>) ?? {};
-    clientToolResults[callId] = result;
-    metadata.clientToolResults = clientToolResults;
-
-    await prisma.run.update({
-      where: { id: req.params.runId },
-      data: { metadata: metadata as any },
+    // Update the ToolCall record with the result
+    const toolCall = await prisma.toolCall.findFirst({
+      where: { runId: req.params.runId, callId },
     });
 
-    // TODO: Check if all pending tool calls have results → resume run
-    // Will be implemented with run-runner feature
+    if (!toolCall) {
+      res.status(404).json({ error: `Tool call ${callId} not found for this run` });
+      return;
+    }
+
+    if (toolCall.status === 'completed') {
+      res.status(400).json({ error: `Tool call ${callId} already completed` });
+      return;
+    }
+
+    await prisma.toolCall.update({
+      where: { id: toolCall.id },
+      data: {
+        status: 'completed',
+        output: result as any,
+        completedAt: new Date(),
+      },
+    });
+
+    // Check if ALL pending tool calls for this run now have results
+    const pendingCount = await prisma.toolCall.count({
+      where: {
+        runId: req.params.runId,
+        status: { not: 'completed' },
+      },
+    });
+
+    if (pendingCount === 0) {
+      // All tool results collected — resume the run
+      // Collect all tool results and store them in run metadata for the resume
+      const allToolCalls = await prisma.toolCall.findMany({
+        where: { runId: req.params.runId },
+        orderBy: { seq: 'asc' },
+      });
+
+      const toolResults: Record<string, unknown> = {};
+      for (const tc of allToolCalls) {
+        toolResults[tc.callId] = tc.output;
+      }
+
+      // Store results in run metadata and transition back to queued for re-execution
+      const metadata = (run.metadata as Record<string, unknown>) ?? {};
+      metadata.clientToolResults = toolResults;
+
+      await prisma.run.update({
+        where: { id: req.params.runId },
+        data: {
+          status: 'queued',
+          metadata: metadata as any,
+        },
+      });
+
+      // Re-execute the run asynchronously
+      (async () => {
+        try {
+          const { executeRun } = await import('../lib/run-runner.js');
+          await executeRun(req.params.runId);
+        } catch (err) {
+          console.error(`[runs] Resume run ${req.params.runId} failed:`, err);
+        }
+      })();
+    }
 
     res.json({ success: true });
   } catch (error) {

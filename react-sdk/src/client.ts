@@ -22,7 +22,6 @@ import type {
   SendMessageParams,
   ListMessagesParams,
   CreateRunParams,
-  SubmitToolResultParams,
   SubmitRunToolResultParams,
   RegisterClientParams,
   ListParams,
@@ -38,7 +37,7 @@ import type {
 class AgentsResource {
   constructor(private http: HttpClient) {}
 
-  async create(params: CreateAgentParams): Promise<{ agentId: string; configHash: string; created: boolean }> {
+  async create(params: CreateAgentParams): Promise<{ agent: Agent & { entityId?: string } }> {
     return this.http.post('/api/agents', params);
   }
 
@@ -213,7 +212,7 @@ class RunsResource {
     return this.http.get(`/api/runs/${runId}`);
   }
 
-  async create(params: CreateRunParams): Promise<{ runId: string; status: string; streamUrl: string }> {
+  async create(params: CreateRunParams): Promise<{ run: Run }> {
     return this.http.post('/api/runs', params);
   }
 
@@ -252,8 +251,8 @@ class RunsResource {
 class ToolsResource {
   constructor(private http: HttpClient) {}
 
-  async submitResult(smartSpaceId: string, params: SubmitToolResultParams): Promise<{ success: boolean }> {
-    return this.http.post(`/api/smart-spaces/${smartSpaceId}/tool-results`, params);
+  async submitResult(runId: string, params: SubmitRunToolResultParams): Promise<{ success: boolean }> {
+    return this.http.post(`/api/runs/${runId}/tool-results`, params);
   }
 
   async submitRunResult(runId: string, params: SubmitRunToolResultParams): Promise<{ success: boolean }> {

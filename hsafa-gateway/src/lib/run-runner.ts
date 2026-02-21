@@ -85,6 +85,7 @@ export async function executeRun(runId: string): Promise<void> {
   // ── Set up AbortController for this run ───────────────────────────────────
   const abortController = new AbortController();
   activeAbortControllers.set(runId, abortController);
+  let waitingTool = false;
 
   // ── Set up activeSpaceId closure (mutable) ────────────────────────────────
   // Read initial value from DB (may already be set by agent-trigger for space_message)
@@ -133,7 +134,7 @@ export async function executeRun(runId: string): Promise<void> {
     const streamResult = streamText({
       model: builtAgent.model as LanguageModel,
       system: builtPrompt.systemPrompt,
-      messages: [],
+      messages: [{ role: 'user' as const, content: 'Execute this run.' }],
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       tools: builtAgent.tools as any,
       abortSignal: abortController.signal,
@@ -168,7 +169,65 @@ export async function executeRun(runId: string): Promise<void> {
       throw new Error(`Stream error in run ${runId}`);
     }
 
-    // ── 5. Mark completed + update lastProcessedMessageId ────────────────────
+    // ── 5. Check for pending client tool calls → waiting_tool ────────────
+    const pendingClientToolCalls = result.toolCalls.filter(
+      (tc) => builtAgent.clientToolNames.has(tc.toolName),
+    );
+
+    if (pendingClientToolCalls.length > 0) {
+      // Persist pending tool calls so the tool-results endpoint can match them
+      await Promise.all(
+        pendingClientToolCalls.map((tc, idx) =>
+          prisma.toolCall.create({
+            data: {
+              runId,
+              seq: idx + 1,
+              callId: tc.toolCallId,
+              toolName: tc.toolName,
+              args: tc.args as any,
+              status: 'requested',
+            },
+          }),
+        ),
+      );
+
+      await prisma.run.update({
+        where: { id: runId },
+        data: { status: 'waiting_tool' },
+      });
+
+      // Emit waiting_tool event
+      await emitRunEvent(runId, {
+        type: 'run.waiting_tool',
+        runId,
+        agentEntityId,
+        toolCalls: pendingClientToolCalls.map((tc) => ({
+          callId: tc.toolCallId,
+          toolName: tc.toolName,
+          args: tc.args,
+        })),
+      });
+
+      const activeSpaceId = getActiveSpaceId();
+      if (activeSpaceId) {
+        await emitSmartSpaceEvent(activeSpaceId, {
+          type: 'run.waiting_tool',
+          runId,
+          agentEntityId,
+          toolCalls: pendingClientToolCalls.map((tc) => ({
+            callId: tc.toolCallId,
+            toolName: tc.toolName,
+            args: tc.args,
+          })),
+        });
+      }
+
+      // Don't emit agent.inactive — agent is waiting for tool results
+      waitingTool = true;
+      return;
+    }
+
+    // ── 5b. Mark completed + update lastProcessedMessageId ───────────────
     await prisma.run.update({
       where: { id: runId },
       data: { status: 'completed', completedAt: new Date() },
@@ -218,9 +277,11 @@ export async function executeRun(runId: string): Promise<void> {
       });
     }
   } finally {
-    // ── 7. Always emit agent.inactive ─────────────────────────────────────────
+    // ── 7. Cleanup + emit agent.inactive (unless waiting for tool results) ────
     activeAbortControllers.delete(runId);
-    await emitAgentStatusToAllSpaces(agentEntityId, agentName, 'inactive', runId);
+    if (!waitingTool) {
+      await emitAgentStatusToAllSpaces(agentEntityId, agentName, 'inactive', runId);
+    }
   }
 }
 

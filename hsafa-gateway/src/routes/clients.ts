@@ -42,7 +42,7 @@ clientsRouter.post('/register', requireAuth(), async (req: Request, res: Respons
       },
     });
 
-    res.status(201).json(client);
+    res.status(201).json({ client });
   } catch (error) {
     console.error('Register client error:', error);
     res.status(500).json({ error: 'Failed to register client' });
@@ -55,7 +55,7 @@ clientsRouter.get('/', requireSecretKey(), async (_req: Request, res: Response) 
     const clients = await prisma.client.findMany({
       orderBy: { createdAt: 'desc' },
     });
-    res.json(clients);
+    res.json({ clients });
   } catch (error) {
     console.error('List clients error:', error);
     res.status(500).json({ error: 'Failed to list clients' });

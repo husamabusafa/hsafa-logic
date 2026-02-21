@@ -4,7 +4,7 @@ import type { Agent, CreateAgentParams, ListParams, TriggerAgentParams, TriggerA
 export class AgentsResource {
   constructor(private http: HttpClient) {}
 
-  async create(params: CreateAgentParams): Promise<{ agentId: string; configHash: string; created: boolean }> {
+  async create(params: CreateAgentParams): Promise<{ agent: Agent & { entityId?: string } }> {
     return this.http.post('/api/agents', params);
   }
 

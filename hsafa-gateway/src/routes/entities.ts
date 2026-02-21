@@ -29,7 +29,7 @@ entitiesRouter.post('/', requireSecretKey(), async (req: Request, res: Response)
       },
     });
 
-    res.status(201).json(entity);
+    res.status(201).json({ entity });
   } catch (error) {
     console.error('Create entity error:', error);
     res.status(500).json({ error: 'Failed to create entity' });
@@ -50,7 +50,7 @@ entitiesRouter.get('/', requireSecretKey(), async (req: Request, res: Response) 
       orderBy: { createdAt: 'desc' },
     });
 
-    res.json(entities);
+    res.json({ entities });
   } catch (error) {
     console.error('List entities error:', error);
     res.status(500).json({ error: 'Failed to list entities' });
@@ -69,7 +69,7 @@ entitiesRouter.get('/:entityId', requireSecretKey(), async (req: Request, res: R
       return;
     }
 
-    res.json(entity);
+    res.json({ entity });
   } catch (error) {
     console.error('Get entity error:', error);
     res.status(500).json({ error: 'Failed to get entity' });
@@ -89,10 +89,51 @@ entitiesRouter.patch('/:entityId', requireSecretKey(), async (req: Request, res:
       data,
     });
 
-    res.json(entity);
+    res.json({ entity });
   } catch (error) {
     console.error('Update entity error:', error);
     res.status(500).json({ error: 'Failed to update entity' });
+  }
+});
+
+// POST /api/entities/agent — Create agent entity (for an existing agent)
+entitiesRouter.post('/agent', requireSecretKey(), async (req: Request, res: Response) => {
+  try {
+    const { agentId, externalId, displayName, metadata } = req.body;
+
+    if (!agentId) {
+      res.status(400).json({ error: 'agentId is required' });
+      return;
+    }
+
+    // Verify the agent exists
+    const agent = await prisma.agent.findUnique({ where: { id: agentId } });
+    if (!agent) {
+      res.status(404).json({ error: 'Agent not found' });
+      return;
+    }
+
+    // Check if an entity already exists for this agent
+    const existing = await prisma.entity.findUnique({ where: { agentId } });
+    if (existing) {
+      res.json({ entity: existing });
+      return;
+    }
+
+    const entity = await prisma.entity.create({
+      data: {
+        type: 'agent',
+        externalId: externalId ?? `agent:${agent.name}`,
+        displayName: displayName ?? agent.name,
+        agentId,
+        metadata: metadata ?? undefined,
+      },
+    });
+
+    res.status(201).json({ entity });
+  } catch (error) {
+    console.error('Create agent entity error:', error);
+    res.status(500).json({ error: 'Failed to create agent entity' });
   }
 });
 

@@ -81,12 +81,11 @@ export class MessagesResource {
         runStream.close();
       };
 
-      // Space stream: collect agent text from persisted messages (v2 — no text streaming)
-      spaceStream.on('smartSpace.message', (event: StreamEvent) => {
+      // Space stream: collect agent text from persisted messages
+      spaceStream.on('space.message', (event: StreamEvent) => {
         const msg = (event.data as Record<string, unknown>)?.message as Record<string, unknown> | undefined;
         if (!msg) return;
         const role = msg.role as string;
-        const agentEntityId = event.agentEntityId || (msg.entityId as string);
         // Only collect agent (assistant) messages, not the human message we just sent
         if (role !== 'assistant' && role !== 'agent') return;
         const content = msg.content as string | undefined;
@@ -94,9 +93,9 @@ export class MessagesResource {
       });
 
       // Run stream: tool events (v2 names)
-      runStream.on('tool-call.start', (event: StreamEvent) => {
+      runStream.on('tool.started', (event: StreamEvent) => {
         const data = event.data as Record<string, unknown>;
-        const callId = String(data.toolCallId || '');
+        const callId = String(data.streamId || data.toolCallId || '');
         if (!callId) return;
         activeToolCalls.set(callId, {
           id: callId,
@@ -105,13 +104,13 @@ export class MessagesResource {
         });
       });
 
-      runStream.on('tool-call.complete', (event: StreamEvent) => {
+      runStream.on('tool.done', (event: StreamEvent) => {
         const data = event.data as Record<string, unknown>;
-        const callId = String(data.toolCallId || '');
+        const callId = String(data.streamId || data.toolCallId || '');
         const existing = activeToolCalls.get(callId);
         if (existing) {
           existing.input = data.input ?? existing.input;
-          existing.output = data.output;
+          existing.output = data.result ?? data.output;
         }
       });
 

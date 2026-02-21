@@ -21,7 +21,7 @@ smartSpacesRouter.post('/', requireSecretKey(), async (req: Request, res: Respon
       data: { name, description, metadata: metadata ?? undefined },
     });
 
-    res.status(201).json(space);
+    res.status(201).json({ smartSpace: space });
   } catch (error) {
     console.error('Create space error:', error);
     res.status(500).json({ error: 'Failed to create space' });
@@ -38,7 +38,7 @@ smartSpacesRouter.get('/', requireAuth(), async (req: Request, res: Response) =>
         include: { smartSpace: true },
         orderBy: { joinedAt: 'desc' },
       });
-      res.json(memberships.map((m) => m.smartSpace));
+      res.json({ smartSpaces: memberships.map((m) => m.smartSpace) });
       return;
     }
 
@@ -46,7 +46,7 @@ smartSpacesRouter.get('/', requireAuth(), async (req: Request, res: Response) =>
     const spaces = await prisma.smartSpace.findMany({
       orderBy: { createdAt: 'desc' },
     });
-    res.json(spaces);
+    res.json({ smartSpaces: spaces });
   } catch (error) {
     console.error('List spaces error:', error);
     res.status(500).json({ error: 'Failed to list spaces' });
@@ -65,7 +65,7 @@ smartSpacesRouter.get('/:smartSpaceId', requireAuth(), requireMembership(), asyn
       return;
     }
 
-    res.json(space);
+    res.json({ smartSpace: space });
   } catch (error) {
     console.error('Get space error:', error);
     res.status(500).json({ error: 'Failed to get space' });
@@ -86,7 +86,7 @@ smartSpacesRouter.patch('/:smartSpaceId', requireSecretKey(), async (req: Reques
       data,
     });
 
-    res.json(space);
+    res.json({ smartSpace: space });
   } catch (error) {
     console.error('Update space error:', error);
     res.status(500).json({ error: 'Failed to update space' });
@@ -133,7 +133,7 @@ smartSpacesRouter.post('/:smartSpaceId/members', requireSecretKey(), async (req:
       },
     });
 
-    res.status(201).json(membership);
+    res.status(201).json({ membership });
   } catch (error) {
     console.error('Add member error:', error);
     res.status(500).json({ error: 'Failed to add member' });
@@ -152,7 +152,7 @@ smartSpacesRouter.get('/:smartSpaceId/members', requireAuth(), requireMembership
       },
     });
 
-    res.json(memberships);
+    res.json({ members: memberships });
   } catch (error) {
     console.error('List members error:', error);
     res.status(500).json({ error: 'Failed to list members' });
@@ -253,14 +253,17 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
     });
 
     res.status(201).json({
-      id: message.id,
-      smartSpaceId: message.smartSpaceId,
-      entityId: message.entityId,
-      role: message.role,
-      content: message.content,
-      metadata: message.metadata,
-      seq: Number(message.seq),
-      createdAt: message.createdAt.toISOString(),
+      message: {
+        id: message.id,
+        smartSpaceId: message.smartSpaceId,
+        entityId: message.entityId,
+        role: message.role,
+        content: message.content,
+        metadata: message.metadata,
+        seq: Number(message.seq),
+        createdAt: message.createdAt.toISOString(),
+      },
+      runs: [],
     });
   } catch (error) {
     console.error('Send message error:', error);
@@ -273,6 +276,8 @@ smartSpacesRouter.get('/:smartSpaceId/messages', requireAuth(), requireMembershi
   try {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const before = req.query.before as string | undefined;
+    const afterSeq = req.query.afterSeq as string | undefined;
+    const beforeSeq = req.query.beforeSeq as string | undefined;
 
     const where: Record<string, unknown> = {
       smartSpaceId: req.params.smartSpaceId,
@@ -280,6 +285,12 @@ smartSpacesRouter.get('/:smartSpaceId/messages', requireAuth(), requireMembershi
 
     if (before) {
       where.createdAt = { lt: new Date(before) };
+    }
+    if (afterSeq) {
+      where.seq = { ...(where.seq as object || {}), gt: BigInt(afterSeq) };
+    }
+    if (beforeSeq) {
+      where.seq = { ...(where.seq as object || {}), lt: BigInt(beforeSeq) };
     }
 
     const messages = await prisma.smartSpaceMessage.findMany({
@@ -294,7 +305,7 @@ smartSpacesRouter.get('/:smartSpaceId/messages', requireAuth(), requireMembershi
     });
 
     // Return in chronological order
-    res.json(messages.reverse().map((m) => ({
+    res.json({ messages: messages.reverse().map((m) => ({
       id: m.id,
       smartSpaceId: m.smartSpaceId,
       entityId: m.entityId,
@@ -303,8 +314,9 @@ smartSpacesRouter.get('/:smartSpaceId/messages', requireAuth(), requireMembershi
       metadata: m.metadata,
       seq: Number(m.seq),
       createdAt: m.createdAt.toISOString(),
-      entity: m.entity,
-    })));
+      entityType: m.entity?.type,
+      entityName: m.entity?.displayName,
+    })) });
   } catch (error) {
     console.error('List messages error:', error);
     res.status(500).json({ error: 'Failed to list messages' });
@@ -352,8 +364,30 @@ smartSpacesRouter.get('/:smartSpaceId/stream', requireAuth(), requireMembership(
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
-    // Send initial heartbeat
-    res.write('data: {"type":"connected"}\n\n');
+    // Query active runs for this space so the client can restore state on reconnect
+    const activeRuns = await prisma.run.findMany({
+      where: {
+        status: 'running',
+        OR: [
+          { triggerSpaceId: spaceId },
+          { activeSpaceId: spaceId },
+        ],
+      },
+      select: {
+        id: true,
+        agentEntityId: true,
+        agentEntity: { select: { displayName: true } },
+      },
+    });
+
+    const activeAgents = activeRuns.map((r) => ({
+      runId: r.id,
+      agentEntityId: r.agentEntityId,
+      agentName: r.agentEntity?.displayName || '',
+    }));
+
+    // Send connected event with active state
+    res.write(`data: ${JSON.stringify({ type: 'connected', activeAgents })}\n\n`);
 
     // Subscribe to Redis channel for this space
     const subscriber = redis.duplicate();
@@ -407,7 +441,7 @@ smartSpacesRouter.get('/:smartSpaceId/runs', requireAuth(), requireMembership(),
       },
     });
 
-    res.json(runs);
+    res.json({ runs });
   } catch (error) {
     console.error('List space runs error:', error);
     res.status(500).json({ error: 'Failed to list runs' });

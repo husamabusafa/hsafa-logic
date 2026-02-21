@@ -5,8 +5,8 @@ import { useHsafaClient } from '../context.js';
 
 export interface UseToolResultReturn {
   submit: (
-    smartSpaceId: string,
-    params: { runId: string; toolCallId: string; result: unknown }
+    runId: string,
+    params: { callId: string; result: unknown }
   ) => Promise<void>;
   submitToRun: (
     runId: string,
@@ -18,21 +18,6 @@ export interface UseToolResultReturn {
 export function useToolResult(): UseToolResultReturn {
   const client = useHsafaClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const submit = useCallback(
-    async (
-      smartSpaceId: string,
-      params: { runId: string; toolCallId: string; result: unknown }
-    ) => {
-      setIsSubmitting(true);
-      try {
-        await client.tools.submitResult(smartSpaceId, params);
-      } finally {
-        setIsSubmitting(false);
-      }
-    },
-    [client]
-  );
 
   const submitToRun = useCallback(
     async (
@@ -49,5 +34,5 @@ export function useToolResult(): UseToolResultReturn {
     [client]
   );
 
-  return { submit, submitToRun, isSubmitting };
+  return { submit: submitToRun, submitToRun, isSubmitting };
 }

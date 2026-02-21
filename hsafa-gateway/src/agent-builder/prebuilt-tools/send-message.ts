@@ -21,7 +21,7 @@ registerPrebuiltTool('send_message', {
       inputSchema: z.object({
         text: z.string().describe('The message content to send.'),
       }),
-      execute: async ({ text }) => {
+      execute: async ({ text }, { toolCallId }) => {
         // 1. Get the active spaceId from run state
         const activeSpaceId = context.getActiveSpaceId();
         if (!activeSpaceId) {
@@ -41,19 +41,22 @@ registerPrebuiltTool('send_message', {
           runId: context.runId,
         });
 
-        // 3. Emit persisted message event to the space (with streamId so the
-        //    client can replace the streaming entry with this record)
+        // 3. Emit persisted message event to the space.
+        //    - Nested `message` object matches the human message format in smart-spaces.ts
+        //    - `streamId` = toolCallId so the client can dedup streaming vs persisted
         await emitSmartSpaceEvent(activeSpaceId, {
           type: 'space.message',
-          messageId: dbMessage.id,
-          spaceId: activeSpaceId,
-          entityId: context.agentEntityId,
-          // streamId matches the toolCallId used during space.message.streaming
-          // The run-runner sets this on the context before tool execution so the
-          // client can dedup streaming vs persisted entries.
-          content: text,
-          role: 'assistant',
-          createdAt: dbMessage.createdAt.toISOString(),
+          streamId: toolCallId,
+          message: {
+            id: dbMessage.id,
+            smartSpaceId: activeSpaceId,
+            entityId: context.agentEntityId,
+            role: 'assistant',
+            content: text,
+            metadata: null,
+            seq: Number(dbMessage.seq),
+            createdAt: dbMessage.createdAt.toISOString(),
+          },
         });
 
         // 4. Trigger all other agent members of the space (sender excluded)

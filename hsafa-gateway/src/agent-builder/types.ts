@@ -123,6 +123,8 @@ export interface BuiltAgent {
   tools: Record<string, unknown>;
   /** Names of tools whose input/result should be posted to the active space */
   visibleToolNames: Set<string>;
+  /** Names of tools that lack an execute function (external/space) — trigger waiting_tool */
+  clientToolNames: Set<string>;
   /** The resolved LLM model instance */
   model: unknown;
 }

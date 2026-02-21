@@ -43,7 +43,7 @@ agentsRouter.post('/', requireSecretKey(), async (req: Request, res: Response) =
       select: { id: true },
     });
 
-    res.status(201).json({ ...agent, entityId: entity?.id });
+    res.status(201).json({ agent: { ...agent, entityId: entity?.id } });
   } catch (error) {
     console.error('Create agent error:', error);
     res.status(500).json({ error: 'Failed to create agent' });
@@ -57,7 +57,7 @@ agentsRouter.get('/', requireSecretKey(), async (_req: Request, res: Response) =
       orderBy: { createdAt: 'desc' },
       include: { entity: { select: { id: true, displayName: true } } },
     });
-    res.json(agents);
+    res.json({ agents });
   } catch (error) {
     console.error('List agents error:', error);
     res.status(500).json({ error: 'Failed to list agents' });
@@ -77,7 +77,7 @@ agentsRouter.get('/:agentId', requireSecretKey(), async (req: Request, res: Resp
       return;
     }
 
-    res.json(agent);
+    res.json({ agent });
   } catch (error) {
     console.error('Get agent error:', error);
     res.status(500).json({ error: 'Failed to get agent' });
@@ -97,7 +97,7 @@ agentsRouter.patch('/:agentId', requireSecretKey(), async (req: Request, res: Re
       data,
     });
 
-    res.json(agent);
+    res.json({ agent });
   } catch (error) {
     console.error('Update agent error:', error);
     res.status(500).json({ error: 'Failed to update agent' });

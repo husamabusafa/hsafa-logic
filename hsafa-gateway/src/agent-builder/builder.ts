@@ -220,6 +220,7 @@ export async function buildAgent(runId: string, context: RunContext): Promise<Bu
   const customToolConfigs: any[] = config.tools ?? [];
   const customTools: Record<string, ReturnType<typeof tool>> = {};
   const visibleToolNames = new Set<string>();
+  const clientToolNames = new Set<string>();
 
   for (const toolConfig of customToolConfigs) {
     const builtTool = buildCustomTool(toolConfig, context);
@@ -231,10 +232,15 @@ export async function buildAgent(runId: string, context: RunContext): Promise<Bu
     if (isVisible) {
       visibleToolNames.add(toolConfig.name as string);
     }
+
+    // Track tools without execute (external/space) — these trigger waiting_tool
+    if (toolConfig.executionType === 'external' || toolConfig.executionType === 'space') {
+      clientToolNames.add(toolConfig.name as string);
+    }
   }
 
   // 6. Merge prebuilt + custom (custom can override prebuilt names if needed)
   const tools = { ...prebuiltTools, ...customTools };
 
-  return { tools, visibleToolNames, model };
+  return { tools, visibleToolNames, clientToolNames, model };
 }

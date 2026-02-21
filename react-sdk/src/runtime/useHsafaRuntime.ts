@@ -236,6 +236,17 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
     const stream = client.spaces.subscribe(smartSpaceId);
     streamRef.current = stream;
 
+    // Restore active agents from SSE connected event (survives page refresh)
+    stream.on('connected', (e: StreamEvent) => {
+      const agents = e.data?.activeAgents as Array<{ runId: string; agentEntityId: string; agentName?: string }> | undefined;
+      if (Array.isArray(agents) && agents.length > 0) {
+        for (const a of agents) {
+          activeRunsRef.current.set(a.runId, { entityId: a.agentEntityId, entityName: a.agentName });
+        }
+        setActiveAgents(deriveActiveAgents(activeRunsRef.current));
+      }
+    });
+
     // Catch-up fetch
     client.messages.list(smartSpaceId, { limit: 100 }).then(({ messages: fresh }: { messages: SmartSpaceMessage[] }) => {
       setRawMessages((prev) => {
@@ -267,9 +278,21 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
             : [...prev, { streamId, entityId: e.agentEntityId || '', text: '', done: false }]
         );
       } else if (phase === 'delta' && delta) {
-        setStreaming(prev => prev.map(s =>
-          s.streamId === streamId ? { ...s, text: s.text + delta } : s
-        ));
+        // Use full accumulated text if available (survives page refresh),
+        // otherwise fall back to appending the delta.
+        const fullText = (e.data?.text as string) || '';
+        setStreaming(prev => {
+          const exists = prev.some(s => s.streamId === streamId);
+          if (exists) {
+            return prev.map(s =>
+              s.streamId === streamId
+                ? { ...s, text: fullText || (s.text + delta) }
+                : s
+            );
+          }
+          // Auto-create entry if we missed the 'start' (e.g. page refresh mid-stream)
+          return [...prev, { streamId, entityId: (e.data?.agentEntityId as string) || e.agentEntityId || '', text: fullText || delta, done: false }];
+        });
       } else if (phase === 'done') {
         setStreaming(prev => prev.map(s =>
           s.streamId === streamId ? { ...s, done: true } : s
@@ -328,15 +351,15 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
 
     // agent.active / agent.inactive → track which agents have running runs
     stream.on('agent.active', (e: StreamEvent) => {
-      const eid = e.data?.entityId as string;
-      const rid = e.data?.runId as string;
+      const eid = e.agentEntityId || (e.data?.agentEntityId as string);
+      const rid = e.runId || (e.data?.runId as string);
       if (!eid || !rid) return;
-      activeRunsRef.current.set(rid, { entityId: eid, entityName: (e.data?.entityName as string) || undefined });
+      activeRunsRef.current.set(rid, { entityId: eid, entityName: (e.data?.agentName as string) || undefined });
       setActiveAgents(deriveActiveAgents(activeRunsRef.current));
     });
 
     stream.on('agent.inactive', (e: StreamEvent) => {
-      const rid = e.data?.runId as string;
+      const rid = e.runId || (e.data?.runId as string);
       if (!rid) return;
       activeRunsRef.current.delete(rid);
       setActiveAgents(deriveActiveAgents(activeRunsRef.current));
@@ -394,10 +417,11 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
   }, [client, smartSpaceId, loaded]);
 
   // ── Build message list ──
-  // isRunning: agent is active OR a tool call is in-flight OR a message is streaming
-  const isRunning = activeAgents.length > 0
-    || toolCalls.some((tc) => tc.status === 'running')
-    || streaming.some((s) => !s.done);
+  // isRunning: only when there is actual streaming content or tool calls in-flight.
+  // activeAgents is NOT included — it fires before streaming starts and would show
+  // an empty assistant bubble. It's still exposed for typing indicators.
+  const isRunning = streaming.some((s) => !s.done && s.text.length > 0)
+    || toolCalls.some((tc) => tc.status === 'running');
 
   const messages = useMemo<ThreadMessageLike[]>(() => {
     // Build set of active tool call IDs to skip their persisted duplicates
