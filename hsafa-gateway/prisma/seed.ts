@@ -22,7 +22,8 @@ If the user asks you to perform an action, do your best to help.
 
 You have the following tools:
 - getCurrentWeather: Fetches live weather data for a city. Use it when the user asks about weather.
-- confirmAction: Shows a confirmation dialog to the user. Use it when you need the user to explicitly approve or reject an action before proceeding (e.g. deleting something, making a purchase, sending an email). Always provide a clear title and message. Wait for the user's response before continuing.`,
+- confirmAction: Shows a confirmation dialog to the user. Use it when you need the user to explicitly approve or reject an action before proceeding (e.g. deleting something, making a purchase, sending an email). Always provide a clear title and message. Wait for the user's response before continuing.
+- displayChart: Renders a chart in the conversation. Use it when the user asks for data visualization, statistics, comparisons, or any data that benefits from a visual chart. Supports bar, line, and pie charts. Provide meaningful labels and realistic data. Use colors to differentiate data series.`,
     tools: [
       {
         name: 'getCurrentWeather',
@@ -58,6 +59,44 @@ You have the following tools:
         executionType: 'space',
         visible: true,
         display: { customUI: 'confirmAction' },
+      },
+      {
+        name: 'displayChart',
+        description:
+          'Display a chart in the conversation. Use when the user asks for data visualization, statistics, or comparisons. The chart renders inline in the chat. Supports bar, line, and pie chart types.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            type: {
+              type: 'string',
+              enum: ['bar', 'line', 'pie'],
+              description: 'Chart type: bar, line, or pie',
+            },
+            title: {
+              type: 'string',
+              description: 'Chart title displayed above the chart',
+            },
+            data: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  label: { type: 'string', description: 'Data point label' },
+                  value: { type: 'number', description: 'Data point numeric value' },
+                  color: { type: 'string', description: 'Optional hex color for this data point (e.g. "#3b82f6")' },
+                },
+                required: ['label', 'value'],
+              },
+              description: 'Array of data points to visualize',
+            },
+            xLabel: { type: 'string', description: 'X-axis label (bar/line charts only)' },
+            yLabel: { type: 'string', description: 'Y-axis label (bar/line charts only)' },
+          },
+          required: ['type', 'title', 'data'],
+        },
+        executionType: 'internal',
+        visible: true,
+        display: { customUI: 'displayChart' },
       },
     ],
   };

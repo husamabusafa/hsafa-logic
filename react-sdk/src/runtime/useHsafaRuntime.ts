@@ -102,7 +102,8 @@ function extractPendingToolCalls(messages: SmartSpaceMessage[]): ToolCallEntry[]
     const parts = (meta?.uiMessage as any)?.parts as Array<Record<string, unknown>> | undefined;
     if (!Array.isArray(parts)) continue;
     for (const p of parts) {
-      if (p.type === 'tool_call' && p.status === 'requires_action' && p.toolCallId) {
+      const pStatus = p.status as string;
+      if (p.type === 'tool_call' && p.toolCallId && (pStatus === 'requires_action' || pStatus === 'streaming' || pStatus === 'running')) {
         entries.push({
           toolCallId: p.toolCallId as string,
           toolName: (p.toolName as string) || 'unknown',
@@ -160,11 +161,12 @@ function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): Threa
           type: 'tool-call',
           toolCallId: p.toolCallId,
           toolName: p.toolName || 'unknown',
-          args: p.args,
+          argsText: JSON.stringify(p.args ?? {}),
+          args: p.args ?? {},
           result: p.result,
           status: p.status === 'complete'
             ? { type: 'complete' }
-            : (p.status === 'waiting' || p.status === 'requires_action')
+            : (p.status === 'waiting' || p.status === 'requires_action' || p.status === 'running' || p.status === 'streaming')
               ? { type: 'running' }
               : { type: 'incomplete', reason: 'error' },
         } as ToolCallContentPart);
@@ -236,7 +238,7 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
     const stream = client.spaces.subscribe(smartSpaceId);
     streamRef.current = stream;
 
-    // Restore active agents from SSE connected event (survives page refresh)
+    // Restore active agents + pending tool calls from SSE connected event (survives page refresh)
     stream.on('connected', (e: StreamEvent) => {
       const agents = e.data?.activeAgents as Array<{ runId: string; agentEntityId: string; agentName?: string }> | undefined;
       if (Array.isArray(agents) && agents.length > 0) {
@@ -244,6 +246,25 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
           activeRunsRef.current.set(a.runId, { entityId: a.agentEntityId, entityName: a.agentName });
         }
         setActiveAgents(deriveActiveAgents(activeRunsRef.current));
+      }
+
+      // Restore pending tool calls for waiting_tool runs (e.g. confirmAction buttons)
+      const pending = e.data?.pendingToolCalls as Array<{ runId: string; callId: string; toolName: string; args: unknown; agentEntityId: string }> | undefined;
+      if (Array.isArray(pending) && pending.length > 0) {
+        setToolCalls(prev => {
+          const existing = new Set(prev.map(tc => tc.toolCallId));
+          const newEntries = pending
+            .filter(tc => !existing.has(tc.callId))
+            .map(tc => ({
+              toolCallId: tc.callId,
+              toolName: tc.toolName,
+              entityId: tc.agentEntityId,
+              runId: tc.runId,
+              args: tc.args as Record<string, unknown>,
+              status: 'running' as const,
+            }));
+          return newEntries.length > 0 ? [...prev, ...newEntries] : prev;
+        });
       }
     });
 
@@ -320,13 +341,29 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
     });
 
     // tool.streaming → progressively update partial args
+    // Auto-creates entry if tool.started was missed (e.g. page refresh mid-stream)
     stream.on('tool.streaming', (e: StreamEvent) => {
       const toolCallId = e.data?.streamId as string;
       const partialArgs = e.data?.partialArgs as Record<string, unknown> | undefined;
+      const toolName = e.data?.toolName as string;
       if (!toolCallId || !partialArgs) return;
-      setToolCalls(prev => prev.map(tc =>
-        tc.toolCallId === toolCallId ? { ...tc, args: partialArgs } : tc
-      ));
+      setToolCalls(prev => {
+        const exists = prev.some(tc => tc.toolCallId === toolCallId);
+        if (exists) {
+          return prev.map(tc =>
+            tc.toolCallId === toolCallId ? { ...tc, args: partialArgs } : tc
+          );
+        }
+        // Auto-create entry if we missed tool.started (e.g. page refresh)
+        return [...prev, {
+          toolCallId,
+          toolName: toolName || 'unknown',
+          entityId: e.agentEntityId || '',
+          runId: e.runId as string | undefined,
+          args: partialArgs,
+          status: 'running' as const,
+        }];
+      });
     });
 
     // tool.done → mark complete with result
@@ -429,7 +466,16 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       const streamId = e.data?.streamId as string | undefined;
       if (streamId) persistedRef.current.add(streamId);
 
-      setRawMessages((prev) => prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]);
+      setRawMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === msg.id);
+        if (idx >= 0) {
+          // Update existing message (e.g. tool result arrived for a persisted tool call)
+          const updated = [...prev];
+          updated[idx] = msg;
+          return updated;
+        }
+        return [...prev, msg];
+      });
       if (streamId) {
         // Remove the live streaming entry — persisted message replaces it
         setStreaming((prev) => prev.filter((s) => s.streamId !== streamId));
@@ -480,7 +526,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         type: 'tool-call',
         toolCallId: tc.toolCallId,
         toolName: tc.toolName,
-        args: tc.args,
+        argsText: JSON.stringify(tc.args ?? {}),
+        args: tc.args ?? {},
         result: tc.result,
         status: tc.status === 'running'
           ? { type: 'running' }

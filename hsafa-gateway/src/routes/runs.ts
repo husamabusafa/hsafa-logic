@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/db.js';
 import { redis } from '../lib/redis.js';
 import { requireAuth, requireSecretKey } from '../middleware/auth.js';
+import { emitSmartSpaceEvent } from '../lib/smartspace-events.js';
+import { buildToolCallMessageMeta, buildToolCallMessagePayload } from '../lib/tool-call-utils.js';
 
 export const runsRouter = Router();
 
@@ -297,6 +299,52 @@ runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res:
       },
     });
 
+    // Update the persisted SmartSpaceMessage for this tool call (if it exists)
+    // so the tool shows as complete with result on page refresh.
+    try {
+      const toolMessages = await prisma.smartSpaceMessage.findMany({
+        where: { runId: req.params.runId },
+      });
+      const toolMsg = toolMessages.find((m) => {
+        const meta = m.metadata as Record<string, unknown> | null;
+        return meta?.toolCallId === callId;
+      });
+      if (toolMsg) {
+        const completeMeta = buildToolCallMessageMeta({
+          toolCallId: callId,
+          toolName: toolCall.toolName,
+          args: toolCall.args as unknown,
+          result,
+          status: 'complete',
+          runId: req.params.runId,
+        });
+        await prisma.smartSpaceMessage.update({
+          where: { id: toolMsg.id },
+          data: { metadata: completeMeta as any },
+        });
+        // Emit updated space.message so the frontend refreshes this tool call
+        if (toolMsg.smartSpaceId) {
+          await emitSmartSpaceEvent(toolMsg.smartSpaceId, {
+            type: 'space.message',
+            streamId: callId,
+            message: buildToolCallMessagePayload({
+              messageId: toolMsg.id,
+              smartSpaceId: toolMsg.smartSpaceId,
+              entityId: toolMsg.entityId,
+              toolCallId: callId,
+              toolName: toolCall.toolName,
+              args: toolCall.args as unknown,
+              result,
+              status: 'complete',
+              runId: req.params.runId,
+            }),
+          });
+        }
+      }
+    } catch (err) {
+      console.warn(`[runs] Failed to update tool message for callId ${callId}:`, err);
+    }
+
     // Check if ALL pending tool calls for this run now have results
     const pendingCount = await prisma.toolCall.count({
       where: {
@@ -306,28 +354,11 @@ runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res:
     });
 
     if (pendingCount === 0) {
-      // All tool results collected — resume the run
-      // Collect all tool results and store them in run metadata for the resume
-      const allToolCalls = await prisma.toolCall.findMany({
-        where: { runId: req.params.runId },
-        orderBy: { seq: 'asc' },
-      });
-
-      const toolResults: Record<string, unknown> = {};
-      for (const tc of allToolCalls) {
-        toolResults[tc.callId] = tc.output;
-      }
-
-      // Store results in run metadata and transition back to queued for re-execution
-      const metadata = (run.metadata as Record<string, unknown>) ?? {};
-      metadata.clientToolResults = toolResults;
-
+      // All tool results collected — transition back to queued for re-execution.
+      // Tool results are read from ToolCall records on resume (no metadata duplication).
       await prisma.run.update({
         where: { id: req.params.runId },
-        data: {
-          status: 'queued',
-          metadata: metadata as any,
-        },
+        data: { status: 'queued' },
       });
 
       // Re-execute the run asynchronously

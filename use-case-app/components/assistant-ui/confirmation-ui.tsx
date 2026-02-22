@@ -22,7 +22,11 @@ interface ConfirmationData {
 }
 
 function parseConfirmation(props: ConfirmationUIProps): ConfirmationData | null {
-  const raw = props.args;
+  let raw = props.args;
+  // Fallback: try parsing argsText if args is null/undefined
+  if (!raw && props.argsText) {
+    try { raw = JSON.parse(props.argsText); } catch { /* ignore */ }
+  }
   if (!raw || typeof raw !== "object") return null;
   const data = raw as Record<string, unknown>;
   if (!data.title || !data.message) return null;

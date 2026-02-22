@@ -9,6 +9,7 @@ import {
 import { useMembers, ReasoningPart, ToolCallPart, ImageToolUI } from "@hsafa/ui";
 import { ProductCard } from "./product-card";
 import { ConfirmationUI } from "./confirmation-ui";
+import { ChartDisplay } from "./chart-display";
 import { ArrowUpIcon, SquareIcon } from "lucide-react";
 import { type ReactNode } from "react";
 
@@ -192,6 +193,7 @@ function AssistantMessage() {
                 showProductCard: ProductCard,
                 generateImage: ImageToolUI,
                 confirmAction: ConfirmationUI,
+                displayChart: ChartDisplay,
               },
               Fallback: ToolCallPart,
             },

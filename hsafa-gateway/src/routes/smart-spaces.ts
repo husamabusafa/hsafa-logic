@@ -367,7 +367,7 @@ smartSpacesRouter.get('/:smartSpaceId/stream', requireAuth(), requireMembership(
     // Query active runs for this space so the client can restore state on reconnect
     const activeRuns = await prisma.run.findMany({
       where: {
-        status: 'running',
+        status: { in: ['running', 'waiting_tool'] },
         OR: [
           { triggerSpaceId: spaceId },
           { activeSpaceId: spaceId },
@@ -375,6 +375,7 @@ smartSpacesRouter.get('/:smartSpaceId/stream', requireAuth(), requireMembership(
       },
       select: {
         id: true,
+        status: true,
         agentEntityId: true,
         agentEntity: { select: { displayName: true } },
       },
@@ -386,8 +387,65 @@ smartSpacesRouter.get('/:smartSpaceId/stream', requireAuth(), requireMembership(
       agentName: r.agentEntity?.displayName || '',
     }));
 
+    // For waiting_tool runs, include their pending tool calls so the
+    // client can restore tool UI (buttons, forms) immediately on reconnect.
+    const waitingRunIds = activeRuns.filter((r) => r.status === 'waiting_tool').map((r) => r.id);
+    let pendingToolCalls: Array<{ runId: string; callId: string; toolName: string; args: unknown; agentEntityId: string }> = [];
+    if (waitingRunIds.length > 0) {
+      const tcs = await prisma.toolCall.findMany({
+        where: { runId: { in: waitingRunIds }, status: { not: 'completed' } },
+        orderBy: { seq: 'asc' },
+      });
+      pendingToolCalls = tcs.map((tc) => {
+        const run = activeRuns.find((r) => r.id === tc.runId);
+        return {
+          runId: tc.runId,
+          callId: tc.callId,
+          toolName: tc.toolName,
+          args: tc.args,
+          agentEntityId: run?.agentEntityId || '',
+        };
+      });
+    }
+
+    // For running runs, include any streaming tool messages so the client
+    // can restore mid-stream tool UI on reconnect (before waiting_tool).
+    const runningRunIds = activeRuns.filter((r) => r.status === 'running').map((r) => r.id);
+    let streamingToolCalls: Array<{ runId: string; callId: string; toolName: string; args: unknown; agentEntityId: string }> = [];
+    if (runningRunIds.length > 0) {
+      const toolMsgs = await prisma.smartSpaceMessage.findMany({
+        where: {
+          smartSpaceId: spaceId,
+          runId: { in: runningRunIds },
+          role: 'assistant',
+        },
+        orderBy: { seq: 'asc' },
+      });
+      for (const m of toolMsgs) {
+        const meta = m.metadata as Record<string, unknown> | null;
+        const parts = (meta?.uiMessage as any)?.parts as Array<Record<string, unknown>> | undefined;
+        if (!Array.isArray(parts)) continue;
+        for (const p of parts) {
+          const s = p.status as string;
+          if (p.type === 'tool_call' && p.toolCallId && (s === 'streaming' || s === 'running')) {
+            const run = activeRuns.find((r) => r.id === m.runId);
+            streamingToolCalls.push({
+              runId: m.runId || '',
+              callId: p.toolCallId as string,
+              toolName: (p.toolName as string) || 'unknown',
+              args: p.args as unknown,
+              agentEntityId: run?.agentEntityId || '',
+            });
+          }
+        }
+      }
+    }
+
+    // Merge: pendingToolCalls (waiting_tool) + streamingToolCalls (running)
+    const allPendingTools = [...pendingToolCalls, ...streamingToolCalls];
+
     // Send connected event with active state
-    res.write(`data: ${JSON.stringify({ type: 'connected', activeAgents })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'connected', activeAgents, pendingToolCalls: allPendingTools })}\n\n`);
 
     // Subscribe to Redis channel for this space
     const subscriber = redis.duplicate();

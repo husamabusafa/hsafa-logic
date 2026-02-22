@@ -173,7 +173,44 @@ export async function executeRun(runId: string): Promise<void> {
       agentEntityId,
     });
 
-    // ── 3. streamText — SDK manages the tool-call loop via stopWhen ──────────
+    // ── 3. Build messages — restore conversation on resume ────────────────────
+    // Fresh run: single user message.
+    // Resume from waiting_tool: restore the full conversation history captured
+    // from the previous execution's response.messages, then append client tool
+    // results read directly from ToolCall records (single source of truth).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const messages: any[] = [{ role: 'user' as const, content: 'Execute this run.' }];
+
+    const runMeta = (run.metadata as Record<string, unknown>) ?? {};
+    const savedResponseMessages = runMeta.responseMessages as unknown[] | undefined;
+
+    // Check for completed client tool calls (indicates resume from waiting_tool)
+    const completedToolCalls = await prisma.toolCall.findMany({
+      where: { runId, status: 'completed' },
+      orderBy: { seq: 'asc' },
+    });
+
+    if (completedToolCalls.length > 0) {
+      if (savedResponseMessages && savedResponseMessages.length > 0) {
+        // Restore the full conversation from the previous execution.
+        // These are the model's own messages (assistant tool-calls, tool results
+        // from server-side tools, text, etc.) captured via response.messages.
+        messages.push(...savedResponseMessages);
+      }
+
+      // Append client tool results from ToolCall records (single source of truth)
+      messages.push({
+        role: 'tool' as const,
+        content: completedToolCalls.map((tc) => ({
+          type: 'tool-result' as const,
+          toolCallId: tc.callId,
+          toolName: tc.toolName,
+          output: { type: 'json' as const, value: tc.output ?? null },
+        })),
+      });
+    }
+
+    // ── 4. streamText — SDK manages the tool-call loop via stopWhen ──────────
     // fullStream yields events across ALL steps so the stream-processor can
     // intercept send_message deltas and visible tool events in real-time.
     // Tools without execute functions (space/external) stop the loop
@@ -181,7 +218,7 @@ export async function executeRun(runId: string): Promise<void> {
     const streamResult = streamText({
       model: builtAgent.model as LanguageModel,
       system: builtPrompt.systemPrompt,
-      messages: [{ role: 'user' as const, content: 'Execute this run.' }],
+      messages,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       tools: builtAgent.tools as any,
       abortSignal: abortController.signal,
@@ -210,6 +247,7 @@ export async function executeRun(runId: string): Promise<void> {
       agentEntityId,
       getActiveSpaceId,
       visibleTools: builtAgent.visibleToolNames,
+      clientTools: builtAgent.clientToolNames,
     });
 
     if (result.finishReason === 'error') {
@@ -222,6 +260,20 @@ export async function executeRun(runId: string): Promise<void> {
     );
 
     if (pendingClientToolCalls.length > 0) {
+      // Capture the model's full conversation from this execution (AI SDK
+      // Manual Agent Loop pattern). These include assistant tool-call messages,
+      // server-side tool-result messages, text, etc. — everything the model
+      // generated across all steps before hitting the client tool.
+      let responseMessages: unknown[] = [];
+      try {
+        const response = await streamResult.response;
+        responseMessages = response.messages ?? [];
+      } catch {
+        // If we can't capture response messages, we'll fall back to DB-only
+        // reconstruction on resume (less context but still functional).
+        console.warn(`[run-runner] Could not capture response.messages for run ${runId}`);
+      }
+
       // Persist pending tool calls so the tool-results endpoint can match them
       await Promise.all(
         pendingClientToolCalls.map((tc, idx) =>
@@ -238,9 +290,14 @@ export async function executeRun(runId: string): Promise<void> {
         ),
       );
 
+      // Persist response messages + actionLog in run metadata for resume
+      const metadata = (run.metadata as Record<string, unknown>) ?? {};
+      metadata.responseMessages = responseMessages;
+      metadata.actionLog = actionLog.toSummary();
+
       await prisma.run.update({
         where: { id: runId },
-        data: { status: 'waiting_tool' },
+        data: { status: 'waiting_tool', metadata: metadata as any },
       });
 
       // Emit waiting_tool event
@@ -274,10 +331,16 @@ export async function executeRun(runId: string): Promise<void> {
       return;
     }
 
-    // ── 5b. Mark completed + update lastProcessedMessageId ───────────────
+    // ── 5b. Mark completed + persist actionLog + update lastProcessedMessageId
+    const completionMeta = (run.metadata as Record<string, unknown>) ?? {};
+    completionMeta.actionLog = actionLog.toSummary();
     await prisma.run.update({
       where: { id: runId },
-      data: { status: 'completed', completedAt: new Date() },
+      data: {
+        status: 'completed',
+        completedAt: new Date(),
+        metadata: completionMeta as any,
+      },
     });
 
     // Update lastProcessedMessageId for the agent in the active space
