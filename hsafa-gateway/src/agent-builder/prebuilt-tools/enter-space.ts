@@ -94,18 +94,43 @@ registerPrebuiltTool('enter_space', {
             lastProcessedSeq = lastMsg?.seq ?? BigInt(0);
           }
 
-          const history = messages.map((msg) => ({
-            id: msg.id,
-            senderName: msg.entity.displayName ?? 'Unknown',
-            senderType: msg.entity.type as string,
-            senderId: msg.entity.id,
-            content: msg.content ?? '',
-            timestamp: msg.createdAt.toISOString(),
-            seen: msg.seq <= lastProcessedSeq,
-          }));
+          const history = messages.map((msg) => {
+            const isYou = msg.entity.id === context.agentEntityId;
+            const entry: Record<string, unknown> = {
+              id: msg.id,
+              senderName: isYou ? 'You (agent)' : (msg.entity.displayName ?? 'Unknown'),
+              senderType: msg.entity.type as string,
+              senderId: msg.entity.id,
+              content: msg.content ?? '',
+              timestamp: msg.createdAt.toISOString(),
+              seen: msg.seq <= lastProcessedSeq,
+            };
+
+            // For the agent's own messages: include WHY it sent them
+            if (isYou && msg.metadata) {
+              const meta = msg.metadata as Record<string, unknown>;
+              const rc = meta.runContext as Record<string, unknown> | undefined;
+              if (rc) {
+                entry.runContext = {
+                  trigger: rc.trigger,
+                  isCrossSpace: rc.isCrossSpace,
+                  actionsBefore: rc.actionsBefore,
+                };
+              }
+            }
+
+            return entry;
+          });
 
           const totalMessages = await prisma.smartSpaceMessage.count({
             where: { smartSpaceId: spaceId },
+          });
+
+          // Log this action to the run action log
+          context.actionLog.add({
+            action: 'space_entered',
+            spaceId,
+            spaceName: membership.smartSpace.name ?? spaceId,
           });
 
           return {

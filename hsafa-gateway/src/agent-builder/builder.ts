@@ -86,7 +86,14 @@ function buildCustomTool(toolConfig: any, context: RunContext): any {
       inputSchema: schema as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       execute: async (input: any) => {
-        return executeGatewayTool(String(name), execution, input, context);
+        const result = await executeGatewayTool(String(name), execution, input, context);
+        context.actionLog.add({
+          action: 'tool_call',
+          toolName: String(name),
+          toolArgs: input as Record<string, unknown>,
+          toolResult: result,
+        });
+        return result;
       },
     });
   }
@@ -99,7 +106,15 @@ function buildCustomTool(toolConfig: any, context: RunContext): any {
       description: String(description),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       inputSchema: schema as any,
-      execute: async () => staticOutput,
+      execute: async (input: any) => {
+        context.actionLog.add({
+          action: 'tool_call',
+          toolName: String(name),
+          toolArgs: input as Record<string, unknown>,
+          toolResult: staticOutput,
+        });
+        return staticOutput;
+      },
     });
   }
 

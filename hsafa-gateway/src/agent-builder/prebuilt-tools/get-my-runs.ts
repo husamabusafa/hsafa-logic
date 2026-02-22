@@ -40,24 +40,66 @@ registerPrebuiltTool('get_my_runs', {
             triggerSpaceId: true,
             triggerMessageContent: true,
             triggerSenderName: true,
+            triggerSenderType: true,
+            triggerServiceName: true,
+            triggerPlanName: true,
             activeSpaceId: true,
             startedAt: true,
+            completedAt: true,
             createdAt: true,
           },
         });
 
-        return {
-          runs: runs.map((r) => ({
-            runId: r.id,
-            status: r.status,
-            triggerType: r.triggerType ?? 'unknown',
-            triggerSummary: r.triggerSenderName
-              ? `${r.triggerSenderName}: "${r.triggerMessageContent ?? ''}"`
-              : (r.triggerMessageContent ?? ''),
-            activeSpaceId: r.activeSpaceId ?? null,
-            startedAt: r.startedAt?.toISOString() ?? r.createdAt.toISOString(),
-          })),
-        };
+        // Enrich each run with its actions (messages sent + tools called)
+        const enrichedRuns = await Promise.all(
+          runs.map(async (r) => {
+            const [messages, toolCalls] = await Promise.all([
+              prisma.smartSpaceMessage.findMany({
+                where: { runId: r.id, entityId: context.agentEntityId },
+                orderBy: { seq: 'asc' },
+                select: {
+                  content: true,
+                  smartSpace: { select: { name: true } },
+                  createdAt: true,
+                },
+                take: 5,
+              }),
+              prisma.toolCall.findMany({
+                where: { runId: r.id },
+                orderBy: { seq: 'asc' },
+                select: { toolName: true, status: true },
+                take: 10,
+              }),
+            ]);
+
+            return {
+              runId: r.id,
+              status: r.status,
+              triggerType: r.triggerType ?? 'unknown',
+              triggerSummary: r.triggerSenderName
+                ? `${r.triggerSenderName} (${r.triggerSenderType ?? 'unknown'}): "${r.triggerMessageContent ?? ''}"`
+                : r.triggerType === 'service'
+                  ? `service "${r.triggerServiceName ?? 'unknown'}"`
+                  : r.triggerType === 'plan'
+                    ? `plan "${r.triggerPlanName ?? 'unknown'}"`
+                    : (r.triggerMessageContent ?? ''),
+              activeSpaceId: r.activeSpaceId ?? null,
+              startedAt: r.startedAt?.toISOString() ?? r.createdAt.toISOString(),
+              completedAt: r.completedAt?.toISOString() ?? null,
+              messagesSent: messages.map((m) => ({
+                spaceName: m.smartSpace?.name ?? 'unknown',
+                preview: (m.content ?? '').slice(0, 100),
+                timestamp: m.createdAt.toISOString(),
+              })),
+              toolsCalled: toolCalls.map((tc) => ({
+                name: tc.toolName,
+                status: tc.status,
+              })),
+            };
+          }),
+        );
+
+        return { runs: enrichedRuns };
       },
     }),
 });

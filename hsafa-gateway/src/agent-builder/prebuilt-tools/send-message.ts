@@ -15,8 +15,8 @@ registerPrebuiltTool('send_message', {
   asTool: (context) =>
     tool({
       description:
-        'Send a message to the active space. This is your only way to communicate. ' +
-        'The trigger space is already active — use enter_space only to switch spaces. ' +
+        'Send a message to your ACTIVE space. You MUST call enter_space first to set an active space. ' +
+        'Check the response to confirm WHO received it. ' +
         'Returns {success:true} on delivery — do NOT retry.',
       inputSchema: z.object({
         text: z.string().describe('The message content to send.'),
@@ -32,16 +32,30 @@ registerPrebuiltTool('send_message', {
           };
         }
 
-        // 2. Persist the message
+        // 2. Build run context metadata to embed in the message
+        const actionsSoFar = context.actionLog.toSummary();
+        const runContext: Record<string, unknown> = {
+          runId: context.runId,
+          trigger: context.triggerSummary,
+          actionsBefore: {
+            toolsCalled: actionsSoFar.toolsCalled,
+            messagesSent: actionsSoFar.messagesSent,
+            spacesEntered: actionsSoFar.spacesEntered,
+          },
+          isCrossSpace: activeSpaceId !== context.triggerSpaceId,
+        };
+
+        // 3. Persist the message with embedded run context
         const dbMessage = await createSmartSpaceMessage({
           smartSpaceId: activeSpaceId,
           entityId: context.agentEntityId,
           role: 'assistant',
           content: text,
+          metadata: { runContext },
           runId: context.runId,
         });
 
-        // 3. Emit persisted message event to the space.
+        // 4. Emit persisted message event to the space.
         //    - Nested `message` object matches the human message format in smart-spaces.ts
         //    - `streamId` = toolCallId so the client can dedup streaming vs persisted
         await emitSmartSpaceEvent(activeSpaceId, {
@@ -53,13 +67,37 @@ registerPrebuiltTool('send_message', {
             entityId: context.agentEntityId,
             role: 'assistant',
             content: text,
-            metadata: null,
+            metadata: { runContext },
             seq: Number(dbMessage.seq),
             createdAt: dbMessage.createdAt.toISOString(),
           },
         });
 
-        // 4. Trigger all other agent members of the space (sender excluded)
+        // 5. Look up space name + members so AI knows exactly who received it
+        const space = await prisma.smartSpace.findUnique({
+          where: { id: activeSpaceId },
+          select: {
+            name: true,
+            memberships: {
+              include: { entity: { select: { id: true, displayName: true, type: true } } },
+            },
+          },
+        });
+        const spaceName = space?.name ?? activeSpaceId;
+        const recipients = (space?.memberships ?? [])
+          .filter((m) => m.entityId !== context.agentEntityId)
+          .map((m) => `${m.entity.displayName ?? 'Unknown'} (${m.entity.type})`);
+
+        // 6. Log this action to the run action log
+        context.actionLog.add({
+          action: 'message_sent',
+          spaceId: activeSpaceId,
+          spaceName,
+          messagePreview: text.length > 120 ? text.slice(0, 120) + '...' : text,
+          messageId: dbMessage.id,
+        });
+
+        // 7. Trigger all other agent members of the space (sender excluded)
         //    Imported lazily to avoid circular dependency with agent-trigger.
         const { triggerAllAgents } = await import(
           '../../lib/agent-trigger.js'
@@ -76,7 +114,11 @@ registerPrebuiltTool('send_message', {
         return {
           success: true,
           messageId: dbMessage.id,
-          status: 'delivered',
+          deliveredTo: {
+            spaceName,
+            spaceId: activeSpaceId,
+            recipients,
+          },
         };
       },
     }),

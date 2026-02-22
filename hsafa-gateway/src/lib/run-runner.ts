@@ -14,7 +14,7 @@ import { emitSmartSpaceEvent, emitRunEvent } from './smartspace-events.js';
 import { processStream } from './stream-processor.js';
 import { buildAgent } from '../agent-builder/builder.js';
 import { buildPrompt } from '../agent-builder/prompt-builder.js';
-import type { RunContext } from '../agent-builder/types.js';
+import type { RunContext, RunActionLog, RunActionEntry } from '../agent-builder/types.js';
 
 // =============================================================================
 // Constants
@@ -100,6 +100,51 @@ export async function executeRun(runId: string): Promise<void> {
     });
   };
 
+  // ── Build RunActionLog (in-memory, tracks all actions during this run) ────
+  const actionLog: RunActionLog = {
+    entries: [],
+    add(entry: Omit<RunActionEntry, 'step' | 'timestamp'>) {
+      this.entries.push({
+        ...entry,
+        step: this.entries.length + 1,
+        timestamp: new Date().toISOString(),
+      });
+    },
+    toSummary() {
+      return {
+        toolsCalled: this.entries
+          .filter((e) => e.action === 'tool_call')
+          .map((e) => ({ name: e.toolName!, args: e.toolArgs })),
+        messagesSent: this.entries
+          .filter((e) => e.action === 'message_sent')
+          .map((e) => ({ spaceId: e.spaceId!, spaceName: e.spaceName, preview: e.messagePreview ?? '' })),
+        spacesEntered: this.entries
+          .filter((e) => e.action === 'space_entered')
+          .map((e) => ({ spaceId: e.spaceId!, spaceName: e.spaceName })),
+      };
+    },
+  };
+
+  // ── Build trigger summary for embedding in message metadata ──────────────
+  const triggerSummary: RunContext['triggerSummary'] = {
+    type: run.triggerType ?? 'unknown',
+    senderName: run.triggerSenderName ?? undefined,
+    senderType: run.triggerSenderType ?? undefined,
+    messageContent: run.triggerMessageContent ?? undefined,
+    spaceId: run.triggerSpaceId ?? undefined,
+    serviceName: run.triggerServiceName ?? undefined,
+    planName: run.triggerPlanName ?? undefined,
+  };
+
+  // Resolve trigger space name for the summary
+  if (run.triggerSpaceId) {
+    const triggerSpace = await prisma.smartSpace.findUnique({
+      where: { id: run.triggerSpaceId },
+      select: { name: true },
+    });
+    if (triggerSpace?.name) triggerSummary.spaceName = triggerSpace.name;
+  }
+
   // ── Build RunContext ───────────────────────────────────────────────────────
   const context: RunContext = {
     runId,
@@ -110,6 +155,8 @@ export async function executeRun(runId: string): Promise<void> {
     triggerType: run.triggerType ?? 'unknown',
     getActiveSpaceId,
     setActiveSpaceId,
+    actionLog,
+    triggerSummary,
   };
 
   try {

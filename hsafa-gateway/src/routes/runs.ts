@@ -90,8 +90,8 @@ runsRouter.post('/', requireSecretKey(), async (req: Request, res: Response) => 
         triggerPlanId,
         triggerPlanName,
         triggerPlanInstruction,
-        // v2: For space_message triggers, auto-set activeSpaceId
-        activeSpaceId: triggerType === 'space_message' ? triggerSpaceId : undefined,
+        // Agent must always call enter_space explicitly — no auto-set
+        activeSpaceId: null,
       },
     });
 

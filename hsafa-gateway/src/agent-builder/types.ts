@@ -89,6 +89,48 @@ export const AgentConfigSchema = z.object({
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
 // =============================================================================
+// Run Action Log — tracks everything the agent does during a run
+// =============================================================================
+
+export interface RunActionEntry {
+  /** Monotonic index within this run */
+  step: number;
+  /** ISO timestamp */
+  timestamp: string;
+  /** What the agent did */
+  action: 'tool_call' | 'message_sent' | 'space_entered';
+  /** Tool name (for tool_call) */
+  toolName?: string;
+  /** Summarized tool args (for tool_call) */
+  toolArgs?: Record<string, unknown>;
+  /** Tool result summary (for tool_call) */
+  toolResult?: unknown;
+  /** Space ID (for space_entered / message_sent) */
+  spaceId?: string;
+  /** Space name (for space_entered / message_sent) */
+  spaceName?: string;
+  /** Message content preview (for message_sent) */
+  messagePreview?: string;
+  /** Message ID (for message_sent) */
+  messageId?: string;
+}
+
+export interface RunActionLog {
+  /** All actions taken so far in this run */
+  entries: RunActionEntry[];
+  /** Append a new action */
+  add(entry: Omit<RunActionEntry, 'step' | 'timestamp'>): void;
+  /** Get a compact summary for embedding in message metadata */
+  toSummary(): RunActionSummary;
+}
+
+export interface RunActionSummary {
+  toolsCalled: { name: string; args?: Record<string, unknown> }[];
+  messagesSent: { spaceId: string; spaceName?: string; preview: string }[];
+  spacesEntered: { spaceId: string; spaceName?: string }[];
+}
+
+// =============================================================================
 // Runtime context passed to every prebuilt tool execute function
 // =============================================================================
 
@@ -112,6 +154,19 @@ export interface RunContext {
    * Updates both the in-memory value and the DB record.
    */
   setActiveSpaceId: (spaceId: string) => Promise<void>;
+  /** In-memory action log — tracks tools called, messages sent, spaces entered */
+  actionLog: RunActionLog;
+  /** Trigger context for embedding in message metadata */
+  triggerSummary: {
+    type: string;
+    senderName?: string;
+    senderType?: string;
+    messageContent?: string;
+    spaceName?: string;
+    spaceId?: string;
+    serviceName?: string;
+    planName?: string;
+  };
 }
 
 // =============================================================================

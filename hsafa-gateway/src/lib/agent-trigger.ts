@@ -34,8 +34,6 @@ export interface CreateAndExecuteRunOptions {
   triggerPlanId?: string;
   triggerPlanName?: string;
   triggerPlanInstruction?: string;
-  /** For space_message triggers: auto-enter the trigger space */
-  activeSpaceId?: string;
 }
 
 // =============================================================================
@@ -88,8 +86,6 @@ export async function triggerAllAgents(options: TriggerAllAgentsOptions): Promis
       triggerSenderEntityId: senderEntityId,
       triggerSenderName: senderName,
       triggerSenderType: senderType,
-      // Auto-enter the trigger space so the agent doesn't need to call enter_space
-      activeSpaceId: spaceId,
     });
   }
 }
@@ -124,7 +120,7 @@ export async function createAndExecuteRun(
       triggerPlanId: options.triggerPlanId ?? null,
       triggerPlanName: options.triggerPlanName ?? null,
       triggerPlanInstruction: options.triggerPlanInstruction ?? null,
-      activeSpaceId: options.activeSpaceId ?? null,
+      activeSpaceId: null,
     },
   });
 

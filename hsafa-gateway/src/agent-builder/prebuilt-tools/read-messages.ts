@@ -85,14 +85,32 @@ registerPrebuiltTool('read_messages', {
 
         return {
           success: true,
-          messages: messages.map((msg) => ({
-            id: msg.id,
-            content: msg.content ?? '',
-            senderName: msg.entity.displayName ?? 'Unknown',
-            senderType: msg.entity.type as string,
-            senderId: msg.entity.id,
-            timestamp: msg.createdAt.toISOString(),
-          })),
+          messages: messages.map((msg) => {
+            const isYou = msg.entity.id === context.agentEntityId;
+            const entry: Record<string, unknown> = {
+              id: msg.id,
+              content: msg.content ?? '',
+              senderName: isYou ? 'You (agent)' : (msg.entity.displayName ?? 'Unknown'),
+              senderType: msg.entity.type as string,
+              senderId: msg.entity.id,
+              timestamp: msg.createdAt.toISOString(),
+            };
+
+            // For the agent's own messages: include WHY it sent them
+            if (isYou && msg.metadata) {
+              const meta = msg.metadata as Record<string, unknown>;
+              const rc = meta.runContext as Record<string, unknown> | undefined;
+              if (rc) {
+                entry.runContext = {
+                  trigger: rc.trigger,
+                  isCrossSpace: rc.isCrossSpace,
+                  actionsBefore: rc.actionsBefore,
+                };
+              }
+            }
+
+            return entry;
+          }),
           total,
         };
       },

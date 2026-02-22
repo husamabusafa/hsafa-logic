@@ -10,6 +10,64 @@ import { prisma } from '../lib/db.js';
 const HISTORY_LIMIT = 50;
 
 // =============================================================================
+// Helpers — Run context annotation for agent messages
+// =============================================================================
+
+/**
+ * Format a compact run-context annotation for an agent's own message.
+ * This tells the agent WHY it sent this message in a previous run.
+ */
+function formatRunContextAnnotation(metadata: Record<string, unknown> | null, agentEntityId: string, msgEntityId: string): string | null {
+  if (!metadata || msgEntityId !== agentEntityId) return null;
+  const rc = metadata.runContext as Record<string, unknown> | undefined;
+  if (!rc) return null;
+
+  const parts: string[] = [];
+
+  // Trigger info
+  const trigger = rc.trigger as Record<string, unknown> | undefined;
+  if (trigger) {
+    if (trigger.type === 'space_message' && trigger.senderName) {
+      const preview = trigger.messageContent
+        ? `"${String(trigger.messageContent).slice(0, 80)}${String(trigger.messageContent).length > 80 ? '...' : ''}"`
+        : '';
+      const spacePart = trigger.spaceName ? ` in "${trigger.spaceName}"` : '';
+      parts.push(`triggered by ${trigger.senderName}${spacePart}${preview ? ': ' + preview : ''}`);
+    } else if (trigger.type === 'service' && trigger.serviceName) {
+      parts.push(`triggered by service "${trigger.serviceName}"`);
+    } else if (trigger.type === 'plan' && trigger.planName) {
+      parts.push(`triggered by plan "${trigger.planName}"`);
+    }
+  }
+
+  // Cross-space indicator
+  if (rc.isCrossSpace) {
+    parts.push('cross-space message');
+  }
+
+  // Actions before this message
+  const actions = rc.actionsBefore as Record<string, unknown[]> | undefined;
+  if (actions) {
+    const tools = actions.toolsCalled as { name: string }[] | undefined;
+    if (tools && tools.length > 0) {
+      parts.push(`used: ${tools.map(t => t.name).join(', ')}`);
+    }
+    const msgs = actions.messagesSent as { spaceName?: string; preview: string }[] | undefined;
+    if (msgs && msgs.length > 0) {
+      parts.push(`sent ${msgs.length} message(s) before this`);
+    }
+    const spaces = actions.spacesEntered as { spaceName?: string }[] | undefined;
+    if (spaces && spaces.length > 0) {
+      const names = spaces.map(s => s.spaceName ?? 'unknown').join(', ');
+      parts.push(`entered: ${names}`);
+    }
+  }
+
+  if (parts.length === 0) return null;
+  return parts.join(' | ');
+}
+
+// =============================================================================
 // Types
 // =============================================================================
 
@@ -97,25 +155,10 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
   }
   parts.push('');
 
-  // ── 3. Active Space (auto-set for space_message triggers) ──────────────────
-  parts.push('ACTIVE SPACE:');
-  if (run.activeSpaceId) {
-    const activeSpace = await prisma.smartSpace.findUnique({
-      where: { id: run.activeSpaceId },
-      select: { id: true, name: true },
-    });
-    parts.push(
-      `  ✅ You ARE in space "${activeSpace?.name ?? run.activeSpaceId}" (id: ${run.activeSpaceId})`,
-    );
-    parts.push(
-      '  You can call send_message immediately — no need to call enter_space.',
-    );
-  } else {
-    parts.push('  ⚠️ You are NOT in any space.');
-    parts.push(
-      '  You MUST call enter_space with a spaceId from YOUR SPACES below before you can send_message.',
-    );
-  }
+  // ── 3. Active Space ─────────────────────────────────────────────────────────
+  parts.push('ACTIVE SPACE: NONE');
+  parts.push('  You MUST call enter_space(spaceId) before you can send_message.');
+  parts.push('  Look at YOUR SPACES below to decide which space to enter based on who you need to reach.');
   parts.push('');
 
   // ── 4. Space History (trigger space only, for space_message triggers) ──────
@@ -158,16 +201,28 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
     parts.push(`SPACE HISTORY ("${spaceForHistory?.name ?? run.triggerSpaceId}"):`);
     for (const msg of messages) {
       const marker = msg.seq <= lastProcessedSeq ? '[SEEN]' : '[NEW]';
-      const senderName = msg.entity.displayName ?? 'Unknown';
-      const senderType = msg.entity.type as string;
+      const isYou = msg.entity.id === agentEntityId;
+      const senderLabel = isYou ? 'You (agent)' : `${msg.entity.displayName ?? 'Unknown'} (${msg.entity.type as string}, id:${msg.entity.id})`;
       const isTrigger = msg.id === run.triggerMessageId ? ' ← TRIGGER' : '';
       const shortId = `msg:${msg.id.slice(0, 8)}`;
       const ts = msg.createdAt.toISOString();
       const content = msg.content ?? '';
 
       parts.push(
-        `  [${shortId}] [${ts}] ${senderName} (${senderType}, id:${msg.entity.id}): "${content}"  ${marker}${isTrigger}`,
+        `  [${shortId}] [${ts}] ${senderLabel}: "${content}"  ${marker}${isTrigger}`,
       );
+
+      // For the agent's own messages: show WHY it sent this message
+      if (isYou) {
+        const annotation = formatRunContextAnnotation(
+          msg.metadata as Record<string, unknown> | null,
+          agentEntityId,
+          msg.entity.id,
+        );
+        if (annotation) {
+          parts.push(`              [context: ${annotation}]`);
+        }
+      }
     }
     parts.push('');
   }
@@ -250,7 +305,7 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
     parts.push('');
   }
 
-  // Active runs (other than current)
+  // Active runs (other than current) — with full action details
   const activeRuns = await prisma.run.findMany({
     where: {
       agentEntityId,
@@ -264,24 +319,81 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
       triggerType: true,
       triggerSpaceId: true,
       triggerSenderName: true,
+      triggerSenderType: true,
       triggerMessageContent: true,
+      triggerServiceName: true,
+      triggerPlanName: true,
       activeSpaceId: true,
       startedAt: true,
     },
   });
-  if (activeRuns.length > 0) {
-    parts.push('ACTIVE RUNS:');
-    parts.push(`  - Run ${runId} (this run) — triggered by ${run.triggerSenderName ?? 'system'}`);
-    for (const r of activeRuns) {
-      const trigger = r.triggerSenderName
-        ? `${r.triggerSenderName}: "${r.triggerMessageContent ?? ''}"`
-        : r.triggerType ?? 'unknown';
-      parts.push(
-        `  - Run ${r.id} (${r.status}) — triggered by ${trigger}${r.activeSpaceId ? ` in space ${r.activeSpaceId}` : ''}`,
-      );
+
+  // Always show ACTIVE RUNS (at minimum the current run)
+  parts.push('ACTIVE RUNS:');
+
+  // Current run
+  const currentTrigger = run.triggerSenderName
+    ? `${run.triggerSenderName}: "${run.triggerMessageContent ?? ''}"`
+    : run.triggerType ?? 'unknown';
+  parts.push(`  ▸ Run ${runId} (this run) — ${currentTrigger}`);
+
+  // Other active runs with full details
+  for (const r of activeRuns) {
+    const trigger = r.triggerSenderName
+      ? `${r.triggerSenderName} (${r.triggerSenderType ?? 'unknown'}): "${r.triggerMessageContent ?? ''}"`
+      : r.triggerType === 'service'
+        ? `service "${r.triggerServiceName ?? 'unknown'}"`
+        : r.triggerType === 'plan'
+          ? `plan "${r.triggerPlanName ?? 'unknown'}"`
+          : r.triggerType ?? 'unknown';
+
+    parts.push(`  ▸ Run ${r.id} (${r.status}) — triggered by ${trigger}`);
+
+    // Load what this run has done: messages sent + tools called
+    const [runMessages, runToolCalls] = await Promise.all([
+      prisma.smartSpaceMessage.findMany({
+        where: { runId: r.id, entityId: agentEntityId },
+        orderBy: { seq: 'asc' },
+        select: {
+          content: true,
+          smartSpaceId: true,
+          smartSpace: { select: { name: true } },
+          createdAt: true,
+        },
+        take: 10,
+      }),
+      prisma.toolCall.findMany({
+        where: { runId: r.id },
+        orderBy: { seq: 'asc' },
+        select: { toolName: true, status: true },
+        take: 10,
+      }),
+    ]);
+
+    if (runToolCalls.length > 0) {
+      const toolSummary = runToolCalls
+        .map((tc) => `${tc.toolName}(${tc.status})`)
+        .join(', ');
+      parts.push(`    tools: ${toolSummary}`);
     }
-    parts.push('');
+
+    if (runMessages.length > 0) {
+      for (const rm of runMessages) {
+        const preview = (rm.content ?? '').slice(0, 60);
+        const spaceName = rm.smartSpace?.name ?? rm.smartSpaceId;
+        parts.push(`    sent to "${spaceName}": "${preview}${(rm.content ?? '').length > 60 ? '...' : ''}"`);
+      }
+    }
+
+    if (r.activeSpaceId) {
+      const activeSpace = await prisma.smartSpace.findUnique({
+        where: { id: r.activeSpaceId },
+        select: { name: true },
+      });
+      parts.push(`    currently in: "${activeSpace?.name ?? r.activeSpaceId}"`);
+    }
   }
+  parts.push('');
 
   // ── 7. Client Tool Results (from previous waiting_tool cycle) ───────────────
   const runMetadata = run.metadata as Record<string, unknown> | null;
@@ -304,43 +416,32 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
 
   // ── 8. Instructions ────────────────────────────────────────────────────────
   parts.push('INSTRUCTIONS:');
+  parts.push('');
+  parts.push('  CONTINUITY:');
+  parts.push('  - You are one continuous entity across all runs. Messages marked "You (agent)" are yours.');
+  parts.push('  - The [context: ...] annotations on your past messages explain why you sent them.');
+  parts.push('  - Never repeat work you already did. Check SPACE HISTORY and ACTIVE RUNS first.');
+  parts.push('  - Use set_memories to persist important context across runs.');
+  parts.push('');
+  parts.push('  REASONING:');
   parts.push('  - Your text output is internal reasoning — never shown to anyone. Keep it brief.');
-
-  // Space-specific instructions based on whether active space is set
-  if (run.activeSpaceId) {
-    parts.push(
-      '  - You are ALREADY in a space. You can call send_message directly to reply to the ACTIVE space.',
-    );
-  } else {
-    parts.push(
-      '  - You are NOT in any space. You MUST call enter_space(spaceId) before send_message.',
-    );
-  }
-
-  // Critical routing instruction
-  parts.push(
-    '  - ROUTING: send_message ONLY delivers to members of your ACTIVE space. Look at YOUR SPACES to see who is in each space.',
-  );
-  parts.push(
-    '  - To message someone in a DIFFERENT space: call enter_space(theirSpaceId) first, then send_message. For example, if Ahmad asks you to "tell Husam something", find the space where Husam is a member, enter_space to that space, then send_message there.',
-  );
-  parts.push(
-    '  - After delivering a message to another space, you may want to enter_space back to the original space to confirm delivery to the requester.',
-  );
-
-  parts.push('  - Use read_messages to load conversation history from any space you belong to.');
-  parts.push(
-    '  - If you have nothing to contribute, end this run without calling send_message.',
-  );
-  parts.push(
-    '  - Runs are stateless. Use set_memories and set_goals to persist important state across runs.',
-  );
-  parts.push(
-    '  - send_message returns {success:true} when delivered — do NOT retry on success.',
-  );
-  parts.push(
-    '  - If any tool returns {success:false}, read the error message and take corrective action.',
-  );
+  parts.push('  - Before acting, determine: what is new, who needs to receive your response, and which space they are in.');
+  parts.push('');
+  parts.push('  ROUTING:');
+  parts.push('  - You start each run with no active space. Call enter_space(spaceId) before send_message.');
+  parts.push('  - send_message only reaches members of your active space. Always verify the recipient is there.');
+  parts.push('  - To reach a specific person, find their space in YOUR SPACES, enter it, then send.');
+  parts.push('  - The send_message response confirms who received the message. Read it.');
+  parts.push('');
+  parts.push('  TOOLS:');
+  parts.push('  - read_messages loads history from any space you belong to.');
+  parts.push('  - Do not retry send_message after success.');
+  parts.push('  - On tool failure, read the error and correct.');
+  parts.push('');
+  parts.push('  BEHAVIOR:');
+  parts.push('  - If you have nothing to contribute, end silently.');
+  parts.push('  - Focus on [NEW] messages. [SEEN] messages were already processed.');
+  parts.push('  - Speak naturally. Never disclaim being an AI.');
 
   // Inject custom agent instructions from config (after system instructions)
   if (agentInstructions) {

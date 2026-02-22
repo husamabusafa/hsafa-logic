@@ -63,30 +63,46 @@ The history is not a generic log. It is **the agent's own lived experience**, st
 
 ---
 
-### Layer 3 — Origin Metadata (Why did I send a message in a different space?)
+### Layer 3 — Run Context Metadata (Why did I send that message?)
 
-When an agent enters Space B and sends a message because of something that happened in Space A, that message carries **origin metadata**:
+Every message the agent sends carries **embedded run context** in its metadata. This is not just origin info — it's a full snapshot of the agent's state when it sent the message:
 
 ```json
 {
-  "origin": {
-    "triggerSpaceId": "space-a",
-    "triggerSpaceName": "Project Alpha",
-    "triggerSenderName": "Husam",
-    "triggerMessage": "Send the report to the dev channel"
+  "runContext": {
+    "runId": "run-abc-123",
+    "trigger": {
+      "type": "space_message",
+      "senderName": "Husam",
+      "senderType": "human",
+      "messageContent": "Send the report to the dev channel",
+      "spaceName": "Project Alpha",
+      "spaceId": "space-a"
+    },
+    "actionsBefore": {
+      "toolsCalled": [{ "name": "fetchData", "args": { "query": "Q4 revenue" } }],
+      "messagesSent": [],
+      "spacesEntered": [{ "spaceId": "space-b", "spaceName": "Dev Channel" }]
+    },
+    "isCrossSpace": true
   }
 }
 ```
 
-When the agent (or another agent) later sees that message in Space B's history, the origin is visible:
+When the agent (or another agent) later sees that message in Space B's history, the context is visible:
 
 ```
 SPACE HISTORY ("Dev Channel"):
-  [msg:x9y0] [15:10] DataAnalyst (agent): "Here's the Q4 report"
-              [sent because Husam asked in "Project Alpha"]
+  [msg:x9y0] [15:10] You (agent): "Here's the Q4 report"
+              [context: triggered by Husam in "Project Alpha": "Send the report to the dev channel" | cross-space message | used: fetchData | entered: Dev Channel]
 ```
 
-No cross-space message is ever context-free. The reason it was sent travels with it.
+This is far richer than simple origin info. The agent can see:
+- **Why** it was triggered (the trigger)
+- **What** it did before sending this message (tools called, spaces entered)
+- **Whether** this was a cross-space action
+
+No message the agent sends is ever context-free. Its full decision trail travels with it.
 
 ---
 
@@ -103,19 +119,24 @@ This prevents the agent from re-processing old decisions, re-answering already-a
 
 ### Layer 5 — Active Runs Block (What else am I doing right now?)
 
-The agent always sees its own concurrent runs:
+The agent always sees its own concurrent runs **with full action details**:
 
 ```
 ACTIVE RUNS:
-  - Run abc-123 (this run) — triggered by Husam in "Project Alpha"
-  - Run def-456 (running) — processing Designer's review in "Design Team"
+  ▸ Run abc-123 (this run) — Husam: "Pull the Q4 revenue numbers"
+  ▸ Run def-456 (running) — triggered by Designer (human): "Review the mockup"
+    tools: fetchData(completed), generateReport(completed)
+    sent to "Design Team": "Here's my review of the mockup..."
+    currently in: "Design Team"
 ```
 
 When the agent sees Run def-456, it knows:
 - It is currently processing a review request
-- That run is active in a different space
+- It already called `fetchData` and `generateReport`
+- It already sent a message to the "Design Team" space
+- It is currently active in that space
 
-This prevents the agent from starting a duplicate task or being confused about its concurrent workload.
+This prevents the agent from duplicating work, and lets it coordinate across concurrent runs with full awareness of what each run has already accomplished.
 
 ---
 
@@ -156,10 +177,12 @@ An agent wakes up for a new run. Before it takes any action, it already knows:
 |----------|--------------|
 | Why am I running? | Trigger block |
 | What's happening in this space? | Space history timeline |
-| What did I do here before? | `[SEEN]` messages in timeline |
+| What did I do here before? | `[SEEN]` messages + `[context: ...]` annotations |
 | What's new since I last ran? | `[NEW]` messages in timeline |
-| Why did I send that cross-space message? | Origin metadata on the message |
-| What else am I doing right now? | Active runs block |
+| Why did I send that message? | Run context metadata embedded in each message |
+| What tools did I use for that? | `actionsBefore.toolsCalled` in run context |
+| What else am I doing right now? | Active runs block (with full action details) |
+| What has my other run accomplished? | Messages sent + tools called per active run |
 | What did I decide weeks ago? | Memory block |
 | What are my ongoing goals? | Goals block |
 

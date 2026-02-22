@@ -27,8 +27,11 @@ At the start of every run, the agent's context includes:
 
 ```
 ACTIVE RUNS:
-  - Run abc-123 (this run) — triggered by Husam in "Project Alpha"
-  - Run ghi-789 (running) — processing Jira webhook payload
+  ▸ Run abc-123 (this run) — Husam: "Pull the Q4 revenue numbers"
+  ▸ Run ghi-789 (running) — triggered by service "jira-webhook"
+    tools: fetchJiraTicket(completed), analyzeIssue(completed)
+    sent to "Dev Team": "The Jira ticket JIR-1234 is a critical bug in..."
+    currently in: "Dev Team"
 ```
 
 ### Fields Per Run
@@ -38,9 +41,12 @@ ACTIVE RUNS:
 | `runId` | Unique run ID |
 | `status` | Current status |
 | `triggerType` | What started the run |
-| `triggerSummary` | Brief description (e.g., "Husam asked about Q4 report") |
+| `triggerSummary` | Full trigger description with sender name, type, and message content |
 | `activeSpaceId` | Which space the run is currently in |
 | `startedAt` | When the run started |
+| `toolsCalled` | Tools the run has called so far (name + status) |
+| `messagesSent` | Messages the run has sent (space name + content preview) |
+| `currentlyIn` | Which space the run is currently active in |
 
 ---
 
@@ -77,12 +83,19 @@ Agents can query their own run history for deeper inspection:
       "runId": "def-456",
       "status": "running",
       "triggerType": "space_message",
-      "triggerSummary": "Ahmad asked for design review",
+      "triggerSummary": "Ahmad (human): \"Can you review the design?\"",
       "activeSpaceId": "space-design",
-      "startedAt": "2026-02-18T14:00:00Z"
+      "startedAt": "2026-02-18T14:00:00Z",
+      "completedAt": null,
+      "messagesSent": [
+        { "spaceName": "Design Team", "preview": "Here's my review of the mockup...", "timestamp": "2026-02-18T14:01:00Z" }
+      ],
+      "toolsCalled": [
+        { "name": "fetchDesignFile", "status": "completed" },
+        { "name": "analyzeLayout", "status": "completed" }
+      ]
     }
-  ],
-  "totalActive": 2
+  ]
 }
 ```
 
