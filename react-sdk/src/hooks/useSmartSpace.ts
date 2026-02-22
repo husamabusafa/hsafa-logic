@@ -101,9 +101,37 @@ export function useSmartSpace(smartSpaceId: string | null | undefined): UseSmart
         createdAt: (raw.createdAt as string) || new Date().toISOString(),
       };
       setMessages((prev) => {
-        if (prev.some((m) => m.id === msg.id)) return prev;
+        const idx = prev.findIndex((m) => m.id === msg.id);
+        if (idx >= 0) {
+          // Update existing message (e.g. tool call result arrived)
+          const updated = [...prev];
+          updated[idx] = msg;
+          return updated;
+        }
         return [...prev, msg];
       });
+
+      // Update tool call status in runs if this is a tool call message
+      const meta = raw.metadata as Record<string, unknown> | undefined;
+      const toolCallId = meta?.toolCallId as string | undefined;
+      if (toolCallId) {
+        const parts = (meta?.uiMessage as any)?.parts as Array<Record<string, unknown>> | undefined;
+        if (Array.isArray(parts)) {
+          for (const p of parts) {
+            if (p.type !== 'tool_call' || p.toolCallId !== toolCallId) continue;
+            setRuns((prev) =>
+              prev.map((r) => ({
+                ...r,
+                toolCalls: r.toolCalls.map((tc) =>
+                  tc.toolCallId === toolCallId
+                    ? { ...tc, input: p.args as unknown, output: p.result as unknown, status: p.status === 'complete' ? 'complete' as const : 'running' as const }
+                    : tc
+                ),
+              }))
+            );
+          }
+        }
+      }
     });
 
     // agent.active → track running agents as active runs
@@ -159,7 +187,7 @@ export function useSmartSpace(smartSpaceId: string | null | undefined): UseSmart
       );
     });
 
-    // tool.done → tool call completed with result
+    // tool.done → tool call completed with result (update both runs and messages)
     stream.on('tool.done', (event: StreamEvent) => {
       const runId = event.runId || (event.data?.runId as string);
       const toolCallId = (event.data?.streamId as string) || '';

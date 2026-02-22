@@ -3,7 +3,7 @@ import { prisma } from '../lib/db.js';
 import { redis } from '../lib/redis.js';
 import { requireAuth, requireSecretKey } from '../middleware/auth.js';
 import { emitSmartSpaceEvent } from '../lib/smartspace-events.js';
-import { buildToolCallMessageMeta, buildToolCallMessagePayload } from '../lib/tool-call-utils.js';
+import { buildToolCallContent, buildToolCallMessageMeta, buildToolCallMessagePayload } from '../lib/tool-call-utils.js';
 
 export const runsRouter = Router();
 
@@ -318,9 +318,10 @@ runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res:
           status: 'complete',
           runId: req.params.runId,
         });
+        const completeContent = buildToolCallContent(toolCall.toolName, toolCall.args as unknown, result, 'complete');
         await prisma.smartSpaceMessage.update({
           where: { id: toolMsg.id },
-          data: { metadata: completeMeta as any },
+          data: { content: completeContent, metadata: completeMeta as any },
         });
         // Emit updated space.message so the frontend refreshes this tool call
         if (toolMsg.smartSpaceId) {

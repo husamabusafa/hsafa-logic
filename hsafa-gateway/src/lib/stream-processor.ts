@@ -3,6 +3,7 @@ import { emitSmartSpaceEvent, emitRunEvent } from './smartspace-events.js';
 import { createSmartSpaceMessage } from './smartspace-db.js';
 import { prisma } from './db.js';
 import {
+  buildToolCallContent,
   buildToolCallMessageMeta,
   buildToolCallMessagePayload,
   type ToolCallStatus,
@@ -76,10 +77,8 @@ interface ActiveToolStream {
   isVisible: boolean;
   /** Special-cased: extract text field and stream as message content */
   isSendMessage: boolean;
-  /** ID of the persisted SmartSpaceMessage (set after DB write on tool-call) */
+  /** ID of the persisted SmartSpaceMessage (set at tool-call time) */
   messageId?: string;
-  /** Timestamp of last DB update (for throttling partial-arg writes) */
-  lastDbUpdateMs?: number;
 }
 
 // =============================================================================
@@ -150,7 +149,6 @@ export async function processStream(
         // fullStream (TextStreamPart) uses .id, not .toolCallId
         const toolCallId = (part.id ?? part.toolCallId) as string;
         const toolName = part.toolName as string;
-        console.log(`[stream-processor] tool-input-start: ${toolName} (${toolCallId})`);
         const spaceId = getActiveSpaceId();
         const isSendMessage = toolName === TOOL_SEND_MESSAGE;
         const isVisible = isSendMessage || visibleTools.has(toolName);
@@ -183,26 +181,6 @@ export async function processStream(
               agentEntityId,
               toolName,
             });
-
-            // ── Persist early so the tool survives page refresh ──────────
-            // No space.message event here — live SSE handles the streaming UX.
-            // The DB record is a silent fallback for catch-up fetch on refresh.
-            try {
-              const dbMsg = await createSmartSpaceMessage({
-                smartSpaceId: spaceId,
-                entityId: agentEntityId,
-                role: 'assistant',
-                content: null,
-                metadata: buildToolCallMessageMeta({
-                  toolCallId, toolName, args: null, result: null, status: 'streaming', runId,
-                }) as unknown as Record<string, unknown>,
-                runId,
-              });
-              const t = active.get(toolCallId);
-              if (t) t.messageId = dbMsg.id;
-            } catch (err) {
-              console.warn(`[stream-processor] Failed to early-persist tool ${toolCallId}:`, err);
-            }
           }
         }
 
@@ -227,10 +205,6 @@ export async function processStream(
         if (!tool || !delta) break;
 
         tool.argsText += delta;
-        if (tool.argsText.length <= delta.length) {
-          console.log(`[stream-processor] tool-input-delta first chunk for ${tool.toolName} (${toolCallId}), argsText: "${tool.argsText.slice(0, 80)}..."`);
-        }
-
         if (!tool.isVisible || !tool.spaceId) break;
 
         if (tool.isSendMessage) {
@@ -269,22 +243,6 @@ export async function processStream(
                 toolName: tool.toolName,
                 partialArgs,
               });
-
-              // Throttled DB update: persist partial args so the tool survives
-              // page refresh even mid-stream (max once per second).
-              const nowMs = Date.now();
-              if (tool.messageId && (nowMs - (tool.lastDbUpdateMs || 0)) > 1000) {
-                tool.lastDbUpdateMs = nowMs;
-                prisma.smartSpaceMessage.update({
-                  where: { id: tool.messageId },
-                  data: {
-                    metadata: buildToolCallMessageMeta({
-                      toolCallId, toolName: tool.toolName, args: partialArgs,
-                      result: null, status: 'streaming', runId,
-                    }) as any,
-                  },
-                }).catch(() => {}); // fire-and-forget, non-blocking
-              }
             }
           } catch {
             // Skip unparseable
@@ -299,7 +257,6 @@ export async function processStream(
         const toolName = part.toolName as string;
         const args = part.input as unknown;
         const tool = active.get(toolCallId);
-        console.log(`[stream-processor] tool-call: ${toolName} (${toolCallId}), hasActiveEntry: ${!!tool}, messageId: ${tool?.messageId ?? 'none'}`);
 
         toolCalls.push({ toolCallId, toolName, args });
 
@@ -314,46 +271,38 @@ export async function processStream(
             partialArgs: args,
           });
 
-          // ── Update the persisted message with final args ────────────────
+          // ── Persist the tool call message with final args ────────────────
           // Client tools (space/external) pause the run → requires_action.
           // Server tools (gateway/internal) execute immediately → running.
           const isClientTool = clientTools.has(toolName);
           const finalStatus: ToolCallStatus = isClientTool ? 'requires_action' : 'running';
-          const updatedMeta = buildToolCallMessageMeta({
-            toolCallId, toolName, args, result: null, status: finalStatus, runId,
-          });
           try {
-            if (tool.messageId) {
-              // Update the early-persisted message
-              await prisma.smartSpaceMessage.update({
-                where: { id: tool.messageId },
-                data: { metadata: updatedMeta as any },
-              });
-            } else {
-              // Fallback: create if early persist failed
-              const dbMsg = await createSmartSpaceMessage({
-                smartSpaceId: tool.spaceId,
-                entityId: agentEntityId,
-                role: 'assistant',
-                content: null,
-                metadata: updatedMeta as unknown as Record<string, unknown>,
-                runId,
-              });
-              tool.messageId = dbMsg.id;
-            }
+            const toolContent = buildToolCallContent(toolName, args, null, finalStatus);
+            const toolMeta = buildToolCallMessageMeta({
+              toolCallId, toolName, args, result: null, status: finalStatus, runId,
+            });
+            const dbMsg = await createSmartSpaceMessage({
+              smartSpaceId: tool.spaceId,
+              entityId: agentEntityId,
+              role: 'assistant',
+              content: toolContent,
+              metadata: toolMeta as unknown as Record<string, unknown>,
+              runId,
+            });
+            tool.messageId = dbMsg.id;
 
-            // Emit space.message so frontend can replace the live tool entry
+            // Emit space.message so frontend gets the persisted version
             await toSpace(tool.spaceId, {
               type: 'space.message',
               streamId: toolCallId,
               message: buildToolCallMessagePayload({
-                messageId: tool.messageId!, smartSpaceId: tool.spaceId,
+                messageId: dbMsg.id, smartSpaceId: tool.spaceId,
                 entityId: agentEntityId, toolCallId, toolName, args,
                 result: null, status: finalStatus, runId,
               }),
             });
           } catch (err) {
-            console.warn(`[stream-processor] Failed to update tool call ${toolCallId}:`, err);
+            console.warn(`[stream-processor] Failed to persist tool call ${toolCallId}:`, err);
           }
         }
 
@@ -404,10 +353,11 @@ export async function processStream(
                 toolCallId, toolName, args: completedArgs,
                 result, status: 'complete', runId,
               });
+              const completeContent = buildToolCallContent(toolName, completedArgs, result, 'complete');
               try {
                 await prisma.smartSpaceMessage.update({
                   where: { id: tool.messageId },
-                  data: { metadata: completeMeta as any },
+                  data: { content: completeContent, metadata: completeMeta as any },
                 });
                 // Re-emit space.message so frontend updates the persisted message
                 await toSpace(tool.spaceId, {

@@ -94,30 +94,6 @@ export interface UseHsafaRuntimeReturn {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Extract ToolCallEntry items from persisted messages that still need user action. */
-function extractPendingToolCalls(messages: SmartSpaceMessage[]): ToolCallEntry[] {
-  const entries: ToolCallEntry[] = [];
-  for (const msg of messages) {
-    const meta = msg.metadata as Record<string, unknown> | null;
-    const parts = (meta?.uiMessage as any)?.parts as Array<Record<string, unknown>> | undefined;
-    if (!Array.isArray(parts)) continue;
-    for (const p of parts) {
-      const pStatus = p.status as string;
-      if (p.type === 'tool_call' && p.toolCallId && (pStatus === 'requires_action' || pStatus === 'streaming' || pStatus === 'running')) {
-        entries.push({
-          toolCallId: p.toolCallId as string,
-          toolName: (p.toolName as string) || 'unknown',
-          entityId: msg.entityId || '',
-          runId: meta?.runId as string | undefined,
-          args: p.args as Record<string, unknown> | undefined,
-          status: 'running',
-        });
-      }
-    }
-  }
-  return entries;
-}
-
 /** Derive unique active agents from the runs ref map. */
 function deriveActiveAgents(runsRef: Map<string, { entityId: string; entityName?: string }>): ActiveAgent[] {
   const seen = new Map<string, ActiveAgent>();
@@ -125,15 +101,6 @@ function deriveActiveAgents(runsRef: Map<string, { entityId: string; entityName?
     if (!seen.has(v.entityId)) seen.set(v.entityId, { entityId: v.entityId, entityName: v.entityName });
   }
   return Array.from(seen.values());
-}
-
-/** Check if a raw SSE message payload contains tool_call parts. */
-function hasToolCallParts(raw: Record<string, unknown>): boolean {
-  if (Array.isArray(raw.parts) && (raw.parts as any[]).some((p: any) => p.type === 'tool_call')) return true;
-  const meta = raw.metadata as Record<string, unknown> | undefined;
-  const uiParts = (meta?.uiMessage as any)?.parts;
-  if (Array.isArray(uiParts) && uiParts.some((p: any) => p.type === 'tool_call')) return true;
-  return false;
 }
 
 // ─── Convert persisted message → ThreadMessageLike ───────────────────
@@ -274,15 +241,6 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         const ids = new Set(fresh.map((m) => m.id));
         return [...fresh, ...prev.filter((m) => !ids.has(m.id))];
       });
-
-      // Reconstruct pending client tool calls (requires_action) so they show with buttons on refresh
-      const pendingTCs = extractPendingToolCalls(fresh);
-      if (pendingTCs.length > 0) {
-        setToolCalls((prev) => {
-          const existing = new Set(prev.map((tc) => tc.toolCallId));
-          return [...prev, ...pendingTCs.filter((tc) => !existing.has(tc.toolCallId))];
-        });
-      }
     }).catch(() => {});
 
     // space.message.streaming → live text delta from send_message
@@ -459,8 +417,11 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         metadata,
         createdAt: (raw.createdAt as string) || new Date().toISOString(),
       };
-      // Skip if no text content AND no tool parts
-      if (!msg.content?.trim() && !hasToolCallParts(raw)) return;
+      // Skip if no text content AND no tool_call parts in metadata
+      if (!msg.content?.trim()) {
+        const uiParts = (metadata?.uiMessage as any)?.parts;
+        if (!Array.isArray(uiParts) || !uiParts.some((p: any) => p.type === 'tool_call')) return;
+      }
 
       // Dedup: mark streamId persisted BEFORE setState
       const streamId = e.data?.streamId as string | undefined;

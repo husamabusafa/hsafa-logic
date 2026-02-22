@@ -10,7 +10,7 @@ import { useMembers, ReasoningPart, ToolCallPart, ImageToolUI } from "@hsafa/ui"
 import { ProductCard } from "./product-card";
 import { ConfirmationUI } from "./confirmation-ui";
 import { ChartDisplay } from "./chart-display";
-import { ArrowUpIcon, SquareIcon } from "lucide-react";
+import { ArrowUpIcon } from "lucide-react";
 import { type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -67,28 +67,11 @@ function Composer() {
 
 function ComposerAction(): ReactNode {
   return (
-    <>
-      <ThreadPrimitive.If running={false}>
-        <ComposerPrimitive.Send asChild>
-          <Button type="submit" size="icon" className="size-7 rounded-lg">
-            <ArrowUpIcon className="size-4" />
-          </Button>
-        </ComposerPrimitive.Send>
-      </ThreadPrimitive.If>
-
-      <ThreadPrimitive.If running>
-        <ComposerPrimitive.Cancel asChild>
-          <Button
-            type="button"
-            variant="secondary"
-            size="icon"
-            className="size-7 rounded-lg"
-          >
-            <SquareIcon className="size-3 fill-current" />
-          </Button>
-        </ComposerPrimitive.Cancel>
-      </ThreadPrimitive.If>
-    </>
+    <ComposerPrimitive.Send asChild>
+      <Button type="submit" size="icon" className="size-7 rounded-lg">
+        <ArrowUpIcon className="size-4" />
+      </Button>
+    </ComposerPrimitive.Send>
   );
 }
 

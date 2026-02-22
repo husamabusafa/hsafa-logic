@@ -20,11 +20,11 @@ export interface UseHsafaChatRuntimeReturn {
 export function useHsafaChatRuntime(
   options: UseHsafaChatRuntimeOptions
 ): UseHsafaChatRuntimeReturn {
-  const { messages, isRunning, activeAgents, onNew, threadListAdapter, membersById } =
+  const { messages, activeAgents, onNew, threadListAdapter, membersById } =
     useHsafaRuntimeCore(options);
 
   const runtime = useExternalStoreRuntime({
-    isRunning,
+    isRunning: false, // Never block sending — multiple concurrent runs are supported
     messages: messages as ThreadMessageLike[],
     convertMessage: (m) => m,
     onNew: onNew as (message: Parameters<typeof onNew>[0]) => Promise<void>,

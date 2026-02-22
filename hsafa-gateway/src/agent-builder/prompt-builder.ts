@@ -203,19 +203,41 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
       const marker = msg.seq <= lastProcessedSeq ? '[SEEN]' : '[NEW]';
       const isYou = msg.entity.id === agentEntityId;
       const senderLabel = isYou ? 'You (agent)' : `${msg.entity.displayName ?? 'Unknown'} (${msg.entity.type as string}, id:${msg.entity.id})`;
-      const isTrigger = msg.id === run.triggerMessageId ? ' ← TRIGGER' : '';
+      const isTrigger = msg.id === run.triggerMessageId ? ' \u2190 TRIGGER' : '';
       const shortId = `msg:${msg.id.slice(0, 8)}`;
       const ts = msg.createdAt.toISOString();
+
+      // Tool call messages have content set to readable summary (e.g. "[Tool: x] Input: ... Result: ...")
+      // Regular messages have plain text content. Both are handled uniformly.
       const content = msg.content ?? '';
 
-      parts.push(
-        `  [${shortId}] [${ts}] ${senderLabel}: "${content}"  ${marker}${isTrigger}`,
-      );
+      // For tool call messages, also show structured info from metadata
+      const meta = msg.metadata as Record<string, unknown> | null;
+      const toolParts = (meta?.uiMessage as any)?.parts as Array<Record<string, unknown>> | undefined;
+      const isToolCall = Array.isArray(toolParts) && toolParts.some((p) => p.type === 'tool_call');
+
+      if (isToolCall) {
+        // Show tool call with structured data for clarity
+        for (const p of toolParts!) {
+          if (p.type !== 'tool_call') continue;
+          const toolName = (p.toolName as string) || 'unknown';
+          const status = (p.status as string) || 'unknown';
+          const argsStr = p.args ? JSON.stringify(p.args).slice(0, 200) : '';
+          const resultStr = p.result ? JSON.stringify(p.result).slice(0, 200) : '';
+          parts.push(
+            `  [${shortId}] [${ts}] ${senderLabel}: [Tool: ${toolName}] args=${argsStr} result=${resultStr} (${status})  ${marker}${isTrigger}`,
+          );
+        }
+      } else {
+        parts.push(
+          `  [${shortId}] [${ts}] ${senderLabel}: "${content}"  ${marker}${isTrigger}`,
+        );
+      }
 
       // For the agent's own messages: show WHY it sent this message
-      if (isYou) {
+      if (isYou && !isToolCall) {
         const annotation = formatRunContextAnnotation(
-          msg.metadata as Record<string, unknown> | null,
+          meta,
           agentEntityId,
           msg.entity.id,
         );
@@ -396,20 +418,16 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
   parts.push('');
 
   // ── 7. Client Tool Results (from previous waiting_tool cycle) ───────────────
-  // NOTE: These results are ALSO injected as proper tool-call / tool-result
-  // messages in run-runner.ts. This section serves as additional reinforcement.
-  const runMetadata = run.metadata as Record<string, unknown> | null;
-  const clientToolResults = runMetadata?.clientToolResults as Record<string, unknown> | undefined;
-  if (clientToolResults && Object.keys(clientToolResults).length > 0) {
+  // Read completed tool calls from ToolCall records (single source of truth).
+  const completedToolCallRecords = await prisma.toolCall.findMany({
+    where: { runId, status: 'completed' },
+    orderBy: { seq: 'asc' },
+  });
+  if (completedToolCallRecords.length > 0) {
     parts.push('COMPLETED TOOL RESULTS (the user already responded — these tools are DONE):');
-    const toolCallRecords = await prisma.toolCall.findMany({
-      where: { runId },
-      orderBy: { seq: 'asc' },
-    });
-    for (const tc of toolCallRecords) {
-      const result = clientToolResults[tc.callId];
+    for (const tc of completedToolCallRecords) {
       parts.push(`  - ${tc.toolName}(${JSON.stringify(tc.args)})`);
-      parts.push(`    user response: ${JSON.stringify(result)}`);
+      parts.push(`    user response: ${JSON.stringify(tc.output)}`);
     }
     parts.push('  CRITICAL: You already called these tools and received results. Do NOT call them again.');
     parts.push('  Acknowledge the user\'s response and continue with your next action (e.g. send_message).');

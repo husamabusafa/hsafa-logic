@@ -46,8 +46,6 @@ export const ConfirmationUI: FC<ConfirmationUIProps> = (props) => {
   const { submitToRun, isSubmitting } = useToolResult();
   const [choice, setChoice] = useState<"confirmed" | "rejected" | null>(null);
 
-  const isPending = isRunning && confirmation != null && choice === null;
-
   // Parse result from persisted message (after page refresh)
   const persistedResult = props.result as
     | { confirmed?: boolean; action?: string }
@@ -57,7 +55,9 @@ export const ConfirmationUI: FC<ConfirmationUIProps> = (props) => {
     choice === "confirmed" || persistedResult?.confirmed === true;
   const wasRejected =
     choice === "rejected" || persistedResult?.confirmed === false;
-  const isResolved = wasConfirmed || wasRejected || choice != null;
+  const isResolved = wasConfirmed || wasRejected || choice != null || status?.type === "complete";
+
+  const isPending = isRunning && confirmation != null && choice === null;
 
   const handleConfirm = async () => {
     if (!isPending || !toolCallId || !runId || isSubmitting) return;
@@ -85,8 +85,8 @@ export const ConfirmationUI: FC<ConfirmationUIProps> = (props) => {
     }
   };
 
-  // Loading skeleton
-  if (isRunning && !confirmation) {
+  // Loading skeleton — only while still streaming / running with no args yet
+  if (isRunning && !confirmation && !isResolved) {
     return (
       <div className="my-2 w-80 animate-pulse rounded-xl border border-border bg-muted/40 p-4">
         <div className="mb-3 h-5 w-2/3 rounded bg-muted" />
@@ -95,6 +95,38 @@ export const ConfirmationUI: FC<ConfirmationUIProps> = (props) => {
         <div className="flex gap-2">
           <div className="h-9 flex-1 rounded-lg bg-muted" />
           <div className="h-9 flex-1 rounded-lg bg-muted" />
+        </div>
+      </div>
+    );
+  }
+
+  // Resolved state — show even if args parsing failed (e.g. after page refresh)
+  if (!confirmation && isResolved) {
+    return (
+      <div
+        className={`my-2 w-80 overflow-hidden rounded-xl border shadow-sm ${
+          wasConfirmed
+            ? "border-emerald-500/50 bg-emerald-50/50 dark:bg-emerald-950/20"
+            : "border-red-500/30 bg-red-50/30 dark:bg-red-950/10"
+        }`}
+      >
+        <div className="px-4 py-3">
+          {wasConfirmed ? (
+            <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="size-3.5" />
+              Confirmed
+            </div>
+          ) : wasRejected ? (
+            <div className="flex items-center gap-1.5 text-xs font-medium text-red-500 dark:text-red-400">
+              <XCircle className="size-3.5" />
+              Cancelled
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <CheckCircle2 className="size-3.5" />
+              Completed
+            </div>
+          )}
         </div>
       </div>
     );
