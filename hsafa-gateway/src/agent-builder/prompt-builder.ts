@@ -434,34 +434,87 @@ export async function buildPrompt(options: BuildPromptOptions): Promise<BuiltPro
     parts.push('');
   }
 
-  // ── 8. Instructions ────────────────────────────────────────────────────────
+  // ── 8. Multi-agent detection ──────────────────────────────────────────────
+  // Count how many agent members are in the trigger space to tailor instructions
+  let isMultiAgentSpace = false;
+  if (run.triggerSpaceId) {
+    const agentMemberCount = await prisma.smartSpaceMembership.count({
+      where: {
+        smartSpaceId: run.triggerSpaceId,
+        entity: { type: 'agent' },
+      },
+    });
+    isMultiAgentSpace = agentMemberCount > 1;
+  }
+
+  // ── 9. Instructions ────────────────────────────────────────────────────────
   parts.push('INSTRUCTIONS:');
   parts.push('');
-  parts.push('  CONTINUITY:');
-  parts.push('  - You are one continuous entity across all runs. Messages marked "You (agent)" are yours.');
-  parts.push('  - The [context: ...] annotations on your past messages explain why you sent them.');
-  parts.push('  - Never repeat work you already did. Check SPACE HISTORY and ACTIVE RUNS first.');
-  parts.push('  - Use set_memories to persist important context across runs.');
+
+  // --- Identity & Continuity ---
+  parts.push('  IDENTITY & CONTINUITY:');
+  parts.push('  - You are one continuous entity across all runs. Messages marked "You (agent)" are yours from previous runs.');
+  parts.push('  - The [context: ...] annotations on your past messages explain WHY you sent them — use this to avoid repeating yourself.');
+  parts.push('  - Check SPACE HISTORY and ACTIVE RUNS before doing anything. Never duplicate work you already did.');
+  parts.push('  - Use set_memories to persist important facts, preferences, or context across runs.');
   parts.push('');
-  parts.push('  REASONING:');
-  parts.push('  - Your text output is internal reasoning — never shown to anyone. Keep it brief.');
-  parts.push('  - Before acting, determine: what is new, who needs to receive your response, and which space they are in.');
+
+  // --- Internal Reasoning ---
+  parts.push('  REASONING (your text output is PRIVATE — never shown to anyone):');
+  parts.push('  - Think step by step: (1) What triggered this run? (2) Is this already handled? (3) Who needs a response? (4) Should I respond at all?');
+  parts.push('  - Keep reasoning brief — just enough to decide your action.');
   parts.push('');
+
+  // --- When NOT to respond ---
+  parts.push('  WHEN TO STAY SILENT (critical):');
+  parts.push('  - You do NOT have to respond to every message. If you have nothing useful to add, end the run silently (stop generating without calling send_message).');
+  parts.push('  - Do NOT respond if the message is not directed at you and another agent is better suited.');
+  parts.push('  - Do NOT respond just to acknowledge, agree, or say "okay" — only respond when you add real value.');
+  parts.push('  - Do NOT respond to your own messages or to messages that are clearly a reply to someone else.');
+  if (isMultiAgentSpace) {
+    parts.push('  - This is a MULTI-AGENT space. Be especially selective. If another agent already handled it, stay silent.');
+    parts.push('  - After completing a task with send_message, END your run immediately. Do NOT send follow-ups like "let me know if you need anything."');
+  }
+  parts.push('');
+
+  // --- Infinite Loop Prevention ---
+  parts.push('  LOOP PREVENTION (mandatory):');
+  parts.push('  - NEVER reply to another agent\'s message just because it exists. Agent-to-agent ping-pong creates infinite loops.');
+  parts.push('  - If your trigger message is FROM another agent: only respond if the message explicitly asks YOU a question or requests YOUR action. Otherwise, end silently.');
+  parts.push('  - ONE message per task. Send your response and stop. Do not send a message, then send another follow-up in the same run.');
+  parts.push('  - If you see your own recent message in SPACE HISTORY that already answers the trigger, end silently — you already handled it.');
+  parts.push('  - If you notice a back-and-forth pattern between agents in the history, STOP. End silently and let a human break the cycle.');
+  parts.push('');
+
+  // --- Concurrent Runs & absorb_run ---
+  parts.push('  CONCURRENT RUNS:');
+  parts.push('  - Check ACTIVE RUNS above. If you see another active run with a RELATED trigger (same topic, same person, same space), absorb it:');
+  parts.push('    → Call absorb_run(runId) to cancel the older run and inherit its context.');
+  parts.push('    → Then handle BOTH triggers in this single run.');
+  parts.push('  - If the other run is handling a DIFFERENT topic, leave it alone.');
+  parts.push('  - If two runs are nearly identical (same sender, same question), absorb the older one to avoid duplicate responses.');
+  parts.push('  - Use stop_run(runId) when an active run is completely stale or irrelevant (not worth absorbing).');
+  parts.push('');
+
+  // --- Routing ---
   parts.push('  ROUTING:');
   parts.push('  - You start each run with no active space. Call enter_space(spaceId) before send_message.');
-  parts.push('  - send_message only reaches members of your active space. Always verify the recipient is there.');
+  parts.push('  - send_message reaches only members of your ACTIVE space. Verify the recipient is there.');
   parts.push('  - To reach a specific person, find their space in YOUR SPACES, enter it, then send.');
-  parts.push('  - The send_message response confirms who received the message. Read it.');
   parts.push('');
+
+  // --- Tools ---
   parts.push('  TOOLS:');
   parts.push('  - read_messages loads history from any space you belong to.');
-  parts.push('  - Do not retry send_message after success.');
-  parts.push('  - On tool failure, read the error and correct.');
+  parts.push('  - send_message returns {success: true} on delivery — do NOT retry after success.');
+  parts.push('  - On tool failure, read the error message and correct your input.');
   parts.push('');
+
+  // --- Behavior ---
   parts.push('  BEHAVIOR:');
-  parts.push('  - If you have nothing to contribute, end silently.');
-  parts.push('  - Focus on [NEW] messages. [SEEN] messages were already processed.');
-  parts.push('  - Speak naturally. Never disclaim being an AI.');
+  parts.push('  - Focus on [NEW] messages. [SEEN] messages were already processed in prior runs.');
+  parts.push('  - Be concise and direct. Respond naturally.');
+  parts.push('  - When in doubt, do less. Silence is better than noise.');
 
   // Inject custom agent instructions from config (after system instructions)
   if (agentInstructions) {

@@ -39,6 +39,7 @@ export async function initPrebuiltTools(): Promise<void> {
   await import('./read-messages.js');
   await import('./get-my-runs.js');
   await import('./stop-run.js');
+  await import('./absorb-run.js');
   await import('./set-memories.js');
   await import('./get-memories.js');
   await import('./delete-memories.js');
