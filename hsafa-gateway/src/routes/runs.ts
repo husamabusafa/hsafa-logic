@@ -94,17 +94,16 @@ runsRouter.get('/:runId/events', requireAuth(), async (req: Request, res: Respon
   try {
     if (!(await verifyRunAccess(req, res))) return;
 
-    const afterSeq = req.query.afterSeq ? BigInt(req.query.afterSeq as string) : undefined;
-    const where: Record<string, unknown> = { runId: req.params.runId };
-    if (afterSeq !== undefined) where.seq = { gt: afterSeq };
-
-    const events = await prisma.runEvent.findMany({
-      where,
+    // v3: Run events are streamed via Redis Pub/Sub, not stored in DB.
+    // Use GET /api/runs/:runId/stream for real-time SSE events.
+    // This endpoint returns messages associated with the run.
+    const messages = await prisma.smartSpaceMessage.findMany({
+      where: { runId: req.params.runId },
       orderBy: { seq: 'asc' },
       take: 100,
     });
 
-    res.json({ events });
+    res.json({ events: messages });
   } catch (error) {
     console.error('Get run events error:', error);
     res.status(500).json({ error: 'Failed to get events' });

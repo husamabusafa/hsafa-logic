@@ -156,6 +156,10 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
       consciousness = refreshSystemPrompt(consciousness, systemPrompt);
 
       // 6. INJECT inbox events as user message
+      // Save pre-cycle snapshot for skip rollback
+      const preCycleConsciousness = [...consciousness];
+      const preCycleCycleCount = cycleCount - 1;
+
       const inboxMessage: ModelMessage = {
         role: 'user',
         content: formatInboxEvents(allEvents),
@@ -198,20 +202,36 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         clientTools: built.clientToolNames,
       });
 
-      // 9. APPEND new messages to consciousness
+      // 9. CHECK FOR SKIP — detect skip() tool call and roll back
       const response = await result.response;
       const newMessages = response.messages as unknown as ModelMessage[];
+
+      if (isSkipCycle(newMessages)) {
+        // Full rollback: restore consciousness, delete run, revert cycle count
+        const reason = extractSkipReason(newMessages);
+        consciousness = preCycleConsciousness;
+        cycleCount = preCycleCycleCount;
+        context.cycleCount = cycleCount;
+
+        await prisma.run.delete({ where: { id: run.id } }).catch(() => {});
+        await emitAgentStatus(agentEntityId, 'inactive', { runId: run.id, agentName });
+
+        console.log(`[agent-process] ${agentName} skipped cycle: ${reason}`);
+        continue;
+      }
+
+      // 10. APPEND new messages to consciousness
       consciousness.push(...newMessages);
 
-      // 10. COMPACT if over budget
+      // 11. COMPACT if over budget
       const maxTokens = (agent.configJson as any)?.consciousness?.maxTokens ?? 100_000;
       const minCycles = (agent.configJson as any)?.consciousness?.minRecentCycles ?? 10;
       consciousness = compactConsciousness(consciousness, maxTokens, minCycles);
 
-      // 11. SAVE consciousness
+      // 12. SAVE consciousness
       await saveConsciousness(agentEntityId, consciousness, cycleCount);
 
-      // 12. UPDATE audit record
+      // 13. UPDATE audit record
       const usage = await result.totalUsage;
       const durationMs = Date.now() - cycleStart;
 
@@ -227,7 +247,7 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         },
       });
 
-      // 13. EMIT agent.inactive
+      // 14. EMIT agent.inactive
       await emitAgentStatus(agentEntityId, 'inactive', { runId: run.id, agentName });
 
       console.log(
@@ -270,6 +290,41 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
   console.log(`[agent-process] ${agentName} shutting down`);
   await saveConsciousness(agentEntityId, consciousness, cycleCount);
   blockingRedis.disconnect();
+}
+
+// =============================================================================
+// Skip detection helpers
+// =============================================================================
+
+/**
+ * Check if the agent called skip() — a tool call with no execute function.
+ * The SDK stops the loop immediately, so it appears as an assistant message
+ * with a tool-call content part where toolName === 'skip'.
+ */
+function isSkipCycle(messages: ModelMessage[]): boolean {
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      if (msg.content.some((p: any) => p.type === 'tool-call' && p.toolName === 'skip')) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Extract the reason string from a skip() tool call.
+ */
+function extractSkipReason(messages: ModelMessage[]): string {
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      const skipPart = (msg.content as any[]).find(
+        (p) => p.type === 'tool-call' && p.toolName === 'skip',
+      );
+      if (skipPart?.args?.reason) return skipPart.args.reason;
+    }
+  }
+  return 'irrelevant';
 }
 
 // =============================================================================

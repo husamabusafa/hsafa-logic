@@ -11,13 +11,13 @@ import {
   type BuiltAgent,
   type ToolConfig,
 } from './types.js';
+import { buildPrebuiltTools } from './prebuilt-tools/registry.js';
 
 // =============================================================================
 // Agent Builder (v3)
 //
-// Resolves the LLM model, builds custom tools from configJson, and returns
-// a BuiltAgent ready for streamText(). Prebuilt tools are injected separately
-// by the agent process when building the full tools object.
+// Resolves the LLM model, builds prebuilt + custom tools, and returns
+// a BuiltAgent ready for streamText().
 // =============================================================================
 
 /**
@@ -34,16 +34,20 @@ export async function buildAgent(
   // Resolve LLM model
   const model = resolveModel(config);
 
+  // Build prebuilt tools (enter_space, send_message, skip, etc.)
+  const prebuilt = buildPrebuiltTools(context);
+
   // Build custom tools from config
-  const { tools, visibleToolNames, clientToolNames } = buildCustomTools(
-    config.tools ?? [],
-    context,
-  );
+  const custom = buildCustomTools(config.tools ?? [], context);
+
+  // Merge: prebuilt first, custom can override if needed
+  const tools = { ...prebuilt.tools, ...custom.tools };
+  const visibleToolNames = new Set([...prebuilt.visibleToolNames, ...custom.visibleToolNames]);
 
   return {
     tools,
     visibleToolNames,
-    clientToolNames,
+    clientToolNames: custom.clientToolNames,
     model,
   };
 }
