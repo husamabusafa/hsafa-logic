@@ -85,6 +85,7 @@ This enables:
 - **Understanding group dynamics**: "Both Husam and Ahmad need to approve."
 - **Distinguishing humans from agents**: Different response styles for each.
 - **Selective response**: Reading the inbox event, deciding if it's relevant.
+- **Skipping irrelevant messages**: In busy multi-agent spaces, most messages aren't for every agent. The agent calls `skip()` and the SDK stops immediately — the cycle is fully rolled back with no consciousness pollution, no run record, no cost. Just like a human glancing at a group chat notification, seeing it's not for them, and swiping away. See [Think Cycle — Skip Cycle](04-think-cycle.md#skip-cycle--skip-tool).
 
 ---
 
@@ -135,7 +136,7 @@ Just like humans: you remember today's conversations clearly, last week in summa
 | Agent is stateless between calls | Consciousness IS the state — no reconstruction needed |
 | Agent can't multitask efficiently | Inbox batches multiple events → one coherent cycle |
 | Agent can't plan ahead | Plan system: `runAfter`, `cron`, `scheduledAt` |
-| Agent responds when not needed | Agent decides independently — silence is default |
+| Agent responds when not needed | Agent calls `skip()` — cycle fully rolled back, zero trace |
 | Agent duplicates work on rapid messages | Inbox batches → no concurrent runs → no `absorb_run` needed |
 | Agent loses context after many interactions | Compaction + memories keep critical context alive |
 
@@ -156,7 +157,7 @@ A good test: **if you replaced the agent with a human, would the system still ma
 | Sends a message | `send_message({ text })` |
 | Sets an alarm for tomorrow | `set_plans({ runAfter: "1 day" })` |
 | Remembers an important fact | `set_memories({ key, value })` |
-| Decides to stay silent | Cycle ends without `send_message` |
+| Decides to stay silent | `skip()` — cycle erased, consciousness unchanged |
 | Handles an urgent interruption | `prepareStep` mid-cycle inbox injection |
 | Forgets old details but remembers key facts | Consciousness compaction + persistent memories |
 
@@ -192,5 +193,6 @@ With consciousness, emotional realism goes deeper: the agent genuinely "remember
 | Context richness | System prompt timeline | Full ModelMessage[] with tool calls |
 | Emotional depth | Limited to current run context | Accumulated across cycles |
 | Self-awareness | ACTIVE RUNS block | Not needed — one mind, one process |
+| Ignoring irrelevant messages | Full run consumed even for silence | `skip()` tool — ~20 tokens, SDK stops immediately, full rollback |
 | Adaptation | One model fits all | Adaptive model per step |
 | Observability | Per-run metrics | Per-cycle + per-step telemetry |

@@ -1,27 +1,22 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/db.js';
 import { redis } from '../lib/redis.js';
-import { requireAuth, requireSecretKey, requireMembership } from '../middleware/auth.js';
-import { triggerAllAgents } from '../lib/agent-trigger.js';
+import { requireSecretKey, requireAuth, requireMembership } from '../middleware/auth.js';
 import { createSmartSpaceMessage } from '../lib/smartspace-db.js';
 import { emitSmartSpaceEvent } from '../lib/smartspace-events.js';
+import { pushSpaceMessageEvent } from '../lib/inbox.js';
+import Redis from 'ioredis';
 
 export const smartSpacesRouter = Router();
-
-// =============================================================================
-// Space CRUD (admin only)
-// =============================================================================
 
 // POST /api/smart-spaces — Create space
 smartSpacesRouter.post('/', requireSecretKey(), async (req: Request, res: Response) => {
   try {
     const { name, description, metadata } = req.body;
-
-    const space = await prisma.smartSpace.create({
+    const smartSpace = await prisma.smartSpace.create({
       data: { name, description, metadata: metadata ?? undefined },
     });
-
-    res.status(201).json({ smartSpace: space });
+    res.status(201).json({ smartSpace });
   } catch (error) {
     console.error('Create space error:', error);
     res.status(500).json({ error: 'Failed to create space' });
@@ -31,22 +26,19 @@ smartSpacesRouter.post('/', requireSecretKey(), async (req: Request, res: Respon
 // GET /api/smart-spaces — List spaces
 smartSpacesRouter.get('/', requireAuth(), async (req: Request, res: Response) => {
   try {
-    // For public_key_jwt, only return spaces the user is a member of
-    if (req.auth?.method === 'public_key_jwt' && req.auth.entityId) {
+    let smartSpaces;
+    if (req.auth?.method === 'secret_key') {
+      smartSpaces = await prisma.smartSpace.findMany({ orderBy: { createdAt: 'desc' } });
+    } else {
+      const entityId = req.auth?.entityId;
+      if (!entityId) { res.status(403).json({ error: 'No entity' }); return; }
       const memberships = await prisma.smartSpaceMembership.findMany({
-        where: { entityId: req.auth.entityId },
+        where: { entityId },
         include: { smartSpace: true },
-        orderBy: { joinedAt: 'desc' },
       });
-      res.json({ smartSpaces: memberships.map((m) => m.smartSpace) });
-      return;
+      smartSpaces = memberships.map((m) => m.smartSpace);
     }
-
-    // Secret key: return all
-    const spaces = await prisma.smartSpace.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
-    res.json({ smartSpaces: spaces });
+    res.json({ smartSpaces });
   } catch (error) {
     console.error('List spaces error:', error);
     res.status(500).json({ error: 'Failed to list spaces' });
@@ -56,16 +48,11 @@ smartSpacesRouter.get('/', requireAuth(), async (req: Request, res: Response) =>
 // GET /api/smart-spaces/:smartSpaceId — Get space
 smartSpacesRouter.get('/:smartSpaceId', requireAuth(), requireMembership(), async (req: Request, res: Response) => {
   try {
-    const space = await prisma.smartSpace.findUnique({
+    const smartSpace = await prisma.smartSpace.findUnique({
       where: { id: req.params.smartSpaceId },
     });
-
-    if (!space) {
-      res.status(404).json({ error: 'Space not found' });
-      return;
-    }
-
-    res.json({ smartSpace: space });
+    if (!smartSpace) { res.status(404).json({ error: 'Not found' }); return; }
+    res.json({ smartSpace });
   } catch (error) {
     console.error('Get space error:', error);
     res.status(500).json({ error: 'Failed to get space' });
@@ -76,17 +63,15 @@ smartSpacesRouter.get('/:smartSpaceId', requireAuth(), requireMembership(), asyn
 smartSpacesRouter.patch('/:smartSpaceId', requireSecretKey(), async (req: Request, res: Response) => {
   try {
     const { name, description, metadata } = req.body;
-    const data: Record<string, unknown> = {};
-    if (name !== undefined) data.name = name;
-    if (description !== undefined) data.description = description;
-    if (metadata !== undefined) data.metadata = metadata;
-
-    const space = await prisma.smartSpace.update({
+    const smartSpace = await prisma.smartSpace.update({
       where: { id: req.params.smartSpaceId },
-      data,
+      data: {
+        ...(name !== undefined && { name }),
+        ...(description !== undefined && { description }),
+        ...(metadata !== undefined && { metadata }),
+      },
     });
-
-    res.json({ smartSpace: space });
+    res.json({ smartSpace });
   } catch (error) {
     console.error('Update space error:', error);
     res.status(500).json({ error: 'Failed to update space' });
@@ -105,34 +90,20 @@ smartSpacesRouter.delete('/:smartSpaceId', requireSecretKey(), async (req: Reque
 });
 
 // =============================================================================
-// Membership
+// Members
 // =============================================================================
 
 // POST /api/smart-spaces/:smartSpaceId/members — Add member
 smartSpacesRouter.post('/:smartSpaceId/members', requireSecretKey(), async (req: Request, res: Response) => {
   try {
     const { entityId, role } = req.body;
-
-    if (!entityId) {
-      res.status(400).json({ error: 'entityId is required' });
-      return;
-    }
-
-    const membership = await prisma.smartSpaceMembership.upsert({
-      where: {
-        smartSpaceId_entityId: {
-          smartSpaceId: req.params.smartSpaceId,
-          entityId,
-        },
-      },
-      update: { role: role ?? undefined },
-      create: {
+    const membership = await prisma.smartSpaceMembership.create({
+      data: {
         smartSpaceId: req.params.smartSpaceId,
         entityId,
         role: role ?? undefined,
       },
     });
-
     res.status(201).json({ membership });
   } catch (error) {
     console.error('Add member error:', error);
@@ -145,14 +116,9 @@ smartSpacesRouter.get('/:smartSpaceId/members', requireAuth(), requireMembership
   try {
     const memberships = await prisma.smartSpaceMembership.findMany({
       where: { smartSpaceId: req.params.smartSpaceId },
-      include: {
-        entity: {
-          select: { id: true, type: true, displayName: true, externalId: true },
-        },
-      },
+      include: { entity: { select: { id: true, type: true, displayName: true } } },
     });
-
-    res.json({ members: memberships });
+    res.json({ memberships });
   } catch (error) {
     console.error('List members error:', error);
     res.status(500).json({ error: 'Failed to list members' });
@@ -170,7 +136,6 @@ smartSpacesRouter.delete('/:smartSpaceId/members/:entityId', requireSecretKey(),
         },
       },
     });
-
     res.json({ success: true });
   } catch (error) {
     console.error('Remove member error:', error);
@@ -182,89 +147,82 @@ smartSpacesRouter.delete('/:smartSpaceId/members/:entityId', requireSecretKey(),
 // Messages
 // =============================================================================
 
-// POST /api/smart-spaces/:smartSpaceId/messages — Send a message
+// POST /api/smart-spaces/:smartSpaceId/messages — Send message
 smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembership(), async (req: Request, res: Response) => {
   try {
-    const { content, metadata } = req.body;
+    const { smartSpaceId } = req.params;
+    let { entityId, content, metadata: msgMeta } = req.body;
 
-    if (!content) {
-      res.status(400).json({ error: 'content is required' });
-      return;
-    }
-
-    // For public_key_jwt, force entityId from JWT (anti-impersonation)
-    let entityId = req.body.entityId;
+    // Anti-impersonation: force entityId from JWT for public_key_jwt auth
     if (req.auth?.method === 'public_key_jwt') {
       entityId = req.auth.entityId;
     }
 
-    if (!entityId) {
-      res.status(400).json({ error: 'entityId is required' });
+    if (!entityId || !content) {
+      res.status(400).json({ error: 'entityId and content are required' });
       return;
     }
 
-    // Get sender info
-    const sender = await prisma.entity.findUnique({
-      where: { id: entityId },
-      select: { id: true, type: true, displayName: true },
-    });
-
-    if (!sender) {
-      res.status(404).json({ error: 'Sender entity not found' });
-      return;
-    }
-
-    const role = sender.type === 'agent' ? 'assistant' : 'user';
-
+    // Persist the message
     const message = await createSmartSpaceMessage({
-      smartSpaceId: req.params.smartSpaceId,
+      smartSpaceId,
       entityId,
-      role,
+      role: 'user',
       content,
-      metadata: metadata ?? undefined,
+      metadata: msgMeta ?? undefined,
     });
 
-    // Emit to space SSE stream
-    await emitSmartSpaceEvent(req.params.smartSpaceId, {
+    // Emit to space SSE
+    await emitSmartSpaceEvent(smartSpaceId, {
       type: 'space.message',
       message: {
         id: message.id,
-        smartSpaceId: message.smartSpaceId,
-        entityId: message.entityId,
-        role: message.role,
-        content: message.content,
-        metadata: message.metadata,
-        seq: Number(message.seq),
+        smartSpaceId,
+        entityId,
+        role: 'user',
+        content,
+        metadata: msgMeta ?? null,
+        seq: message.seq.toString(),
         createdAt: message.createdAt.toISOString(),
       },
     });
 
-    // v2: Trigger ALL other agent members in the space (sender excluded)
-    // Fire-and-forget — do NOT await (run executes in background)
-    triggerAllAgents({
-      spaceId: req.params.smartSpaceId,
-      senderEntityId: entityId,
-      senderName: sender.displayName ?? entityId,
-      senderType: sender.type as 'human' | 'agent',
-      messageContent: content,
-      messageId: message.id,
-    }).catch((err: unknown) => {
-      console.error('[smart-spaces] triggerAllAgents error:', err);
+    // v3: Push to inbox of all OTHER agent members (fire-and-forget)
+    const senderEntity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      select: { displayName: true, type: true },
     });
 
-    res.status(201).json({
-      message: {
-        id: message.id,
-        smartSpaceId: message.smartSpaceId,
-        entityId: message.entityId,
-        role: message.role,
-        content: message.content,
-        metadata: message.metadata,
-        seq: Number(message.seq),
-        createdAt: message.createdAt.toISOString(),
+    const agentMembers = await prisma.smartSpaceMembership.findMany({
+      where: {
+        smartSpaceId,
+        entityId: { not: entityId },
+        entity: { type: 'agent' },
       },
-      runs: [],
+      select: { entityId: true },
     });
+
+    const space = await prisma.smartSpace.findUnique({
+      where: { id: smartSpaceId },
+      select: { name: true },
+    });
+
+    // Push to each agent's inbox
+    for (const member of agentMembers) {
+      pushSpaceMessageEvent(member.entityId, {
+        spaceId: smartSpaceId,
+        spaceName: space?.name ?? 'Unnamed',
+        messageId: message.id,
+        senderEntityId: entityId,
+        senderName: senderEntity?.displayName ?? 'Unknown',
+        senderType: (senderEntity?.type ?? 'human') as 'human' | 'agent',
+        content,
+      }).catch((err) => {
+        console.warn(`[smart-spaces] Failed to push to inbox ${member.entityId}:`, err);
+      });
+    }
+
+    res.status(201).json({ message });
   } catch (error) {
     console.error('Send message error:', error);
     res.status(500).json({ error: 'Failed to send message' });
@@ -274,196 +232,65 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
 // GET /api/smart-spaces/:smartSpaceId/messages — List messages
 smartSpacesRouter.get('/:smartSpaceId/messages', requireAuth(), requireMembership(), async (req: Request, res: Response) => {
   try {
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
-    const before = req.query.before as string | undefined;
-    const afterSeq = req.query.afterSeq as string | undefined;
-    const beforeSeq = req.query.beforeSeq as string | undefined;
+    const { smartSpaceId } = req.params;
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+    const afterSeq = req.query.afterSeq ? BigInt(req.query.afterSeq as string) : undefined;
+    const beforeSeq = req.query.beforeSeq ? BigInt(req.query.beforeSeq as string) : undefined;
 
-    const where: Record<string, unknown> = {
-      smartSpaceId: req.params.smartSpaceId,
-    };
-
-    if (before) {
-      where.createdAt = { lt: new Date(before) };
-    }
-    if (afterSeq) {
-      where.seq = { ...(where.seq as object || {}), gt: BigInt(afterSeq) };
-    }
-    if (beforeSeq) {
-      where.seq = { ...(where.seq as object || {}), lt: BigInt(beforeSeq) };
-    }
+    const where: Record<string, unknown> = { smartSpaceId };
+    if (afterSeq !== undefined) where.seq = { gt: afterSeq };
+    if (beforeSeq !== undefined) where.seq = { ...(where.seq as any ?? {}), lt: beforeSeq };
 
     const messages = await prisma.smartSpaceMessage.findMany({
       where,
       orderBy: { seq: 'desc' },
       take: limit,
-      include: {
-        entity: {
-          select: { id: true, type: true, displayName: true },
-        },
-      },
+      include: { entity: { select: { id: true, displayName: true, type: true } } },
     });
 
-    // Return in chronological order
-    res.json({ messages: messages.reverse().map((m) => ({
-      id: m.id,
-      smartSpaceId: m.smartSpaceId,
-      entityId: m.entityId,
-      role: m.role,
-      content: m.content,
-      metadata: m.metadata,
-      seq: Number(m.seq),
-      createdAt: m.createdAt.toISOString(),
-      entityType: m.entity?.type,
-      entityName: m.entity?.displayName,
-    })) });
+    res.json({ messages: messages.reverse() });
   } catch (error) {
     console.error('List messages error:', error);
     res.status(500).json({ error: 'Failed to list messages' });
   }
 });
 
-// POST /api/smart-spaces/:smartSpaceId/read — Mark messages as read (for humans)
-smartSpacesRouter.post('/:smartSpaceId/read', requireAuth(), requireMembership(), async (req: Request, res: Response) => {
-  try {
-    const entityId = req.auth?.entityId;
-    const { lastMessageId } = req.body;
-
-    if (!entityId || !lastMessageId) {
-      res.status(400).json({ error: 'lastMessageId is required' });
-      return;
-    }
-
-    await prisma.smartSpaceMembership.updateMany({
-      where: {
-        smartSpaceId: req.params.smartSpaceId,
-        entityId,
-      },
-      data: { lastSeenMessageId: lastMessageId },
-    });
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Mark read error:', error);
-    res.status(500).json({ error: 'Failed to mark as read' });
-  }
-});
-
 // =============================================================================
-// SSE Stream — Real-time events for a space
+// SSE Stream
 // =============================================================================
 
+// GET /api/smart-spaces/:smartSpaceId/stream — SSE event stream
 smartSpacesRouter.get('/:smartSpaceId/stream', requireAuth(), requireMembership(), async (req: Request, res: Response) => {
   try {
-    const spaceId = req.params.smartSpaceId;
+    const { smartSpaceId } = req.params;
 
-    // Set SSE headers
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders();
-
-    // Query active runs for this space so the client can restore state on reconnect
-    const activeRuns = await prisma.run.findMany({
-      where: {
-        status: { in: ['running', 'waiting_tool'] },
-        OR: [
-          { triggerSpaceId: spaceId },
-          { activeSpaceId: spaceId },
-        ],
-      },
-      select: {
-        id: true,
-        status: true,
-        agentEntityId: true,
-        agentEntity: { select: { displayName: true } },
-      },
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
     });
 
-    const activeAgents = activeRuns.map((r) => ({
-      runId: r.id,
-      agentEntityId: r.agentEntityId,
-      agentName: r.agentEntity?.displayName || '',
-    }));
+    res.write(`data: ${JSON.stringify({ type: 'connected', smartSpaceId })}\n\n`);
 
-    // For waiting_tool runs, include their pending tool calls so the
-    // client can restore tool UI (buttons, forms) immediately on reconnect.
-    const waitingRunIds = activeRuns.filter((r) => r.status === 'waiting_tool').map((r) => r.id);
-    let pendingToolCalls: Array<{ runId: string; callId: string; toolName: string; args: unknown; agentEntityId: string }> = [];
-    if (waitingRunIds.length > 0) {
-      const tcs = await prisma.toolCall.findMany({
-        where: { runId: { in: waitingRunIds }, status: { not: 'completed' } },
-        orderBy: { seq: 'asc' },
-      });
-      pendingToolCalls = tcs.map((tc) => {
-        const run = activeRuns.find((r) => r.id === tc.runId);
-        return {
-          runId: tc.runId,
-          callId: tc.callId,
-          toolName: tc.toolName,
-          args: tc.args,
-          agentEntityId: run?.agentEntityId || '',
-        };
-      });
-    }
+    // Subscribe to Redis pub/sub for this space
+    const subscriber = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+    const channel = `smartspace:${smartSpaceId}`;
+    await subscriber.subscribe(channel);
 
-    // For running runs, include any streaming tool messages so the client
-    // can restore mid-stream tool UI on reconnect (before waiting_tool).
-    const runningRunIds = activeRuns.filter((r) => r.status === 'running').map((r) => r.id);
-    let streamingToolCalls: Array<{ runId: string; callId: string; toolName: string; args: unknown; agentEntityId: string }> = [];
-    if (runningRunIds.length > 0) {
-      const toolMsgs = await prisma.smartSpaceMessage.findMany({
-        where: {
-          smartSpaceId: spaceId,
-          runId: { in: runningRunIds },
-          role: 'assistant',
-        },
-        orderBy: { seq: 'asc' },
-      });
-      for (const m of toolMsgs) {
-        const meta = m.metadata as Record<string, unknown> | null;
-        const parts = (meta?.uiMessage as any)?.parts as Array<Record<string, unknown>> | undefined;
-        if (!Array.isArray(parts)) continue;
-        for (const p of parts) {
-          const s = p.status as string;
-          if (p.type === 'tool_call' && p.toolCallId && (s === 'streaming' || s === 'running')) {
-            const run = activeRuns.find((r) => r.id === m.runId);
-            streamingToolCalls.push({
-              runId: m.runId || '',
-              callId: p.toolCallId as string,
-              toolName: (p.toolName as string) || 'unknown',
-              args: p.args as unknown,
-              agentEntityId: run?.agentEntityId || '',
-            });
-          }
-        }
-      }
-    }
-
-    // Merge: pendingToolCalls (waiting_tool) + streamingToolCalls (running)
-    const allPendingTools = [...pendingToolCalls, ...streamingToolCalls];
-
-    // Send connected event with active state
-    res.write(`data: ${JSON.stringify({ type: 'connected', activeAgents, pendingToolCalls: allPendingTools })}\n\n`);
-
-    // Subscribe to Redis channel for this space
-    const subscriber = redis.duplicate();
-    await subscriber.subscribe(`smartspace:${spaceId}`);
-
-    subscriber.on('message', (_channel: string, message: string) => {
+    subscriber.on('message', (_ch: string, message: string) => {
       res.write(`data: ${message}\n\n`);
     });
 
-    // Heartbeat to keep connection alive
-    const heartbeat = setInterval(() => {
-      res.write(': heartbeat\n\n');
-    }, 30000);
+    // Keepalive ping every 30s
+    const pingInterval = setInterval(() => {
+      res.write(': ping\n\n');
+    }, 30_000);
 
-    // Cleanup on disconnect
+    // Cleanup on close
     req.on('close', () => {
-      clearInterval(heartbeat);
-      subscriber.unsubscribe();
+      clearInterval(pingInterval);
+      subscriber.unsubscribe(channel).catch(() => {});
       subscriber.disconnect();
     });
   } catch (error) {
@@ -473,30 +300,47 @@ smartSpacesRouter.get('/:smartSpaceId/stream', requireAuth(), requireMembership(
 });
 
 // =============================================================================
-// Space-scoped runs list
+// Read receipts
 // =============================================================================
 
+// PATCH /api/smart-spaces/:smartSpaceId/read — Mark messages as seen
+smartSpacesRouter.patch('/:smartSpaceId/read', requireAuth(), requireMembership(), async (req: Request, res: Response) => {
+  try {
+    const { smartSpaceId } = req.params;
+    const entityId = req.auth?.entityId;
+    const { lastSeenMessageId } = req.body;
+
+    if (!entityId || !lastSeenMessageId) {
+      res.status(400).json({ error: 'lastSeenMessageId is required' });
+      return;
+    }
+
+    await prisma.smartSpaceMembership.update({
+      where: { smartSpaceId_entityId: { smartSpaceId, entityId } },
+      data: { lastSeenMessageId },
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Read receipt error:', error);
+    res.status(500).json({ error: 'Failed to update read receipt' });
+  }
+});
+
+// =============================================================================
+// Space-scoped runs (audit records)
+// =============================================================================
+
+// GET /api/smart-spaces/:smartSpaceId/runs — List runs triggered from this space
 smartSpacesRouter.get('/:smartSpaceId/runs', requireAuth(), requireMembership(), async (req: Request, res: Response) => {
   try {
+    const { smartSpaceId } = req.params;
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+
     const runs = await prisma.run.findMany({
-      where: {
-        OR: [
-          { triggerSpaceId: req.params.smartSpaceId },
-          { activeSpaceId: req.params.smartSpaceId },
-        ],
-      },
+      where: { triggerSpaceId: smartSpaceId },
       orderBy: { createdAt: 'desc' },
-      take: 20,
-      select: {
-        id: true,
-        agentEntityId: true,
-        status: true,
-        triggerType: true,
-        activeSpaceId: true,
-        startedAt: true,
-        completedAt: true,
-        createdAt: true,
-      },
+      take: limit,
     });
 
     res.json({ runs });

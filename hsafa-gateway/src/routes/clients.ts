@@ -1,44 +1,39 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/db.js';
-import { requireAuth, requireSecretKey } from '../middleware/auth.js';
+import { requireSecretKey, requireAuth } from '../middleware/auth.js';
 
 export const clientsRouter = Router();
 
-// POST /api/clients/register — Register a client connection
-clientsRouter.post('/register', requireAuth(), async (req: Request, res: Response) => {
+// POST /api/clients — Register a client
+clientsRouter.post('/', requireAuth(), async (req: Request, res: Response) => {
   try {
-    const { clientKey, clientType, displayName, capabilities } = req.body;
+    let { entityId, clientKey, clientType, displayName, capabilities } = req.body;
 
-    if (!clientKey) {
-      res.status(400).json({ error: 'clientKey is required' });
-      return;
-    }
-
-    // For public_key_jwt auth, force entityId from JWT (anti-impersonation)
-    let entityId = req.body.entityId;
+    // Anti-impersonation: force entityId from JWT for public_key_jwt auth
     if (req.auth?.method === 'public_key_jwt') {
       entityId = req.auth.entityId;
     }
 
-    if (!entityId) {
-      res.status(400).json({ error: 'entityId is required' });
+    if (!entityId || !clientKey) {
+      res.status(400).json({ error: 'entityId and clientKey are required' });
       return;
     }
 
     const client = await prisma.client.upsert({
       where: { clientKey },
-      update: {
-        lastSeenAt: new Date(),
-        clientType: clientType ?? undefined,
-        displayName: displayName ?? undefined,
-        capabilities: capabilities ?? undefined,
-      },
       create: {
         entityId,
         clientKey,
-        clientType,
-        displayName,
+        clientType: clientType ?? undefined,
+        displayName: displayName ?? undefined,
         capabilities: capabilities ?? {},
+        lastSeenAt: new Date(),
+      },
+      update: {
+        lastSeenAt: new Date(),
+        ...(clientType !== undefined && { clientType }),
+        ...(displayName !== undefined && { displayName }),
+        ...(capabilities !== undefined && { capabilities }),
       },
     });
 
@@ -49,12 +44,18 @@ clientsRouter.post('/register', requireAuth(), async (req: Request, res: Respons
   }
 });
 
-// GET /api/clients — List clients (admin only)
-clientsRouter.get('/', requireSecretKey(), async (_req: Request, res: Response) => {
+// GET /api/clients — List clients
+clientsRouter.get('/', requireSecretKey(), async (req: Request, res: Response) => {
   try {
+    const entityId = req.query.entityId as string | undefined;
+    const where: Record<string, unknown> = {};
+    if (entityId) where.entityId = entityId;
+
     const clients = await prisma.client.findMany({
-      orderBy: { createdAt: 'desc' },
+      where,
+      orderBy: { lastSeenAt: 'desc' },
     });
+
     res.json({ clients });
   } catch (error) {
     console.error('List clients error:', error);
@@ -62,10 +63,10 @@ clientsRouter.get('/', requireSecretKey(), async (_req: Request, res: Response) 
   }
 });
 
-// DELETE /api/clients/:clientId — Delete client (admin only)
-clientsRouter.delete('/:clientId', requireSecretKey(), async (req: Request, res: Response) => {
+// DELETE /api/clients/:id — Delete client
+clientsRouter.delete('/:id', requireSecretKey(), async (req: Request, res: Response) => {
   try {
-    await prisma.client.delete({ where: { id: req.params.clientId } });
+    await prisma.client.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (error) {
     console.error('Delete client error:', error);

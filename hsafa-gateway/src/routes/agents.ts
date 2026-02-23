@@ -1,12 +1,13 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
 import { prisma } from '../lib/db.js';
 import { requireSecretKey } from '../middleware/auth.js';
-import { createAndExecuteRun } from '../lib/agent-trigger.js';
+import { pushServiceEvent } from '../lib/inbox.js';
+import { startProcess, stopProcess } from '../lib/process-manager.js';
 
 export const agentsRouter = Router();
 
-// POST /api/agents — Create agent + entity
-agentsRouter.post('/', requireSecretKey(), async (req: Request, res: Response) => {
+// POST /api/agents — Create agent
+agentsRouter.post('/', requireSecretKey(), async (req, res) => {
   try {
     const { name, description, configJson } = req.body;
 
@@ -15,35 +16,23 @@ agentsRouter.post('/', requireSecretKey(), async (req: Request, res: Response) =
       return;
     }
 
-    const existing = await prisma.agent.findUnique({ where: { name } });
-    if (existing) {
-      res.status(409).json({ error: `Agent "${name}" already exists` });
-      return;
-    }
-
-    const agent = await prisma.$transaction(async (tx) => {
-      const a = await tx.agent.create({
-        data: { name, description, configJson },
-      });
-
-      await tx.entity.create({
-        data: {
-          type: 'agent',
-          externalId: `agent:${name}`,
-          displayName: name,
-          agentId: a.id,
-        },
-      });
-
-      return a;
+    const agent = await prisma.agent.create({
+      data: { name, description, configJson },
     });
 
-    const entity = await prisma.entity.findUnique({
-      where: { agentId: agent.id },
-      select: { id: true },
+    // Auto-create an entity for the agent
+    const entity = await prisma.entity.create({
+      data: {
+        type: 'agent',
+        agentId: agent.id,
+        displayName: name,
+      },
     });
 
-    res.status(201).json({ agent: { ...agent, entityId: entity?.id } });
+    // Start agent process
+    await startProcess(agent.id, entity.id, name);
+
+    res.status(201).json({ agent, entityId: entity.id });
   } catch (error) {
     console.error('Create agent error:', error);
     res.status(500).json({ error: 'Failed to create agent' });
@@ -51,11 +40,11 @@ agentsRouter.post('/', requireSecretKey(), async (req: Request, res: Response) =
 });
 
 // GET /api/agents — List agents
-agentsRouter.get('/', requireSecretKey(), async (_req: Request, res: Response) => {
+agentsRouter.get('/', requireSecretKey(), async (req, res) => {
   try {
     const agents = await prisma.agent.findMany({
+      include: { entity: { select: { id: true } } },
       orderBy: { createdAt: 'desc' },
-      include: { entity: { select: { id: true, displayName: true } } },
     });
     res.json({ agents });
   } catch (error) {
@@ -64,19 +53,17 @@ agentsRouter.get('/', requireSecretKey(), async (_req: Request, res: Response) =
   }
 });
 
-// GET /api/agents/:agentId — Get agent
-agentsRouter.get('/:agentId', requireSecretKey(), async (req: Request, res: Response) => {
+// GET /api/agents/:id — Get agent
+agentsRouter.get('/:id', requireSecretKey(), async (req, res) => {
   try {
     const agent = await prisma.agent.findUnique({
-      where: { id: req.params.agentId },
-      include: { entity: { select: { id: true, displayName: true } } },
+      where: { id: req.params.id },
+      include: { entity: { select: { id: true } } },
     });
-
     if (!agent) {
       res.status(404).json({ error: 'Agent not found' });
       return;
     }
-
     res.json({ agent });
   } catch (error) {
     console.error('Get agent error:', error);
@@ -84,19 +71,18 @@ agentsRouter.get('/:agentId', requireSecretKey(), async (req: Request, res: Resp
   }
 });
 
-// PATCH /api/agents/:agentId — Update agent config
-agentsRouter.patch('/:agentId', requireSecretKey(), async (req: Request, res: Response) => {
+// PATCH /api/agents/:id — Update agent
+agentsRouter.patch('/:id', requireSecretKey(), async (req, res) => {
   try {
-    const { description, configJson } = req.body;
-    const data: Record<string, unknown> = {};
-    if (description !== undefined) data.description = description;
-    if (configJson !== undefined) data.configJson = configJson;
-
+    const { name, description, configJson } = req.body;
     const agent = await prisma.agent.update({
-      where: { id: req.params.agentId },
-      data,
+      where: { id: req.params.id },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(description !== undefined && { description }),
+        ...(configJson !== undefined && { configJson }),
+      },
     });
-
     res.json({ agent });
   } catch (error) {
     console.error('Update agent error:', error);
@@ -104,14 +90,19 @@ agentsRouter.patch('/:agentId', requireSecretKey(), async (req: Request, res: Re
   }
 });
 
-// DELETE /api/agents/:agentId — Delete agent + entity
-agentsRouter.delete('/:agentId', requireSecretKey(), async (req: Request, res: Response) => {
+// DELETE /api/agents/:id — Delete agent
+agentsRouter.delete('/:id', requireSecretKey(), async (req, res) => {
   try {
-    await prisma.$transaction(async (tx) => {
-      await tx.entity.deleteMany({ where: { agentId: req.params.agentId } });
-      await tx.agent.delete({ where: { id: req.params.agentId } });
+    const agent = await prisma.agent.findUnique({
+      where: { id: req.params.id },
+      include: { entity: { select: { id: true } } },
     });
 
+    if (agent?.entity) {
+      await stopProcess(agent.entity.id);
+    }
+
+    await prisma.agent.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (error) {
     console.error('Delete agent error:', error);
@@ -120,8 +111,9 @@ agentsRouter.delete('/:agentId', requireSecretKey(), async (req: Request, res: R
 });
 
 // POST /api/agents/:agentId/trigger — Service trigger (external systems)
-agentsRouter.post('/:agentId/trigger', requireSecretKey(), async (req: Request, res: Response) => {
+agentsRouter.post('/:agentId/trigger', requireSecretKey(), async (req, res) => {
   try {
+    const { agentId } = req.params;
     const { serviceName, payload } = req.body;
 
     if (!serviceName) {
@@ -130,7 +122,7 @@ agentsRouter.post('/:agentId/trigger', requireSecretKey(), async (req: Request, 
     }
 
     const agent = await prisma.agent.findUnique({
-      where: { id: req.params.agentId },
+      where: { id: agentId },
       include: { entity: { select: { id: true } } },
     });
 
@@ -139,20 +131,12 @@ agentsRouter.post('/:agentId/trigger', requireSecretKey(), async (req: Request, 
       return;
     }
 
-    const runId = await createAndExecuteRun({
-      agentEntityId: agent.entity.id,
-      agentId: agent.id,
-      triggerType: 'service',
-      triggerServiceName: serviceName,
-      triggerPayload: payload ?? undefined,
-      // No activeSpaceId — agent must call enter_space first
+    await pushServiceEvent(agent.entity.id, {
+      serviceName,
+      payload: payload ?? {},
     });
 
-    res.status(201).json({
-      runId,
-      agentEntityId: agent.entity.id,
-      status: 'queued',
-    });
+    res.json({ success: true, agentEntityId: agent.entity.id });
   } catch (error) {
     console.error('Trigger agent error:', error);
     res.status(500).json({ error: 'Failed to trigger agent' });

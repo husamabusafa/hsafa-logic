@@ -1,9 +1,9 @@
 {
   "name": "@hsafa/gateway",
-  "version": "3.0.0",
+  "version": "2.0.0",
   "type": "module",
   "private": true,
-  "description": "Hsafa Agent Gateway v3 - Living Agent Process, Inbox, Consciousness",
+  "description": "Hsafa Agent Gateway v2 - Stateless runs, space-context, all-agent triggering",
   "scripts": {
     "dev": "tsx watch --env-file=.env src/index.ts",
     "build": "tsc",

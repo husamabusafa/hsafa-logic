@@ -7,7 +7,6 @@ import { clientsRouter } from './routes/clients.js';
 import { runsRouter } from './routes/runs.js';
 import { prisma } from './lib/db.js';
 import { redis } from './lib/redis.js';
-import { startAllProcesses, stopAllProcesses, getProcessCount } from './lib/process-manager.js';
 
 const app = express();
 const server = createServer(app);
@@ -39,16 +38,11 @@ app.use('/api/runs', runsRouter);
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({
-    status: 'ok',
-    service: 'hsafa-gateway',
-    version: '3.0.0',
-    processes: getProcessCount(),
-  });
+  res.json({ status: 'ok', service: 'hsafa-gateway', version: '2.0.0' });
 });
 
 server.listen(PORT, async () => {
-  console.log(`Hsafa Gateway v3 running on http://localhost:${PORT}`);
+  console.log(`Hsafa Gateway v2 running on http://localhost:${PORT}`);
 
   try {
     await prisma.$connect();
@@ -64,36 +58,5 @@ server.listen(PORT, async () => {
     console.error('Redis connection failed:', error);
   }
 
-  // v3: Start all agent processes
-  try {
-    await startAllProcesses();
-  } catch (error) {
-    console.error('Failed to start agent processes:', error);
-  }
+  // TODO: startPlanScheduler() — will be implemented with plans feature
 });
-
-// Graceful shutdown
-const shutdown = async () => {
-  console.log('\nShutting down...');
-
-  try {
-    await stopAllProcesses();
-  } catch (error) {
-    console.error('Error stopping processes:', error);
-  }
-
-  server.close(() => {
-    prisma.$disconnect();
-    redis.disconnect();
-    process.exit(0);
-  });
-
-  // Force exit after 15s
-  setTimeout(() => {
-    console.error('Forced shutdown after timeout');
-    process.exit(1);
-  }, 15_000);
-};
-
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);

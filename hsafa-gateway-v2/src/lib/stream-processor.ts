@@ -25,7 +25,7 @@ export interface StreamProcessorOptions {
   agentEntityId: string;
   /**
    * Returns the current active spaceId. Called per event so that if
-   * `enter_space` is executed mid-cycle the correct space gets the events.
+   * `enter_space` is executed mid-run the correct space gets the events.
    */
   getActiveSpaceId: () => string | null;
   /**
@@ -36,7 +36,7 @@ export interface StreamProcessorOptions {
   visibleTools: Set<string>;
   /**
    * Set of tool names that are client-side (space/external executionType).
-   * These have no execute function — the cycle pauses for user input.
+   * These have no execute function — the run pauses for user input.
    */
   clientTools: Set<string>;
 }
@@ -51,9 +51,13 @@ export interface CollectedToolCall {
 export interface StreamResult {
   /** All tool calls the LLM made in this generation step */
   toolCalls: CollectedToolCall[];
-  /** LLM finish reason */
+  /** LLM finish reason: 'tool-calls' | 'stop' | 'length' | 'content-filter' | 'error' */
   finishReason: string;
-  /** Agent's internal text output (never streamed — collected for debug) */
+  /**
+   * Agent's internal text output.
+   * In v2 this is NEVER streamed — it's internal planning/reasoning.
+   * Collected here for debug logging only.
+   */
   internalText: string;
 }
 
@@ -86,7 +90,7 @@ interface ActiveToolStream {
  *  - Emits Hsafa-native SSE events to the appropriate Redis channels
  *  - Extracts `text` from `send_message` partial JSON and streams it as
  *    `space.message.streaming` deltas (so the UI shows real-time typing)
- *  - Collects all tool calls for the process loop
+ *  - Collects all tool calls for the run-runner to execute
  *
  * Event naming convention (Hsafa-native):
  *
@@ -96,6 +100,9 @@ interface ActiveToolStream {
  *  tool.streaming           — partial args for a visible custom tool
  *  tool.done                — a tool call completed (result available)
  *  tool.error               — a tool call failed
+ *
+ * The run.started / run.completed / run.failed / agent.active / agent.inactive
+ * events are emitted by the run-runner, not here.
  */
 export async function processStream(
   fullStream: AsyncIterable<any>,
@@ -110,10 +117,12 @@ export async function processStream(
 
   // ── Redis emit helpers ────────────────────────────────────────────────────
 
+  /** Publish to a space channel (visible events only) */
   const toSpace = async (spaceId: string, payload: Record<string, unknown>) => {
     await emitSmartSpaceEvent(spaceId, payload as { type: string } & Record<string, unknown>);
   };
 
+  /** Publish to the run channel (all tool events, for node-sdk consumers) */
   const toRun = async (payload: Record<string, unknown>) => {
     await emitRunEvent(runId, payload as { type: string } & Record<string, unknown>);
   };
@@ -137,6 +146,7 @@ export async function processStream(
 
       // ── Tool call begins — args will follow as deltas ────────────────────
       case 'tool-input-start': {
+        // fullStream (TextStreamPart) uses .id, not .toolCallId
         const toolCallId = (part.id ?? part.toolCallId) as string;
         const toolName = part.toolName as string;
         const spaceId = getActiveSpaceId();
@@ -154,6 +164,7 @@ export async function processStream(
 
         if (isVisible && spaceId) {
           if (isSendMessage) {
+            // Signal the start of a new streaming message to the UI
             await toSpace(spaceId, {
               type: 'space.message.streaming',
               streamId: toolCallId,
@@ -173,6 +184,7 @@ export async function processStream(
           }
         }
 
+        // All tool starts go to the run channel for programmatic consumers
         await toRun({
           type: 'tool.started',
           streamId: toolCallId,
@@ -186,6 +198,7 @@ export async function processStream(
 
       // ── Partial args arriving ────────────────────────────────────────────
       case 'tool-input-delta': {
+        // fullStream (TextStreamPart) uses .id and .delta
         const toolCallId = (part.id ?? part.toolCallId) as string;
         const delta = ((part.delta ?? part.inputTextDelta) as string) ?? '';
         const tool = active.get(toolCallId);
@@ -195,6 +208,7 @@ export async function processStream(
         if (!tool.isVisible || !tool.spaceId) break;
 
         if (tool.isSendMessage) {
+          // Extract the growing `text` field from partial JSON and emit deltas
           try {
             const parsed = parsePartialJson(tool.argsText) as Record<string, unknown> | null;
             if (parsed && typeof parsed.text === 'string') {
@@ -214,9 +228,10 @@ export async function processStream(
               }
             }
           } catch {
-            // Partial JSON not yet parseable
+            // Partial JSON not yet parseable — skip
           }
         } else {
+          // Visible custom tool: stream the partial args object
           try {
             const partialArgs = parsePartialJson(tool.argsText);
             if (partialArgs !== undefined) {
@@ -245,6 +260,7 @@ export async function processStream(
 
         toolCalls.push({ toolCallId, toolName, args });
 
+        // For visible non-send_message tools, emit final args to the space
         if (tool?.isVisible && tool.spaceId && !tool.isSendMessage) {
           await toSpace(tool.spaceId, {
             type: 'tool.streaming',
@@ -255,7 +271,9 @@ export async function processStream(
             partialArgs: args,
           });
 
-          // Persist the tool call message
+          // ── Persist the tool call message with final args ────────────────
+          // Client tools (space/external) pause the run → requires_action.
+          // Server tools (gateway/internal) execute immediately → running.
           const isClientTool = clientTools.has(toolName);
           const finalStatus: ToolCallStatus = isClientTool ? 'requires_action' : 'running';
           try {
@@ -273,6 +291,7 @@ export async function processStream(
             });
             tool.messageId = dbMsg.id;
 
+            // Emit space.message so frontend gets the persisted version
             await toSpace(tool.spaceId, {
               type: 'space.message',
               streamId: toolCallId,
@@ -287,6 +306,7 @@ export async function processStream(
           }
         }
 
+        // Notify run channel that args are fully available
         await toRun({
           type: 'tool.ready',
           streamId: toolCallId,
@@ -307,6 +327,8 @@ export async function processStream(
 
         if (tool?.isVisible && tool.spaceId) {
           if (tool.isSendMessage) {
+            // Signal end of streaming — the send_message prebuilt tool will
+            // separately emit space.message (persisted) with the full content
             await toSpace(tool.spaceId, {
               type: 'space.message.streaming',
               streamId: toolCallId,
@@ -324,6 +346,7 @@ export async function processStream(
               result,
             });
 
+            // ── Update the persisted tool message with the result ──────
             if (tool.messageId) {
               const completedArgs = toolCalls.find((tc) => tc.toolCallId === toolCallId)?.args ?? null;
               const completeMeta = buildToolCallMessageMeta({
@@ -336,6 +359,7 @@ export async function processStream(
                   where: { id: tool.messageId },
                   data: { content: completeContent, metadata: completeMeta as any },
                 });
+                // Re-emit space.message so frontend updates the persisted message
                 await toSpace(tool.spaceId, {
                   type: 'space.message',
                   streamId: toolCallId,
@@ -384,6 +408,7 @@ export async function processStream(
 
         finishReason = 'error';
 
+        // Emit error for every tool call that was mid-stream
         for (const [toolCallId, tool] of active) {
           if (tool.isVisible && tool.spaceId) {
             await toSpace(tool.spaceId, {

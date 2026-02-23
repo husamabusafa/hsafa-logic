@@ -151,7 +151,8 @@ SecurityBot wakes:
 
 DevOps wakes:
   → Reads context. Design discussion, not ops yet.
-  → Silence (no send_message).
+  → skip({ reason: "Architecture design discussion, not ops" })
+  → SDK stops at step 0. Cycle rolled back, consciousness unchanged.
 
 Architect's message → pushes to SecurityBot + DevOps inboxes
 SecurityBot's message → pushes to Architect + DevOps inboxes
@@ -161,11 +162,11 @@ SecurityBot wakes (from Architect's message):
   → send_message("OAuth2 is good. Add PKCE for public clients.")
 
 DevOps wakes (from both messages):
-  → Consciousness has: full discussion so far
+  → Now there are implementation details it CAN act on
   → send_message("I can set up Keycloak. ETA: 2 days.")
 ```
 
-Each agent independently processes inbox events and contributes when relevant. Their consciousness tracks the evolving discussion.
+Each agent independently processes inbox events and contributes when relevant. Agents that have nothing to add call `skip()` — the SDK stops immediately and the cycle is fully rolled back (no consciousness update, no run record, no cost beyond the skip decision). See [Think Cycle — Skip Cycle](04-think-cycle.md#skip-cycle--skip-tool) for details.
 
 ### Pattern 4: Batched Events (v3 Advantage)
 
@@ -222,14 +223,19 @@ Even if the original cycle has been compacted out of consciousness, the memories
 
 ## Deciding When to Respond
 
-Agents don't always need to respond. The system prompt instructs:
+Agents don't always need to respond. In multi-entity spaces, the agent will receive inbox events for **every** message — most of which are not directed at it. The system prompt instructs:
 
 ```
-If you have nothing to contribute after reading an inbox event, do nothing.
-Silence is the default — only send a message when you have something useful to add.
-```
+In multi-entity spaces, you will receive many messages that are not directed at you
+and are better handled by another agent or human in the space.
 
-This is the same as v2: no `skipResponse` tool needed. The agent simply ends the cycle without calling `send_message`.
+If after reading the inbox events you determine:
+  - The message is not addressed to you (by name, role, or context)
+  - Another agent or human is better suited to respond
+  - You have nothing useful to contribute
+
+Call the skip() tool immediately. Do NOT send any messages first.
+```
 
 ### How the Agent Decides
 
@@ -239,7 +245,15 @@ The agent reads the inbox events and reasons:
 - Has this already been handled? (Check consciousness for prior responses)
 - Is another agent better suited? (Check space members in system prompt)
 
-If the answer is "no useful contribution," the agent produces only internal reasoning text and the cycle ends.
+If the answer is "no useful contribution," the agent calls `skip()`.
+
+### `skip()` = Full Rollback
+
+The `skip` tool has **no `execute` function**, so the SDK stops the loop immediately at step 0. The gateway then detects the `skip` tool call structurally (no text parsing) and **erases the entire cycle** — no consciousness update, no run record, no cycle count increment, no compaction. From the agent's perspective, the skip never happened. This prevents irrelevant events from polluting consciousness with noise.
+
+This is different from v2's "silence" (where the agent ended the cycle without sending a message but still consumed a full run). In v3, a skip is virtually free (~20 output tokens for the tool call) and leaves zero trace.
+
+See [Think Cycle — Skip Cycle](04-think-cycle.md#skip-cycle--skip-tool) for the full implementation.
 
 ---
 

@@ -1,261 +1,200 @@
-// =============================================================================
-// Agent Builder
-// =============================================================================
-// Reads an agent's configJson and produces everything needed to call the LLM:
-//  - Resolved AI SDK model instance
-//  - All tools (prebuilt + custom) ready for streamText()
-//  - Set of visible tool names (for stream-processor routing)
-
-import { tool } from 'ai';
-import { openai } from '@ai-sdk/openai';
-import { anthropic } from '@ai-sdk/anthropic';
-import { google } from '@ai-sdk/google';
-import { xai } from '@ai-sdk/xai';
+import { createOpenAI } from '@ai-sdk/openai';
+import { createAnthropic } from '@ai-sdk/anthropic';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createXai } from '@ai-sdk/xai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { z } from 'zod';
-import { jsonSchema } from 'ai';
-import { prisma } from '../lib/db.js';
-import { AgentConfigSchema, type RunContext, type BuiltAgent } from './types.js';
-import { initPrebuiltTools, getPrebuiltTools } from './prebuilt-tools/registry.js';
+import { tool, jsonSchema } from 'ai';
+import {
+  AgentConfigSchema,
+  type AgentConfig,
+  type AgentProcessContext,
+  type BuiltAgent,
+  type ToolConfig,
+} from './types.js';
 
 // =============================================================================
-// Provider resolution
+// Agent Builder (v3)
+//
+// Resolves the LLM model, builds custom tools from configJson, and returns
+// a BuiltAgent ready for streamText(). Prebuilt tools are injected separately
+// by the agent process when building the full tools object.
 // =============================================================================
-
-/** Default model used if provider config is missing or unknown */
-const DEFAULT_MODEL = 'gpt-4o-mini';
-const DEFAULT_PROVIDER = 'openai';
 
 /**
- * Resolve an AI SDK model instance from the agent's model config.
- * Model names come from the DB — never hardcoded here.
+ * Build an agent from its config JSON and process context.
+ * Returns the model, tools, and metadata needed for streamText().
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function resolveModel(providerName: string, modelName: string): any {
-  switch (providerName.toLowerCase()) {
-    case 'openai':
-      return openai(modelName);
-    case 'anthropic':
-      return anthropic(modelName);
-    case 'google':
-      return google(modelName);
-    case 'xai':
-      return xai(modelName);
-    case 'openrouter': {
-      const router = createOpenRouter({
-        apiKey: process.env.OPENROUTER_API_KEY ?? '',
+export async function buildAgent(
+  rawConfig: unknown,
+  context: AgentProcessContext,
+): Promise<BuiltAgent> {
+  // Parse and validate config
+  const config = AgentConfigSchema.parse(rawConfig);
+
+  // Resolve LLM model
+  const model = resolveModel(config);
+
+  // Build custom tools from config
+  const { tools, visibleToolNames, clientToolNames } = buildCustomTools(
+    config.tools ?? [],
+    context,
+  );
+
+  return {
+    tools,
+    visibleToolNames,
+    clientToolNames,
+    model,
+  };
+}
+
+// =============================================================================
+// Model Resolution
+// =============================================================================
+
+function resolveModel(config: AgentConfig): unknown {
+  const { provider, model: modelName } = config.model;
+
+  // In AI SDK v6, model constructors take 1 arg (model ID).
+  // temperature, maxTokens, etc. go on the streamText() call.
+  switch (provider) {
+    case 'openai': {
+      const openai = createOpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
       });
-      return router(modelName);
+      return openai(modelName);
+    }
+    case 'anthropic': {
+      const anthropic = createAnthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY,
+      });
+      return anthropic(modelName);
+    }
+    case 'google': {
+      const google = createGoogleGenerativeAI({
+        apiKey: process.env.GOOGLE_API_KEY,
+      });
+      return google(modelName);
+    }
+    case 'xai': {
+      const xai = createXai({
+        apiKey: process.env.XAI_API_KEY,
+      });
+      return xai(modelName);
+    }
+    case 'openrouter': {
+      const openrouter = createOpenRouter({
+        apiKey: process.env.OPENROUTER_API_KEY,
+      });
+      return openrouter(modelName);
     }
     default:
-      console.warn(
-        `[builder] Unknown provider "${providerName}", falling back to ${DEFAULT_PROVIDER}/${DEFAULT_MODEL}`,
-      );
-      return openai(DEFAULT_MODEL);
+      throw new Error(`Unknown model provider: ${provider}`);
   }
 }
 
 // =============================================================================
-// Custom tool builder
+// Custom Tool Building
 // =============================================================================
 
-/**
- * Convert one custom ToolConfig from agent configJson into an AI SDK tool.
- * executionType determines whether the tool has an execute function:
- *  - gateway  → server-side HTTP request
- *  - internal → no-op / static output
- *  - external / space → no execute (run pauses at waiting_tool — handled by run-runner)
- *
- * Uses 'any' throughout because tool schemas come from JSON config at runtime
- * and AI SDK's tool() generic constraints don't accommodate dynamic schema objects.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildCustomTool(toolConfig: any, context: RunContext): any {
-  const { name, description, inputSchema, executionType, execution } = toolConfig;
-
-  // Build the input schema — config uses raw JSON Schema objects
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const schema = jsonSchema(inputSchema as any);
-
-  // For gateway tools: execute via HTTP or compute
-  if (executionType === 'gateway' && execution) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return tool({
-      description: String(description),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      inputSchema: schema as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      execute: async (input: any) => {
-        const result = await executeGatewayTool(String(name), execution, input, context);
-        context.actionLog.add({
-          action: 'tool_call',
-          toolName: String(name),
-          toolArgs: input as Record<string, unknown>,
-          toolResult: result,
-        });
-        return result;
-      },
-    });
-  }
-
-  // For internal tools: static output or no-op
-  if (executionType === 'internal') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const staticOutput = (execution as any)?.output ?? { status: 'ok' };
-    return tool({
-      description: String(description),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      inputSchema: schema as any,
-      execute: async (input: any) => {
-        context.actionLog.add({
-          action: 'tool_call',
-          toolName: String(name),
-          toolArgs: input as Record<string, unknown>,
-          toolResult: staticOutput,
-        });
-        return staticOutput;
-      },
-    });
-  }
-
-  // For external / space tools: no execute — run-runner handles waiting_tool
-  return tool({
-    description: String(description),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    inputSchema: schema as any,
-    // No execute → AI SDK emits tool-call but does not execute it server-side.
-    // run-runner detects pending tool calls and transitions run to waiting_tool.
-  });
+interface CustomToolsResult {
+  tools: Record<string, unknown>;
+  visibleToolNames: Set<string>;
+  clientToolNames: Set<string>;
 }
 
-// =============================================================================
-// Gateway tool execution (HTTP)
-// =============================================================================
-
-async function executeGatewayTool(
-  toolName: string,
-  execution: Record<string, unknown>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  input: any,
-  _context: RunContext,
-): Promise<unknown> {
-  const url = execution.url as string | undefined;
-  const method = (execution.method as string | undefined) ?? 'POST';
-  const timeout = (execution.timeout as number | undefined) ?? 30_000;
-
-  if (!url) {
-    return { error: `Tool "${toolName}" has no execution URL configured.` };
-  }
-
-  // Template variable substitution: {{input.field}}
-  const resolvedUrl = url.replace(/\{\{input\.(\w+)\}\}/g, (_, key) => {
-    const val = input[key];
-    return val !== undefined ? String(val) : '';
-  });
-
-  // Build headers — substitute ${env.VAR} references
-  const rawHeaders = (execution.headers as Record<string, string> | undefined) ?? {};
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  for (const [k, v] of Object.entries(rawHeaders)) {
-    headers[k] = v.replace(/\$\{env\.(\w+)\}/g, (_, envVar) => process.env[envVar] ?? '');
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-  try {
-    const response = await fetch(resolvedUrl, {
-      method,
-      headers,
-      ...(method !== 'GET' ? { body: JSON.stringify(input) } : {}),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      return { error: `HTTP ${response.status}: ${response.statusText}` };
-    }
-
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('application/json')) {
-      return await response.json();
-    }
-    return { result: await response.text() };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    const msg = err instanceof Error ? err.message : String(err);
-    return { error: `Tool "${toolName}" request failed: ${msg}` };
-  }
-}
-
-// =============================================================================
-// buildAgent — main export
-// =============================================================================
-
-/**
- * Build all agent artifacts from a Run record.
- * Fetches the agent config from DB, resolves the LLM model, constructs all tools.
- *
- * @param runId — ID of the Run being executed
- * @param context — RunContext with closures for activeSpaceId
- */
-export async function buildAgent(runId: string, context: RunContext): Promise<BuiltAgent> {
-  // 1. Load agent from DB
-  const run = await prisma.run.findUniqueOrThrow({
-    where: { id: runId },
-    include: { agent: { select: { configJson: true } } },
-  });
-
-  // 2. Parse + validate config — fall back to raw cast if validation fails
-  const parseResult = AgentConfigSchema.safeParse(run.agent.configJson);
-  if (!parseResult.success) {
-    console.warn(
-      `[builder] Agent config validation issues for run ${runId}:`,
-      parseResult.error.issues.map((i) => i.message).join('; '),
-    );
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const config: import('./types.js').AgentConfig = parseResult.success
-    ? parseResult.data
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    : (run.agent.configJson as any);
-
-  // 3. Resolve LLM model
-  const providerName = config.model?.provider ?? DEFAULT_PROVIDER;
-  const modelName = config.model?.model ?? DEFAULT_MODEL;
-  const model = resolveModel(providerName, modelName);
-
-  // 4. Init prebuilt tools (idempotent) and bind to context
-  await initPrebuiltTools();
-  const prebuiltTools = getPrebuiltTools(context);
-
-  // 5. Build custom tools from config
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const customToolConfigs: any[] = config.tools ?? [];
-  const customTools: Record<string, ReturnType<typeof tool>> = {};
+function buildCustomTools(
+  toolConfigs: ToolConfig[],
+  context: AgentProcessContext,
+): CustomToolsResult {
+  const tools: Record<string, unknown> = {};
   const visibleToolNames = new Set<string>();
   const clientToolNames = new Set<string>();
 
-  for (const toolConfig of customToolConfigs) {
-    const builtTool = buildCustomTool(toolConfig, context);
-    customTools[toolConfig.name as string] = builtTool;
+  for (const tc of toolConfigs) {
+    const isVisible = tc.visible ?? (tc.executionType !== 'internal');
+    if (isVisible) visibleToolNames.add(tc.name);
 
-    // Determine visibility — default true for gateway/external/space, false for internal
-    const defaultVisible = toolConfig.executionType !== 'internal';
-    const isVisible = toolConfig.visible !== undefined ? toolConfig.visible : defaultVisible;
-    if (isVisible) {
-      visibleToolNames.add(toolConfig.name as string);
-    }
+    // Tools without server-side execution (space/external) become client tools
+    const isClientTool = tc.executionType === 'space' || tc.executionType === 'external';
+    if (isClientTool) clientToolNames.add(tc.name);
 
-    // Track tools without execute (external/space) — these trigger waiting_tool
-    if (toolConfig.executionType === 'external' || toolConfig.executionType === 'space') {
-      clientToolNames.add(toolConfig.name as string);
+    // Use the tool's own JSON Schema from configJson, falling back to open object
+    const schema = (Object.keys(tc.inputSchema).length > 0)
+      ? tc.inputSchema
+      : { type: 'object' as const, properties: {} };
+
+    const inputSchema = jsonSchema<Record<string, unknown>>(schema as any);
+
+    if (isClientTool) {
+      // Client tools: no execute — SDK stops the loop, cycle enters waiting_tool
+      tools[tc.name] = { description: tc.description, inputSchema };
+    } else {
+      // Server tools: use tool() helper for type-safe execute inference
+      tools[tc.name] = tool({
+        description: tc.description,
+        inputSchema,
+        execute: async (args) => {
+          return executeGatewayTool(tc, args as Record<string, unknown>, context);
+        },
+      });
     }
   }
 
-  // 6. Merge prebuilt + custom (custom can override prebuilt names if needed)
-  const tools = { ...prebuiltTools, ...customTools };
+  return { tools, visibleToolNames, clientToolNames };
+}
 
-  return { tools, visibleToolNames, clientToolNames, model };
+// =============================================================================
+// Gateway Tool Execution
+// =============================================================================
+
+async function executeGatewayTool(
+  config: ToolConfig,
+  args: Record<string, unknown>,
+  _context: AgentProcessContext,
+): Promise<unknown> {
+  const exec = config.execution ?? {};
+
+  switch (config.executionType) {
+    case 'gateway': {
+      // HTTP request tool
+      const url = exec.url as string;
+      const method = (exec.method as string) ?? 'POST';
+      const headers = (exec.headers as Record<string, string>) ?? {};
+      const timeout = (exec.timeout as number) ?? 30_000;
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+
+      try {
+        const response = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: method !== 'GET' ? JSON.stringify(args) : undefined,
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+
+        if (!response.ok) {
+          return { error: `HTTP ${response.status}: ${response.statusText}` };
+        }
+
+        const data = await response.json();
+        return data;
+      } catch (err) {
+        clearTimeout(timer);
+        return {
+          error: err instanceof Error ? err.message : 'Gateway tool execution failed',
+        };
+      }
+    }
+
+    case 'internal': {
+      // Internal tools return a static/computed result
+      return { success: true, args };
+    }
+
+    default:
+      return { error: `Unsupported execution type: ${config.executionType}` };
+  }
 }

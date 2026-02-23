@@ -355,6 +355,136 @@ await saveConsciousness(agentId, consciousness);
 
 ---
 
+## Skip Cycle — `skip` Tool
+
+In multi-entity spaces, an agent will receive inbox events for **every** message posted — including messages from other agents, messages addressed to other people, and conversations that have nothing to do with it. Most of the time, another agent or human is the right responder.
+
+### The `skip` Prebuilt Tool
+
+Instead of parsing text output (fragile, ambiguous), the agent calls a **`skip` tool** — a structured, deterministic signal:
+
+```typescript
+// Prebuilt tool — no execute function
+skip: {
+  description: 'Call this when the inbox events are not relevant to you and another agent or human will handle them. This skips the cycle entirely — no messages will be sent, no tools will run.',
+  inputSchema: jsonSchema<{ reason?: string }>({
+    type: 'object',
+    properties: {
+      reason: {
+        type: 'string',
+        description: 'Brief reason for skipping (internal log only, not shown to users)'
+      }
+    }
+  }),
+  // No execute — SDK stops the loop immediately at step 0
+}
+```
+
+Because `skip` has **no `execute` function**, the SDK stops the loop immediately — the cycle ends at step 0 with zero further processing. This is the same mechanism used for interactive client tools, but repurposed for cycle control.
+
+### System Prompt Instruction
+
+```
+In multi-entity spaces, you will receive many messages that are not directed at you
+and are better handled by another agent or human in the space.
+
+If after reading the inbox events you determine:
+  - The message is not addressed to you (by name, role, or context)
+  - Another agent or human is better suited to respond
+  - You have nothing useful to contribute
+
+Call the skip() tool immediately. Do NOT send any messages first.
+```
+
+### Detection and Rollback
+
+The gateway detects the `skip` tool call structurally (no text parsing) and **rolls back the entire cycle**:
+
+```typescript
+// After streamText completes
+const response = await result.response;
+const lastMsg = response.messages.at(-1);
+const isSkip = lastMsg?.role === 'assistant'
+  && Array.isArray(lastMsg.content)
+  && lastMsg.content.some(p => p.type === 'tool-call' && p.toolName === 'skip');
+
+if (isSkip) {
+  // 1. Do NOT append new messages to consciousness
+  // 2. Do NOT save consciousness (keep it unchanged)
+  // 3. Delete the run audit record
+  await prisma.run.delete({ where: { id: run.id } });
+
+  // 4. No cycle count increment
+  // 5. No compaction
+  // 6. No summary generation
+  // 7. Go directly back to sleep
+
+  const reason = lastMsg.content.find(p => p.type === 'tool-call' && p.toolName === 'skip')?.args?.reason;
+  console.log(`[agent-process] ${agentName} skipped cycle: ${reason || 'irrelevant'}`);
+  continue; // back to waitForInbox()
+}
+
+// Normal path: append to consciousness, save, compact, etc.
+```
+
+### Why a Tool Instead of Text?
+
+| | `[SKIP]` text | `skip()` tool |
+|---|---|---|
+| **Detection** | Regex/string matching (fragile) | Structured tool call (deterministic) |
+| **Short-circuit** | Model runs full generation | SDK stops at step 0 (no execute) |
+| **Ambiguity** | `[SKIP]`, `[skip]`, `SKIP`, `[SKIP] not for me`... | Exact: `toolName === 'skip'` |
+| **Cost** | Full response generation | ~20 tokens for tool call |
+| **Consistency** | Special-case text parsing | Same pattern as all other tools |
+
+### Why Full Rollback?
+
+The skip must be **completely invisible** to the agent's consciousness:
+
+- **No new messages** — the agent shouldn't "remember" reading and deciding to skip. That would pollute consciousness with irrelevant noise and waste token budget on compaction.
+- **No run record** — billing/audit shouldn't count a skip as a real cycle. The agent did nothing.
+- **No cycle count increment** — compaction thresholds shouldn't be affected by skips.
+- **No summary** — there's nothing to summarize.
+
+From the agent's perspective, the skip never happened. Next time it wakes, consciousness is exactly as it was before.
+
+### Cost Optimization
+
+Skip cycles are extremely cheap — the model reads the inbox events, decides they're irrelevant, and calls `skip()` at step 0. The SDK stops immediately. Typically:
+- ~500-1000 input tokens (system prompt + inbox events)
+- ~20 output tokens (tool call)
+- No further steps, no tool execution, no streaming, no persistence
+
+For an agent in a busy 10-person space where only 20% of messages are relevant, this saves ~80% of full cycle costs.
+
+### Example
+
+```
+Space "Engineering" — Husam, Ahmad, FrontendBot (agent), BackendBot (agent), DevOpsBot (agent)
+
+Ahmad: "Hey FrontendBot, can you check the CSS on the login page?"
+→ Pushes to FrontendBot, BackendBot, DevOpsBot inboxes
+
+FrontendBot wakes:
+  INBOX: [Engineering] Ahmad: "Hey FrontendBot, can you check the CSS on the login page?"
+  → Addressed to me. Respond normally.
+  → enter_space → send_message("Sure, checking now...")
+
+BackendBot wakes:
+  INBOX: [Engineering] Ahmad: "Hey FrontendBot, can you check the CSS on the login page?"
+  → Not for me. FrontendBot will handle this.
+  → skip({ reason: "CSS question addressed to FrontendBot" })
+  → SDK stops at step 0. Cycle rolled back. Consciousness unchanged.
+
+DevOpsBot wakes:
+  INBOX: [Engineering] Ahmad: "Hey FrontendBot, can you check the CSS on the login page?"
+  → Not for me. CSS issue, not ops.
+  → skip({ reason: "Frontend CSS issue, not ops-related" })
+  → SDK stops at step 0. Cycle rolled back. Consciousness unchanged.
+```
+
+---
+
 ## Telemetry
 
 Every cycle is traced via OpenTelemetry:

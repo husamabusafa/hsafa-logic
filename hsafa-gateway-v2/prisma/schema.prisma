@@ -18,10 +18,20 @@ enum EntityType {
 }
 
 enum RunStatus {
+  queued
   running
-  waiting_tool // Interactive space tools only (forms, approvals)
+  waiting_tool   // Only for interactive UI tools (forms, approvals). No waiting_reply — runs are stateless.
   completed
   failed
+  canceled
+}
+
+enum ToolCallStatus {
+  requested
+  dispatched
+  completed
+  failed
+  expired
 }
 
 enum PlanStatus {
@@ -32,7 +42,7 @@ enum PlanStatus {
 }
 
 // =============================================================================
-// ENTITY — Unified identity (Human or Agent)
+// ENTITY - Unified identity (Human or Agent)
 // =============================================================================
 
 model Entity {
@@ -44,7 +54,7 @@ model Entity {
   createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  // For Agent Entities — link to agent config
+  // For Agent Entities - link to agent config
   agentId String? @unique @map("agent_id") @db.Uuid
   agent   Agent?  @relation(fields: [agentId], references: [id])
 
@@ -56,7 +66,6 @@ model Entity {
   memories              Memory[]
   plans                 Plan[]
   goals                 Goal[]
-  consciousness         AgentConsciousness?
 
   @@index([type])
   @@index([externalId])
@@ -64,7 +73,8 @@ model Entity {
 }
 
 // =============================================================================
-// SMART SPACE — Shared context space (timeline of events/messages)
+// SMART SPACE - Shared context space (timeline of events/messages)
+// v2: No adminAgentEntityId. All agents are equal.
 // =============================================================================
 
 model SmartSpace {
@@ -84,8 +94,7 @@ model SmartSpace {
 
 // =============================================================================
 // SMART SPACE MEMBERSHIP
-// v3: Removed lastProcessedMessageId (consciousness tracks everything).
-//     Kept lastSeenMessageId for human unread indicators.
+// v2: Added lastProcessedMessageId (agents) and lastSeenMessageId (humans)
 // =============================================================================
 
 model SmartSpaceMembership {
@@ -95,8 +104,9 @@ model SmartSpaceMembership {
   role         String?
   joinedAt     DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
 
-  // For humans: last message seen in the UI (unread badges)
-  lastSeenMessageId String? @map("last_seen_message_id") @db.Uuid
+  // v2: Read-state tracking
+  lastProcessedMessageId String? @map("last_processed_message_id") @db.Uuid // For agents: last message processed in a run
+  lastSeenMessageId      String? @map("last_seen_message_id") @db.Uuid      // For humans: last message seen in the UI
 
   smartSpace SmartSpace @relation(fields: [smartSpaceId], references: [id], onDelete: Cascade)
   entity     Entity     @relation(fields: [entityId], references: [id], onDelete: Cascade)
@@ -107,7 +117,7 @@ model SmartSpaceMembership {
 }
 
 // =============================================================================
-// SMART SPACE MESSAGE — Messages/events in a SmartSpace
+// SMART SPACE MESSAGE - Messages/events in a SmartSpace
 // =============================================================================
 
 model SmartSpaceMessage {
@@ -123,7 +133,7 @@ model SmartSpaceMessage {
   smartSpace SmartSpace @relation(fields: [smartSpaceId], references: [id], onDelete: Cascade)
   entity     Entity     @relation(fields: [entityId], references: [id])
 
-  // If this message was produced during a think cycle
+  // If this message was produced by a Run
   runId String? @map("run_id") @db.Uuid
   run   Run?    @relation(fields: [runId], references: [id])
 
@@ -134,7 +144,7 @@ model SmartSpaceMessage {
 }
 
 // =============================================================================
-// AGENT — Agent configuration (separate from Entity identity)
+// AGENT - Agent configuration (separate from Entity identity)
 // =============================================================================
 
 model Agent {
@@ -154,56 +164,38 @@ model Agent {
 }
 
 // =============================================================================
-// AGENT CONSCIOUSNESS — Persistent ModelMessage[] across think cycles
-// v3 NEW: The agent's continuous memory carried forward across cycles.
-// =============================================================================
-
-model AgentConsciousness {
-  id            String   @id @default(uuid()) @db.Uuid
-  agentEntityId String   @unique @map("agent_entity_id") @db.Uuid
-  messages      Json     @db.JsonB // ModelMessage[] serialized as JSON
-  cycleCount    Int      @default(0) @map("cycle_count")
-  tokenEstimate Int      @default(0) @map("token_estimate")
-  lastCycleAt   DateTime @default(now()) @map("last_cycle_at") @db.Timestamptz(6)
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  entity Entity @relation(fields: [agentEntityId], references: [id])
-
-  @@map("agent_consciousness")
-}
-
-// =============================================================================
-// RUN — Think cycle audit record
-// v3: Simplified. No activeSpaceId. No queued/canceled status.
-//     Added cycle metrics (cycleNumber, stepCount, tokens, duration).
+// RUN - One execution of an Agent
+// v2: Added activeSpaceId (set by enter_space). Runs are general-purpose.
+//     No waiting_reply. triggerMentionReason removed (no mentions in v2).
 // =============================================================================
 
 model Run {
   id            String    @id @default(uuid()) @db.Uuid
   agentEntityId String    @map("agent_entity_id") @db.Uuid
   agentId       String    @map("agent_id") @db.Uuid
-  status        RunStatus @default(running)
+  triggeredById String?   @map("triggered_by_id") @db.Uuid
+  status        RunStatus
+  startedAt     DateTime? @map("started_at") @db.Timestamptz(6)
+  completedAt   DateTime? @map("completed_at") @db.Timestamptz(6)
+  errorMessage  String?   @map("error_message")
+  metadata      Json?     @db.JsonB
 
-  // v3: Cycle metadata
-  cycleNumber      Int @default(0) @map("cycle_number")
-  inboxEventCount  Int @default(0) @map("inbox_event_count")
-  stepCount        Int @default(0) @map("step_count")
-  promptTokens     Int @default(0) @map("prompt_tokens")
-  completionTokens Int @default(0) @map("completion_tokens")
-  durationMs       Int @default(0) @map("duration_ms")
+  // v2: Active space context (set by enter_space tool, not a FK)
+  activeSpaceId String? @map("active_space_id") @db.Uuid
 
-  // Trigger context (from inbox event)
-  triggerType      String? @map("trigger_type") // 'space_message' | 'plan' | 'service'
-  triggerSpaceId   String? @map("trigger_space_id") @db.Uuid
-  triggerEntityId  String? @map("trigger_entity_id") @db.Uuid
-  triggerMessageId String? @map("trigger_message_id") @db.Uuid
-  triggerPayload   Json?   @map("trigger_payload") @db.JsonB
-
-  startedAt   DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
-  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
-  errorMessage String?  @map("error_message")
-  metadata     Json?    @db.JsonB
+  // Trigger context
+  triggerType           String?  @map("trigger_type")              // 'space_message' | 'plan' | 'service'
+  triggerSpaceId        String?  @map("trigger_space_id") @db.Uuid
+  triggerMessageId      String?  @map("trigger_message_id") @db.Uuid
+  triggerMessageContent String?  @map("trigger_message_content") @db.Text
+  triggerSenderEntityId String?  @map("trigger_sender_entity_id") @db.Uuid
+  triggerSenderName     String?  @map("trigger_sender_name")
+  triggerSenderType     String?  @map("trigger_sender_type")      // 'human' | 'agent'
+  triggerServiceName    String?  @map("trigger_service_name")
+  triggerPayload        Json?    @map("trigger_payload") @db.JsonB
+  triggerPlanId         String?  @map("trigger_plan_id") @db.Uuid
+  triggerPlanName       String?  @map("trigger_plan_name")
+  triggerPlanInstruction String? @map("trigger_plan_instruction") @db.Text
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -211,16 +203,62 @@ model Run {
   agentEntity Entity @relation(fields: [agentEntityId], references: [id])
   agent       Agent  @relation(fields: [agentId], references: [id])
 
+  events   RunEvent[]
+  toolCalls ToolCall[]
   messages SmartSpaceMessage[]
 
   @@index([agentEntityId, createdAt])
   @@index([agentEntityId, status])
+  @@index([agentEntityId, triggerMessageId])
   @@index([status, updatedAt])
   @@map("runs")
 }
 
 // =============================================================================
-// CLIENT — Connection points (web, mobile, node backend, etc.)
+// RUN EVENTS - Streaming events within a Run
+// =============================================================================
+
+model RunEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  runId     String   @map("run_id") @db.Uuid
+  seq       BigInt
+  type      String
+  payload   Json     @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, seq])
+  @@index([runId, createdAt])
+  @@map("run_events")
+}
+
+// =============================================================================
+// TOOL CALLS - Tool calls within a Run (used for waiting_tool / client tools)
+// =============================================================================
+
+model ToolCall {
+  id          String         @id @default(uuid()) @db.Uuid
+  runId       String         @map("run_id") @db.Uuid
+  seq         BigInt
+  callId      String         @map("call_id")
+  toolName    String         @map("tool_name")
+  args        Json           @db.JsonB
+  status      ToolCallStatus
+  output      Json?          @db.JsonB
+  requestedAt DateTime       @default(now()) @map("requested_at") @db.Timestamptz(6)
+  completedAt DateTime?      @map("completed_at") @db.Timestamptz(6)
+  errorMessage String?       @map("error_message")
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, callId])
+  @@index([runId, seq])
+  @@map("tool_calls")
+}
+
+// =============================================================================
+// CLIENT - Connection points (web, mobile, node backend, etc.)
 // =============================================================================
 
 model Client {
@@ -241,7 +279,7 @@ model Client {
 }
 
 // =============================================================================
-// MEMORY — Long-term agent memory (persists across think cycles)
+// MEMORY - Long-term agent memory (persists across Runs)
 // =============================================================================
 
 model Memory {
@@ -261,7 +299,7 @@ model Memory {
 }
 
 // =============================================================================
-// PLAN — Agent scheduled executions
+// PLAN - Agent scheduled executions
 // =============================================================================
 
 model Plan {
@@ -287,7 +325,7 @@ model Plan {
 }
 
 // =============================================================================
-// GOAL — Agent objectives
+// GOAL - Agent objectives
 // =============================================================================
 
 model Goal {

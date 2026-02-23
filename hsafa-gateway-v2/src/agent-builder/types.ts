@@ -1,5 +1,5 @@
 // =============================================================================
-// Agent Builder — Types (v3)
+// Agent Builder — Types
 // =============================================================================
 // Zod schemas + TS types for agent configJson and the runtime context passed
 // to every prebuilt tool execute function.
@@ -23,6 +23,7 @@ export const ModelConfigSchema = z.object({
     .object({
       enabled: z.boolean().optional(),
       effort: z.enum(['low', 'medium', 'high']).optional(),
+      /** 'auto' = provider decides whether to summarize reasoning */
       summary: z.enum(['auto', 'always', 'never']).optional(),
     })
     .optional(),
@@ -39,7 +40,7 @@ export const ToolConfigSchema = z.object({
   /**
    * Who executes this tool:
    * - gateway  — HTTP request / compute, executed server-side immediately
-   * - external — Forwarded to an external webhook; cycle pauses (waiting_tool)
+   * - external — Forwarded to an external webhook; run pauses (waiting_tool)
    * - space    — Rendered in the active space; user provides result (waiting_tool)
    * - internal — No execution; result is static or provided inline
    */
@@ -69,40 +70,8 @@ export const McpServerSchema = z.object({
   allowedTools: z.array(z.string()).optional(),
 });
 
-/** v3 consciousness configuration */
-export const ConsciousnessConfigSchema = z.object({
-  /** Maximum tokens in consciousness before compaction triggers */
-  maxTokens: z.number().optional(),
-  /** Always keep at least the last N cycles in full detail */
-  minRecentCycles: z.number().optional(),
-  /** Compaction strategy: 'summarize' (self-summary) | 'semantic' | 'layered' */
-  compactionStrategy: z.enum(['summarize', 'semantic', 'layered']).optional(),
-});
-
-export type ConsciousnessConfig = z.infer<typeof ConsciousnessConfigSchema>;
-
-/** v3 adaptive model configuration — different models for different step types */
-export const AdaptiveModelConfigSchema = z.object({
-  cheap: z.string().optional(),
-  standard: z.string().optional(),
-  reasoning: z.string().optional(),
-});
-
-export type AdaptiveModelConfig = z.infer<typeof AdaptiveModelConfigSchema>;
-
-/** v3 loop configuration */
-export const LoopConfigSchema = z.object({
-  maxSteps: z.number().optional(),
-  maxTokensPerCycle: z.number().optional(),
-  toolChoice: z.string().optional(),
-});
-
-export type LoopConfig = z.infer<typeof LoopConfigSchema>;
-
-/** Full agent configJson shape (v3) */
+/** Full agent configJson shape */
 export const AgentConfigSchema = z.object({
-  /** Config version */
-  version: z.string().optional(),
   /** LLM model config */
   model: ModelConfigSchema,
   /** Agent's system instructions (freeform text, injected after context blocks) */
@@ -115,73 +84,89 @@ export const AgentConfigSchema = z.object({
       servers: z.array(McpServerSchema).optional(),
     })
     .optional(),
-  /** v3: Consciousness settings */
-  consciousness: ConsciousnessConfigSchema.optional(),
-  /** v3: Adaptive model per step type */
-  adaptiveModel: AdaptiveModelConfigSchema.optional(),
-  /** v3: Think cycle loop settings */
-  loop: LoopConfigSchema.optional(),
-  /** v3: Middleware stack names */
-  middleware: z.array(z.string()).optional(),
 });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
 // =============================================================================
-// Inbox Event Types (v3)
+// Run Action Log — tracks everything the agent does during a run
 // =============================================================================
 
-export interface InboxEvent {
-  eventId: string;
-  type: 'space_message' | 'plan' | 'service';
+export interface RunActionEntry {
+  /** Monotonic index within this run */
+  step: number;
+  /** ISO timestamp */
   timestamp: string;
-  data: SpaceMessageEventData | PlanEventData | ServiceEventData;
+  /** What the agent did */
+  action: 'tool_call' | 'message_sent' | 'space_entered';
+  /** Tool name (for tool_call) */
+  toolName?: string;
+  /** Summarized tool args (for tool_call) */
+  toolArgs?: Record<string, unknown>;
+  /** Tool result summary (for tool_call) */
+  toolResult?: unknown;
+  /** Space ID (for space_entered / message_sent) */
+  spaceId?: string;
+  /** Space name (for space_entered / message_sent) */
+  spaceName?: string;
+  /** Message content preview (for message_sent) */
+  messagePreview?: string;
+  /** Message ID (for message_sent) */
+  messageId?: string;
 }
 
-export interface SpaceMessageEventData {
-  spaceId: string;
-  spaceName: string;
-  messageId: string;
-  senderEntityId: string;
-  senderName: string;
-  senderType: 'human' | 'agent';
-  content: string;
+export interface RunActionLog {
+  /** All actions taken so far in this run */
+  entries: RunActionEntry[];
+  /** Append a new action */
+  add(entry: Omit<RunActionEntry, 'step' | 'timestamp'>): void;
+  /** Get a compact summary for embedding in message metadata */
+  toSummary(): RunActionSummary;
 }
 
-export interface PlanEventData {
-  planId: string;
-  planName: string;
-  instruction: string;
-}
-
-export interface ServiceEventData {
-  serviceName: string;
-  payload: Record<string, unknown>;
+export interface RunActionSummary {
+  toolsCalled: { name: string; args?: Record<string, unknown> }[];
+  messagesSent: { spaceId: string; spaceName?: string; preview: string }[];
+  spacesEntered: { spaceId: string; spaceName?: string }[];
 }
 
 // =============================================================================
-// Agent Process Context (v3) — replaces RunContext
+// Runtime context passed to every prebuilt tool execute function
 // =============================================================================
 
-export interface AgentProcessContext {
+export interface RunContext {
+  runId: string;
   agentEntityId: string;
   agentName: string;
   /** Agent's DB id (for memory/goal/plan queries) */
   agentId: string;
-  /** Current cycle number (monotonically increasing) */
-  cycleCount: number;
-  /** The run ID for the current think cycle (audit record) */
-  currentRunId: string | null;
+  /** The space that triggered this run (for space_message triggers) */
+  triggerSpaceId: string | null;
+  /** Trigger type: 'space_message' | 'plan' | 'service' */
+  triggerType: string;
   /**
    * Returns the current activeSpaceId. Mutable — changes when enter_space is
-   * called. In-memory only (not persisted to DB in v3).
+   * called. Closure so prebuilt tools always see the latest value.
    */
   getActiveSpaceId: () => string | null;
   /**
-   * Called by enter_space to update the active space within the process.
-   * In-memory only — no DB write.
+   * Called by enter_space to update the active space at the run level.
+   * Updates both the in-memory value and the DB record.
    */
-  setActiveSpaceId: (spaceId: string) => void;
+  setActiveSpaceId: (spaceId: string) => Promise<void>;
+  /** In-memory action log — tracks tools called, messages sent, spaces entered */
+  actionLog: RunActionLog;
+  /** Trigger context for embedding in message metadata */
+  triggerSummary: {
+    type: string;
+    senderName?: string;
+    senderType?: string;
+    messageContent?: string;
+    spaceName?: string;
+    spaceId?: string;
+    serviceName?: string;
+    planName?: string;
+  };
 }
 
 // =============================================================================
