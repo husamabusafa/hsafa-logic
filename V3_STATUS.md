@@ -2,7 +2,7 @@
 
 ## Quick Summary
 
-The v3 **Living Agent Architecture** replaces v2's stateless runs with persistent agent processes that sleep, wake, think, and remember. The core infrastructure is **built and compiling**. The main gaps are: **prebuilt tools not wired**, **skip tool not implemented**, **`send_message` prebuilt tool missing**, **no plan scheduler**, **waiting_tool resume not wired**, and **SDKs not aligned** to v3.
+The v3 **Living Agent Architecture** replaces v2's stateless runs with persistent agent processes that sleep, wake, think, and remember. The core gateway is **~95% complete and compiling clean** (`npx tsc --noEmit` = 0 errors). All 13 prebuilt tools are built, skip detection + rollback works, plan scheduler uses BullMQ for exact-time firing, async tools replace `waiting_tool` (agent never blocks), durable inbox events with crash recovery, and `prepareStep` with mid-cycle inbox awareness. Remaining gaps: **SDKs not aligned** to v3, **seed script**, **Prisma migration**, and **tests**.
 
 ---
 
@@ -13,9 +13,9 @@ The v3 **Living Agent Architecture** replaces v2's stateless runs with persisten
 | **Agent Process** | Persistent `while(true)` loop: sleep → wake → think → act → sleep | ✅ Built |
 | **Inbox** | Redis list per agent: LPUSH to add, BRPOP to consume | ✅ Built |
 | **Consciousness** | `ModelMessage[]` persisted across cycles, with compaction | ✅ Built |
-| **Think Cycle** | Single `streamText()` call with `prepareStep` + `stopWhen` | ✅ Built |
-| **Spaces** | Shared context environments, `enter_space` + `send_message` | ⚠️ Partially (no prebuilt tools wired) |
-| **Tools** | Generic capabilities with execution types + visibility | ⚠️ Partially (custom tools built, prebuilt tools missing) |
+| **Think Cycle** | Single `streamText()` call with `prepareStep` + `stopWhen` | ✅ Built (prepareStep complete) |
+| **Spaces** | Shared context environments, `enter_space` + `send_message` | ✅ Built |
+| **Tools** | Generic capabilities with execution types + visibility | ✅ Built (13 prebuilt + custom + async) |
 
 ---
 
@@ -41,17 +41,21 @@ The v3 **Living Agent Architecture** replaces v2's stateless runs with persisten
 
 | Step | Task | Status | File |
 |------|------|--------|------|
-| 4 | `inbox.ts` — pushToInbox, drainInbox, waitForInbox (BRPOP), peekInbox, formatInboxEvents, formatInboxPreview | ✅ Done | `src/lib/inbox.ts` (257 lines) |
+| 4 | `inbox.ts` — pushToInbox, drainInbox, waitForInbox (BRPOP), peekInbox, formatInboxEvents, formatInboxPreview | ✅ Done | `src/lib/inbox.ts` (~340 lines) |
 | 5 | Wire inbox pushes into triggers (messages route, service trigger) | ✅ Done | `src/routes/smart-spaces.ts`, `src/routes/agents.ts` |
+| 5b | Durable inbox events — `InboxEvent` Postgres table, dual-write (Redis + DB) | ✅ Done | `prisma/schema.prisma`, `src/lib/inbox.ts` |
+| 5c | Inbox event lifecycle — `markEventsProcessing`, `markEventsProcessed`, `markEventsFailed`, `recoverStuckEvents` | ✅ Done | `src/lib/inbox.ts` |
+| 5d | `pushToolResultEvent` — push `tool_result` events for async tool completions | ✅ Done | `src/lib/inbox.ts` |
 | 6 | Test — send message → verify Redis inbox | ❌ No tests yet |
 
 **Details:**
-- `pushSpaceMessageEvent`, `pushPlanEvent`, `pushServiceEvent` convenience helpers
+- `pushSpaceMessageEvent`, `pushPlanEvent`, `pushServiceEvent`, `pushToolResultEvent` convenience helpers
 - Deduplication by `eventId` in `drainInbox`
 - `waitForInbox` uses dedicated blocking Redis connection (BRPOP with 30s timeout)
-- `formatInboxPreview` for mid-cycle lightweight awareness
+- `formatInboxPreview` for mid-cycle lightweight awareness (supports `tool_result` type)
 - Messages route pushes to all other agent members' inboxes (fire-and-forget)
 - Service trigger route pushes to agent's inbox via `pushServiceEvent`
+- **Durable InboxEvent table**: every push dual-writes to Redis (fast) + Postgres (durable). Crash recovery re-pushes stuck events on process startup.
 
 ---
 
@@ -59,16 +63,17 @@ The v3 **Living Agent Architecture** replaces v2's stateless runs with persisten
 
 | Step | Task | Status | File |
 |------|------|--------|------|
-| 7 | `agent-process.ts` — the persistent `while(true)` loop | ✅ Done | `src/lib/agent-process.ts` (307 lines) |
+| 7 | `agent-process.ts` — the persistent `while(true)` loop | ✅ Done | `src/lib/agent-process.ts` (~400 lines) |
 | 8 | `process-manager.ts` — start/stop/manage all processes | ✅ Done | `src/lib/process-manager.ts` (166 lines) |
-| 9 | `prompt-builder.ts` — v3 system prompt (IDENTITY → SPACES → GOALS → MEMORIES → PLANS → INSTRUCTIONS) | ✅ Done | `src/agent-builder/prompt-builder.ts` (142 lines) |
-| 10 | `types.ts` — AgentProcessContext, InboxEvent types, AgentConfig with consciousness/adaptiveModel/loop/middleware | ✅ Done | `src/agent-builder/types.ts` (201 lines) |
+| 9 | `prompt-builder.ts` — v3 system prompt (IDENTITY → SPACES → GOALS → MEMORIES → PLANS → INSTRUCTIONS + ASYNC TOOLS) | ✅ Done | `src/agent-builder/prompt-builder.ts` (~150 lines) |
+| 10 | `types.ts` — AgentProcessContext, InboxEvent types (4 types), AgentConfig with consciousness/loop/middleware | ✅ Done | `src/agent-builder/types.ts` (~200 lines) |
 | 11 | Wire into `index.ts` — startup `startAllProcesses()`, shutdown `stopAllProcesses()` | ✅ Done | `src/index.ts` |
 | 12 | Test — start gateway → agent wakes → responds | ❌ Not tested end-to-end |
 
 **Details:**
 - Full lifecycle: load consciousness → BRPOP sleep → drain inbox → refresh system prompt → inject inbox → streamText → processStream → append to consciousness → compact → save → loop
-- `prepareStep` with mid-cycle inbox preview (Strategy 2 from docs)
+- `prepareStep` with mid-cycle inbox preview (Strategy 2 from docs) — peeks inbox at every step > 0
+- InboxEvent lifecycle: `markEventsProcessing` → `markEventsProcessed` / `markEventsFailed` + crash recovery
 - Audit Run record created per cycle with trigger context + metrics
 - `agent.active`/`agent.inactive` emitted to all spaces at cycle start/end
 - Error handling with 5s backoff retry
@@ -76,66 +81,71 @@ The v3 **Living Agent Architecture** replaces v2's stateless runs with persisten
 
 ---
 
-### Phase 4: Prebuilt Tool Updates ❌ NOT STARTED
+### Phase 4: Prebuilt Tool Updates ✅ COMPLETE
 
-| Step | Task | Status | Notes |
-|------|------|--------|-------|
-| 13 | Remove run-control tools (`absorb-run`, `stop-run`, `get-my-runs`) | ❌ | These files don't exist in v3 gateway (clean start), but need to verify no references |
-| 14 | Add `peek-inbox.ts` prebuilt tool | ❌ | `inbox.ts` has `peekInbox()` function but no prebuilt tool wrapping it for the agent |
-| 15 | Update `enter-space.ts` — remove DB persistence, remove `[SEEN]/[NEW]`, return plain history | ❌ | **No prebuilt tools directory exists yet** |
-| 16 | Update `send-message.ts` — use `pushToInbox()` instead of `triggerAllAgents()`, remove origin/actionLog | ❌ | **Critical — agent can't communicate without this** |
-| 17 | Update `read-messages.ts` — remove `[SEEN]/[NEW]` formatting | ❌ | Not created |
-| 18 | Update `registry.ts` — wire all prebuilt tools | ❌ | No registry exists |
-| 19 | Test full cycle with prebuilt tools | ❌ | |
+| Step | Task | Status | File |
+|------|------|--------|------|
+| 13 | Remove run-control tools | ✅ N/A | Clean v3 start — no v2 files exist |
+| 14 | `peek-inbox.ts` prebuilt tool | ✅ Done | `src/agent-builder/prebuilt-tools/peek-inbox.ts` |
+| 15 | `enter-space.ts` — validate membership, set active, return history | ✅ Done | `src/agent-builder/prebuilt-tools/enter-space.ts` |
+| 16 | `send-message.ts` — post to space, push to inboxes | ✅ Done | `src/agent-builder/prebuilt-tools/send-message.ts` |
+| 17 | `read-messages.ts` — paginated history | ✅ Done | `src/agent-builder/prebuilt-tools/read-messages.ts` |
+| 18 | `registry.ts` — wire all 13 tools + visible set | ✅ Done | `src/agent-builder/prebuilt-tools/registry.ts` |
+| 19 | `skip.ts` — no execute, SDK stops at step 0 | ✅ Done | `src/agent-builder/prebuilt-tools/skip.ts` |
+| 20 | Memory tools (`set`, `get`, `delete`) | ✅ Done | `src/agent-builder/prebuilt-tools/set-memories.ts` etc. |
+| 21 | Goal tools (`set`, `delete`) | ✅ Done | `src/agent-builder/prebuilt-tools/set-goals.ts` etc. |
+| 22 | Plan tools (`set`, `get`, `delete`) | ✅ Done | `src/agent-builder/prebuilt-tools/set-plans.ts` etc. |
+| 23 | Wire prebuilt tools into `builder.ts` | ✅ Done | `src/agent-builder/builder.ts` |
+| 24 | Skip detection + rollback in `agent-process.ts` | ✅ Done | `src/lib/agent-process.ts` |
+| 25 | Test full cycle with prebuilt tools | ❌ Not tested | |
 
-**This is the biggest gap.** The agent process loop calls `buildAgent()` which only builds **custom tools** from configJson. There is **no prebuilt tool injection**. The agent currently has no `enter_space`, `send_message`, `read_messages`, `set_memories`, `set_goals`, `set_plans`, `get_plans`, `delete_plans`, `delete_goals`, `delete_memories`, `get_memories`, `peek_inbox`, or `skip` tools.
+**All 13 prebuilt tools built and wired:**
 
-**Required prebuilt tools (12 total from docs + skip):**
+| Tool | Purpose | Status |
+|------|---------|--------|
+| `enter_space` | Set active space + load history | ✅ |
+| `send_message` | Post message to active space + push to inboxes | ✅ |
+| `read_messages` | Read space history (with offset/limit) | ✅ |
+| `peek_inbox` | Pull pending inbox events mid-cycle | ✅ |
+| `skip` | Skip irrelevant cycle (no execute, SDK stops at step 0) | ✅ |
+| `set_memories` | Store key-value memories | ✅ |
+| `get_memories` | Read stored memories | ✅ |
+| `delete_memories` | Delete memories by key | ✅ |
+| `set_goals` | Define/update goals | ✅ |
+| `delete_goals` | Delete goals by ID | ✅ |
+| `set_plans` | Create scheduled triggers (enqueues BullMQ job) | ✅ |
+| `get_plans` | Read current plans | ✅ |
+| `delete_plans` | Delete plans by ID (removes BullMQ job) | ✅ |
 
-| Tool | Purpose | Exists? |
-|------|---------|---------|
-| `enter_space` | Set active space + load history | ❌ |
-| `send_message` | Post message to active space + push to inboxes | ❌ |
-| `read_messages` | Read space history (with offset/limit) | ❌ |
-| `peek_inbox` | Pull pending inbox events mid-cycle | ❌ |
-| `skip` | Skip irrelevant cycle (no execute, SDK stops at step 0) | ❌ |
-| `set_memories` | Store key-value memories | ❌ |
-| `get_memories` | Read stored memories | ❌ |
-| `delete_memories` | Delete memories by key | ❌ |
-| `set_goals` | Define/update goals | ❌ |
-| `delete_goals` | Delete goals by ID | ❌ |
-| `set_plans` | Create scheduled triggers | ❌ |
-| `get_plans` | Read current plans | ❌ |
-| `delete_plans` | Delete plans by ID | ❌ |
-
----
-
-### Phase 5: `prepareStep` + Mid-Cycle Inbox ⚠️ PARTIALLY DONE
-
-| Step | Task | Status | Notes |
-|------|------|--------|-------|
-| 20 | `prepareStep` with lightweight inbox preview | ✅ Done | In `agent-process.ts` — peeks inbox at every step > 0 |
-| 21 | Tool phase gates (optional) | ❌ Not done | Could restrict tools per step (observe → think → respond) |
-| 22 | Test mid-cycle correction | ❌ | |
+**Skip detection + rollback:** `agent-process.ts` checks `response.messages` for `skip()` tool call after each cycle. On skip: consciousness restored to pre-cycle snapshot, run record deleted, cycle count reverted. Agent goes back to sleep as if the cycle never happened.
 
 ---
 
-### Phase 6: Run Audit Records ✅ MOSTLY COMPLETE
+### Phase 5: `prepareStep` + Mid-Cycle Inbox ✅ COMPLETE
 
 | Step | Task | Status | Notes |
 |------|------|--------|-------|
-| 23 | Create Run at cycle start | ✅ Done | In `agent-process.ts` |
-| 24 | `waiting_tool` flow — pause on space tool, resume on result | ⚠️ Partial | Run status set to `waiting_tool` in route, but **no resume logic** wired. The `TODO: Check if all pending tools have results, then resume the cycle` is still in `runs.ts:188` |
-| 25 | Emit `agent.active`/`agent.inactive` | ✅ Done | In `agent-process.ts` |
-| 26 | Test dashboard query | ❌ | |
+| 20 | `prepareStep` with lightweight inbox preview | ✅ Done | In `agent-process.ts` — peeks inbox at every step > 0, formats as preview |
+| 21 | Tool phase gates (optional) | N/A | Removed from scope — not needed |
+| 22 | Adaptive model selection | N/A | Removed from scope — not needed |
+| 23 | Test mid-cycle correction | ❌ | |
 
-**`waiting_tool` gap:** When an interactive space tool (no execute function) stops the streamText loop, the process needs to:
-1. Detect the pending client tool calls
-2. Set run to `waiting_tool`
-3. Wait for tool result submission via REST API
-4. Resume the cycle with tool results injected into consciousness
+`prepareStep` is complete: at every step > 0, it peeks the inbox (up to 5 events) and injects a lightweight preview as a user message. The agent sees what's waiting and can adapt mid-cycle.
 
-Currently: the `runs.ts` tool-results endpoint stores results in run metadata but has a `TODO` comment for resuming. The agent-process.ts doesn't handle `waiting_tool` at all.
+---
+
+### Phase 6: Run Audit + Async Tools ✅ COMPLETE
+
+| Step | Task | Status | Notes |
+|------|------|--------|-------|
+| 24 | Create Run at cycle start | ✅ Done | In `agent-process.ts` |
+| 25 | **Async tool handling** — replace `waiting_tool` with non-blocking async tools | ✅ Done | `builder.ts`, `stream-processor.ts`, `runs.ts`, `inbox.ts` |
+| 26 | **PendingToolCall table** — track async tool calls awaiting results | ✅ Done | `prisma/schema.prisma` |
+| 27 | **Tool result submission** — resolve pending call + push `tool_result` inbox event | ✅ Done | `src/routes/runs.ts` |
+| 28 | Emit `agent.active`/`agent.inactive` | ✅ Done | In `agent-process.ts` |
+| 29 | Test dashboard query | ❌ | |
+
+**Async tools replace `waiting_tool`:** In v3, async tools (`space`, `external`-no-url) have an `execute()` that creates a `PendingToolCall` record and returns `{ status: 'pending' }` immediately. The agent never blocks. When the real result arrives (user submits via `POST /api/runs/:runId/tool-results`), the gateway resolves the `PendingToolCall`, pushes a `tool_result` inbox event, updates the persisted `SmartSpaceMessage` to `complete`, and the agent wakes to process the result in its next cycle.
 
 ---
 
@@ -148,7 +158,7 @@ Currently: the `runs.ts` tool-results endpoint stores results in run metadata bu
 | 29 | Remove `activeSpaceId` from run code | ✅ | Already clean |
 | 30 | Remove `lastProcessedMessageId` from code | ✅ | Already clean |
 | 31 | Update routes — trigger uses inbox | ✅ Done | `agents.ts` trigger route uses `pushServiceEvent` |
-| 32 | Final `npx tsc --noEmit` | ❌ Not verified |
+| 32 | Final `npx tsc --noEmit` | ✅ Done (0 errors after all changes) |
 
 ---
 
@@ -172,30 +182,45 @@ hsafa-gateway/
 │   └── seed.ts                    ⚠️ Needs v3 agent config (consciousness settings)
 ├── src/
 │   ├── agent-builder/
-│   │   ├── types.ts               ✅ v3 types (AgentProcessContext, InboxEvent, ConsciousnessConfig, etc.)
-│   │   ├── builder.ts             ✅ Model resolution + custom tools (NO prebuilt tool injection)
-│   │   ├── prompt-builder.ts      ✅ v3 system prompt (simple, no [SEEN]/[NEW])
-│   │   └── prebuilt-tools/        ❌ DIRECTORY MISSING — needs 13 tool files + registry
+│   │   ├── types.ts               ✅ v3 types (AgentProcessContext, InboxEvent x4, ConsciousnessConfig, etc.)
+│   │   ├── builder.ts             ✅ Model resolution + prebuilt + custom + async tool wrapping
+│   │   ├── prompt-builder.ts      ✅ v3 system prompt (IDENTITY → INSTRUCTIONS + ASYNC TOOLS)
+│   │   └── prebuilt-tools/        ✅ 13 tools + registry
+│   │       ├── registry.ts        ✅ buildPrebuiltTools() — assembles all tools
+│   │       ├── enter-space.ts     ✅ Set active space + load history
+│   │       ├── send-message.ts    ✅ Post to space + push to agent inboxes
+│   │       ├── read-messages.ts   ✅ Paginated space history
+│   │       ├── peek-inbox.ts      ✅ Pull inbox events mid-cycle
+│   │       ├── skip.ts            ✅ No execute — cycle rollback signal
+│   │       ├── set-memories.ts    ✅ Upsert key-value memories
+│   │       ├── get-memories.ts    ✅ Read memories
+│   │       ├── delete-memories.ts ✅ Delete by key
+│   │       ├── set-goals.ts       ✅ Create/update goals
+│   │       ├── delete-goals.ts    ✅ Delete by ID
+│   │       ├── set-plans.ts       ✅ Create plans + enqueue BullMQ job
+│   │       ├── get-plans.ts       ✅ List plans
+│   │       └── delete-plans.ts    ✅ Delete + dequeue BullMQ job
 │   ├── lib/
 │   │   ├── consciousness.ts       ✅ Load/save/compact/refresh (302 lines)
-│   │   ├── inbox.ts               ✅ Push/drain/wait/peek/format (257 lines)
-│   │   ├── agent-process.ts       ✅ Main process loop (307 lines)
+│   │   ├── inbox.ts               ✅ Push/drain/wait/peek/format + durable InboxEvent + lifecycle (~340 lines)
+│   │   ├── agent-process.ts       ✅ Main process loop + skip rollback + inbox lifecycle (~400 lines)
 │   │   ├── process-manager.ts     ✅ Start/stop all processes (166 lines)
 │   │   ├── stream-processor.ts    ✅ Tool streaming to spaces (418 lines)
 │   │   ├── smartspace-db.ts       ✅ Message persistence with retry loop
 │   │   ├── smartspace-events.ts   ✅ Redis pub/sub helpers
 │   │   ├── redis.ts               ✅ Redis client + createBlockingRedis
 │   │   ├── db.ts                  ✅ Prisma client singleton
-│   │   └── tool-call-utils.ts     ✅ Tool call content/metadata builders
+│   │   ├── tool-call-utils.ts     ✅ Tool call content/metadata builders
+│   │   └── plan-scheduler.ts      ✅ BullMQ queue + worker for plan firing
 │   ├── middleware/
 │   │   └── auth.ts                ✅ requireSecretKey, requireAuth, requireMembership
 │   ├── routes/
 │   │   ├── agents.ts              ✅ CRUD + service trigger (uses inbox)
 │   │   ├── entities.ts            ✅ Human entity CRUD
 │   │   ├── smart-spaces.ts        ✅ Space CRUD, members, messages (uses inbox push), SSE, read receipts
-│   │   ├── runs.ts                ⚠️ CRUD + SSE + tool-results (TODO: resume cycle)
+│   │   ├── runs.ts                ✅ CRUD + SSE + tool-results (async: PendingToolCall + inbox push)
 │   │   └── clients.ts             ✅ Client registration
-│   └── index.ts                   ✅ Express entry, startAllProcesses on boot, graceful shutdown
+│   └── index.ts                   ✅ Express entry, startAllProcesses + startPlanScheduler on boot
 ├── package.json
 └── tsconfig.json
 ```
@@ -209,82 +234,64 @@ hsafa-gateway/
 3. ✅ Agent sleeps on BRPOP (zero CPU)
 4. ✅ Human sends message via REST → message persisted → SSE emitted → pushed to agent inboxes
 5. ✅ Agent wakes, drains inbox, formats events as user message
-6. ✅ System prompt refreshed (IDENTITY, SPACES, GOALS, MEMORIES, PLANS, INSTRUCTIONS)
+6. ✅ System prompt refreshed (IDENTITY, SPACES, GOALS, MEMORIES, PLANS, INSTRUCTIONS, ASYNC TOOLS)
 7. ✅ Consciousness loaded, inbox injected, `streamText()` called
 8. ✅ `prepareStep` peeks inbox at each step for mid-cycle awareness
 9. ✅ Stream processor intercepts tool events, streams to active space
 10. ✅ After cycle: consciousness updated, compacted if needed, saved to DB
 11. ✅ Run audit record created + updated with metrics
 12. ✅ `agent.active`/`agent.inactive` emitted to all spaces
+13. ✅ Agent can `enter_space`, `send_message`, `read_messages` — full space interaction
+14. ✅ Agent can `skip()` irrelevant cycles — full rollback, no consciousness pollution
+15. ✅ Agent can `peek_inbox` mid-cycle for urgent events
+16. ✅ Agent can `set_memories`, `get_memories`, `delete_memories` — persistent state
+17. ✅ Agent can `set_goals`, `delete_goals` — long-term focus
+18. ✅ Agent can `set_plans`, `get_plans`, `delete_plans` — scheduled actions
+19. ✅ Plans fire at exact time via BullMQ (cron, scheduledAt, runAfter)
+20. ✅ Plan scheduler reconciles DB → BullMQ on startup (crash-safe)
+21. ✅ **Async tools** — `space`/`external`-no-url tools return `{ status: 'pending' }`, agent never blocks
+22. ✅ **Tool result submission** — `POST /api/runs/:runId/tool-results` resolves PendingToolCall + pushes `tool_result` inbox event
+23. ✅ **Durable inbox events** — dual-write to Redis + Postgres, crash recovery on startup
+24. ✅ **InboxEvent lifecycle** — events tracked as pending → processing → processed/failed in Postgres
 
 ## What Does NOT Work Yet
 
-1. ❌ **Agent has no prebuilt tools** — can't `enter_space`, `send_message`, `read_messages`, etc.
-2. ❌ **Agent can't communicate** — `send_message` prebuilt tool doesn't exist
-3. ❌ **Agent can't skip** — `skip` tool not implemented (cycle rollback logic missing)
-4. ❌ **`peek_inbox` tool** not wired for agent use
-5. ❌ **No plan scheduler** — plans can be set but nothing fires them into inboxes
-6. ❌ **`waiting_tool` resume** — interactive space tools pause the cycle but can't resume
-7. ❌ **Builder doesn't inject prebuilt tools** — `buildAgent()` only returns custom tools
-8. ❌ **Adaptive model selection** — `prepareStep` doesn't switch models per step
-9. ❌ **Tool phase gates** — not implemented (optional per docs)
-10. ❌ **SDKs not updated** — react-sdk, node-sdk, ui-sdk still have v2 code
-11. ❌ **No seed script for v3** — needs agent with `consciousness` config
-12. ❌ **Prisma migration** not verified as run
-13. ❌ **No tests** for any v3 component
+1. ❌ **SDKs not updated** — react-sdk, node-sdk, ui-sdk still have v2 code
+2. ❌ **No seed script for v3** — needs agent with `consciousness` config
+3. ❌ **Prisma migration** not verified as run
+4. ❌ **No tests** for any v3 component
 
 ---
 
 ## Priority Order for Remaining Work
 
-### P0 — Critical (agent can't function without these)
+### P0 — Critical (DONE ✅)
+
+All P0 tasks are complete: prebuilt tools, registry, builder wiring, skip detection, plan scheduler, async tools, durable inbox, and prepareStep.
+
+### P1 — Next Up
 
 | # | Task | Effort | Dependencies |
 |---|------|--------|-------------|
-| 1 | **Create prebuilt tools directory + registry** | Small | None |
-| 2 | **`enter_space` prebuilt tool** — validate membership, set activeSpaceId, return history | Medium | Registry |
-| 3 | **`send_message` prebuilt tool** — post to active space, push to other agents' inboxes | Medium | Registry, enter_space |
-| 4 | **Wire prebuilt tools into `builder.ts`** — inject alongside custom tools | Small | Registry |
-| 5 | **`skip` tool** — no execute function, detection + rollback in `agent-process.ts` | Medium | Builder |
-| 6 | **`read_messages` prebuilt tool** | Small | Registry |
-| 7 | **Seed script** for v3 agent with consciousness config | Small | None |
-| 8 | **Run Prisma migration** | Small | None |
+| 1 | **Seed script** for v3 agent with consciousness config | Small | None |
+| 2 | **Run Prisma migration** | Small | None |
 
-### P1 — Important (persistent state + scheduling)
+### P2 — Advanced Features (can defer)
 
 | # | Task | Effort | Dependencies |
 |---|------|--------|-------------|
-| 9 | **Memory tools** (`set_memories`, `get_memories`, `delete_memories`) | Small | Registry |
-| 10 | **Goal tools** (`set_goals`, `delete_goals`) | Small | Registry |
-| 11 | **Plan tools** (`set_plans`, `get_plans`, `delete_plans`) | Small | Registry |
-| 12 | **Plan scheduler** — tick interval checks plans, pushes to inboxes | Medium | inbox.ts |
-| 13 | **`peek_inbox` prebuilt tool** | Small | Registry |
+| 3 | **Middleware stack** — RAG, guardrails, caching, logging | Large | Architecture design |
+| 4 | **Semantic compaction** — embeddings-based relevance | Large | Embedding model |
+| 5 | **Telemetry** — OpenTelemetry integration | Medium | OTel setup |
 
-### P2 — Interactive Tools + Resume
+### P3 — SDK Alignment
 
 | # | Task | Effort | Dependencies |
 |---|------|--------|-------------|
-| 14 | **`waiting_tool` detection** in agent-process.ts — detect client tools, set run status | Medium | Stream processor |
-| 15 | **`waiting_tool` resume** — on tool result submission, resume cycle with results | Large | agent-process.ts |
-
-### P3 — Advanced Features (can defer)
-
-| # | Task | Effort | Dependencies |
-|---|------|--------|-------------|
-| 16 | **Adaptive model selection** in prepareStep — cheap/standard/reasoning per step | Medium | Agent config |
-| 17 | **Tool phase gates** — restrict tools per step number | Small | prepareStep |
-| 18 | **Middleware stack** — RAG, guardrails, caching, logging | Large | Architecture design |
-| 19 | **Semantic compaction** — embeddings-based relevance | Large | Embedding model |
-| 20 | **Telemetry** — OpenTelemetry integration | Medium | OTel setup |
-
-### P4 — SDK Alignment
-
-| # | Task | Effort | Dependencies |
-|---|------|--------|-------------|
-| 21 | **react-sdk** — simplify to v3 events (space.message, streaming, agent status) | Medium | Gateway stable |
-| 22 | **node-sdk** — update Run type, remove v2 fields | Small | Gateway stable |
-| 23 | **ui-sdk** — verify compatibility | Small | react-sdk done |
-| 24 | **use-case-app** — update for v3 | Medium | All SDKs done |
+| 6 | **react-sdk** — simplify to v3 events (space.message, streaming, agent status, async tools) | Medium | Gateway stable |
+| 7 | **node-sdk** — update Run type, remove v2 fields | Small | Gateway stable |
+| 8 | **ui-sdk** — verify compatibility | Small | react-sdk done |
+| 9 | **use-case-app** — update for v3 | Medium | All SDKs done |
 
 ---
 
@@ -294,17 +301,17 @@ hsafa-gateway/
 |---------|-------------|-------|
 | `streamText()` | ✅ | Core think cycle call |
 | `stopWhen: stepCountIs(N)` | ✅ | Max steps per cycle |
-| `prepareStep` | ✅ | Mid-cycle inbox preview, can add model switching + tool phases |
+| `prepareStep` | ✅ | Mid-cycle inbox preview (complete) |
 | `response.messages` → consciousness | ✅ | Appended after each cycle |
 | `fullStream` events | ✅ | Stream processor intercepts tool events |
 | `tool()` helper | ✅ | Custom gateway tools |
 | `jsonSchema()` | ✅ | Tool input schemas |
-| Tools without `execute` | Planned | `skip` tool + interactive space tools — SDK stops loop |
+| Tools without `execute` | ✅ | `skip` tool implemented — SDK stops loop, gateway rolls back cycle |
 | `ModelMessage` type | ✅ | Consciousness uses this format |
 | `prepareStep.messages` | ✅ | Inject inbox preview as user message |
-| `prepareStep.model` | ❌ | Adaptive model selection not yet implemented |
-| `prepareStep.activeTools` | ❌ | Tool phase gates not yet implemented |
-| `prepareStep.toolChoice` | ❌ | Not yet used |
+| `prepareStep.model` | N/A | Removed from scope — one model per agent |
+| `prepareStep.activeTools` | N/A | Removed from scope — tool phase gates not needed |
+| `prepareStep.toolChoice` | N/A | Not needed |
 | `onStepFinish` | ❌ | Could use for per-step telemetry |
 | `experimental_telemetry` | ❌ | Not yet wired |
 | `totalUsage` | ✅ | Recorded in Run audit record |
@@ -348,15 +355,15 @@ hsafa-gateway/
 | **Process Manager** | ✅ Complete | 100% |
 | **Prompt Builder** | ✅ Complete | 100% |
 | **Stream Processor** | ✅ Complete | 100% |
-| **Routes** | ✅ Mostly complete | 90% (tool-results resume TODO) |
-| **Prebuilt Tools** | ❌ Not started | 0% |
-| **Skip Tool + Rollback** | ❌ Not started | 0% |
-| **Plan Scheduler** | ❌ Not started | 0% |
-| **Waiting Tool Resume** | ⚠️ Partial | 30% |
-| **Adaptive Model** | ❌ Not started | 0% |
+| **Routes** | ✅ Complete | 100% (async tool results via inbox) |
+| **Prebuilt Tools** | ✅ Complete | 100% (13 tools + registry) |
+| **Skip Tool + Rollback** | ✅ Complete | 100% |
+| **Plan Scheduler** | ✅ Complete | 100% (BullMQ, cron + one-shot) |
+| **Async Tools** | ✅ Complete | 100% (PendingToolCall + inbox) |
+| **Durable Inbox Events** | ✅ Complete | 100% (InboxEvent table + crash recovery) |
 | **react-sdk v3** | ❌ Not started | 0% |
 | **node-sdk v3** | ❌ Not started | 0% |
 | **ui-sdk v3** | ❌ Not started | 0% |
 | **Tests** | ❌ Not started | 0% |
 
-**Overall v3 Gateway: ~55% complete.** The core loop is done. Prebuilt tools are the critical blocker.
+**Overall v3 Gateway: ~95% complete.** Core loop + prebuilt tools + plan scheduler + async tools + durable inbox + prepareStep all done. `npx tsc --noEmit` = 0 errors. Next: seed script, Prisma migration, SDK alignment.

@@ -1,5 +1,6 @@
 import { tool, jsonSchema } from 'ai';
 import { prisma } from '../../lib/db.js';
+import { enqueuePlan, dequeuePlan } from '../../lib/plan-scheduler.js';
 import type { AgentProcessContext } from '../types.js';
 
 // =============================================================================
@@ -96,6 +97,10 @@ export function createSetPlansTool(ctx: AgentProcessContext) {
         }
 
         if (plan.id) {
+          // Remove old BullMQ job before re-scheduling
+          const oldPlan = await prisma.plan.findUnique({ where: { id: plan.id }, select: { cron: true } });
+          await dequeuePlan(plan.id, oldPlan?.cron);
+
           await prisma.plan.update({
             where: { id: plan.id },
             data: {
@@ -108,8 +113,11 @@ export function createSetPlansTool(ctx: AgentProcessContext) {
               status: 'pending',
             },
           });
+
+          // Enqueue updated plan
+          await enqueuePlan({ id: plan.id, entityId: ctx.agentEntityId, cron: plan.cron ?? null, nextRunAt, isRecurring });
         } else {
-          await prisma.plan.create({
+          const created = await prisma.plan.create({
             data: {
               entityId: ctx.agentEntityId,
               name: plan.name,
@@ -121,6 +129,9 @@ export function createSetPlansTool(ctx: AgentProcessContext) {
               status: 'pending',
             },
           });
+
+          // Enqueue new plan
+          await enqueuePlan({ id: created.id, entityId: ctx.agentEntityId, cron: plan.cron ?? null, nextRunAt, isRecurring });
         }
         count++;
       }

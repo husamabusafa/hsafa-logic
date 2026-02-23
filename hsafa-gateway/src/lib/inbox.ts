@@ -1,12 +1,14 @@
 import { redis } from './redis.js';
-import type { InboxEvent, SpaceMessageEventData, PlanEventData, ServiceEventData } from '../agent-builder/types.js';
+import { prisma } from './db.js';
+import type { InboxEvent, SpaceMessageEventData, PlanEventData, ServiceEventData, ToolResultEventData } from '../agent-builder/types.js';
 
 // =============================================================================
 // Inbox System (v3)
 //
-// Every agent has a Redis list: inbox:{agentEntityId}
+// Dual-write: Redis list (fast wakeup queue) + Postgres InboxEvent (durable log).
 // Events are pushed with LPUSH, consumed with RPOP (FIFO order).
 // Agent process blocks on BRPOP to sleep when idle.
+// Postgres enables crash recovery, audit trail, and per-cycle event inspection.
 // =============================================================================
 
 const INBOX_PREFIX = 'inbox:';
@@ -21,6 +23,7 @@ const BRPOP_TIMEOUT = 30;
 
 /**
  * Push an event to an agent's inbox and signal the process to wake up.
+ * Dual-write: Redis (fast queue) + Postgres (durable log).
  * Uses LPUSH (left push) so RPOP (right pop) gives FIFO order.
  */
 export async function pushToInbox(
@@ -28,8 +31,24 @@ export async function pushToInbox(
   event: InboxEvent,
 ): Promise<void> {
   const key = `${INBOX_PREFIX}${agentEntityId}`;
+
+  // Durable write — Postgres (upsert to handle dedup on retry)
+  await prisma.inboxEvent.upsert({
+    where: {
+      agentEntityId_eventId: { agentEntityId, eventId: event.eventId },
+    },
+    create: {
+      agentEntityId,
+      eventId: event.eventId,
+      type: event.type,
+      data: event.data as any,
+      status: 'pending',
+    },
+    update: {}, // no-op if already exists (dedup)
+  });
+
+  // Fast write — Redis (queue + wakeup signal)
   await redis.lpush(key, JSON.stringify(event));
-  // Publish a wakeup signal in case the process is using pub/sub instead of BRPOP
   await redis.publish(`${WAKEUP_PREFIX}${agentEntityId}`, '1');
 }
 
@@ -76,6 +95,23 @@ export async function pushServiceEvent(
   const event: InboxEvent = {
     eventId: `svc:${crypto.randomUUID()}`,
     type: 'service',
+    timestamp: new Date().toISOString(),
+    data,
+  };
+  await pushToInbox(agentEntityId, event);
+}
+
+/**
+ * Push a tool_result event to an agent's inbox.
+ * Called when an async tool's result arrives (user submit, webhook callback).
+ */
+export async function pushToolResultEvent(
+  agentEntityId: string,
+  data: ToolResultEventData,
+): Promise<void> {
+  const event: InboxEvent = {
+    eventId: `tr:${data.toolCallId}`,
+    type: 'tool_result',
     timestamp: new Date().toISOString(),
     data,
   };
@@ -197,6 +233,115 @@ export async function inboxSize(agentEntityId: string): Promise<number> {
 }
 
 // =============================================================================
+// Lifecycle — Mark events as processing / processed / failed in Postgres
+// =============================================================================
+
+/**
+ * Mark a batch of events as 'processing' and link them to a run.
+ * Called at the start of a think cycle, after drain.
+ */
+export async function markEventsProcessing(
+  agentEntityId: string,
+  eventIds: string[],
+  runId: string,
+): Promise<void> {
+  if (eventIds.length === 0) return;
+  await prisma.inboxEvent.updateMany({
+    where: {
+      agentEntityId,
+      eventId: { in: eventIds },
+      status: 'pending',
+    },
+    data: {
+      status: 'processing',
+      runId,
+    },
+  });
+}
+
+/**
+ * Mark a batch of events as 'processed' after a successful think cycle.
+ */
+export async function markEventsProcessed(
+  agentEntityId: string,
+  eventIds: string[],
+): Promise<void> {
+  if (eventIds.length === 0) return;
+  await prisma.inboxEvent.updateMany({
+    where: {
+      agentEntityId,
+      eventId: { in: eventIds },
+      status: 'processing',
+    },
+    data: {
+      status: 'processed',
+      processedAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Mark a batch of events as 'failed' when a think cycle errors.
+ */
+export async function markEventsFailed(
+  agentEntityId: string,
+  eventIds: string[],
+): Promise<void> {
+  if (eventIds.length === 0) return;
+  await prisma.inboxEvent.updateMany({
+    where: {
+      agentEntityId,
+      eventId: { in: eventIds },
+      status: 'processing',
+    },
+    data: {
+      status: 'failed',
+    },
+  });
+}
+
+/**
+ * Crash recovery: find events stuck in 'processing' (agent crashed mid-cycle)
+ * and re-push them to the Redis inbox for reprocessing.
+ */
+export async function recoverStuckEvents(agentEntityId: string): Promise<number> {
+  const stuck = await prisma.inboxEvent.findMany({
+    where: {
+      agentEntityId,
+      status: 'processing',
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  if (stuck.length === 0) return 0;
+
+  const key = `${INBOX_PREFIX}${agentEntityId}`;
+  for (const row of stuck) {
+    const event: InboxEvent = {
+      eventId: row.eventId,
+      type: row.type as InboxEvent['type'],
+      timestamp: row.createdAt.toISOString(),
+      data: row.data as any,
+    };
+    await redis.lpush(key, JSON.stringify(event));
+  }
+
+  // Reset status back to pending so they'll be marked processing again
+  await prisma.inboxEvent.updateMany({
+    where: {
+      agentEntityId,
+      status: 'processing',
+    },
+    data: {
+      status: 'pending',
+      runId: null,
+    },
+  });
+
+  return stuck.length;
+}
+
+// =============================================================================
 // Format — Convert inbox events to a user message string for consciousness
 // =============================================================================
 
@@ -218,6 +363,11 @@ export function formatInboxEvents(events: InboxEvent[]): string {
       case 'service': {
         const d = e.data as ServiceEventData;
         return `[Service: ${d.serviceName}] ${JSON.stringify(d.payload)}`;
+      }
+      case 'tool_result': {
+        const d = e.data as ToolResultEventData;
+        const resultPreview = typeof d.result === 'string' ? d.result : JSON.stringify(d.result);
+        return `[Tool Result: ${d.toolName}] (callId: ${d.toolCallId}) ${resultPreview}`;
       }
       default:
         return `[Unknown event type: ${e.type}]`;
@@ -246,6 +396,10 @@ export function formatInboxPreview(events: InboxEvent[]): string {
       case 'service': {
         const d = e.data as ServiceEventData;
         return `  [Service: ${d.serviceName}]`;
+      }
+      case 'tool_result': {
+        const d = e.data as ToolResultEventData;
+        return `  [Tool Result: ${d.toolName}] result arrived`;
       }
       default:
         return `  [Unknown]`;

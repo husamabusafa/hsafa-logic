@@ -2,6 +2,13 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/db.js';
 import { redis } from '../lib/redis.js';
 import { requireSecretKey, requireAuth } from '../middleware/auth.js';
+import { pushToolResultEvent } from '../lib/inbox.js';
+import { emitSmartSpaceEvent } from '../lib/smartspace-events.js';
+import {
+  buildToolCallContent,
+  buildToolCallMessageMeta,
+  buildToolCallMessagePayload,
+} from '../lib/tool-call-utils.js';
 import Redis from 'ioredis';
 
 export const runsRouter = Router();
@@ -149,7 +156,7 @@ runsRouter.get('/:runId/stream', requireAuth(), async (req: Request, res: Respon
   }
 });
 
-// POST /api/runs/:runId/tool-results — Submit tool result (for interactive space tools)
+// POST /api/runs/:runId/tool-results — Submit async tool result (v3: pushes to inbox)
 runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res: Response) => {
   try {
     if (!(await verifyRunAccess(req, res))) return;
@@ -162,31 +169,88 @@ runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res:
       return;
     }
 
-    const run = await prisma.run.findUnique({ where: { id: runId } });
-    if (!run) {
-      res.status(404).json({ error: 'Run not found' });
-      return;
-    }
-
-    if (run.status !== 'waiting_tool') {
-      res.status(409).json({ error: `Run is not waiting for tool result (status: ${run.status})` });
-      return;
-    }
-
-    // Store result in run metadata
-    const metadata = (run.metadata as Record<string, unknown>) ?? {};
-    const clientToolResults = (metadata.clientToolResults as Record<string, unknown>) ?? {};
-    clientToolResults[callId] = result;
-    metadata.clientToolResults = clientToolResults;
-
-    await prisma.run.update({
-      where: { id: runId },
-      data: { metadata: metadata as any },
+    // Look up the pending tool call
+    const pending = await prisma.pendingToolCall.findUnique({
+      where: { toolCallId: callId },
     });
 
-    // TODO: Check if all pending tools have results, then resume the cycle
+    if (!pending) {
+      res.status(404).json({ error: 'Pending tool call not found' });
+      return;
+    }
 
-    res.json({ success: true });
+    if (pending.runId !== runId) {
+      res.status(403).json({ error: 'Tool call does not belong to this run' });
+      return;
+    }
+
+    if (pending.status !== 'pending') {
+      res.status(409).json({ error: `Tool call already ${pending.status}` });
+      return;
+    }
+
+    // 1. Resolve the pending tool call
+    await prisma.pendingToolCall.update({
+      where: { toolCallId: callId },
+      data: {
+        status: 'resolved',
+        result: result as any,
+        resolvedAt: new Date(),
+      },
+    });
+
+    // 2. Push tool_result inbox event → agent wakes in next cycle
+    await pushToolResultEvent(pending.agentEntityId, {
+      toolCallId: callId,
+      toolName: pending.toolName,
+      originRunId: runId,
+      result,
+    });
+
+    // 3. Update the persisted SmartSpaceMessage (if visible tool was posted to a space)
+    const toolMsg = await prisma.smartSpaceMessage.findFirst({
+      where: {
+        runId,
+        metadata: { path: ['toolCallId'], equals: callId },
+      },
+    });
+
+    if (toolMsg) {
+      const args = pending.args;
+      const completeContent = buildToolCallContent(pending.toolName, args, result, 'complete');
+      const completeMeta = buildToolCallMessageMeta({
+        toolCallId: callId,
+        toolName: pending.toolName,
+        args,
+        result,
+        status: 'complete',
+        runId,
+      });
+
+      await prisma.smartSpaceMessage.update({
+        where: { id: toolMsg.id },
+        data: { content: completeContent, metadata: completeMeta as any },
+      });
+
+      // Emit updated message to the space so UI updates
+      await emitSmartSpaceEvent(toolMsg.smartSpaceId, {
+        type: 'space.message',
+        streamId: callId,
+        message: buildToolCallMessagePayload({
+          messageId: toolMsg.id,
+          smartSpaceId: toolMsg.smartSpaceId,
+          entityId: toolMsg.entityId,
+          toolCallId: callId,
+          toolName: pending.toolName,
+          args,
+          result,
+          status: 'complete',
+          runId,
+        }),
+      });
+    }
+
+    res.json({ success: true, agentEntityId: pending.agentEntityId });
   } catch (error) {
     console.error('Tool result error:', error);
     res.status(500).json({ error: 'Failed to submit tool result' });

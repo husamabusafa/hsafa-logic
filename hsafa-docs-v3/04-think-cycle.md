@@ -291,9 +291,9 @@ const hasRespondedToAll: StopCondition = ({ steps }) => {
 
 The model can also stop naturally by producing text without tool calls (`finishReason: 'end-turn'`). This is the normal way a cycle ends — the agent has nothing more to do.
 
-### Interactive Tool Pause
+### Async Tool Completion
 
-If the agent calls a `space` tool (e.g., approval dialog), the SDK stops the loop because the tool has no `execute` function. The process waits for the tool result to be submitted, then the cycle can resume.
+If the agent calls an async tool (`space` or `external` without URL), the tool's `execute()` returns `{ status: "pending" }` immediately. The agent sees this result, understands the real result will arrive via inbox later, and **continues the cycle normally**. The agent process never blocks waiting for external results. See [06 — Tool System](./06-tool-system.md) for the full async tool flow.
 
 ---
 
@@ -520,6 +520,6 @@ Wire to any OpenTelemetry backend (Datadog, Langfuse, etc.) for consciousness re
 | `messages: []` (empty — all context in system prompt) | `messages: consciousness` (full history) |
 | `prepareStep` checks for cancellation | `prepareStep` does model selection, tool phases, inbox injection |
 | `stopWhen: stepCountIs(MAX)` | Multiple stop conditions (steps, budget, completion) |
-| One model per run | Adaptive model per step |
+| One model per run | One model per agent (configurable) |
 | Run ends → context discarded | Cycle ends → consciousness persisted and carried forward |
 | `response.messages` used for nothing | `response.messages` appended to consciousness |

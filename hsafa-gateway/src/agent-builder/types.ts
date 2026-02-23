@@ -38,9 +38,9 @@ export const ToolConfigSchema = z.object({
   inputSchema: z.record(z.string(), z.unknown()),
   /**
    * Who executes this tool:
-   * - gateway  — HTTP request / compute, executed server-side immediately
-   * - external — Forwarded to an external webhook; cycle pauses (waiting_tool)
-   * - space    — Rendered in the active space; user provides result (waiting_tool)
+   * - gateway  — HTTP request / compute, executed server-side immediately (inline)
+   * - external — Forwarded to an external webhook. Inline if execution.url exists, otherwise async (result via inbox)
+   * - space    — Rendered in the active space; user provides result. Always async (result via inbox)
    * - internal — No execution; result is static or provided inline
    */
   executionType: z.enum(['gateway', 'external', 'space', 'internal']),
@@ -81,15 +81,6 @@ export const ConsciousnessConfigSchema = z.object({
 
 export type ConsciousnessConfig = z.infer<typeof ConsciousnessConfigSchema>;
 
-/** v3 adaptive model configuration — different models for different step types */
-export const AdaptiveModelConfigSchema = z.object({
-  cheap: z.string().optional(),
-  standard: z.string().optional(),
-  reasoning: z.string().optional(),
-});
-
-export type AdaptiveModelConfig = z.infer<typeof AdaptiveModelConfigSchema>;
-
 /** v3 loop configuration */
 export const LoopConfigSchema = z.object({
   maxSteps: z.number().optional(),
@@ -117,8 +108,6 @@ export const AgentConfigSchema = z.object({
     .optional(),
   /** v3: Consciousness settings */
   consciousness: ConsciousnessConfigSchema.optional(),
-  /** v3: Adaptive model per step type */
-  adaptiveModel: AdaptiveModelConfigSchema.optional(),
   /** v3: Think cycle loop settings */
   loop: LoopConfigSchema.optional(),
   /** v3: Middleware stack names */
@@ -133,9 +122,9 @@ export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
 export interface InboxEvent {
   eventId: string;
-  type: 'space_message' | 'plan' | 'service';
+  type: 'space_message' | 'plan' | 'service' | 'tool_result';
   timestamp: string;
-  data: SpaceMessageEventData | PlanEventData | ServiceEventData;
+  data: SpaceMessageEventData | PlanEventData | ServiceEventData | ToolResultEventData;
 }
 
 export interface SpaceMessageEventData {
@@ -157,6 +146,15 @@ export interface PlanEventData {
 export interface ServiceEventData {
   serviceName: string;
   payload: Record<string, unknown>;
+}
+
+export interface ToolResultEventData {
+  toolCallId: string;
+  toolName: string;
+  /** The cycle (run) that originally called this tool */
+  originRunId: string;
+  /** The actual result from the external source / user */
+  result: unknown;
 }
 
 // =============================================================================
@@ -193,8 +191,8 @@ export interface BuiltAgent {
   tools: Record<string, unknown>;
   /** Names of tools whose input/result should be posted to the active space */
   visibleToolNames: Set<string>;
-  /** Names of tools that lack an execute function (external/space) — trigger waiting_tool */
-  clientToolNames: Set<string>;
+  /** Names of async tools (space/external-no-url) — execute returns pending, real result via inbox */
+  asyncToolNames: Set<string>;
   /** The resolved LLM model instance */
   model: unknown;
 }

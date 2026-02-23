@@ -188,11 +188,6 @@ The `configJson` stored in the Agent model changes slightly for v3:
     "minRecentCycles": 10,
     "compactionStrategy": "summarize"
   },
-  "adaptiveModel": {
-    "cheap": "gpt-4o-mini",
-    "standard": "gpt-4o",
-    "reasoning": "o3"
-  },
   "middleware": ["rag", "guardrails", "logging"]
 }
 ```
@@ -223,11 +218,6 @@ The `configJson` stored in the Agent model changes slightly for v3:
     "maxTokens": 100000,
     "minRecentCycles": 10,
     "compactionStrategy": "summarize"
-  },
-  "adaptiveModel": {
-    "cheap": "gpt-4o-mini",
-    "standard": "gpt-4o",
-    "reasoning": "o3"
   },
   "loop": {
     "maxSteps": 20,
@@ -308,7 +298,7 @@ Agent
   ├── Entity (1:1)
   ├── AgentConsciousness (via entity)
   ├── Run (think cycle records)
-  └── configJson (AgentConfig with consciousness + adaptive model settings)
+  └── configJson (AgentConfig with consciousness + loop settings)
 ```
 
 ---

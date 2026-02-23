@@ -15,7 +15,7 @@ AI agents are **persistent living processes** — not stateless request-response
 | Multiple concurrent runs per agent | One process, one inbox, one consciousness |
 | `absorb_run` for run coordination | No concurrent runs — inbox batches events naturally |
 | Context rebuilt from scratch every run | Consciousness persists and grows, compacted when needed |
-| One model per agent | Adaptive model selection per step (cheap → reasoning) |
+| One model per agent | One model per agent (configurable per agent) |
 | No middleware | Composable middleware stack (RAG, guardrails, caching, logging) |
 | Run = unit of work | Think cycle = unit of work (one `streamText` call per wakeup) |
 

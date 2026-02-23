@@ -127,6 +127,13 @@ export async function buildSystemPrompt(
     'Your text output is internal reasoning -- never shown to anyone. Keep it brief.',
     'Use send_message to communicate. Use enter_space to switch spaces.',
     'If you have nothing to contribute after reading an inbox event, do nothing (produce only brief internal text).',
+    '',
+    'ASYNC TOOLS:',
+    'Some tools (interactive UI, external webhooks) return { status: "pending" } immediately.',
+    'This means the real result will arrive in your inbox as a [Tool Result] event in a later cycle.',
+    'When you see a pending result, continue with other tasks. Do NOT wait or loop.',
+    'When the tool_result event arrives in your inbox, process the result and continue your work.',
+    '',
     'After completing your actions, end with a brief summary of what you did.',
     'Format: "Responded to [who] about [topic]. [Key actions taken]. [What is pending]."',
   ].join('\n  ');

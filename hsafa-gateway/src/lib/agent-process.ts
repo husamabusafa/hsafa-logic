@@ -2,7 +2,17 @@ import { streamText, stepCountIs, type LanguageModel } from 'ai';
 import type Redis from 'ioredis';
 import { prisma } from './db.js';
 import { createBlockingRedis } from './redis.js';
-import { drainInbox, waitForInbox, formatInboxEvents, peekInbox, formatInboxPreview } from './inbox.js';
+import {
+  drainInbox,
+  waitForInbox,
+  formatInboxEvents,
+  peekInbox,
+  formatInboxPreview,
+  markEventsProcessing,
+  markEventsProcessed,
+  markEventsFailed,
+  recoverStuckEvents,
+} from './inbox.js';
 import {
   loadConsciousness,
   saveConsciousness,
@@ -100,6 +110,12 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
   // Build tools and model (once — rebuilt if config changes)
   const built = await buildAgent(agent.configJson as any, context);
 
+  // Crash recovery: re-push any events stuck in 'processing' from a previous crash
+  const recovered = await recoverStuckEvents(agentEntityId);
+  if (recovered > 0) {
+    console.log(`[agent-process] ${agentName} recovered ${recovered} stuck inbox events`);
+  }
+
   console.log(`[agent-process] ${agentName} (${agentEntityId}) started — cycle ${cycleCount}`);
 
   // ── Main loop ─────────────────────────────────────────────────────────────
@@ -145,6 +161,12 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         },
       });
       context.currentRunId = run.id;
+
+      // Track eventIds for Postgres lifecycle
+      const eventIds = allEvents.map((e) => e.eventId);
+
+      // Mark events as processing in Postgres (linked to this run)
+      await markEventsProcessing(agentEntityId, eventIds, run.id);
 
       const cycleStart = Date.now();
 
@@ -199,7 +221,7 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         agentEntityId,
         getActiveSpaceId: () => activeSpaceId,
         visibleTools: built.visibleToolNames,
-        clientTools: built.clientToolNames,
+        asyncTools: built.asyncToolNames,
       });
 
       // 9. CHECK FOR SKIP — detect skip() tool call and roll back
@@ -214,6 +236,8 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         context.cycleCount = cycleCount;
 
         await prisma.run.delete({ where: { id: run.id } }).catch(() => {});
+        // Reset events back to pending (they were never really processed)
+        await markEventsFailed(agentEntityId, eventIds).catch(() => {});
         await emitAgentStatus(agentEntityId, 'inactive', { runId: run.id, agentName });
 
         console.log(`[agent-process] ${agentName} skipped cycle: ${reason}`);
@@ -247,6 +271,9 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         },
       });
 
+      // Mark all events as processed in Postgres
+      await markEventsProcessed(agentEntityId, eventIds);
+
       // 14. EMIT agent.inactive
       await emitAgentStatus(agentEntityId, 'inactive', { runId: run.id, agentName });
 
@@ -259,6 +286,16 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
       if (signal.aborted) break;
 
       console.error(`[agent-process] ${agentName} cycle error:`, error);
+
+      // Mark events as failed in Postgres (they can be inspected / retried)
+      if (context.currentRunId) {
+        // eventIds might not be in scope if the error was before drain
+        // Use a Postgres query to find events linked to this run
+        await prisma.inboxEvent.updateMany({
+          where: { runId: context.currentRunId, status: 'processing' },
+          data: { status: 'failed' },
+        }).catch(() => {});
+      }
 
       // Update run as failed if we have one
       if (context.currentRunId) {

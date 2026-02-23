@@ -14,10 +14,10 @@ Every tool has an `executionType` that determines how it runs:
 
 | Type | Runs Where | Description |
 |------|-----------|-------------|
-| `gateway` | Gateway server | HTTP requests, computations, image generation, AI sub-agents. |
-| `external` | External service | Tool call forwarded to an external service via webhook/API. Service returns the result. |
-| `space` | Client/browser | Tool call rendered in the active space as interactive UI. User submits the result. Think cycle pauses until result arrives. |
-| `internal` | Gateway server | Like `gateway`, but results are never shown in any space. Purely internal. |
+| `gateway` | Gateway server | HTTP requests, computations, image generation, AI sub-agents. Always **inline** (2-4s). |
+| `external` | External service | If `execution.url` exists: **inline** HTTP call (same as gateway). If no URL: **async** — returns pending, result arrives via inbox. |
+| `space` | Client/browser | Tool call rendered in the active space as interactive UI. Always **async** — returns pending immediately, user submits result which arrives via inbox. |
+| `internal` | Gateway server | Like `gateway`, but results are never shown in any space. Purely internal. Always **inline**. |
 
 ---
 
@@ -108,7 +108,7 @@ If the agent hasn't called `enter_space` and a visible tool executes, the result
 }
 ```
 
-**`space`** — Client-rendered UI (no server execution):
+**`space`** — Client-rendered UI (async, result via inbox):
 ```json
 {
   "display": {
@@ -148,19 +148,68 @@ Built-in tools are always invisible (`visible: false`) — their execution is in
 
 ---
 
-## Interactive vs. Display-Only Visible Tools
+## Inline vs. Async Tools
 
-### Display-Only (`executionType: "gateway"` + `visible: true`)
+### Inline (`executionType: "gateway"` or `"internal"` or `"external"` with URL)
 
-The tool executes on the gateway. The result is stored as a `SmartSpaceMessage` and streamed to the active space. **The think cycle continues immediately.**
+The tool has an `execute()` function that resolves within the cycle. The agent sees the result immediately and continues reasoning. **The think cycle continues normally.**
 
-Examples: weather widget, chart render, product card, fetch summary.
+Examples: weather API (gateway), Jira webhook (external+URL), static lookup (internal).
 
-### Interactive (`executionType: "space"` + `visible: true`)
+### Async (`executionType: "space"` or `"external"` without URL)
 
-The tool call is streamed to the active space. **The think cycle pauses** (tool has no `execute` function — SDK stops the loop). The frontend renders the tool's custom UI. The user interacts and submits a result. The cycle resumes.
+The tool's `execute()` function creates a `PendingToolCall` record and returns `{ status: "pending" }` immediately. **The think cycle continues** — the agent knows the result is coming later and can do other work.
 
-Examples: approval dialog, form input, confirmation prompt, file picker.
+When the real result arrives (user submits, webhook fires), it is pushed as a `tool_result` inbox event. The agent wakes, sees the result in the next cycle's inbox, and continues its work with the result.
+
+Examples: approval dialog (space), confirmation prompt (space), long-running batch job (external, no URL).
+
+### Async Tool Flow
+
+```
+Cycle 15:
+  INBOX: [Husam: "Book a hotel in Tokyo"]
+  Agent → calls confirmAction("Confirm booking?")
+  Tool result: { status: "pending", pendingToolCallId: "tc-abc" }
+  Agent: "Asked Husam to confirm. I'll continue when he responds."
+  → cycle ends, consciousness saved
+
+Cycle 16:
+  INBOX: [Tool Result: confirmAction] (callId: tc-abc) { "confirmed": true }
+  Agent: "Husam confirmed! Booking now..."
+  Agent → calls bookHotel(...)
+```
+
+### PendingToolCall Table
+
+Tracks async tool calls awaiting external results:
+
+| Column | Purpose |
+|--------|---------|
+| `toolCallId` | SDK tool call ID (unique key for result submission) |
+| `agentEntityId` | Which agent — so the result endpoint knows where to push |
+| `runId` | Which cycle spawned the call |
+| `toolName` + `args` | What was called |
+| `status` | `pending` → `resolved` or `expired` |
+| `result` | Filled when result arrives |
+| `expiresAt` | Optional TTL for auto-expiry |
+
+### Result Submission Flow
+
+1. Client/webhook calls `POST /api/runs/:runId/tool-results` with `{ callId, result }`
+2. Gateway looks up `PendingToolCall` by `callId`
+3. Updates status to `resolved`, stores result
+4. Pushes `tool_result` inbox event → agent wakes in next cycle
+5. Updates the persisted `SmartSpaceMessage` from `requires_action` → `complete` (if visible)
+
+### What This Eliminates
+
+| v2 | v3 |
+|----|----|
+| `waiting_tool` run status blocks the process | Agent never blocks — returns pending, continues |
+| Tool result resumes the run mid-cycle | Tool result arrives as inbox event in next cycle |
+| Complex resume logic (inject tool-result into messages) | Natural consciousness — agent reads result as inbox event |
+| One tool call blocks all other work | Agent can process other inbox events while waiting |
 
 ---
 

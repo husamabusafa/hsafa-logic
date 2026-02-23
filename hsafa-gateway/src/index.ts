@@ -8,6 +8,7 @@ import { runsRouter } from './routes/runs.js';
 import { prisma } from './lib/db.js';
 import { redis } from './lib/redis.js';
 import { startAllProcesses, stopAllProcesses, getProcessCount } from './lib/process-manager.js';
+import { startPlanScheduler, stopPlanScheduler } from './lib/plan-scheduler.js';
 
 const app = express();
 const server = createServer(app);
@@ -70,6 +71,13 @@ server.listen(PORT, async () => {
   } catch (error) {
     console.error('Failed to start agent processes:', error);
   }
+
+  // v3: Start plan scheduler (BullMQ)
+  try {
+    await startPlanScheduler();
+  } catch (error) {
+    console.error('Failed to start plan scheduler:', error);
+  }
 });
 
 // Graceful shutdown
@@ -77,6 +85,7 @@ const shutdown = async () => {
   console.log('\nShutting down...');
 
   try {
+    await stopPlanScheduler();
     await stopAllProcesses();
   } catch (error) {
     console.error('Error stopping processes:', error);

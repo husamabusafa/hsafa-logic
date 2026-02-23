@@ -36,7 +36,7 @@ Everything in v3 is built on six primitives:
 | Multiple concurrent runs per agent | One process handles all events sequentially |
 | Context rebuilt from DB every invocation | Consciousness loaded once, updated incrementally |
 | Run = unit of work | Think cycle = unit of work |
-| One model per agent, fixed | Adaptive model per step via `prepareStep` |
+| One model per agent, fixed | One model per agent (configurable in `configJson.model`) |
 | No middleware | Composable middleware stack (RAG, guardrails, caching) |
 | `lastProcessedMessageId` tracking | Not needed — consciousness tracks what the agent has seen |
 

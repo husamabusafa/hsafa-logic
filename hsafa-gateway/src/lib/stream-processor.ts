@@ -35,10 +35,10 @@ export interface StreamProcessorOptions {
    */
   visibleTools: Set<string>;
   /**
-   * Set of tool names that are client-side (space/external executionType).
-   * These have no execute function — the cycle pauses for user input.
+   * Set of async tool names (space, external-without-url).
+   * Their execute returns { status: 'pending' } — real result arrives via inbox.
    */
-  clientTools: Set<string>;
+  asyncTools: Set<string>;
 }
 
 export interface CollectedToolCall {
@@ -101,7 +101,7 @@ export async function processStream(
   fullStream: AsyncIterable<any>,
   options: StreamProcessorOptions,
 ): Promise<StreamResult> {
-  const { runId, agentEntityId, getActiveSpaceId, visibleTools, clientTools } = options;
+  const { runId, agentEntityId, getActiveSpaceId, visibleTools, asyncTools } = options;
 
   const toolCalls: CollectedToolCall[] = [];
   const active = new Map<string, ActiveToolStream>();
@@ -256,8 +256,8 @@ export async function processStream(
           });
 
           // Persist the tool call message
-          const isClientTool = clientTools.has(toolName);
-          const finalStatus: ToolCallStatus = isClientTool ? 'requires_action' : 'running';
+          const isAsyncTool = asyncTools.has(toolName);
+          const finalStatus: ToolCallStatus = isAsyncTool ? 'requires_action' : 'running';
           try {
             const toolContent = buildToolCallContent(toolName, args, null, finalStatus);
             const toolMeta = buildToolCallMessageMeta({
@@ -305,6 +305,10 @@ export async function processStream(
         const result = part.output as unknown;
         const tool = active.get(toolCallId);
 
+        // Check if this is a pending async tool result (not a real completion)
+        const isPendingResult = typeof result === 'object' && result !== null
+          && (result as Record<string, unknown>).status === 'pending';
+
         if (tool?.isVisible && tool.spaceId) {
           if (tool.isSendMessage) {
             await toSpace(tool.spaceId, {
@@ -314,7 +318,8 @@ export async function processStream(
               agentEntityId,
               phase: 'done',
             });
-          } else {
+          } else if (!isPendingResult) {
+            // Real result — update message to complete
             await toSpace(tool.spaceId, {
               type: 'tool.done',
               streamId: toolCallId,
@@ -350,6 +355,7 @@ export async function processStream(
               }
             }
           }
+          // isPendingResult: message stays as requires_action — will be updated when real result arrives
         }
 
         await toRun({

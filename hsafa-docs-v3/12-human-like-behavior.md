@@ -100,9 +100,9 @@ Agents don't just react — they initiate:
 
 ---
 
-### 7. Adaptive Thinking
+### 7. Consistent Thinking
 
-The agent adjusts its intelligence to the task:
+The agent uses its configured model for all tasks:
 
 - **Simple greeting** → cheap model (gpt-4o-mini), 1-2 steps
 - **Complex multi-space analysis** → reasoning model (o3), many steps
@@ -194,5 +194,5 @@ With consciousness, emotional realism goes deeper: the agent genuinely "remember
 | Emotional depth | Limited to current run context | Accumulated across cycles |
 | Self-awareness | ACTIVE RUNS block | Not needed — one mind, one process |
 | Ignoring irrelevant messages | Full run consumed even for silence | `skip()` tool — ~20 tokens, SDK stops immediately, full rollback |
-| Adaptation | One model fits all | Adaptive model per step |
+| Adaptation | One model fits all | One model per agent, configurable |
 | Observability | Per-run metrics | Per-cycle + per-step telemetry |

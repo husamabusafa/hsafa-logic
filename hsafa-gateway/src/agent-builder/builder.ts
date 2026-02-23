@@ -3,7 +3,8 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createXai } from '@ai-sdk/xai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { tool, jsonSchema } from 'ai';
+import { tool, jsonSchema, type ToolExecutionOptions } from 'ai';
+import { prisma } from '../lib/db.js';
 import {
   AgentConfigSchema,
   type AgentConfig,
@@ -47,7 +48,7 @@ export async function buildAgent(
   return {
     tools,
     visibleToolNames,
-    clientToolNames: custom.clientToolNames,
+    asyncToolNames: custom.asyncToolNames,
     model,
   };
 }
@@ -104,7 +105,7 @@ function resolveModel(config: AgentConfig): unknown {
 interface CustomToolsResult {
   tools: Record<string, unknown>;
   visibleToolNames: Set<string>;
-  clientToolNames: Set<string>;
+  asyncToolNames: Set<string>;
 }
 
 function buildCustomTools(
@@ -113,15 +114,16 @@ function buildCustomTools(
 ): CustomToolsResult {
   const tools: Record<string, unknown> = {};
   const visibleToolNames = new Set<string>();
-  const clientToolNames = new Set<string>();
+  const asyncToolNames = new Set<string>();
 
   for (const tc of toolConfigs) {
     const isVisible = tc.visible ?? (tc.executionType !== 'internal');
     if (isVisible) visibleToolNames.add(tc.name);
 
-    // Tools without server-side execution (space/external) become client tools
-    const isClientTool = tc.executionType === 'space' || tc.executionType === 'external';
-    if (isClientTool) clientToolNames.add(tc.name);
+    // Async tools: space (always), external without URL (no inline execution possible)
+    const hasUrl = !!(tc.execution as Record<string, unknown> | undefined)?.url;
+    const isAsyncTool = tc.executionType === 'space' || (tc.executionType === 'external' && !hasUrl);
+    if (isAsyncTool) asyncToolNames.add(tc.name);
 
     // Use the tool's own JSON Schema from configJson, falling back to open object
     const schema = (Object.keys(tc.inputSchema).length > 0)
@@ -130,11 +132,32 @@ function buildCustomTools(
 
     const inputSchema = jsonSchema<Record<string, unknown>>(schema as any);
 
-    if (isClientTool) {
-      // Client tools: no execute — SDK stops the loop, cycle enters waiting_tool
-      tools[tc.name] = { description: tc.description, inputSchema };
+    if (isAsyncTool) {
+      // Async tools: execute creates PendingToolCall, returns pending immediately.
+      // The real result arrives via inbox as a tool_result event in a later cycle.
+      tools[tc.name] = tool({
+        description: tc.description,
+        inputSchema,
+        execute: async (args: Record<string, unknown>, options: ToolExecutionOptions) => {
+          const toolCallId = options.toolCallId;
+          await prisma.pendingToolCall.create({
+            data: {
+              agentEntityId: context.agentEntityId,
+              runId: context.currentRunId!,
+              toolCallId,
+              toolName: tc.name,
+              args: args as any,
+            },
+          });
+          return {
+            status: 'pending',
+            pendingToolCallId: toolCallId,
+            message: `Waiting for result. It will arrive in your inbox when ready.`,
+          };
+        },
+      });
     } else {
-      // Server tools: use tool() helper for type-safe execute inference
+      // Inline tools (gateway, internal, external-with-url): execute runs immediately
       tools[tc.name] = tool({
         description: tc.description,
         inputSchema,
@@ -145,7 +168,7 @@ function buildCustomTools(
     }
   }
 
-  return { tools, visibleToolNames, clientToolNames };
+  return { tools, visibleToolNames, asyncToolNames };
 }
 
 // =============================================================================
@@ -189,6 +212,39 @@ async function executeGatewayTool(
         clearTimeout(timer);
         return {
           error: err instanceof Error ? err.message : 'Gateway tool execution failed',
+        };
+      }
+    }
+
+    case 'external': {
+      // External tools with URL — inline HTTP call (same as gateway)
+      const url = exec.url as string;
+      if (!url) return { error: 'External tool has no URL and should be async' };
+      const method = (exec.method as string) ?? 'POST';
+      const headers = (exec.headers as Record<string, string>) ?? {};
+      const timeout = (exec.timeout as number) ?? 30_000;
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+
+      try {
+        const response = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: method !== 'GET' ? JSON.stringify(args) : undefined,
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+
+        if (!response.ok) {
+          return { error: `HTTP ${response.status}: ${response.statusText}` };
+        }
+
+        return await response.json();
+      } catch (err) {
+        clearTimeout(timer);
+        return {
+          error: err instanceof Error ? err.message : 'External tool execution failed',
         };
       }
     }

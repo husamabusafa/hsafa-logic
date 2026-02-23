@@ -179,6 +179,40 @@ Like plans, service events have **no associated space**. The agent uses `enter_s
 
 ---
 
+## Event Source 4: Tool Result (Async)
+
+When an agent calls an async tool (`space` or `external` without URL), the tool returns `{ status: "pending" }` immediately and the cycle continues. The real result arrives later as a `tool_result` inbox event.
+
+### Inbox Entry
+
+```json
+{
+  "eventId": "tr:tc-abc-123",
+  "type": "tool_result",
+  "timestamp": "2026-02-18T15:12:00Z",
+  "data": {
+    "toolCallId": "tc-abc-123",
+    "toolName": "confirmAction",
+    "originRunId": "run-xyz",
+    "result": { "confirmed": true }
+  }
+}
+```
+
+### How It Works
+
+1. Agent calls an async tool → `execute()` creates a `PendingToolCall` record → returns `{ status: "pending" }`.
+2. Agent finishes the cycle normally (consciousness saved with the pending result).
+3. User submits result via `POST /api/runs/:runId/tool-results` → gateway resolves `PendingToolCall`, pushes `tool_result` inbox event.
+4. Agent wakes, drains inbox, sees the tool result alongside any other pending events.
+5. Agent processes the result with full consciousness context of why it called the tool.
+
+### No Active Space
+
+Like plans and services, tool result events have **no associated space**. The agent already knows which space the original tool call was in (from consciousness).
+
+---
+
 ## Inbox Processing
 
 ### drainInbox

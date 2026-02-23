@@ -19,7 +19,7 @@ enum EntityType {
 
 enum RunStatus {
   running
-  waiting_tool // Interactive space tools only (forms, approvals)
+  waiting_tool // DEPRECATED in v3: async tools return pending + result via inbox. Kept for SDK compat.
   completed
   failed
 }
@@ -29,6 +29,13 @@ enum PlanStatus {
   running
   completed
   canceled
+}
+
+enum InboxEventStatus {
+  pending
+  processing
+  processed
+  failed
 }
 
 // =============================================================================
@@ -57,6 +64,8 @@ model Entity {
   plans                 Plan[]
   goals                 Goal[]
   consciousness         AgentConsciousness?
+  inboxEvents           InboxEvent[]
+  pendingToolCalls      PendingToolCall[]
 
   @@index([type])
   @@index([externalId])
@@ -211,7 +220,9 @@ model Run {
   agentEntity Entity @relation(fields: [agentEntityId], references: [id])
   agent       Agent  @relation(fields: [agentId], references: [id])
 
-  messages SmartSpaceMessage[]
+  messages         SmartSpaceMessage[]
+  inboxEvents      InboxEvent[]
+  pendingToolCalls PendingToolCall[]
 
   @@index([agentEntityId, createdAt])
   @@index([agentEntityId, status])
@@ -305,4 +316,62 @@ model Goal {
   @@index([entityId, status])
   @@index([entityId, priority])
   @@map("goals")
+}
+
+// =============================================================================
+// INBOX EVENT — Durable log of events pushed to agent inboxes
+// v3: Redis is the fast queue (BRPOP wakeup). Postgres is the durable record.
+//     Enables crash recovery, audit trail, and per-cycle event inspection.
+// =============================================================================
+
+model InboxEvent {
+  id              String           @id @default(uuid()) @db.Uuid
+  agentEntityId   String           @map("agent_entity_id") @db.Uuid
+  eventId         String           @map("event_id") // dedup key (messageId, planId+ts, svc UUID)
+  type            String           // 'space_message' | 'plan' | 'service'
+  data            Json             @db.JsonB
+  status          InboxEventStatus @default(pending)
+
+  // Set when the think cycle starts processing this event
+  runId           String?          @map("run_id") @db.Uuid
+
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  processedAt     DateTime?        @map("processed_at") @db.Timestamptz(6)
+
+  agentEntity Entity @relation(fields: [agentEntityId], references: [id], onDelete: Cascade)
+  run         Run?   @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@unique([agentEntityId, eventId])
+  @@index([agentEntityId, status])
+  @@index([runId])
+  @@map("inbox_events")
+}
+
+// =============================================================================
+// PENDING TOOL CALL — Async tool calls awaiting external results
+// v3: Async tools (space, external-without-url) return { status: 'pending' }
+//     immediately. The real result arrives via inbox as a tool_result event.
+//     This table maps toolCallId → agent so the result endpoint knows where
+//     to push the inbox event.
+// =============================================================================
+
+model PendingToolCall {
+  id              String    @id @default(uuid()) @db.Uuid
+  agentEntityId   String    @map("agent_entity_id") @db.Uuid
+  runId           String    @map("run_id") @db.Uuid
+  toolCallId      String    @unique @map("tool_call_id")
+  toolName        String    @map("tool_name")
+  args            Json      @db.JsonB
+  status          String    @default("pending") // pending, resolved, expired
+  result          Json?     @db.JsonB
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(6)
+  expiresAt       DateTime? @map("expires_at") @db.Timestamptz(6)
+
+  agentEntity Entity @relation(fields: [agentEntityId], references: [id], onDelete: Cascade)
+  run         Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([agentEntityId, status])
+  @@index([status, expiresAt])
+  @@map("pending_tool_calls")
 }
