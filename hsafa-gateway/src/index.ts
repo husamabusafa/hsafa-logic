@@ -1,3 +1,6 @@
+// BigInt JSON serialization (Prisma seq fields are BigInt)
+(BigInt.prototype as any).toJSON = function () { return Number(this); };
+
 import express from 'express';
 import { createServer } from 'http';
 import { agentsRouter } from './routes/agents.js';

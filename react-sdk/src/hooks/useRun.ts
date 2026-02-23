@@ -60,33 +60,33 @@ export function useRun(runId: string | null | undefined): UseRunReturn {
     streamRef.current = stream;
     setIsStreaming(true);
 
-    stream.on('text.delta', (event: StreamEvent) => {
-      const delta = (event.data.delta as string) || (event.data.text as string) || '';
-      if (delta) {
+    stream.on('space.message.streaming', (event: StreamEvent) => {
+      const phase = event.data?.phase as string;
+      const delta = (event.data?.delta as string) || '';
+      if (phase === 'delta' && delta) {
         setText((prev) => prev + delta);
       }
       setEvents((prev) => [...prev, event]);
     });
 
-    stream.on('tool-input-available', (event: StreamEvent) => {
+    stream.on('tool.started', (event: StreamEvent) => {
       const tc: ToolCall = {
-        toolCallId: (event.data.toolCallId as string) || '',
-        toolName: (event.data.toolName as string) || '',
-        input: event.data.input,
-        inputText: typeof event.data.input === 'string' ? event.data.input : JSON.stringify(event.data.input),
+        toolCallId: (event.data?.streamId as string) || (event.data?.toolCallId as string) || '',
+        toolName: (event.data?.toolName as string) || '',
+        input: event.data?.args,
+        inputText: typeof event.data?.args === 'string' ? event.data.args : JSON.stringify(event.data?.args ?? {}),
         status: 'running',
       };
       setToolCalls((prev) => [...prev, tc]);
-      setStatus('waiting_tool');
       setEvents((prev) => [...prev, event]);
     });
 
-    stream.on('tool-output-available', (event: StreamEvent) => {
-      const toolCallId = (event.data.toolCallId as string) || '';
+    stream.on('tool.done', (event: StreamEvent) => {
+      const toolCallId = (event.data?.streamId as string) || (event.data?.toolCallId as string) || '';
       setToolCalls((prev) =>
         prev.map((tc) =>
           tc.toolCallId === toolCallId
-            ? { ...tc, output: event.data.output, status: 'complete' as const }
+            ? { ...tc, output: event.data?.result, status: 'complete' as const }
             : tc
         )
       );
@@ -110,8 +110,8 @@ export function useRun(runId: string | null | undefined): UseRunReturn {
       setEvents((prev) => [...prev, event]);
     });
 
-    stream.on('run.canceled', (event: StreamEvent) => {
-      setStatus('canceled');
+    stream.on('run.cancelled', (event: StreamEvent) => {
+      setStatus('failed');
       setIsStreaming(false);
       setEvents((prev) => [...prev, event]);
     });
@@ -119,8 +119,8 @@ export function useRun(runId: string | null | undefined): UseRunReturn {
     // Catch-all for other event types
     stream.on('*', (event: StreamEvent) => {
       const handled = [
-        'text.delta', 'tool-input-available', 'tool-output-available',
-        'run.started', 'run.completed', 'run.failed', 'run.canceled',
+        'space.message.streaming', 'tool.started', 'tool.done',
+        'run.started', 'run.completed', 'run.failed', 'run.cancelled',
       ];
       if (!handled.includes(event.type)) {
         setEvents((prev) => [...prev, event]);

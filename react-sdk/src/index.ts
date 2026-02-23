@@ -79,7 +79,6 @@ export type {
   SendMessageParams,
   ListMessagesParams,
   CreateRunParams,
-  SubmitToolResultParams,
   SubmitRunToolResultParams,
   RegisterClientParams,
   ListParams,

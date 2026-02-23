@@ -344,7 +344,7 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       ));
     });
 
-    // run.waiting_tool → agent paused waiting for user input on client tools
+    // run.waiting_tool → deprecated in v3 (async tools don't block), kept for v2 compat
     // Finalize tool call args from the event and ensure they're in 'running' state
     stream.on('run.waiting_tool', (e: StreamEvent) => {
       const tcs = e.data?.toolCalls as Array<{ callId: string; toolName: string; args: unknown }> | undefined;

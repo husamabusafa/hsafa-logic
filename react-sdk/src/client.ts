@@ -251,12 +251,17 @@ class RunsResource {
 class ToolsResource {
   constructor(private http: HttpClient) {}
 
-  async submitResult(runId: string, params: SubmitRunToolResultParams): Promise<{ success: boolean }> {
+  /**
+   * Submit an async tool result for a pending tool call.
+   * v3: Resolves PendingToolCall + pushes tool_result inbox event.
+   */
+  async submitResult(runId: string, params: SubmitRunToolResultParams): Promise<{ success: boolean; agentEntityId?: string }> {
     return this.http.post(`/api/runs/${runId}/tool-results`, params);
   }
 
-  async submitRunResult(runId: string, params: SubmitRunToolResultParams): Promise<{ success: boolean }> {
-    return this.http.post(`/api/runs/${runId}/tool-results`, params);
+  /** @deprecated Use submitResult instead */
+  async submitRunResult(runId: string, params: SubmitRunToolResultParams): Promise<{ success: boolean; agentEntityId?: string }> {
+    return this.submitResult(runId, params);
   }
 }
 

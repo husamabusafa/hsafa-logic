@@ -68,38 +68,34 @@ export interface Membership {
 
 export interface Run {
   id: string;
-  smartSpaceId?: string | null;
-  activeSpaceId?: string | null;
   agentEntityId: string;
   agentId: string;
-  triggeredById?: string | null;
   status: RunStatus;
   metadata?: Record<string, unknown> | null;
-  // Trigger context
+  // v3: Cycle metrics
+  cycleNumber?: number;
+  inboxEventCount?: number;
+  stepCount?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  durationMs?: number;
+  // Trigger context (from inbox event)
   triggerType?: 'space_message' | 'plan' | 'service' | null;
   triggerSpaceId?: string | null;
+  triggerEntityId?: string | null;
   triggerMessageId?: string | null;
-  triggerMessageContent?: string | null;
-  triggerSenderEntityId?: string | null;
-  triggerSenderName?: string | null;
-  triggerSenderType?: 'human' | 'agent' | null;
-  triggerServiceName?: string | null;
   triggerPayload?: unknown;
-  triggerPlanId?: string | null;
-  triggerPlanName?: string | null;
-  triggerPlanInstruction?: string | null;
+  startedAt?: string;
   createdAt: string;
   completedAt?: string | null;
   errorMessage?: string | null;
 }
 
 export type RunStatus =
-  | 'queued'
   | 'running'
   | 'waiting_tool'
   | 'completed'
-  | 'failed'
-  | 'canceled';
+  | 'failed';
 
 export interface RunEvent {
   id: string;
@@ -151,7 +147,7 @@ export type EventType =
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
-  | 'run.waiting_tool'
+  | 'run.waiting_tool'    // deprecated in v3 — async tools don't block
   // Agent status
   | 'agent.active'
   | 'agent.inactive'
@@ -228,18 +224,9 @@ export interface ListMessagesParams {
 }
 
 export interface CreateRunParams {
-  smartSpaceId?: string;
   agentEntityId: string;
   agentId?: string;
-  triggeredById?: string;
   metadata?: Record<string, unknown>;
-  start?: boolean;
-}
-
-export interface SubmitToolResultParams {
-  runId: string;
-  toolCallId: string;
-  result: unknown;
 }
 
 export interface SubmitRunToolResultParams {

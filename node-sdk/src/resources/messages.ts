@@ -53,7 +53,7 @@ export class MessagesResource {
       const activeToolCalls = new Map<string, { id: string; name: string; input: unknown; output?: unknown }>();
       let settled = false;
 
-      // Subscribe to space stream for persisted messages (v2: no text streaming, text arrives as smartSpace.message)
+      // Subscribe to space stream for persisted messages and agent lifecycle events
       const spaceStream = new SSEStream({
         url: this.http.buildUrl(`/api/smart-spaces/${smartSpaceId}/stream`),
         headers: this.http.getAuthHeaders(),
@@ -92,7 +92,7 @@ export class MessagesResource {
         if (content) text += (text ? '\n' : '') + content;
       });
 
-      // Run stream: tool events (v2 names)
+      // Run stream: tool events
       runStream.on('tool.started', (event: StreamEvent) => {
         const data = event.data as Record<string, unknown>;
         const callId = String(data.streamId || data.toolCallId || '');
@@ -114,14 +114,23 @@ export class MessagesResource {
         }
       });
 
-      // Run stream: completion signals
-      runStream.on('run.completed', () => {
+      // Completion helper — resolves the promise with collected data
+      const finish = () => {
         if (!settled) {
           settled = true;
           cleanup();
           toolCalls.push(...activeToolCalls.values());
           resolve({ text, toolCalls, run: { id: runId } as any });
         }
+      };
+
+      // Run stream: completion signals
+      runStream.on('run.completed', finish);
+
+      // v3: agent.inactive on space stream also signals cycle end
+      spaceStream.on('agent.inactive', (event: StreamEvent) => {
+        const rid = event.runId || (event.data?.runId as string);
+        if (rid === runId) finish();
       });
 
       runStream.on('run.failed', (event: StreamEvent) => {

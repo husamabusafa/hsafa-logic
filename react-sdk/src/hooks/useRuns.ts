@@ -47,7 +47,7 @@ export function useRuns(options?: UseRunsOptions): UseRunsReturn {
     async (runId: string) => {
       await client.runs.cancel(runId);
       setRuns((prev) =>
-        prev.map((r) => (r.id === runId ? { ...r, status: 'canceled' as const } : r))
+        prev.map((r) => (r.id === runId ? { ...r, status: 'failed' as const } : r))
       );
     },
     [client]

@@ -2,7 +2,7 @@
 
 ## Quick Summary
 
-The v3 **Living Agent Architecture** replaces v2's stateless runs with persistent agent processes that sleep, wake, think, and remember. The core gateway is **~95% complete and compiling clean** (`npx tsc --noEmit` = 0 errors). All 13 prebuilt tools are built, skip detection + rollback works, plan scheduler uses BullMQ for exact-time firing, async tools replace `waiting_tool` (agent never blocks), durable inbox events with crash recovery, and `prepareStep` with mid-cycle inbox awareness. Remaining gaps: **SDKs not aligned** to v3, **seed script**, **Prisma migration**, and **tests**.
+The v3 **Living Agent Architecture** replaces v2's stateless runs with persistent agent processes that sleep, wake, think, and remember. The core gateway is **~98% complete and compiling clean** (`npx tsc --noEmit` = 0 errors). All 13 prebuilt tools are built, skip detection + rollback works, plan scheduler uses BullMQ for exact-time firing, async tools replace `waiting_tool` (agent never blocks), durable inbox events with crash recovery, `prepareStep` with mid-cycle inbox awareness, **all 3 SDKs aligned to v3**, and **Prisma migration applied**. Remaining gaps: **seed script** and **tests**.
 
 ---
 
@@ -162,13 +162,14 @@ The v3 **Living Agent Architecture** replaces v2's stateless runs with persisten
 
 ---
 
-### Phase 8: SDK Alignment ❌ NOT STARTED
+### Phase 8: SDK Alignment ✅ COMPLETE
 
 | Step | Task | Status | Notes |
 |------|------|--------|-------|
-| 33 | react-sdk — update for v3 events | ❌ | Still has v2 runtime code |
-| 34 | node-sdk — update types for simplified Run | ❌ | Still has v2 types |
-| 35 | ui-sdk — no changes expected | ❌ | May need minor updates |
+| 33 | react-sdk — update for v3 events | ✅ Done | types, client, useRun (v1→v3 event names), useRuns, useHsafaRuntime |
+| 34 | node-sdk — update types for simplified Run | ✅ Done | Run (cycle metrics, simplified trigger), RunStatus, tools, sendAndWait |
+| 35 | ui-sdk — verify compatibility | ✅ Done | No changes needed — wraps react-sdk, compiles clean |
+| 36 | Prisma migration | ✅ Done | v3_living_agent + v3_main applied, Prisma Client regenerated |
 
 ---
 
@@ -178,7 +179,7 @@ The v3 **Living Agent Architecture** replaces v2's stateless runs with persisten
 hsafa-gateway/
 ├── prisma/
 │   ├── schema.prisma              ✅ v3 schema (AgentConsciousness, simplified Run)
-│   ├── migrations/                ⚠️ Need to verify migration exists
+│   ├── migrations/                ✅ v3_living_agent + v3_main applied
 │   └── seed.ts                    ⚠️ Needs v3 agent config (consciousness settings)
 ├── src/
 │   ├── agent-builder/
@@ -256,10 +257,8 @@ hsafa-gateway/
 
 ## What Does NOT Work Yet
 
-1. ❌ **SDKs not updated** — react-sdk, node-sdk, ui-sdk still have v2 code
-2. ❌ **No seed script for v3** — needs agent with `consciousness` config
-3. ❌ **Prisma migration** not verified as run
-4. ❌ **No tests** for any v3 component
+1. ❌ **No seed script for v3** — needs agent with `consciousness` config
+2. ❌ **No tests** for any v3 component
 
 ---
 
@@ -274,7 +273,7 @@ All P0 tasks are complete: prebuilt tools, registry, builder wiring, skip detect
 | # | Task | Effort | Dependencies |
 |---|------|--------|-------------|
 | 1 | **Seed script** for v3 agent with consciousness config | Small | None |
-| 2 | **Run Prisma migration** | Small | None |
+| 2 | **use-case-app** — update for v3 | Medium | All SDKs done |
 
 ### P2 — Advanced Features (can defer)
 
@@ -283,15 +282,6 @@ All P0 tasks are complete: prebuilt tools, registry, builder wiring, skip detect
 | 3 | **Middleware stack** — RAG, guardrails, caching, logging | Large | Architecture design |
 | 4 | **Semantic compaction** — embeddings-based relevance | Large | Embedding model |
 | 5 | **Telemetry** — OpenTelemetry integration | Medium | OTel setup |
-
-### P3 — SDK Alignment
-
-| # | Task | Effort | Dependencies |
-|---|------|--------|-------------|
-| 6 | **react-sdk** — simplify to v3 events (space.message, streaming, agent status, async tools) | Medium | Gateway stable |
-| 7 | **node-sdk** — update Run type, remove v2 fields | Small | Gateway stable |
-| 8 | **ui-sdk** — verify compatibility | Small | react-sdk done |
-| 9 | **use-case-app** — update for v3 | Medium | All SDKs done |
 
 ---
 
@@ -361,9 +351,10 @@ All P0 tasks are complete: prebuilt tools, registry, builder wiring, skip detect
 | **Plan Scheduler** | ✅ Complete | 100% (BullMQ, cron + one-shot) |
 | **Async Tools** | ✅ Complete | 100% (PendingToolCall + inbox) |
 | **Durable Inbox Events** | ✅ Complete | 100% (InboxEvent table + crash recovery) |
-| **react-sdk v3** | ❌ Not started | 0% |
-| **node-sdk v3** | ❌ Not started | 0% |
-| **ui-sdk v3** | ❌ Not started | 0% |
+| **Prisma Migration** | ✅ Complete | 100% (v3_living_agent + v3_main) |
+| **react-sdk v3** | ✅ Complete | 100% (types, hooks, runtime aligned) |
+| **node-sdk v3** | ✅ Complete | 100% (types, resources, sendAndWait aligned) |
+| **ui-sdk v3** | ✅ Complete | 100% (wraps react-sdk, no changes needed) |
 | **Tests** | ❌ Not started | 0% |
 
-**Overall v3 Gateway: ~95% complete.** Core loop + prebuilt tools + plan scheduler + async tools + durable inbox + prepareStep all done. `npx tsc --noEmit` = 0 errors. Next: seed script, Prisma migration, SDK alignment.
+**Overall v3: ~98% complete.** Core loop + prebuilt tools + plan scheduler + async tools + durable inbox + prepareStep + all 3 SDKs aligned + Prisma migration applied. All 4 packages compile clean (`npx tsc --noEmit` = 0 errors). Next: seed script, tests.
