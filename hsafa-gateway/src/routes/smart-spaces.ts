@@ -118,7 +118,7 @@ smartSpacesRouter.get('/:smartSpaceId/members', requireAuth(), requireMembership
       where: { smartSpaceId: req.params.smartSpaceId },
       include: { entity: { select: { id: true, type: true, displayName: true } } },
     });
-    res.json({ memberships });
+    res.json({ members: memberships });
   } catch (error) {
     console.error('List members error:', error);
     res.status(500).json({ error: 'Failed to list members' });
@@ -271,7 +271,29 @@ smartSpacesRouter.get('/:smartSpaceId/stream', requireAuth(), requireMembership(
       'X-Accel-Buffering': 'no',
     });
 
-    res.write(`data: ${JSON.stringify({ type: 'connected', smartSpaceId })}\n\n`);
+    // Include active agents in the connected event so the indicator restores on refresh
+    const activeRuns = await prisma.run.findMany({
+      where: {
+        status: 'running',
+        agent: {
+          entity: {
+            smartSpaceMemberships: { some: { smartSpaceId } },
+          },
+        },
+      },
+      select: {
+        id: true,
+        agentEntityId: true,
+        agent: { select: { name: true } },
+      },
+    });
+    const activeAgents = activeRuns.map((r) => ({
+      runId: r.id,
+      agentEntityId: r.agentEntityId,
+      agentName: r.agent.name,
+    }));
+
+    res.write(`data: ${JSON.stringify({ type: 'connected', smartSpaceId, activeAgents })}\n\n`);
 
     // Subscribe to Redis pub/sub for this space
     const subscriber = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');

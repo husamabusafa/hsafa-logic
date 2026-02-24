@@ -2,7 +2,7 @@ import { PrismaClient } from "./generated/client";
 import bcrypt from "bcryptjs";
 
 // Gateway Prisma client (separate DB)
-import { PrismaClient as GatewayPrismaClient } from "@prisma/client";
+import { PrismaClient as GatewayPrismaClient } from "../../hsafa-gateway/prisma/generated/client/index.js";
 
 const prisma = new PrismaClient();
 
@@ -58,9 +58,9 @@ async function main() {
 
   // --- Update gateway entities' externalId to match use-case-app user IDs ---
   // This is required so JWT sub claim (user.id) matches entity.externalId
-  const gatewayPrisma = new GatewayPrismaClient({
-    datasources: { db: { url: GATEWAY_DATABASE_URL } },
-  });
+  // Prisma v7: URL comes from environment, not constructor
+  process.env.DATABASE_URL = GATEWAY_DATABASE_URL;
+  const gatewayPrisma = new GatewayPrismaClient();
 
   await gatewayPrisma.entity.update({
     where: { id: GATEWAY_IDS.managerEntityId },
