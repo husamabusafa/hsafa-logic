@@ -24,7 +24,16 @@ export function createSendMessageTool(ctx: AgentProcessContext) {
       const spaceId = ctx.getActiveSpaceId();
       if (!spaceId) {
         console.warn(`[send_message] ${ctx.agentName} tried to send without active space — message NOT delivered: "${text.slice(0, 80)}"`);
-        return { success: false, error: 'MESSAGE NOT SENT — no active space. You must call enter_space first. The message was NOT delivered to anyone.' };
+        const memberships = await prisma.smartSpaceMembership.findMany({
+          where: { entityId: ctx.agentEntityId },
+          include: { smartSpace: { select: { id: true, name: true } } },
+        });
+        const spaceList = memberships.map((m) => `"${m.smartSpace.name}" (id: ${m.smartSpace.id})`).join(', ');
+        return {
+          success: false,
+          error: `MESSAGE NOT SENT — you are not in any space. Call enter_space first, then retry send_message.`,
+          action: `Call enter_space with one of your spaces: ${spaceList || 'none found'}`,
+        };
       }
 
       // Persist the message

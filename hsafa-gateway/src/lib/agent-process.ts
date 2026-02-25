@@ -68,7 +68,8 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
   // Load consciousness
   let { messages: consciousness, cycleCount } = await loadConsciousness(agentEntityId);
 
-  // Load agent config for tool building and model resolution
+  // Restore activeSpaceId from consciousness — scan backwards for last enter_space/leave_space
+  let activeSpaceId: string | null = restoreActiveSpaceId(consciousness);
   const agent = await prisma.agent.findUniqueOrThrow({
     where: { id: agentId },
     include: {
@@ -93,9 +94,11 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
     },
   });
 
-  // Mutable active space — in-memory only (not persisted in v3)
-  let activeSpaceId: string | null = null;
+  // Mutable active space — restored from consciousness on startup, updated by enter/leave_space
   let enterSpaceLocked = false;
+  if (activeSpaceId) {
+    console.log(`[agent-process] ${agentName} restored activeSpaceId: ${activeSpaceId}`);
+  }
 
   // Build process context
   const context: AgentProcessContext = {
@@ -208,17 +211,25 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         maxOutputTokens: agentConfig?.model?.maxTokens,
         stopWhen: stepCountIs(maxSteps),
         prepareStep: async ({ stepNumber }) => {
-          // Mid-cycle inbox awareness (lightweight preview)
-          if (stepNumber === 0) return {};
+          const spaceId = activeSpaceId;
+          const spaceContext = spaceId
+            ? `ACTIVE SPACE: ${spaceId} — you are currently in this space. send_message will deliver here.`
+            : `ACTIVE SPACE: none — you are not in any space. Call enter_space before send_message.`;
 
+          // Step 0: inject active space reminder only
+          if (stepNumber === 0) {
+            return {
+              messages: [{ role: 'user' as const, content: spaceContext }],
+            };
+          }
+
+          // Step 1+: active space + mid-cycle inbox preview
           const pending = await peekInbox(agentEntityId, 5);
-          if (pending.length === 0) return {};
+          const parts: string[] = [spaceContext];
+          if (pending.length > 0) parts.push(formatInboxPreview(pending));
 
           return {
-            messages: [{
-              role: 'user' as const,
-              content: formatInboxPreview(pending),
-            }],
+            messages: [{ role: 'user' as const, content: parts.join('\n\n') }],
           };
         },
       });
@@ -335,6 +346,28 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
   console.log(`[agent-process] ${agentName} shutting down`);
   await saveConsciousness(agentEntityId, consciousness, cycleCount);
   blockingRedis.disconnect();
+}
+
+// =============================================================================
+// Active space restoration
+// =============================================================================
+
+/**
+ * Scan consciousness backwards to find the last enter_space or leave_space tool call.
+ * Returns the spaceId from the last enter_space, or null if the last action was leave_space
+ * or no space action was found.
+ */
+function restoreActiveSpaceId(messages: ModelMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+    for (const part of (msg.content as any[])) {
+      if (part.type !== 'tool-call') continue;
+      if (part.toolName === 'enter_space') return part.input?.spaceId ?? null;
+      if (part.toolName === 'leave_space') return null;
+    }
+  }
+  return null;
 }
 
 // =============================================================================
