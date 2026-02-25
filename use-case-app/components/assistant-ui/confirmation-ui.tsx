@@ -39,25 +39,24 @@ function parseConfirmation(props: ConfirmationUIProps): ConfirmationData | null 
 }
 
 export const ConfirmationUI: FC<ConfirmationUIProps> = (props) => {
-  const { status, toolCallId } = props;
-  const isRunning = status?.type === "running";
+  const { toolCallId } = props;
   const confirmation = parseConfirmation(props);
   const runId = useMessage((m) => (m.metadata as any)?.custom?.runId as string | undefined);
   const { submitToRun, isSubmitting } = useToolResult();
   const [choice, setChoice] = useState<"confirmed" | "rejected" | null>(null);
 
-  // Parse result from persisted message (after page refresh)
+  // Determine state purely from data — no dependency on assistant-ui's status prop.
+  // result=null/undefined → pending (not yet resolved), result=object → resolved.
   const persistedResult = props.result as
     | { confirmed?: boolean; action?: string }
     | null
     | undefined;
-  const wasConfirmed =
-    choice === "confirmed" || persistedResult?.confirmed === true;
-  const wasRejected =
-    choice === "rejected" || persistedResult?.confirmed === false;
-  const isResolved = wasConfirmed || wasRejected || choice != null || status?.type === "complete";
+  const wasConfirmed = choice === "confirmed" || persistedResult?.confirmed === true;
+  const wasRejected = choice === "rejected" || persistedResult?.confirmed === false;
+  const isResolved = wasConfirmed || wasRejected;
 
-  const isPending = isRunning && confirmation != null && choice === null;
+  // Pending = we have the confirmation data, no result yet, user hasn't chosen yet
+  const isPending = !props.result && confirmation != null && !isResolved;
 
   const handleConfirm = async () => {
     if (!isPending || !toolCallId || !runId || isSubmitting) return;
@@ -85,8 +84,8 @@ export const ConfirmationUI: FC<ConfirmationUIProps> = (props) => {
     }
   };
 
-  // Loading skeleton — only while still streaming / running with no args yet
-  if (isRunning && !confirmation && !isResolved) {
+  // Loading skeleton — show while args are still streaming in (no confirmation data yet)
+  if (!confirmation && !isResolved && !props.result) {
     return (
       <div className="my-2 w-80 animate-pulse rounded-xl border border-border bg-muted/40 p-4">
         <div className="mb-3 h-5 w-2/3 rounded bg-muted" />

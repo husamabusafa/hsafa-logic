@@ -301,14 +301,15 @@ export async function markEventsFailed(
 }
 
 /**
- * Crash recovery: find events stuck in 'processing' (agent crashed mid-cycle)
- * and re-push them to the Redis inbox for reprocessing.
+ * Crash recovery: find events stuck in 'processing' or orphaned as 'pending'
+ * (Redis signals lost after gateway restart) and re-push them to the Redis
+ * inbox so the agent process picks them up.
  */
 export async function recoverStuckEvents(agentEntityId: string): Promise<number> {
   const stuck = await prisma.inboxEvent.findMany({
     where: {
       agentEntityId,
-      status: 'processing',
+      status: { in: ['processing', 'pending'] },
     },
     orderBy: { createdAt: 'asc' },
   });
@@ -326,17 +327,20 @@ export async function recoverStuckEvents(agentEntityId: string): Promise<number>
     await redis.lpush(key, JSON.stringify(event));
   }
 
-  // Reset status back to pending so they'll be marked processing again
-  await prisma.inboxEvent.updateMany({
-    where: {
-      agentEntityId,
-      status: 'processing',
-    },
-    data: {
-      status: 'pending',
-      runId: null,
-    },
-  });
+  // Reset any 'processing' events back to 'pending' so they'll be marked processing again
+  const processingCount = stuck.filter((e) => e.status === 'processing').length;
+  if (processingCount > 0) {
+    await prisma.inboxEvent.updateMany({
+      where: {
+        agentEntityId,
+        status: 'processing',
+      },
+      data: {
+        status: 'pending',
+        runId: null,
+      },
+    });
+  }
 
   return stuck.length;
 }

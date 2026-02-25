@@ -184,10 +184,12 @@ runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res:
       return;
     }
 
-    if (pending.status !== 'pending') {
+    if (pending.status !== 'pending' && pending.status !== 'waiting') {
       res.status(409).json({ error: `Tool call already ${pending.status}` });
       return;
     }
+
+    const wasWaiting = pending.status === 'waiting';
 
     // 1. Resolve the pending tool call
     await prisma.pendingToolCall.update({
@@ -200,12 +202,16 @@ runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res:
     });
 
     // 2. Push tool_result inbox event → agent wakes in next cycle
-    await pushToolResultEvent(pending.agentEntityId, {
-      toolCallId: callId,
-      toolName: pending.toolName,
-      originRunId: runId,
-      result,
-    });
+    //    Skip inbox push if the tool was in 'waiting' state — the inline
+    //    waiter (waitForPendingResult) will pick up the resolved result.
+    if (!wasWaiting) {
+      await pushToolResultEvent(pending.agentEntityId, {
+        toolCallId: callId,
+        toolName: pending.toolName,
+        originRunId: runId,
+        result,
+      });
+    }
 
     // 3. Update the persisted SmartSpaceMessage (if visible tool was posted to a space)
     const toolMsg = await prisma.smartSpaceMessage.findFirst({

@@ -38,10 +38,10 @@ export const ToolConfigSchema = z.object({
   inputSchema: z.record(z.string(), z.unknown()),
   /**
    * Who executes this tool:
-   * - gateway  — HTTP request / compute, executed server-side immediately (inline)
-   * - external — Forwarded to an external webhook. Inline if execution.url exists, otherwise async (result via inbox)
-   * - space    — Rendered in the active space; user provides result. Always async (result via inbox)
-   * - internal — No execution; result is static or provided inline
+   * - gateway  — HTTP call to a URL. Always inline.
+   * - external — SDK / external server handles execution. Result submitted via API.
+   * - space    — Rendered in the active space as interactive UI. User provides result.
+   * - internal — No execution; returns input args as result immediately.
    */
   executionType: z.enum(['gateway', 'external', 'space', 'internal']),
   /**
@@ -49,14 +49,21 @@ export const ToolConfigSchema = z.object({
    * Default: true for gateway/external/space, false for internal.
    */
   visible: z.boolean().optional(),
+  /**
+   * If true, the tool returns { status: 'pending' } immediately and the real
+   * result arrives via inbox in a later cycle. If false (default), the tool
+   * blocks until the result is available (up to `timeout` ms).
+   */
+  isAsync: z.boolean().optional(),
+  /**
+   * Max milliseconds to wait for the tool result when isAsync is false.
+   * Only relevant for tools without a URL (external/space).
+   * After timeout, the tool returns an error — the agent never waits forever.
+   * Default: 30000 (30s).
+   */
+  timeout: z.number().optional(),
   /** Type-specific execution config (URL, method, headers, etc.) */
   execution: z.record(z.string(), z.unknown()).optional(),
-  /** Display config for space-rendered tools */
-  display: z
-    .object({
-      customUI: z.string().optional(),
-    })
-    .optional(),
 });
 
 export type ToolConfig = z.infer<typeof ToolConfigSchema>;

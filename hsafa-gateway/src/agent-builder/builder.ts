@@ -108,6 +108,8 @@ interface CustomToolsResult {
   asyncToolNames: Set<string>;
 }
 
+const DEFAULT_TOOL_TIMEOUT = 30_000;
+
 function buildCustomTools(
   toolConfigs: ToolConfig[],
   context: AgentProcessContext,
@@ -120,25 +122,52 @@ function buildCustomTools(
     const isVisible = tc.visible ?? (tc.executionType !== 'internal');
     if (isVisible) visibleToolNames.add(tc.name);
 
-    // Async tools: space (always), external without URL (no inline execution possible)
-    const hasUrl = !!(tc.execution as Record<string, unknown> | undefined)?.url;
-    const isAsyncTool = tc.executionType === 'space' || (tc.executionType === 'external' && !hasUrl);
-    if (isAsyncTool) asyncToolNames.add(tc.name);
+    const exec = (tc.execution ?? {}) as Record<string, unknown>;
+    const hasUrl = !!exec.url;
+    const isAsync = tc.isAsync ?? false;
+    const timeout = tc.timeout ?? DEFAULT_TOOL_TIMEOUT;
 
-    // Use the tool's own JSON Schema from configJson, falling back to open object
+    if (isAsync) asyncToolNames.add(tc.name);
+
     const schema = (Object.keys(tc.inputSchema).length > 0)
       ? tc.inputSchema
       : { type: 'object' as const, properties: {} };
 
     const inputSchema = jsonSchema<Record<string, unknown>>(schema as any);
 
-    if (isAsyncTool) {
-      // Async tools: execute creates PendingToolCall, returns pending immediately.
-      // The real result arrives via inbox as a tool_result event in a later cycle.
+    if (tc.executionType === 'internal') {
+      // Internal: return args as result immediately
+      tools[tc.name] = tool({
+        description: tc.description,
+        inputSchema,
+        execute: async (args) => {
+          if (isVisible && !context.getActiveSpaceId()) {
+            return { error: `Tool "${tc.name}" is visible but you are not in a space. Call enter_space first.` };
+          }
+          return { success: true, args };
+        },
+      });
+    } else if (hasUrl) {
+      // Inline HTTP call (gateway or external with URL)
+      tools[tc.name] = tool({
+        description: tc.description,
+        inputSchema,
+        execute: async (args) => {
+          if (isVisible && !context.getActiveSpaceId()) {
+            return { error: `Tool "${tc.name}" is visible but you are not in a space. Call enter_space first.` };
+          }
+          return executeHttpTool(tc, args as Record<string, unknown>);
+        },
+      });
+    } else if (isAsync) {
+      // Async: create PendingToolCall, return pending immediately, result via inbox
       tools[tc.name] = tool({
         description: tc.description,
         inputSchema,
         execute: async (args: Record<string, unknown>, options: ToolExecutionOptions) => {
+          if (isVisible && !context.getActiveSpaceId()) {
+            return { error: `Tool "${tc.name}" is visible but you are not in a space. Call enter_space first.` };
+          }
           const toolCallId = options.toolCallId;
           await prisma.pendingToolCall.create({
             data: {
@@ -147,22 +176,45 @@ function buildCustomTools(
               toolCallId,
               toolName: tc.name,
               args: args as any,
+              status: 'pending',
             },
           });
           return {
             status: 'pending',
             pendingToolCallId: toolCallId,
-            message: `Waiting for result. It will arrive in your inbox when ready.`,
+            message: 'Waiting for result. It will arrive in your inbox when ready.',
           };
         },
       });
     } else {
-      // Inline tools (gateway, internal, external-with-url): execute runs immediately
+      // Sync with timeout: create PendingToolCall, wait for result up to timeout.
+      // The agent NEVER waits forever — timeout always applies.
       tools[tc.name] = tool({
         description: tc.description,
         inputSchema,
-        execute: async (args) => {
-          return executeGatewayTool(tc, args as Record<string, unknown>, context);
+        execute: async (args: Record<string, unknown>, options: ToolExecutionOptions) => {
+          if (isVisible && !context.getActiveSpaceId()) {
+            return { error: `Tool "${tc.name}" is visible but you are not in a space. Call enter_space first.` };
+          }
+          const toolCallId = options.toolCallId;
+          await prisma.pendingToolCall.create({
+            data: {
+              agentEntityId: context.agentEntityId,
+              runId: context.currentRunId!,
+              toolCallId,
+              toolName: tc.name,
+              args: args as any,
+              status: 'waiting',
+            },
+          });
+
+          const result = await waitForPendingResult(toolCallId, timeout);
+          if (result !== null) return result;
+
+          return {
+            error: `Tool "${tc.name}" timed out after ${timeout}ms. No result was received.`,
+            toolCallId,
+          };
         },
       });
     }
@@ -171,90 +223,83 @@ function buildCustomTools(
   return { tools, visibleToolNames, asyncToolNames };
 }
 
+/**
+ * Poll PendingToolCall for resolution within the given timeout.
+ * Returns the result if resolved, or null if the timeout expires.
+ * On timeout, flips status 'waiting' → 'pending' so that if the result
+ * arrives later, the tool-results API pushes it to the inbox.
+ */
+async function waitForPendingResult(
+  toolCallId: string,
+  timeoutMs: number,
+): Promise<unknown | null> {
+  const deadline = Date.now() + timeoutMs;
+  const POLL_INTERVAL = 500;
+
+  while (Date.now() < deadline) {
+    const pending = await prisma.pendingToolCall.findUnique({
+      where: { toolCallId },
+    });
+    if (pending?.status === 'resolved') {
+      return pending.result;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((r) => setTimeout(r, Math.min(POLL_INTERVAL, remaining)));
+  }
+
+  // Timeout — flip to 'pending' so late results still reach the agent via inbox
+  await prisma.pendingToolCall.updateMany({
+    where: { toolCallId, status: 'waiting' },
+    data: { status: 'pending' },
+  });
+
+  // Final check — result may have arrived between last poll and status flip
+  const final = await prisma.pendingToolCall.findUnique({ where: { toolCallId } });
+  if (final?.status === 'resolved') return final.result;
+
+  return null;
+}
+
 // =============================================================================
-// Gateway Tool Execution
+// HTTP Tool Execution
 // =============================================================================
 
-async function executeGatewayTool(
+/**
+ * Execute a tool by making an HTTP request to the configured URL.
+ * Used for gateway and external tools that have a URL.
+ */
+async function executeHttpTool(
   config: ToolConfig,
   args: Record<string, unknown>,
-  _context: AgentProcessContext,
 ): Promise<unknown> {
-  const exec = config.execution ?? {};
+  const exec = (config.execution ?? {}) as Record<string, unknown>;
+  const url = exec.url as string;
+  const method = (exec.method as string) ?? 'POST';
+  const headers = (exec.headers as Record<string, string>) ?? {};
+  const httpTimeout = (exec.httpTimeout as number) ?? 30_000;
 
-  switch (config.executionType) {
-    case 'gateway': {
-      // HTTP request tool
-      const url = exec.url as string;
-      const method = (exec.method as string) ?? 'POST';
-      const headers = (exec.headers as Record<string, string>) ?? {};
-      const timeout = (exec.timeout as number) ?? 30_000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), httpTimeout);
 
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: method !== 'GET' ? JSON.stringify(args) : undefined,
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
 
-      try {
-        const response = await fetch(url, {
-          method,
-          headers: { 'Content-Type': 'application/json', ...headers },
-          body: method !== 'GET' ? JSON.stringify(args) : undefined,
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
-
-        if (!response.ok) {
-          return { error: `HTTP ${response.status}: ${response.statusText}` };
-        }
-
-        const data = await response.json();
-        return data;
-      } catch (err) {
-        clearTimeout(timer);
-        return {
-          error: err instanceof Error ? err.message : 'Gateway tool execution failed',
-        };
-      }
+    if (!response.ok) {
+      return { error: `HTTP ${response.status}: ${response.statusText}` };
     }
 
-    case 'external': {
-      // External tools with URL — inline HTTP call (same as gateway)
-      const url = exec.url as string;
-      if (!url) return { error: 'External tool has no URL and should be async' };
-      const method = (exec.method as string) ?? 'POST';
-      const headers = (exec.headers as Record<string, string>) ?? {};
-      const timeout = (exec.timeout as number) ?? 30_000;
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeout);
-
-      try {
-        const response = await fetch(url, {
-          method,
-          headers: { 'Content-Type': 'application/json', ...headers },
-          body: method !== 'GET' ? JSON.stringify(args) : undefined,
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
-
-        if (!response.ok) {
-          return { error: `HTTP ${response.status}: ${response.statusText}` };
-        }
-
-        return await response.json();
-      } catch (err) {
-        clearTimeout(timer);
-        return {
-          error: err instanceof Error ? err.message : 'External tool execution failed',
-        };
-      }
-    }
-
-    case 'internal': {
-      // Internal tools return a static/computed result
-      return { success: true, args };
-    }
-
-    default:
-      return { error: `Unsupported execution type: ${config.executionType}` };
+    return await response.json();
+  } catch (err) {
+    clearTimeout(timer);
+    return {
+      error: err instanceof Error ? err.message : 'Tool HTTP execution failed',
+    };
   }
 }

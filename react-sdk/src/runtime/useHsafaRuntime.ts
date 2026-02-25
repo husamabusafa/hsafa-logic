@@ -119,7 +119,8 @@ function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): Threa
 
   // Extract text and tool_call parts from structured parts or plain content
   const content: ContentPart[] = [];
-  const parts = (msg.metadata as any)?.uiMessage?.parts;
+  const meta = msg.metadata as any;
+  const parts = meta?.uiMessage?.parts;
   if (Array.isArray(parts)) {
     for (const p of parts) {
       if (p.type === 'text' && p.text) content.push({ type: 'text', text: p.text });
@@ -140,6 +141,25 @@ function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): Threa
       }
     }
   }
+
+  // Handle flat tool_call metadata format from gateway
+  // (gateway stores { type: 'tool_call', toolCallId, toolName, args, result, status, runId })
+  if (content.length === 0 && meta?.type === 'tool_call' && meta?.toolCallId) {
+    content.push({
+      type: 'tool-call',
+      toolCallId: meta.toolCallId,
+      toolName: meta.toolName || 'unknown',
+      argsText: JSON.stringify(meta.args ?? {}),
+      args: meta.args ?? {},
+      result: meta.result ?? undefined,
+      status: meta.status === 'complete'
+        ? { type: 'complete' }
+        : (meta.status === 'waiting' || meta.status === 'requires_action' || meta.status === 'running' || meta.status === 'streaming')
+          ? { type: 'running' }
+          : { type: 'incomplete', reason: 'error' },
+    } as ToolCallContentPart);
+  }
+
   if (content.length === 0) {
     const text = msg.content || '';
     if (!text.trim()) return null;
@@ -417,10 +437,12 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         metadata,
         createdAt: (raw.createdAt as string) || new Date().toISOString(),
       };
-      // Skip if no text content AND no tool_call parts in metadata
+      // Skip if no text content AND no tool_call in metadata
       if (!msg.content?.trim()) {
         const uiParts = (metadata?.uiMessage as any)?.parts;
-        if (!Array.isArray(uiParts) || !uiParts.some((p: any) => p.type === 'tool_call')) return;
+        const hasToolCallParts = Array.isArray(uiParts) && uiParts.some((p: any) => p.type === 'tool_call');
+        const isFlatToolCall = (metadata as any)?.type === 'tool_call' && (metadata as any)?.toolCallId;
+        if (!hasToolCallParts && !isFlatToolCall) return;
       }
 
       // Dedup: mark streamId persisted BEFORE setState
@@ -438,9 +460,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         return [...prev, msg];
       });
       if (streamId) {
-        // Remove the live streaming entry — persisted message replaces it
+        // Remove the live streaming/tool-call entry — persisted message replaces it
         setStreaming((prev) => prev.filter((s) => s.streamId !== streamId));
-        // Clear matching tool call entry to avoid duplicate display
         setToolCalls((prev) => prev.filter((tc) => tc.toolCallId !== streamId));
       }
     });
@@ -472,6 +493,11 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         // Skip persisted messages whose tool_call parts are all covered by live toolCalls
         const parts = (m.metadata as any)?.uiMessage?.parts as Array<Record<string, unknown>> | undefined;
         if (Array.isArray(parts) && parts.length > 0 && parts.every((p) => p.type === 'tool_call' && activeToolCallIds.has(p.toolCallId as string))) {
+          return false;
+        }
+        // Also check flat tool_call metadata format
+        const flatMeta = m.metadata as any;
+        if (flatMeta?.type === 'tool_call' && flatMeta?.toolCallId && activeToolCallIds.has(flatMeta.toolCallId)) {
           return false;
         }
         return true;
