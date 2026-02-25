@@ -95,6 +95,7 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
 
   // Mutable active space — in-memory only (not persisted in v3)
   let activeSpaceId: string | null = null;
+  let enterSpaceLocked = false;
 
   // Build process context
   const context: AgentProcessContext = {
@@ -105,6 +106,13 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
     currentRunId: null,
     getActiveSpaceId: () => activeSpaceId,
     setActiveSpaceId: (spaceId: string) => { activeSpaceId = spaceId; },
+    clearActiveSpaceId: () => { activeSpaceId = null; },
+    tryLockEnterSpace: () => {
+      if (enterSpaceLocked) return false;
+      enterSpaceLocked = true;
+      return true;
+    },
+    unlockEnterSpace: () => { enterSpaceLocked = false; },
   };
 
   // Build tools and model (once — rebuilt if config changes)
@@ -132,8 +140,8 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
 
       if (allEvents.length === 0) continue;
 
-      // Reset active space each cycle (agent must enter_space explicitly)
-      activeSpaceId = null;
+      // activeSpaceId persists across cycles — once the agent enters a space,
+      // it stays there until it explicitly calls leave_space or enter_space to switch.
       cycleCount++;
       context.cycleCount = cycleCount;
 

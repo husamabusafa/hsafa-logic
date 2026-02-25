@@ -1,5 +1,6 @@
 import type { AgentProcessContext } from '../types.js';
 import { createEnterSpaceTool } from './enter-space.js';
+import { createLeaveSpaceTool } from './leave-space.js';
 import { createSendMessageTool } from './send-message.js';
 import { createReadMessagesTool } from './read-messages.js';
 import { createPeekInboxTool } from './peek-inbox.js';
@@ -33,6 +34,7 @@ export function buildPrebuiltTools(ctx: AgentProcessContext): PrebuiltToolsResul
   const tools: Record<string, unknown> = {
     // Space tools
     enter_space: createEnterSpaceTool(ctx),
+    leave_space: createLeaveSpaceTool(ctx),
     send_message: createSendMessageTool(ctx),
     read_messages: createReadMessagesTool(ctx),
     peek_inbox: createPeekInboxTool(ctx),

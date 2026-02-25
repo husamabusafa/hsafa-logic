@@ -1,6 +1,6 @@
 import { redis } from './redis.js';
 import { prisma } from './db.js';
-import type { InboxEvent, SpaceMessageEventData, PlanEventData, ServiceEventData, ToolResultEventData } from '../agent-builder/types.js';
+import type { InboxEvent, SpaceMessageEventData, SpaceMessageContextEntry, PlanEventData, ServiceEventData, ToolResultEventData } from '../agent-builder/types.js';
 
 // =============================================================================
 // Inbox System (v3)
@@ -342,6 +342,49 @@ export async function recoverStuckEvents(agentEntityId: string): Promise<number>
 }
 
 // =============================================================================
+// Recent Context — Fetch last N messages from a space for inbox enrichment
+// =============================================================================
+
+const DEFAULT_CONTEXT_COUNT = 5;
+
+/**
+ * Fetch the last N messages from a space (before a specific message) to provide
+ * conversation context in inbox events. Returns oldest-first.
+ */
+export async function fetchRecentSpaceContext(
+  spaceId: string,
+  beforeMessageId: string,
+  count: number = DEFAULT_CONTEXT_COUNT,
+): Promise<SpaceMessageContextEntry[]> {
+  // First get the seq of the triggering message so we fetch messages BEFORE it
+  const triggerMsg = await prisma.smartSpaceMessage.findUnique({
+    where: { id: beforeMessageId },
+    select: { seq: true },
+  });
+
+  if (!triggerMsg) return [];
+
+  const messages = await prisma.smartSpaceMessage.findMany({
+    where: {
+      smartSpaceId: spaceId,
+      seq: { lt: triggerMsg.seq },
+    },
+    orderBy: { seq: 'desc' },
+    take: count,
+    include: {
+      entity: { select: { displayName: true, type: true } },
+    },
+  });
+
+  // Reverse to oldest-first
+  return messages.reverse().map((m) => ({
+    senderName: m.entity.displayName ?? 'Unknown',
+    senderType: (m.entity.type === 'agent' ? 'agent' : 'human') as 'human' | 'agent',
+    content: m.content ?? '',
+  }));
+}
+
+// =============================================================================
 // Format — Convert inbox events to a user message string for consciousness
 // =============================================================================
 
@@ -354,7 +397,14 @@ export function formatInboxEvents(events: InboxEvent[]): string {
     switch (e.type) {
       case 'space_message': {
         const d = e.data as SpaceMessageEventData;
-        return `[${d.spaceName}] ${d.senderName} (${d.senderType}): "${d.content}"`;
+        let line = `[${d.spaceName}] ${d.senderName} (${d.senderType}): "${d.content}"`;
+        if (d.recentContext && d.recentContext.length > 0) {
+          const ctx = d.recentContext
+            .map((c) => `    ${c.senderName} (${c.senderType}): "${c.content}"`)
+            .join('\n');
+          line += `\n  Recent conversation in this space:\n${ctx}`;
+        }
+        return line;
       }
       case 'plan': {
         const d = e.data as PlanEventData;

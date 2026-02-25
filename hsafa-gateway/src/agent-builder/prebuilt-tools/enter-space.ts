@@ -19,6 +19,15 @@ export function createEnterSpaceTool(ctx: AgentProcessContext) {
       required: ['spaceId'],
     }),
     execute: async ({ spaceId, limit }) => {
+      // Lock to prevent parallel enter_space calls (race condition: second call overwrites first)
+      if (!ctx.tryLockEnterSpace()) {
+        return {
+          success: false,
+          error: 'Another enter_space call is already in progress. Call enter_space sequentially — do NOT call it multiple times in the same step.',
+        };
+      }
+
+      try {
       const messageLimit = Math.min(limit ?? 50, 200);
 
       // Validate membership
@@ -67,6 +76,9 @@ export function createEnterSpaceTool(ctx: AgentProcessContext) {
         history,
         totalMessages: total,
       };
+      } finally {
+        ctx.unlockEnterSpace();
+      }
     },
   });
 }

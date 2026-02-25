@@ -2,7 +2,7 @@ import { tool, jsonSchema } from 'ai';
 import { prisma } from '../../lib/db.js';
 import { createSmartSpaceMessage } from '../../lib/smartspace-db.js';
 import { emitSmartSpaceEvent } from '../../lib/smartspace-events.js';
-import { pushSpaceMessageEvent } from '../../lib/inbox.js';
+import { pushSpaceMessageEvent, fetchRecentSpaceContext } from '../../lib/inbox.js';
 import type { AgentProcessContext } from '../types.js';
 
 // =============================================================================
@@ -23,7 +23,8 @@ export function createSendMessageTool(ctx: AgentProcessContext) {
     execute: async ({ text }) => {
       const spaceId = ctx.getActiveSpaceId();
       if (!spaceId) {
-        return { success: false, error: 'No active space. Call enter_space first.' };
+        console.warn(`[send_message] ${ctx.agentName} tried to send without active space — message NOT delivered: "${text.slice(0, 80)}"`);
+        return { success: false, error: 'MESSAGE NOT SENT — no active space. You must call enter_space first. The message was NOT delivered to anyone.' };
       }
 
       // Persist the message
@@ -67,6 +68,11 @@ export function createSendMessageTool(ctx: AgentProcessContext) {
         select: { entityId: true },
       });
 
+      // Fetch recent context once for all agent pushes
+      const recentContext = agentMembers.length > 0
+        ? await fetchRecentSpaceContext(spaceId, message.id).catch(() => [])
+        : [];
+
       for (const member of agentMembers) {
         pushSpaceMessageEvent(member.entityId, {
           spaceId,
@@ -76,6 +82,7 @@ export function createSendMessageTool(ctx: AgentProcessContext) {
           senderName: ctx.agentName,
           senderType: 'agent',
           content: text,
+          recentContext: recentContext.length > 0 ? recentContext : undefined,
         }).catch((err) => {
           console.warn(`[send_message] Failed to push to inbox ${member.entityId}:`, err);
         });

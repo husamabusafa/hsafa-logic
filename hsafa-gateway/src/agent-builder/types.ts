@@ -127,6 +127,12 @@ export interface InboxEvent {
   data: SpaceMessageEventData | PlanEventData | ServiceEventData | ToolResultEventData;
 }
 
+export interface SpaceMessageContextEntry {
+  senderName: string;
+  senderType: 'human' | 'agent';
+  content: string;
+}
+
 export interface SpaceMessageEventData {
   spaceId: string;
   spaceName: string;
@@ -135,6 +141,8 @@ export interface SpaceMessageEventData {
   senderName: string;
   senderType: 'human' | 'agent';
   content: string;
+  /** Last N messages from the space before this message (oldest first) */
+  recentContext?: SpaceMessageContextEntry[];
 }
 
 export interface PlanEventData {
@@ -180,6 +188,18 @@ export interface AgentProcessContext {
    * In-memory only — no DB write.
    */
   setActiveSpaceId: (spaceId: string) => void;
+  /**
+   * Called by leave_space to clear the active space. After this,
+   * send_message will fail until enter_space is called again.
+   */
+  clearActiveSpaceId: () => void;
+  /**
+   * Lock mechanism to prevent parallel enter_space calls.
+   * Returns true if the lock was acquired, false if already locked.
+   */
+  tryLockEnterSpace: () => boolean;
+  /** Release the enter_space lock after the call completes. */
+  unlockEnterSpace: () => void;
 }
 
 // =============================================================================

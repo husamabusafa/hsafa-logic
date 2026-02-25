@@ -4,7 +4,7 @@ import { redis } from '../lib/redis.js';
 import { requireSecretKey, requireAuth, requireMembership } from '../middleware/auth.js';
 import { createSmartSpaceMessage } from '../lib/smartspace-db.js';
 import { emitSmartSpaceEvent } from '../lib/smartspace-events.js';
-import { pushSpaceMessageEvent } from '../lib/inbox.js';
+import { pushSpaceMessageEvent, fetchRecentSpaceContext } from '../lib/inbox.js';
 import Redis from 'ioredis';
 
 export const smartSpacesRouter = Router();
@@ -207,6 +207,11 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
       select: { name: true },
     });
 
+    // Fetch recent conversation context (once, shared across all agent pushes)
+    const recentContext = agentMembers.length > 0
+      ? await fetchRecentSpaceContext(smartSpaceId, message.id).catch(() => [])
+      : [];
+
     // Push to each agent's inbox
     for (const member of agentMembers) {
       pushSpaceMessageEvent(member.entityId, {
@@ -217,6 +222,7 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
         senderName: senderEntity?.displayName ?? 'Unknown',
         senderType: (senderEntity?.type ?? 'human') as 'human' | 'agent',
         content,
+        recentContext: recentContext.length > 0 ? recentContext : undefined,
       }).catch((err) => {
         console.warn(`[smart-spaces] Failed to push to inbox ${member.entityId}:`, err);
       });
