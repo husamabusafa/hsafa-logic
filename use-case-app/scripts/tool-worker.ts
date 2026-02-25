@@ -36,16 +36,21 @@ const worker = client.tools.listen({
     console.log(`[tool-worker] fetchExternalData query="${query}"`);
 
     // Example data — replace with real logic
-    const results = [
+    const allProjects = [
       { id: 1, title: 'Project Alpha', status: 'active', progress: 78 },
       { id: 2, title: 'Project Beta', status: 'completed', progress: 100 },
       { id: 3, title: 'Project Gamma', status: 'planning', progress: 12 },
-    ].filter(
-      (p) =>
-        !query ||
-        p.title.toLowerCase().includes(query.toLowerCase()) ||
-        p.status.toLowerCase().includes(query.toLowerCase()),
-    );
+    ];
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const results = !query
+      ? allProjects
+      : allProjects.filter((p) =>
+          words.some(
+            (w) =>
+              p.title.toLowerCase().includes(w) ||
+              p.status.toLowerCase().includes(w),
+          ),
+        );
 
     return {
       source: 'use-case-app-worker',
