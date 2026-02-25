@@ -70,9 +70,12 @@ const tools = [
     visible: true,
   },
 
-  // ─── 3. External Data Tool (external, sync with timeout, not visible) ───
-  // isAsync: false + timeout: 10s → waits up to 10s for SDK/external server
-  // to submit the result. If timeout → returns error (never waits forever).
+  // ─── 3. External Data Tool (external, SSE worker pattern) ──────────────
+  // executionType: 'external' + no URL → gateway creates PendingToolCall
+  // and emits tool.call to the Redis tool-workers channel. Any service
+  // running client.tools.listen({ fetchExternalData: handler }) picks it
+  // up, executes, and submits the result via the tool-results API.
+  // See: use-case-app/scripts/tool-worker.ts for the reference worker.
   {
     name: 'fetchExternalData',
     description:

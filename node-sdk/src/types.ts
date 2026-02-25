@@ -246,6 +246,34 @@ export interface SubmitRunToolResultParams {
   result: unknown;
 }
 
+// =============================================================================
+// Tool Worker Types
+// =============================================================================
+
+/** Payload of a tool.call event from the gateway tool-worker SSE stream. */
+export interface ToolCallEvent {
+  type: 'tool.call';
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  runId: string;
+  agentEntityId: string;
+  ts: string;
+}
+
+/**
+ * Map of toolName → async handler function.
+ * Each handler receives the tool args and must return the result.
+ */
+export type ToolWorkerHandlers = {
+  [toolName: string]: (args: Record<string, unknown>) => Promise<unknown>;
+};
+
+/** Return value of client.tools.listen() — call close() to disconnect. */
+export interface ToolWorkerInstance {
+  close: () => void;
+}
+
 export interface RegisterClientParams {
   entityId: string;
   clientKey: string;

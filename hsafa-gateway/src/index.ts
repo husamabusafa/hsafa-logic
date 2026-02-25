@@ -8,6 +8,7 @@ import { entitiesRouter } from './routes/entities.js';
 import { smartSpacesRouter } from './routes/smart-spaces.js';
 import { clientsRouter } from './routes/clients.js';
 import { runsRouter } from './routes/runs.js';
+import { toolWorkersRouter } from './routes/tool-workers.js';
 import { prisma } from './lib/db.js';
 import { redis } from './lib/redis.js';
 import { startAllProcesses, stopAllProcesses, getProcessCount } from './lib/process-manager.js';
@@ -40,6 +41,7 @@ app.use('/api/entities', entitiesRouter);
 app.use('/api/smart-spaces', smartSpacesRouter);
 app.use('/api/clients', clientsRouter);
 app.use('/api/runs', runsRouter);
+app.use('/api/tools', toolWorkersRouter);
 
 // Health check
 app.get('/health', (_req, res) => {

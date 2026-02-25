@@ -13,6 +13,7 @@ import {
   type ToolConfig,
 } from './types.js';
 import { buildPrebuiltTools } from './prebuilt-tools/registry.js';
+import { emitToolWorkerEvent } from '../lib/tool-worker-events.js';
 
 // =============================================================================
 // Agent Builder (v3)
@@ -187,8 +188,8 @@ function buildCustomTools(
         },
       });
     } else {
-      // Sync with timeout: create PendingToolCall, wait for result up to timeout.
-      // The agent NEVER waits forever — timeout always applies.
+      // Sync with timeout: create PendingToolCall, notify worker via Redis,
+      // then wait for result up to timeout. The agent NEVER waits forever.
       tools[tc.name] = tool({
         description: tc.description,
         inputSchema,
@@ -207,6 +208,17 @@ function buildCustomTools(
               status: 'waiting',
             },
           });
+
+          // Notify all connected tool-worker SSE clients
+          emitToolWorkerEvent({
+            type: 'tool.call',
+            toolCallId,
+            toolName: tc.name,
+            args,
+            runId: context.currentRunId!,
+            agentEntityId: context.agentEntityId,
+            ts: new Date().toISOString(),
+          }).catch((err) => console.warn('[builder] Failed to emit tool worker event:', err));
 
           const result = await waitForPendingResult(toolCallId, timeout);
           if (result !== null) return result;

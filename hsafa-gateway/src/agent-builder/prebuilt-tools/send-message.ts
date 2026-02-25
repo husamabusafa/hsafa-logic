@@ -20,7 +20,7 @@ export function createSendMessageTool(ctx: AgentProcessContext) {
       },
       required: ['text'],
     }),
-    execute: async ({ text }) => {
+    execute: async ({ text }, { toolCallId }) => {
       const spaceId = ctx.getActiveSpaceId();
       if (!spaceId) {
         console.warn(`[send_message] ${ctx.agentName} tried to send without active space — message NOT delivered: "${text.slice(0, 80)}"`);
@@ -36,11 +36,11 @@ export function createSendMessageTool(ctx: AgentProcessContext) {
         runId: ctx.currentRunId ?? undefined,
       });
 
-      // Emit to space SSE (the stream-processor handles streaming deltas;
-      // this emits the final persisted message for clients joining late)
+      // Emit to space SSE with toolCallId as streamId so the frontend can
+      // remove the live space.message.streaming entry and replace it seamlessly.
       await emitSmartSpaceEvent(spaceId, {
         type: 'space.message',
-        streamId: null,
+        streamId: toolCallId,
         message: {
           id: message.id,
           smartSpaceId: spaceId,

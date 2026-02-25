@@ -265,12 +265,10 @@ function PieChartView({ chart }: { chart: ChartData }) {
 // ─── Main Component ────────────────────────────────────────────────────────
 
 export const ChartDisplay: FC<ChartDisplayProps> = (props) => {
-  const { status } = props;
-  const isRunning = status?.type === "running";
   const chart = parseChart(props);
 
-  // Loading skeleton
-  if (isRunning && !chart) {
+  // Loading skeleton — args still streaming in (no valid chart yet, no result yet)
+  if (!chart && !props.result) {
     return (
       <div className="my-2 w-96 animate-pulse rounded-xl border border-border bg-muted/40 p-4">
         <div className="mb-3 flex items-center gap-2">
