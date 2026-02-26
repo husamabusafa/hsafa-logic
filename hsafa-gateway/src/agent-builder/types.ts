@@ -200,13 +200,6 @@ export interface AgentProcessContext {
    * send_message will fail until enter_space is called again.
    */
   clearActiveSpaceId: () => void;
-  /**
-   * Lock mechanism to prevent parallel enter_space calls.
-   * Returns true if the lock was acquired, false if already locked.
-   */
-  tryLockEnterSpace: () => boolean;
-  /** Release the enter_space lock after the call completes. */
-  unlockEnterSpace: () => void;
 }
 
 // =============================================================================

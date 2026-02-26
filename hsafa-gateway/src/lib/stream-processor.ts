@@ -249,7 +249,6 @@ export async function processStream(
         const tool = active.get(toolCallId);
 
         toolCalls.push({ toolCallId, toolName, args, durationMs: undefined });
-        console.log(`[DEBUG:tool-call] ${toolName} args=${JSON.stringify(args).slice(0, 120)}`);
 
         if (tool?.isVisible && tool.spaceId && !tool.isSendMessage) {
           await toSpace(tool.spaceId, {
@@ -392,7 +391,6 @@ export async function processStream(
       // ── Final finish ─────────────────────────────────────────────────────────────
       case 'finish':
         if (part.finishReason) finishReason = part.finishReason as string;
-        console.log(`[DEBUG:stream-processor] runId=${runId} finish reason=${finishReason} toolCalls=${toolCalls.length} textLen=${internalText.length}`);
         break;
 
       // ── Stream error ─────────────────────────────────────────────────────────────

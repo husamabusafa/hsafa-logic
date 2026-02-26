@@ -6,6 +6,9 @@ import {
   drainInbox,
   waitForInbox,
   formatInboxEvents,
+  inboxSize,
+  peekInbox,
+  formatInboxPreview,
   markEventsProcessing,
   markEventsProcessed,
   recoverStuckEvents,
@@ -111,8 +114,6 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
     getActiveSpaceId: () => activeSpaceId,
     setActiveSpaceId: (spaceId: string) => { activeSpaceId = spaceId; },
     clearActiveSpaceId: () => { activeSpaceId = null; },
-    tryLockEnterSpace: () => true,
-    unlockEnterSpace: () => {},
   };
 
   // Build tools and model (once — rebuilt if config changes)
@@ -216,6 +217,40 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         providerOptions: {
           openai: { parallelToolCalls: false },
         },
+
+        prepareStep: async ({ stepNumber, messages }) => {
+          // Step 0: model sees full consciousness + inbox — no injection needed
+          if (stepNumber === 0) return {};
+
+          // Step 1+: provide situational awareness without being prescriptive
+          const parts: string[] = [];
+
+          // Time awareness — agent knows how long the cycle has been running
+          const elapsed = Date.now() - cycleStart;
+          parts.push(`Current time: ${new Date().toISOString()} (cycle running ${Math.round(elapsed / 1000)}s)`);
+
+          // Inbox awareness — let agent know if new events arrived mid-cycle
+          try {
+            const pending = await inboxSize(agentEntityId);
+            if (pending > 0) {
+              const preview = await peekInbox(agentEntityId, 3);
+              parts.push(formatInboxPreview(preview));
+            }
+          } catch {
+            // Non-critical — skip if Redis hiccups
+          }
+
+          if (parts.length === 0) return {};
+
+          // IMPORTANT: `messages` in return REPLACES the full array.
+          // Spread existing messages and append our system note.
+          return {
+            messages: [
+              ...messages,
+              { role: 'system' as const, content: parts.join('\n') },
+            ],
+          };
+        },
       });
 
       // 8. PROCESS STREAM — handle tool events, streaming to spaces
@@ -227,22 +262,40 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         asyncTools: built.asyncToolNames,
       });
 
-      // 9. COLLECT response messages
+      // 9. SKIP DETECTION — if the agent called skip (no execute), rollback
+      const skipped = streamResult.toolCalls.find((tc) => tc.toolName === 'skip');
+      if (skipped) {
+        const reason = (skipped.args as any)?.reason ?? 'no reason';
+        console.log(`[agent-process] ${agentName} cycle ${cycleCount} SKIPPED: ${reason}`);
+
+        // Rollback: restore pre-cycle consciousness, revert cycle count
+        consciousness = preCycleConsciousness!;
+        cycleCount = preCycleCycleCount;
+        context.cycleCount = cycleCount;
+
+        // Clean up: delete the run record and mark events as processed
+        await prisma.run.delete({ where: { id: run.id } }).catch(() => {});
+        await markEventsProcessed(agentEntityId, eventIds);
+        await emitAgentStatus(agentEntityId, 'inactive', { runId: run.id, agentName });
+        continue;
+      }
+
+      // 10. COLLECT response messages
       const response = await result.response;
       const newMessages = response.messages as unknown as ModelMessage[];
 
-      // 10. APPEND new messages to consciousness
+      // 11. APPEND new messages to consciousness
       consciousness.push(...newMessages);
 
-      // 11. COMPACT if over budget
+      // 12. COMPACT if over budget
       const maxTokens = (agent.configJson as any)?.consciousness?.maxTokens ?? 100_000;
       const minCycles = (agent.configJson as any)?.consciousness?.minRecentCycles ?? 10;
       consciousness = compactConsciousness(consciousness, maxTokens, minCycles);
 
-      // 12. SAVE consciousness
+      // 13. SAVE consciousness
       await saveConsciousness(agentEntityId, consciousness, cycleCount);
 
-      // 13. UPDATE audit record
+      // 14. UPDATE audit record
       const usage = await result.totalUsage;
       const durationMs = Date.now() - cycleStart;
 

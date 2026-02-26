@@ -1,6 +1,7 @@
 import pg from 'pg';
+const { Pool } = pg;
 
-const pool = new pg.Pool({
+const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://hsafa:hsafa123@localhost:5434/hsafa_db',
 });
 
