@@ -2,6 +2,7 @@ packages:
   - hsafa-gateway
   - node-sdk
   - react-sdk
+  - react-native-sdk
   - ui-sdk
   - nextjs-test-app
   - use-case-app
