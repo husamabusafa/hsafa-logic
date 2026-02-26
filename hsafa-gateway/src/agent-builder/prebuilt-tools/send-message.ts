@@ -36,69 +36,77 @@ export function createSendMessageTool(ctx: AgentProcessContext) {
         };
       }
 
-      // Persist the message
-      const message = await createSmartSpaceMessage({
-        smartSpaceId: spaceId,
-        entityId: ctx.agentEntityId,
-        role: 'assistant',
-        content: text,
-        runId: ctx.currentRunId ?? undefined,
-      });
-
-      // Emit to space SSE with toolCallId as streamId so the frontend can
-      // remove the live space.message.streaming entry and replace it seamlessly.
-      await emitSmartSpaceEvent(spaceId, {
-        type: 'space.message',
-        streamId: toolCallId,
-        message: {
-          id: message.id,
+      try {
+        // Persist the message
+        const message = await createSmartSpaceMessage({
           smartSpaceId: spaceId,
           entityId: ctx.agentEntityId,
           role: 'assistant',
           content: text,
-          metadata: null,
-          seq: message.seq.toString(),
-          createdAt: message.createdAt.toISOString(),
-        },
-      });
-
-      // Push to all OTHER agent members' inboxes (sender excluded)
-      const space = await prisma.smartSpace.findUnique({
-        where: { id: spaceId },
-        select: { name: true },
-      });
-
-      const agentMembers = await prisma.smartSpaceMembership.findMany({
-        where: {
-          smartSpaceId: spaceId,
-          entityId: { not: ctx.agentEntityId },
-          entity: { type: 'agent' },
-        },
-        select: { entityId: true },
-      });
-
-      // Fetch recent context once for all agent pushes
-      const recentContext = agentMembers.length > 0
-        ? await fetchRecentSpaceContext(spaceId, message.id).catch(() => [])
-        : [];
-
-      for (const member of agentMembers) {
-        pushSpaceMessageEvent(member.entityId, {
-          spaceId,
-          spaceName: space?.name ?? 'Unnamed',
-          messageId: message.id,
-          senderEntityId: ctx.agentEntityId,
-          senderName: ctx.agentName,
-          senderType: 'agent',
-          content: text,
-          recentContext: recentContext.length > 0 ? recentContext : undefined,
-        }).catch((err) => {
-          console.warn(`[send_message] Failed to push to inbox ${member.entityId}:`, err);
+          runId: ctx.currentRunId ?? undefined,
         });
-      }
 
-      console.log(`[send_message] ${ctx.agentName} delivered to space ${spaceId} messageId=${message.id}`);
-      return { success: true, messageId: message.id, status: 'delivered' };
+        // Emit to space SSE with toolCallId as streamId so the frontend can
+        // remove the live space.message.streaming entry and replace it seamlessly.
+        await emitSmartSpaceEvent(spaceId, {
+          type: 'space.message',
+          streamId: toolCallId,
+          message: {
+            id: message.id,
+            smartSpaceId: spaceId,
+            entityId: ctx.agentEntityId,
+            role: 'assistant',
+            content: text,
+            metadata: null,
+            seq: message.seq.toString(),
+            createdAt: message.createdAt.toISOString(),
+          },
+        });
+
+        // Push to all OTHER agent members' inboxes (sender excluded)
+        const space = await prisma.smartSpace.findUnique({
+          where: { id: spaceId },
+          select: { name: true },
+        });
+
+        const agentMembers = await prisma.smartSpaceMembership.findMany({
+          where: {
+            smartSpaceId: spaceId,
+            entityId: { not: ctx.agentEntityId },
+            entity: { type: 'agent' },
+          },
+          select: { entityId: true },
+        });
+
+        // Fetch recent context once for all agent pushes
+        const recentContext = agentMembers.length > 0
+          ? await fetchRecentSpaceContext(spaceId, message.id).catch(() => [])
+          : [];
+
+        for (const member of agentMembers) {
+          pushSpaceMessageEvent(member.entityId, {
+            spaceId,
+            spaceName: space?.name ?? 'Unnamed',
+            messageId: message.id,
+            senderEntityId: ctx.agentEntityId,
+            senderName: ctx.agentName,
+            senderType: 'agent',
+            content: text,
+            recentContext: recentContext.length > 0 ? recentContext : undefined,
+          }).catch((err) => {
+            console.warn(`[send_message] Failed to push to inbox ${member.entityId}:`, err);
+          });
+        }
+
+        console.log(`[send_message] ${ctx.agentName} delivered to space ${spaceId} messageId=${message.id}`);
+        return { success: true, messageId: message.id, status: 'delivered' };
+      } catch (err) {
+        console.error(`[send_message] ${ctx.agentName} FAILED to deliver to space ${spaceId}:`, err);
+        return {
+          success: false,
+          error: `MESSAGE FAILED — internal error: ${err instanceof Error ? err.message : String(err)}. You may retry once.`,
+        };
+      }
     },
   });
 }

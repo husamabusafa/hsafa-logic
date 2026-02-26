@@ -43,7 +43,7 @@ export async function createEnterSpaceTool(ctx: AgentProcessContext) {
 
   return tool({
     description:
-      'Enter a space to send messages and use tools there. Returns the recent conversation history so you can see what has been said.',
+      'Enter a space and load its conversation history. Call this first to see what was said. IMPORTANT: your text output is invisible — after reading the history you MUST call send_message({ text }) to actually deliver a reply. Calling enter_space alone sends nothing.',
     inputSchema: jsonSchema<{ spaceId: string }>({
       type: 'object',
       properties: {
@@ -61,49 +61,57 @@ export async function createEnterSpaceTool(ctx: AgentProcessContext) {
         };
       }
 
-      // Validate membership
-      const membership = await prisma.smartSpaceMembership.findUnique({
-        where: {
-          smartSpaceId_entityId: { smartSpaceId: spaceId, entityId: ctx.agentEntityId },
-        },
-        include: {
-          smartSpace: { select: { name: true } },
-        },
-      });
+      try {
+        // Validate membership
+        const membership = await prisma.smartSpaceMembership.findUnique({
+          where: {
+            smartSpaceId_entityId: { smartSpaceId: spaceId, entityId: ctx.agentEntityId },
+          },
+          include: {
+            smartSpace: { select: { name: true } },
+          },
+        });
 
-      if (!membership) {
-        return { success: false, error: 'Not a member of this space.' };
+        if (!membership) {
+          return { success: false, error: 'Not a member of this space.' };
+        }
+
+        // Set active space
+        ctx.setActiveSpaceId(spaceId);
+
+        // Load recent conversation history
+        const messages = await prisma.smartSpaceMessage.findMany({
+          where: { smartSpaceId: spaceId },
+          orderBy: { seq: 'desc' },
+          take: HISTORY_LIMIT,
+          include: {
+            entity: { select: { id: true, displayName: true, type: true } },
+          },
+        });
+
+        // Format as readable timeline (oldest first) with timestamps
+        const now = new Date();
+        const history = messages.reverse().map((m) => {
+          const isYou = m.entityId === ctx.agentEntityId;
+          const name = isYou ? 'You' : (m.entity.displayName ?? 'Unknown');
+          const ago = relativeTime(m.createdAt, now);
+          return `[${ago}] ${name}: "${m.content ?? ''}"`;
+        });
+
+        return {
+          success: true,
+          spaceId,
+          spaceName: membership.smartSpace.name ?? 'Unnamed',
+          history: history.length > 0 ? history : ['(no messages yet)'],
+          totalMessages: messages.length,
+        };
+      } catch (err) {
+        console.error(`[enter_space] ${ctx.agentName} FAILED to enter space ${spaceId}:`, err);
+        return {
+          success: false,
+          error: `Failed to enter space — internal error: ${err instanceof Error ? err.message : String(err)}`,
+        };
       }
-
-      // Set active space
-      ctx.setActiveSpaceId(spaceId);
-
-      // Load recent conversation history
-      const messages = await prisma.smartSpaceMessage.findMany({
-        where: { smartSpaceId: spaceId },
-        orderBy: { seq: 'desc' },
-        take: HISTORY_LIMIT,
-        include: {
-          entity: { select: { id: true, displayName: true, type: true } },
-        },
-      });
-
-      // Format as readable timeline (oldest first) with timestamps
-      const now = new Date();
-      const history = messages.reverse().map((m) => {
-        const isYou = m.entityId === ctx.agentEntityId;
-        const name = isYou ? 'You' : (m.entity.displayName ?? 'Unknown');
-        const ago = relativeTime(m.createdAt, now);
-        return `[${ago}] ${name}: "${m.content ?? ''}"`;
-      });
-
-      return {
-        success: true,
-        spaceId,
-        spaceName: membership.smartSpace.name ?? 'Unnamed',
-        history: history.length > 0 ? history : ['(no messages yet)'],
-        totalMessages: messages.length,
-      };
     },
   });
 }

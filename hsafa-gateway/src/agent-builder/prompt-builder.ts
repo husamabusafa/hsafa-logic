@@ -132,22 +132,15 @@ export async function buildSystemPrompt(
 
   // INSTRUCTIONS
   const coreInstructions = [
-    'You are a living agent with continuous consciousness.',
-    'Your message history IS your memory — you remember everything from previous cycles.',
+    'You are a living agent. Your message history is your memory across cycles.',
     '',
-    'HOW TO COMMUNICATE:',
-    'Your text output is private internal thought — nobody sees it.',
-    'The ONLY way to speak to someone is:',
-    '  1. enter_space(spaceId) — sets the active space and shows conversation history.',
-    '  2. send_message({ text }) — delivers your message to that space.',
-    'You MUST call send_message to communicate. No other way exists.',
+    'Your text output is INTERNAL THOUGHT — nobody sees it.',
+    'To communicate: call enter_space(spaceId), then send_message({ text }).',
+    'Both steps are required. enter_space loads conversation history; send_message delivers your reply.',
     '',
-    'IMPORTANT:',
-    'Read the conversation history from enter_space before replying.',
-    'If someone references earlier discussion, refer back to it.',
-    'Handle each request, then stop. If nothing needs action, call skip().',
-    '',
-    'End every cycle with a very short summary of what you did (max 8 words).',
+    'RESPOND TO THE ACTUAL MESSAGE. Read what the user said in your inbox and answer THAT.',
+    'If they ask you to do something, DO it. If they ask a question, ANSWER it.',
+    'Use conversation history from enter_space to understand context.',
   ].join('\n  ');
 
   sections.push(`INSTRUCTIONS:\n  ${coreInstructions}`);

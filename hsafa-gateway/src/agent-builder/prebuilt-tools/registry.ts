@@ -4,7 +4,6 @@ import { createLeaveSpaceTool } from './leave-space.js';
 import { createSendMessageTool } from './send-message.js';
 import { createReadMessagesTool } from './read-messages.js';
 import { createPeekInboxTool } from './peek-inbox.js';
-import { createSkipTool } from './skip.js';
 import { createSetMemoriesTool } from './set-memories.js';
 import { createGetMemoriesTool } from './get-memories.js';
 import { createDeleteMemoriesTool } from './delete-memories.js';
@@ -38,9 +37,6 @@ export async function buildPrebuiltTools(ctx: AgentProcessContext): Promise<Preb
     send_message: createSendMessageTool(ctx),
     read_messages: createReadMessagesTool(ctx),
     peek_inbox: createPeekInboxTool(ctx),
-
-    // Cycle control
-    skip: createSkipTool(),
 
     // Memory tools
     set_memories: createSetMemoriesTool(ctx),

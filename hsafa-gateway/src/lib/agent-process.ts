@@ -6,10 +6,8 @@ import {
   drainInbox,
   waitForInbox,
   formatInboxEvents,
-  inboxSize,
   markEventsProcessing,
   markEventsProcessed,
-  markEventsFailed,
   recoverStuckEvents,
 } from './inbox.js';
 import {
@@ -19,8 +17,7 @@ import {
   refreshSystemPrompt,
   type ModelMessage,
 } from './consciousness.js';
-import { processStream, type CollectedToolCall } from './stream-processor.js';
-import { formatDuration } from './time-utils.js';
+import { processStream } from './stream-processor.js';
 import { emitSmartSpaceEvent } from './smartspace-events.js';
 import { buildAgent } from '../agent-builder/builder.js';
 import { buildSystemPrompt } from '../agent-builder/prompt-builder.js';
@@ -132,17 +129,16 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
   // ── Main loop ─────────────────────────────────────────────────────────────
 
   while (!signal.aborted) {
+    let preCycleConsciousness: ModelMessage[] | null = null;
+    let preCycleCycleCount = cycleCount;
     try {
       // 1. SLEEP — block until inbox has events
-      console.log(`[DEBUG:agent-process] ${agentName} waiting for inbox...`);
       const firstEvent = await waitForInbox(agentEntityId, blockingRedis, signal);
       if (signal.aborted || !firstEvent) break;
-      console.log(`[DEBUG:agent-process] ${agentName} woke up with event type=${firstEvent.type}`);
 
       // 2. DRAIN — pull all pending events
       const remainingEvents = await drainInbox(agentEntityId);
       const allEvents: InboxEvent[] = [firstEvent, ...remainingEvents];
-      console.log(`[DEBUG:agent-process] ${agentName} drained ${allEvents.length} events`);
 
       if (allEvents.length === 0) continue;
 
@@ -194,17 +190,15 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
       consciousness = refreshSystemPrompt(consciousness, systemPrompt);
 
       // 6. INJECT inbox events as user message
-      // Save pre-cycle snapshot for skip rollback
-      const preCycleConsciousness = [...consciousness];
-      const preCycleCycleCount = cycleCount - 1;
+      // Snapshot before mutation — used for crash recovery
+      preCycleConsciousness = [...consciousness];
+      preCycleCycleCount = cycleCount - 1;
 
       const inboxMessage: ModelMessage = {
         role: 'user',
         content: formatInboxEvents(allEvents),
       };
       consciousness.push(inboxMessage);
-
-      console.log(`[DEBUG:agent-process] ${agentName} starting think cycle ${cycleCount} with ${allEvents.length} events, runId=${run.id}`);
 
       // 7. THINK — one streamText call
       const maxSteps = (agent.configJson as any)?.loop?.maxSteps ?? DEFAULT_MAX_STEPS;
@@ -217,27 +211,12 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         toolChoice: (agentConfig?.loop?.toolChoice as any) ?? 'auto',
         temperature: agentConfig?.model?.temperature,
         maxOutputTokens: agentConfig?.model?.maxTokens,
-        stopWhen: [stepCountIs(maxSteps)],
+        stopWhen: stepCountIs(maxSteps),
 
         providerOptions: {
           openai: { parallelToolCalls: false },
         },
-
-        prepareStep: async ({ stepNumber }) => {
-          if (stepNumber === 0) return {};
-
-          const elapsed = ((Date.now() - cycleStart) / 1000).toFixed(1);
-          const pending = await inboxSize(agentEntityId);
-          const parts = [`step ${stepNumber + 1}`, `${elapsed}s into cycle`];
-          if (pending > 0) parts.push(`${pending} new inbox event(s) waiting`);
-
-          return {
-            messages: [{ role: 'user' as const, content: `[${parts.join(' | ')}]` }],
-          };
-        },
       });
-
-      console.log(`[DEBUG:agent-process] ${agentName} stream started, processing...`);
 
       // 8. PROCESS STREAM — handle tool events, streaming to spaces
       const streamResult = await processStream(result.fullStream, {
@@ -248,41 +227,12 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         asyncTools: built.asyncToolNames,
       });
 
-      console.log(`[DEBUG:agent-process] ${agentName} stream processed, toolCalls=${streamResult.toolCalls.length}`);
-
-      // 9. CHECK FOR SKIP — detect skip() tool call and roll back
+      // 9. COLLECT response messages
       const response = await result.response;
       const newMessages = response.messages as unknown as ModelMessage[];
 
-      if (isSkipCycle(newMessages)) {
-        // Full rollback: restore consciousness, delete run, revert cycle count
-        const reason = extractSkipReason(newMessages);
-        consciousness = preCycleConsciousness;
-        cycleCount = preCycleCycleCount;
-        context.cycleCount = cycleCount;
-
-        await prisma.run.delete({ where: { id: run.id } }).catch(() => {});
-        // Reset events back to pending (they were never really processed)
-        await markEventsFailed(agentEntityId, eventIds).catch(() => {});
-        await emitAgentStatus(agentEntityId, 'inactive', { runId: run.id, agentName });
-
-        console.log(`[agent-process] ${agentName} skipped cycle: ${reason}`);
-        continue;
-      }
-
       // 10. APPEND new messages to consciousness
       consciousness.push(...newMessages);
-
-      // 10b. APPEND cycle timeline — gives agent temporal awareness
-      const cycleDurationMs = Date.now() - cycleStart;
-      const timelineParts: string[] = [`Cycle ${cycleCount} complete in ${formatDuration(cycleDurationMs)}`];
-      if (streamResult.toolCalls.length > 0) {
-        const toolSummaries = streamResult.toolCalls
-          .map((tc: CollectedToolCall) => `${tc.toolName}(${tc.durationMs != null ? formatDuration(tc.durationMs) : '?'})`)
-          .join(', ');
-        timelineParts.push(`tools: ${toolSummaries}`);
-      }
-      consciousness.push({ role: 'user', content: `[${timelineParts.join(' | ')}]` });
 
       // 11. COMPACT if over budget
       const maxTokens = (agent.configJson as any)?.consciousness?.maxTokens ?? 100_000;
@@ -325,6 +275,16 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
       console.error(`[agent-process] ${agentName} cycle error:`, error);
       if (error instanceof Error) console.error(`[agent-process] stack:`, error.stack);
 
+      // CRASH RECOVERY: rollback consciousness so the next cycle starts clean.
+      // Without this, the orphaned inbox user message (with no assistant reply)
+      // corrupts message ordering and the agent stops working forever.
+      if (preCycleConsciousness) {
+        consciousness = preCycleConsciousness;
+        cycleCount = preCycleCycleCount;
+        context.cycleCount = cycleCount;
+        console.log(`[agent-process] ${agentName} consciousness rolled back to pre-cycle state`);
+      }
+
       // Mark events as failed in Postgres (they can be inspected / retried)
       if (context.currentRunId) {
         // eventIds might not be in scope if the error was before drain
@@ -365,41 +325,6 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
   console.log(`[agent-process] ${agentName} shutting down`);
   await saveConsciousness(agentEntityId, consciousness, cycleCount);
   blockingRedis.disconnect();
-}
-
-// =============================================================================
-// Skip detection helpers
-// =============================================================================
-
-/**
- * Check if the agent called skip() — a tool call with no execute function.
- * The SDK stops the loop immediately, so it appears as an assistant message
- * with a tool-call content part where toolName === 'skip'.
- */
-function isSkipCycle(messages: ModelMessage[]): boolean {
-  for (const msg of messages) {
-    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-      if (msg.content.some((p: any) => p.type === 'tool-call' && p.toolName === 'skip')) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-/**
- * Extract the reason string from a skip() tool call.
- */
-function extractSkipReason(messages: ModelMessage[]): string {
-  for (const msg of messages) {
-    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-      const skipPart = (msg.content as any[]).find(
-        (p) => p.type === 'tool-call' && p.toolName === 'skip',
-      );
-      if (skipPart?.args?.reason) return skipPart.args.reason;
-    }
-  }
-  return 'irrelevant';
 }
 
 // =============================================================================
