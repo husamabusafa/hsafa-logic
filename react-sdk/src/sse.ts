@@ -126,6 +126,11 @@ export class SSEStream implements HsafaStream {
           }
         }
       }
+
+      // Stream ended cleanly (server closed connection) — reconnect
+      if (!this.closed && this.options.reconnect !== false) {
+        this.scheduleReconnect();
+      }
     } catch (error) {
       if (this.closed) return;
 

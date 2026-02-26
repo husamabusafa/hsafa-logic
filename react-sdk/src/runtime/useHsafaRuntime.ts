@@ -546,7 +546,16 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       if (!smartSpaceId) throw new Error('No SmartSpace selected');
       const part = message.content[0];
       if (!part || part.type !== 'text' || !part.text) throw new Error('Only text messages supported');
-      await client.messages.send(smartSpaceId, { content: part.text, entityId });
+      const { message: sent } = await client.messages.send(smartSpaceId, { content: part.text, entityId });
+
+      // Optimistic: add the persisted message to state immediately.
+      // If the SSE space.message event arrives later, the handler deduplicates by ID.
+      if (sent?.id) {
+        setRawMessages((prev) => {
+          if (prev.some((m) => m.id === sent.id)) return prev;
+          return [...prev, sent];
+        });
+      }
     },
     [client, smartSpaceId, entityId],
   );

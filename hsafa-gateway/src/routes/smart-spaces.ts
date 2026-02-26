@@ -202,6 +202,8 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
       select: { entityId: true },
     });
 
+    console.log(`[DEBUG:messages] space=${smartSpaceId} sender=${entityId} agentMembers=${agentMembers.map(m => m.entityId).join(',')||'NONE'}`);
+
     const space = await prisma.smartSpace.findUnique({
       where: { id: smartSpaceId },
       select: { name: true },
@@ -214,6 +216,7 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
 
     // Push to each agent's inbox
     for (const member of agentMembers) {
+      console.log(`[DEBUG:messages] pushing inbox event to agent ${member.entityId}`);
       pushSpaceMessageEvent(member.entityId, {
         spaceId: smartSpaceId,
         spaceName: space?.name ?? 'Unnamed',
@@ -223,6 +226,8 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
         senderType: (senderEntity?.type ?? 'human') as 'human' | 'agent',
         content,
         recentContext: recentContext.length > 0 ? recentContext : undefined,
+      }).then(() => {
+        console.log(`[DEBUG:messages] inbox push OK for agent ${member.entityId}`);
       }).catch((err) => {
         console.warn(`[smart-spaces] Failed to push to inbox ${member.entityId}:`, err);
       });

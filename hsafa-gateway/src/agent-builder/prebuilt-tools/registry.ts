@@ -30,10 +30,10 @@ export interface PrebuiltToolsResult {
  * Build all prebuilt tools for an agent process.
  * Returns tools + the set of visible tool names (only send_message).
  */
-export function buildPrebuiltTools(ctx: AgentProcessContext): PrebuiltToolsResult {
+export async function buildPrebuiltTools(ctx: AgentProcessContext): Promise<PrebuiltToolsResult> {
   const tools: Record<string, unknown> = {
     // Space tools
-    enter_space: createEnterSpaceTool(ctx),
+    enter_space: await createEnterSpaceTool(ctx),
     leave_space: createLeaveSpaceTool(ctx),
     send_message: createSendMessageTool(ctx),
     read_messages: createReadMessagesTool(ctx),

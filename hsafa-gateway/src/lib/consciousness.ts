@@ -149,6 +149,16 @@ interface Cycle {
   messages: ModelMessage[];
 }
 
+/**
+ * Determine if a user message content represents the start of a real cycle.
+ * Real cycles start with "INBOX (" (from formatInboxEvents).
+ * System-injected markers like "[step 2 | ...]", "[Cycle N complete ...]",
+ * "[N new inbox event(s) waiting]", and "[EARLIER CYCLES ...]" are NOT cycle starts.
+ */
+function isCycleStart(content: string): boolean {
+  return content.startsWith('INBOX (');
+}
+
 function extractCycles(messages: ModelMessage[]): Cycle[] {
   const cycles: Cycle[] = [];
   let currentStart = -1;
@@ -159,8 +169,10 @@ function extractCycles(messages: ModelMessage[]): Cycle[] {
     // Skip the system prompt (always index 0)
     if (i === 0 && msg.role === 'system') continue;
 
-    // A user message marks the start of a new cycle
-    if (msg.role === 'user') {
+    // A user message marks the start of a new cycle — but only real inbox
+    // messages, not system-injected markers (step context, cycle timelines).
+    // Real inbox messages start with "INBOX (".
+    if (msg.role === 'user' && typeof msg.content === 'string' && isCycleStart(msg.content)) {
       if (currentStart >= 0) {
         cycles.push({
           startIndex: currentStart,
@@ -188,13 +200,41 @@ function extractCycles(messages: ModelMessage[]): Cycle[] {
  * Extract the agent's self-summary from a cycle.
  * The agent's final text output (assistant message with string content)
  * serves as a natural summary of what it did.
+ * Also extracts the cycle timestamp from the inbox header for temporal context.
  */
 function extractCycleSummary(cycle: Cycle): string | null {
   // Walk backwards to find the last assistant text message
+  let summary: string | null = null;
   for (let i = cycle.messages.length - 1; i >= 0; i--) {
     const msg = cycle.messages[i];
     if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content.trim()) {
-      return msg.content.trim();
+      summary = msg.content.trim();
+      break;
+    }
+  }
+  if (!summary) return null;
+
+  // Try to extract timestamp from the cycle's inbox header or timeline marker
+  const cycleTimestamp = extractCycleTimestamp(cycle);
+  if (cycleTimestamp) {
+    return `[${cycleTimestamp}] ${summary}`;
+  }
+  return summary;
+}
+
+/**
+ * Extract a timestamp string from a cycle's messages.
+ * Looks for the INBOX header ("now=...") or cycle timeline marker.
+ */
+function extractCycleTimestamp(cycle: Cycle): string | null {
+  for (const msg of cycle.messages) {
+    if (msg.role === 'user' && typeof msg.content === 'string') {
+      // Match "now=2026-02-26T13:42:00.000Z" from INBOX header
+      const inboxMatch = msg.content.match(/now=([\d\-T:.Z]+)/);
+      if (inboxMatch) return inboxMatch[1];
+      // Match "Cycle N complete" timeline markers
+      const cycleMatch = msg.content.match(/Cycle \d+ complete/);
+      if (cycleMatch) return cycleMatch[0];
     }
   }
   return null;

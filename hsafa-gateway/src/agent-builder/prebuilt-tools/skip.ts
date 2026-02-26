@@ -11,7 +11,7 @@ import { jsonSchema } from 'ai';
 export function createSkipTool() {
   return {
     description:
-      'Call this when the inbox events are not relevant to you and another agent or human will handle them. This skips the cycle entirely — no messages will be sent, no consciousness update, no cost. Call this IMMEDIATELY without calling any other tools first.',
+      'Call this ONLY when the inbox events are clearly not relevant to you and another agent or human will handle them. This skips the cycle entirely — no messages will be sent, no consciousness update. If a human has addressed you by name, do NOT skip — respond instead.',
     inputSchema: jsonSchema<{ reason?: string }>({
       type: 'object',
       properties: {

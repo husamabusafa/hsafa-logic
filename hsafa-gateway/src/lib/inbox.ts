@@ -1,5 +1,6 @@
 import { redis } from './redis.js';
 import { prisma } from './db.js';
+import { relativeTime } from './time-utils.js';
 import type { InboxEvent, SpaceMessageEventData, SpaceMessageContextEntry, PlanEventData, ServiceEventData, ToolResultEventData } from '../agent-builder/types.js';
 
 // =============================================================================
@@ -349,7 +350,7 @@ export async function recoverStuckEvents(agentEntityId: string): Promise<number>
 // Recent Context — Fetch last N messages from a space for inbox enrichment
 // =============================================================================
 
-const DEFAULT_CONTEXT_COUNT = 5;
+const DEFAULT_CONTEXT_COUNT = 15;
 
 /**
  * Fetch the last N messages from a space (before a specific message) to provide
@@ -397,11 +398,15 @@ export async function fetchRecentSpaceContext(
  * This becomes the injected user message in consciousness.
  */
 export function formatInboxEvents(events: InboxEvent[]): string {
+  const now = new Date();
+
   const lines = events.map((e) => {
+    const ts = e.timestamp ? `${relativeTime(e.timestamp, now)}` : '';
+
     switch (e.type) {
       case 'space_message': {
         const d = e.data as SpaceMessageEventData;
-        let line = `[${d.spaceName}] ${d.senderName} (${d.senderType}): "${d.content}"`;
+        let line = `[${d.spaceName} | spaceId: ${d.spaceId}] ${d.senderName} (${d.senderType})${ts ? ` ${ts}` : ''}: "${d.content}"`;
         if (d.recentContext && d.recentContext.length > 0) {
           const ctx = d.recentContext
             .map((c) => `    ${c.senderName} (${c.senderType}): "${c.content}"`)
@@ -412,23 +417,23 @@ export function formatInboxEvents(events: InboxEvent[]): string {
       }
       case 'plan': {
         const d = e.data as PlanEventData;
-        return `[Plan: ${d.planName}] ${d.instruction}`;
+        return `[Plan: ${d.planName}]${ts ? ` (${ts})` : ''} ${d.instruction}`;
       }
       case 'service': {
         const d = e.data as ServiceEventData;
-        return `[Service: ${d.serviceName}] ${JSON.stringify(d.payload)}`;
+        return `[Service: ${d.serviceName}]${ts ? ` (${ts})` : ''} ${JSON.stringify(d.payload)}`;
       }
       case 'tool_result': {
         const d = e.data as ToolResultEventData;
         const resultPreview = typeof d.result === 'string' ? d.result : JSON.stringify(d.result);
-        return `[Tool Result: ${d.toolName}] (callId: ${d.toolCallId}) ${resultPreview}`;
+        return `[Tool Result: ${d.toolName}]${ts ? ` (${ts})` : ''} (callId: ${d.toolCallId}) ${resultPreview}`;
       }
       default:
         return `[Unknown event type: ${e.type}]`;
     }
   });
 
-  return `INBOX (${events.length} event${events.length !== 1 ? 's' : ''}, ${new Date().toISOString()}):\n${lines.join('\n')}`;
+  return `INBOX (${events.length} event${events.length !== 1 ? 's' : ''}, now=${now.toISOString()}):\n${lines.join('\n')}`;
 }
 
 /**

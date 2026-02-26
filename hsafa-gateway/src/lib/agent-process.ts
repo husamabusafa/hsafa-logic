@@ -6,8 +6,7 @@ import {
   drainInbox,
   waitForInbox,
   formatInboxEvents,
-  peekInbox,
-  formatInboxPreview,
+  inboxSize,
   markEventsProcessing,
   markEventsProcessed,
   markEventsFailed,
@@ -20,7 +19,8 @@ import {
   refreshSystemPrompt,
   type ModelMessage,
 } from './consciousness.js';
-import { processStream } from './stream-processor.js';
+import { processStream, type CollectedToolCall } from './stream-processor.js';
+import { formatDuration } from './time-utils.js';
 import { emitSmartSpaceEvent } from './smartspace-events.js';
 import { buildAgent } from '../agent-builder/builder.js';
 import { buildSystemPrompt } from '../agent-builder/prompt-builder.js';
@@ -33,7 +33,7 @@ import type { AgentProcessContext, InboxEvent } from '../agent-builder/types.js'
 // One process per agent. Replaces the stateless run-runner from v2.
 // =============================================================================
 
-const DEFAULT_MAX_STEPS = 20;
+const DEFAULT_MAX_STEPS = 5;
 
 export interface AgentProcessOptions {
   agentId: string;
@@ -68,8 +68,7 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
   // Load consciousness
   let { messages: consciousness, cycleCount } = await loadConsciousness(agentEntityId);
 
-  // Restore activeSpaceId from consciousness — scan backwards for last enter_space/leave_space
-  let activeSpaceId: string | null = restoreActiveSpaceId(consciousness);
+  let activeSpaceId: string | null = null;
   const agent = await prisma.agent.findUniqueOrThrow({
     where: { id: agentId },
     include: {
@@ -94,10 +93,15 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
     },
   });
 
-  // Mutable active space — restored from consciousness on startup, updated by enter/leave_space
-  let enterSpaceLocked = false;
-  if (activeSpaceId) {
-    console.log(`[agent-process] ${agentName} restored activeSpaceId: ${activeSpaceId}`);
+  // Safety reset: if consciousness is suspiciously large with no successful cycles,
+  // reset to empty to prevent infinite tool-call loops from corrupted history
+  const MAX_STARTUP_MESSAGES = 120;
+  if (consciousness.length > MAX_STARTUP_MESSAGES) {
+    console.log(`[agent-process] ${agentName} consciousness too large (${consciousness.length} messages), resetting to fresh start`);
+    consciousness = [];
+    cycleCount = 0;
+    activeSpaceId = null;
+    await saveConsciousness(agentEntityId, [], 0);
   }
 
   // Build process context
@@ -110,12 +114,8 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
     getActiveSpaceId: () => activeSpaceId,
     setActiveSpaceId: (spaceId: string) => { activeSpaceId = spaceId; },
     clearActiveSpaceId: () => { activeSpaceId = null; },
-    tryLockEnterSpace: () => {
-      if (enterSpaceLocked) return false;
-      enterSpaceLocked = true;
-      return true;
-    },
-    unlockEnterSpace: () => { enterSpaceLocked = false; },
+    tryLockEnterSpace: () => true,
+    unlockEnterSpace: () => {},
   };
 
   // Build tools and model (once — rebuilt if config changes)
@@ -127,24 +127,29 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
     console.log(`[agent-process] ${agentName} recovered ${recovered} stuck inbox events`);
   }
 
-  console.log(`[agent-process] ${agentName} (${agentEntityId}) started — cycle ${cycleCount}`);
+  console.log(`[agent-process] ${agentName} (${agentEntityId}) started — cycle ${cycleCount}, consciousness=${consciousness.length} messages`);
 
   // ── Main loop ─────────────────────────────────────────────────────────────
 
   while (!signal.aborted) {
     try {
       // 1. SLEEP — block until inbox has events
+      console.log(`[DEBUG:agent-process] ${agentName} waiting for inbox...`);
       const firstEvent = await waitForInbox(agentEntityId, blockingRedis, signal);
       if (signal.aborted || !firstEvent) break;
+      console.log(`[DEBUG:agent-process] ${agentName} woke up with event type=${firstEvent.type}`);
 
       // 2. DRAIN — pull all pending events
       const remainingEvents = await drainInbox(agentEntityId);
       const allEvents: InboxEvent[] = [firstEvent, ...remainingEvents];
+      console.log(`[DEBUG:agent-process] ${agentName} drained ${allEvents.length} events`);
 
       if (allEvents.length === 0) continue;
 
-      // activeSpaceId persists across cycles — once the agent enters a space,
-      // it stays there until it explicitly calls leave_space or enter_space to switch.
+      // Reset active space at the start of each cycle — the agent must explicitly
+      // call enter_space to select which space to act in. This ensures the model
+      // always makes a conscious decision about WHERE to respond.
+      activeSpaceId = null;
       cycleCount++;
       context.cycleCount = cycleCount;
 
@@ -199,40 +204,40 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
       };
       consciousness.push(inboxMessage);
 
+      console.log(`[DEBUG:agent-process] ${agentName} starting think cycle ${cycleCount} with ${allEvents.length} events, runId=${run.id}`);
+
       // 7. THINK — one streamText call
       const maxSteps = (agent.configJson as any)?.loop?.maxSteps ?? DEFAULT_MAX_STEPS;
-
       const agentConfig = agent.configJson as any;
+
       const result = streamText({
         model: built.model as LanguageModel,
         messages: consciousness as any,
         tools: built.tools as any,
+        toolChoice: (agentConfig?.loop?.toolChoice as any) ?? 'auto',
         temperature: agentConfig?.model?.temperature,
         maxOutputTokens: agentConfig?.model?.maxTokens,
-        stopWhen: stepCountIs(maxSteps),
+        stopWhen: [stepCountIs(maxSteps)],
+
+        providerOptions: {
+          openai: { parallelToolCalls: false },
+        },
+
         prepareStep: async ({ stepNumber }) => {
-          const spaceId = activeSpaceId;
-          const spaceContext = spaceId
-            ? `ACTIVE SPACE: ${spaceId} — you are currently in this space. send_message will deliver here.`
-            : `ACTIVE SPACE: none — you are not in any space. Call enter_space before send_message.`;
+          if (stepNumber === 0) return {};
 
-          // Step 0: inject active space reminder only
-          if (stepNumber === 0) {
-            return {
-              messages: [{ role: 'user' as const, content: spaceContext }],
-            };
-          }
-
-          // Step 1+: active space + mid-cycle inbox preview
-          const pending = await peekInbox(agentEntityId, 5);
-          const parts: string[] = [spaceContext];
-          if (pending.length > 0) parts.push(formatInboxPreview(pending));
+          const elapsed = ((Date.now() - cycleStart) / 1000).toFixed(1);
+          const pending = await inboxSize(agentEntityId);
+          const parts = [`step ${stepNumber + 1}`, `${elapsed}s into cycle`];
+          if (pending > 0) parts.push(`${pending} new inbox event(s) waiting`);
 
           return {
-            messages: [{ role: 'user' as const, content: parts.join('\n\n') }],
+            messages: [{ role: 'user' as const, content: `[${parts.join(' | ')}]` }],
           };
         },
       });
+
+      console.log(`[DEBUG:agent-process] ${agentName} stream started, processing...`);
 
       // 8. PROCESS STREAM — handle tool events, streaming to spaces
       const streamResult = await processStream(result.fullStream, {
@@ -242,6 +247,8 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         visibleTools: built.visibleToolNames,
         asyncTools: built.asyncToolNames,
       });
+
+      console.log(`[DEBUG:agent-process] ${agentName} stream processed, toolCalls=${streamResult.toolCalls.length}`);
 
       // 9. CHECK FOR SKIP — detect skip() tool call and roll back
       const response = await result.response;
@@ -265,6 +272,17 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
 
       // 10. APPEND new messages to consciousness
       consciousness.push(...newMessages);
+
+      // 10b. APPEND cycle timeline — gives agent temporal awareness
+      const cycleDurationMs = Date.now() - cycleStart;
+      const timelineParts: string[] = [`Cycle ${cycleCount} complete in ${formatDuration(cycleDurationMs)}`];
+      if (streamResult.toolCalls.length > 0) {
+        const toolSummaries = streamResult.toolCalls
+          .map((tc: CollectedToolCall) => `${tc.toolName}(${tc.durationMs != null ? formatDuration(tc.durationMs) : '?'})`)
+          .join(', ');
+        timelineParts.push(`tools: ${toolSummaries}`);
+      }
+      consciousness.push({ role: 'user', content: `[${timelineParts.join(' | ')}]` });
 
       // 11. COMPACT if over budget
       const maxTokens = (agent.configJson as any)?.consciousness?.maxTokens ?? 100_000;
@@ -305,6 +323,7 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
       if (signal.aborted) break;
 
       console.error(`[agent-process] ${agentName} cycle error:`, error);
+      if (error instanceof Error) console.error(`[agent-process] stack:`, error.stack);
 
       // Mark events as failed in Postgres (they can be inspected / retried)
       if (context.currentRunId) {
@@ -346,28 +365,6 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
   console.log(`[agent-process] ${agentName} shutting down`);
   await saveConsciousness(agentEntityId, consciousness, cycleCount);
   blockingRedis.disconnect();
-}
-
-// =============================================================================
-// Active space restoration
-// =============================================================================
-
-/**
- * Scan consciousness backwards to find the last enter_space or leave_space tool call.
- * Returns the spaceId from the last enter_space, or null if the last action was leave_space
- * or no space action was found.
- */
-function restoreActiveSpaceId(messages: ModelMessage[]): string | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
-    for (const part of (msg.content as any[])) {
-      if (part.type !== 'tool-call') continue;
-      if (part.toolName === 'enter_space') return part.input?.spaceId ?? null;
-      if (part.toolName === 'leave_space') return null;
-    }
-  }
-  return null;
 }
 
 // =============================================================================

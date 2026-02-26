@@ -97,6 +97,7 @@ export function createSendMessageTool(ctx: AgentProcessContext) {
         });
       }
 
+      console.log(`[send_message] ${ctx.agentName} delivered to space ${spaceId} messageId=${message.id}`);
       return { success: true, messageId: message.id, status: 'delivered' };
     },
   });

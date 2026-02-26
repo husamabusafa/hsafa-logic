@@ -46,6 +46,8 @@ export interface CollectedToolCall {
   toolName: string;
   /** Fully parsed args — available after the tool-call part */
   args: unknown;
+  /** Duration in milliseconds (set after tool-result) */
+  durationMs?: number;
 }
 
 export interface StreamResult {
@@ -75,6 +77,8 @@ interface ActiveToolStream {
   isSendMessage: boolean;
   /** ID of the persisted SmartSpaceMessage (set at tool-call time) */
   messageId?: string;
+  /** Timestamp when tool-input-start fired */
+  startedAt: number;
 }
 
 // =============================================================================
@@ -150,6 +154,7 @@ export async function processStream(
           lastTextLen: 0,
           isVisible,
           isSendMessage,
+          startedAt: Date.now(),
         });
 
         if (isVisible && spaceId) {
@@ -243,7 +248,8 @@ export async function processStream(
         const args = part.input as unknown;
         const tool = active.get(toolCallId);
 
-        toolCalls.push({ toolCallId, toolName, args });
+        toolCalls.push({ toolCallId, toolName, args, durationMs: undefined });
+        console.log(`[DEBUG:tool-call] ${toolName} args=${JSON.stringify(args).slice(0, 120)}`);
 
         if (tool?.isVisible && tool.spaceId && !tool.isSendMessage) {
           await toSpace(tool.spaceId, {
@@ -358,6 +364,13 @@ export async function processStream(
           // isPendingResult: message stays as requires_action — will be updated when real result arrives
         }
 
+        // Record duration on the collected tool call
+        if (tool) {
+          const durationMs = Date.now() - tool.startedAt;
+          const tc = toolCalls.find((t) => t.toolCallId === toolCallId);
+          if (tc) tc.durationMs = durationMs;
+        }
+
         await toRun({
           type: 'tool.done',
           streamId: toolCallId,
@@ -376,17 +389,19 @@ export async function processStream(
         if (part.finishReason) finishReason = part.finishReason as string;
         break;
 
-      // ── Final finish ─────────────────────────────────────────────────────
+      // ── Final finish ─────────────────────────────────────────────────────────────
       case 'finish':
         if (part.finishReason) finishReason = part.finishReason as string;
+        console.log(`[DEBUG:stream-processor] runId=${runId} finish reason=${finishReason} toolCalls=${toolCalls.length} textLen=${internalText.length}`);
         break;
 
-      // ── Stream error ─────────────────────────────────────────────────────
+      // ── Stream error ─────────────────────────────────────────────────────────────
       case 'error': {
         const errMsg =
           part.error instanceof Error
             ? part.error.message
             : String(part.error ?? 'Stream error');
+        console.error(`[stream-processor] runId=${runId} stream ERROR:`, errMsg, part.error);
 
         finishReason = 'error';
 

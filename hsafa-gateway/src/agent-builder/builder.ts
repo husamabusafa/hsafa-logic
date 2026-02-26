@@ -37,7 +37,7 @@ export async function buildAgent(
   const model = resolveModel(config);
 
   // Build prebuilt tools (enter_space, send_message, skip, etc.)
-  const prebuilt = buildPrebuiltTools(context);
+  const prebuilt = await buildPrebuiltTools(context);
 
   // Build custom tools from config
   const custom = buildCustomTools(config.tools ?? [], context);
@@ -92,7 +92,8 @@ function resolveModel(config: AgentConfig): unknown {
       const openrouter = createOpenRouter({
         apiKey: process.env.OPENROUTER_API_KEY,
       });
-      return openrouter(modelName);
+      // OpenRouter reads parallelToolCalls from model settings (not providerOptions)
+      return openrouter.chat(modelName, { parallelToolCalls: false });
     }
     default:
       throw new Error(`Unknown model provider: ${provider}`);
