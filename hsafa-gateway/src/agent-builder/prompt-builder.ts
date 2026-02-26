@@ -1,5 +1,6 @@
 import { prisma } from '../lib/db.js';
 import { relativeTime } from '../lib/time-utils.js';
+import { getSpacesForEntity, getMembersOfSpace } from '../lib/membership-service.js';
 
 // =============================================================================
 // Prompt Builder (v3)
@@ -21,17 +22,12 @@ export async function buildSystemPrompt(
   agentEntityId: string,
   agentName: string,
 ): Promise<string> {
-  const [agent, memberships, memories, goals, plans, consciousness] = await Promise.all([
+  const [agent, spaces, memories, goals, plans, consciousness] = await Promise.all([
     prisma.agent.findUnique({
       where: { id: agentId },
       select: { configJson: true, description: true },
     }),
-    prisma.smartSpaceMembership.findMany({
-      where: { entityId: agentEntityId },
-      include: {
-        smartSpace: { select: { id: true, name: true } },
-      },
-    }),
+    getSpacesForEntity(agentEntityId),
     prisma.memory.findMany({
       where: { entityId: agentEntityId },
       select: { key: true, value: true },
@@ -56,27 +52,16 @@ export async function buildSystemPrompt(
   const config = agent?.configJson as any;
   const userInstructions = config?.instructions ?? '';
 
-  // Load all space members for context
-  const spaceIds = memberships.map((m) => m.smartSpaceId);
-  const allMemberships = spaceIds.length > 0
-    ? await prisma.smartSpaceMembership.findMany({
-        where: { smartSpaceId: { in: spaceIds } },
-        include: {
-          entity: { select: { id: true, displayName: true, type: true } },
-        },
-      })
-    : [];
-
-  // Group members by space
+  // Load members for each space (cached)
   const spaceMembers = new Map<string, Array<{ name: string; type: string; isYou: boolean }>>();
-  for (const m of allMemberships) {
-    if (!spaceMembers.has(m.smartSpaceId)) spaceMembers.set(m.smartSpaceId, []);
-    spaceMembers.get(m.smartSpaceId)!.push({
-      name: m.entity.displayName ?? m.entity.id,
-      type: m.entity.type,
-      isYou: m.entity.id === agentEntityId,
-    });
-  }
+  await Promise.all(spaces.map(async (s) => {
+    const members = await getMembersOfSpace(s.spaceId);
+    spaceMembers.set(s.spaceId, members.map((m) => ({
+      name: m.displayName,
+      type: m.type,
+      isYou: m.entityId === agentEntityId,
+    })));
+  }));
 
   // ---- Build sections ----
 
@@ -94,13 +79,13 @@ export async function buildSystemPrompt(
   );
 
   // YOUR SPACES
-  if (memberships.length > 0) {
-    const spaceLines = memberships.map((m) => {
-      const members = spaceMembers.get(m.smartSpaceId) ?? [];
+  if (spaces.length > 0) {
+    const spaceLines = spaces.map((s) => {
+      const members = spaceMembers.get(s.spaceId) ?? [];
       const memberList = members
         .map((mem) => mem.isYou ? 'You' : `${mem.name} (${mem.type})`)
         .join(', ');
-      return `  - "${m.smartSpace.name ?? 'Unnamed'}" (id: ${m.smartSpaceId}) -- ${memberList}`;
+      return `  - "${s.spaceName}" (id: ${s.spaceId}) -- ${memberList}`;
     });
     sections.push(`YOUR SPACES:\n${spaceLines.join('\n')}`);
   }
@@ -136,14 +121,39 @@ export async function buildSystemPrompt(
     '',
     'Your text output is INTERNAL THOUGHT — nobody sees it.',
     'To communicate: call enter_space(spaceId), then send_message({ text }).',
-    'Both steps are required. enter_space loads conversation history; send_message delivers your reply.',
+    'enter_space loads conversation history; send_message delivers your reply.',
+    'Your active space persists across cycles — if you were in a space last cycle, you are still in it.',
+    'You only need to call enter_space when switching spaces or when you need to refresh history.',
     '',
     'RESPOND TO THE ACTUAL MESSAGE. Read what the user said in your inbox and answer THAT.',
     'If they ask you to do something, DO it. If they ask a question, ANSWER it.',
     'Use conversation history from enter_space to understand context.',
+    '',
+    'When you are finished with this cycle, call done(). Provide a brief summary if you accomplished something.',
+    'If there is nothing to do, just call done() without a summary.',
   ].join('\n  ');
 
   sections.push(`INSTRUCTIONS:\n  ${coreInstructions}`);
+
+  // RELATIONSHIP AWARENESS (Ship #9)
+  sections.push(
+    `RELATIONSHIP AWARENESS:\n` +
+    `  After meaningful interactions, update your memories about the people you interact with.\n` +
+    `  Track: who they are, what they care about, how they prefer to communicate,\n` +
+    `  what you've helped them with, and when you last spoke.\n` +
+    `  Use memory keys like "about:Husam", "about:Ahmad" for per-person context.\n` +
+    `  This helps you personalize responses — remember communication preferences and past topics.`
+  );
+
+  // PROACTIVE BEHAVIOR (Ship #11)
+  sections.push(
+    `PROACTIVE BEHAVIOR:\n` +
+    `  You can act proactively. If someone says they'll be back later, consider following up.\n` +
+    `  If you started a task for someone, check on the result.\n` +
+    `  If a conversation goes quiet, consider checking if they need help.\n` +
+    `  Use set_plans to schedule follow-ups when appropriate.\n` +
+    `  You are not just reactive — you care about the people you interact with.`
+  );
 
   if (userInstructions) {
     sections.push(`CUSTOM INSTRUCTIONS:\n  ${userInstructions}`);

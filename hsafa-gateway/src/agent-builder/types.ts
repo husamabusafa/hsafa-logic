@@ -202,6 +202,14 @@ export interface AgentProcessContext {
   clearActiveSpaceId: () => void;
 }
 
+/**
+ * Extract AgentProcessContext from a tool's experimental_context.
+ * Ship #14: Tools read context from execute's second arg instead of closure.
+ */
+export function getCtx(options: { experimental_context?: unknown }): AgentProcessContext {
+  return options.experimental_context as AgentProcessContext;
+}
+
 // =============================================================================
 // Build result returned from builder.ts
 // =============================================================================
@@ -215,4 +223,6 @@ export interface BuiltAgent {
   asyncToolNames: Set<string>;
   /** The resolved LLM model instance */
   model: unknown;
+  /** Active MCP clients — must be closed on agent shutdown */
+  mcpClients: Array<{ name: string; close: () => Promise<void> }>;
 }

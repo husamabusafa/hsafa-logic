@@ -2,9 +2,8 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/db.js';
 import { redis } from '../lib/redis.js';
 import { requireSecretKey, requireAuth, requireMembership } from '../middleware/auth.js';
-import { createSmartSpaceMessage } from '../lib/smartspace-db.js';
 import { emitSmartSpaceEvent } from '../lib/smartspace-events.js';
-import { pushSpaceMessageEvent, fetchRecentSpaceContext } from '../lib/inbox.js';
+import { postSpaceMessage } from '../lib/space-service.js';
 import Redis from 'ioredis';
 
 export const smartSpacesRouter = Router();
@@ -163,75 +162,27 @@ smartSpacesRouter.post('/:smartSpaceId/messages', requireAuth(), requireMembersh
       return;
     }
 
-    // Persist the message
-    const message = await createSmartSpaceMessage({
-      smartSpaceId,
-      entityId,
-      role: 'user',
-      content,
-      metadata: msgMeta ?? undefined,
-    });
-
-    // Emit to space SSE
-    await emitSmartSpaceEvent(smartSpaceId, {
-      type: 'space.message',
-      message: {
-        id: message.id,
-        smartSpaceId,
-        entityId,
-        role: 'user',
-        content,
-        metadata: msgMeta ?? null,
-        seq: message.seq.toString(),
-        createdAt: message.createdAt.toISOString(),
-      },
-    });
-
-    // v3: Push to inbox of all OTHER agent members (fire-and-forget)
+    // Look up sender display name for inbox events
     const senderEntity = await prisma.entity.findUnique({
       where: { id: entityId },
       select: { displayName: true, type: true },
     });
 
-    const agentMembers = await prisma.smartSpaceMembership.findMany({
-      where: {
-        smartSpaceId,
-        entityId: { not: entityId },
-        entity: { type: 'agent' },
-      },
-      select: { entityId: true },
+    // Persist + emit SSE + fan-out to agent inboxes (via SpaceService)
+    const result = await postSpaceMessage({
+      spaceId: smartSpaceId,
+      entityId,
+      role: 'user',
+      content,
+      metadata: msgMeta ?? undefined,
+      senderName: senderEntity?.displayName ?? 'Unknown',
+      senderType: (senderEntity?.type ?? 'human') as 'human' | 'agent',
     });
 
-    console.log(`[DEBUG:messages] space=${smartSpaceId} sender=${entityId} agentMembers=${agentMembers.map(m => m.entityId).join(',')||'NONE'}`);
-
-    const space = await prisma.smartSpace.findUnique({
-      where: { id: smartSpaceId },
-      select: { name: true },
+    // Return the message in the response (match existing API shape)
+    const message = await prisma.smartSpaceMessage.findUnique({
+      where: { id: result.messageId },
     });
-
-    // Fetch recent conversation context (once, shared across all agent pushes)
-    const recentContext = agentMembers.length > 0
-      ? await fetchRecentSpaceContext(smartSpaceId, message.id).catch(() => [])
-      : [];
-
-    // Push to each agent's inbox
-    for (const member of agentMembers) {
-      console.log(`[DEBUG:messages] pushing inbox event to agent ${member.entityId}`);
-      pushSpaceMessageEvent(member.entityId, {
-        spaceId: smartSpaceId,
-        spaceName: space?.name ?? 'Unnamed',
-        messageId: message.id,
-        senderEntityId: entityId,
-        senderName: senderEntity?.displayName ?? 'Unknown',
-        senderType: (senderEntity?.type ?? 'human') as 'human' | 'agent',
-        content,
-        recentContext: recentContext.length > 0 ? recentContext : undefined,
-      }).then(() => {
-        console.log(`[DEBUG:messages] inbox push OK for agent ${member.entityId}`);
-      }).catch((err) => {
-        console.warn(`[smart-spaces] Failed to push to inbox ${member.entityId}:`, err);
-      });
-    }
 
     res.status(201).json({ message });
   } catch (error) {

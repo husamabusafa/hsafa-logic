@@ -1,6 +1,7 @@
 import { tool, jsonSchema } from 'ai';
 import { prisma } from '../../lib/db.js';
 import { relativeTime } from '../../lib/time-utils.js';
+import { getSpacesForEntity } from '../../lib/membership-service.js';
 import type { AgentProcessContext } from '../types.js';
 
 // =============================================================================
@@ -14,22 +15,19 @@ import type { AgentProcessContext } from '../types.js';
 // what has been said in the space.
 // =============================================================================
 
-const HISTORY_LIMIT = 20;
+const HISTORY_LIMIT = 100;
 
 /**
  * Create the enter_space tool. Async because it loads the agent's
  * memberships from DB to build the spaceId enum.
  */
 export async function createEnterSpaceTool(ctx: AgentProcessContext) {
-  // Load memberships ONCE at tool creation time for the enum
-  const memberships = await prisma.smartSpaceMembership.findMany({
-    where: { entityId: ctx.agentEntityId },
-    include: { smartSpace: { select: { id: true, name: true } } },
-  });
+  // Load memberships ONCE at tool creation time for the enum (cached)
+  const spaces = await getSpacesForEntity(ctx.agentEntityId);
 
-  const validSpaceIds = memberships.map((m) => m.smartSpaceId);
-  const spaceLabels = memberships
-    .map((m) => `${m.smartSpaceId} = "${m.smartSpace.name ?? 'Unnamed'}"`)
+  const validSpaceIds = spaces.map((s) => s.spaceId);
+  const spaceLabels = spaces
+    .map((s) => `${s.spaceId} = "${s.spaceName}"`)
     .join(', ');
 
   // Build the JSON Schema for spaceId — with enum if we have memberships

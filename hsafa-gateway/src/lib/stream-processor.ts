@@ -1,20 +1,24 @@
-import { parse as parsePartialJson } from 'partial-json';
 import { emitSmartSpaceEvent, emitRunEvent } from './smartspace-events.js';
-import { createSmartSpaceMessage } from './smartspace-db.js';
-import { prisma } from './db.js';
-import {
-  buildToolCallContent,
-  buildToolCallMessageMeta,
-  buildToolCallMessagePayload,
-  type ToolCallStatus,
-} from './tool-call-utils.js';
+import { hookStates } from './tool-streaming.js';
 
 // =============================================================================
-// Constants
+// Stream Processor (v3 — simplified with Tool Lifecycle Hooks)
+//
+// Space-facing streaming logic (tool.started, tool.streaming,
+// space.message.streaming, tool.done, DB persistence) has been moved into
+// tool lifecycle hooks (onInputStart / onInputDelta / onInputAvailable) on the
+// tool definitions themselves. See:
+//   - send-message.ts      — owns send_message streaming
+//   - tool-streaming.ts    — factory for visible custom tool hooks
+//   - builder.ts           — wires hooks + wraps execute for result finalization
+//
+// This module now ONLY handles:
+//   1. Tool call collection (for the process loop return value)
+//   2. Duration tracking (tool-input-start → tool-result)
+//   3. Run-stream events (tool.started, tool.ready, tool.done, tool.error)
+//   4. Internal text collection (debug)
+//   5. Finish / error handling (including error cleanup via hookStates)
 // =============================================================================
-
-/** The prebuilt tool name that sends a message to the active space */
-export const TOOL_SEND_MESSAGE = 'send_message';
 
 // =============================================================================
 // Types
@@ -23,22 +27,6 @@ export const TOOL_SEND_MESSAGE = 'send_message';
 export interface StreamProcessorOptions {
   runId: string;
   agentEntityId: string;
-  /**
-   * Returns the current active spaceId. Called per event so that if
-   * `enter_space` is executed mid-cycle the correct space gets the events.
-   */
-  getActiveSpaceId: () => string | null;
-  /**
-   * Set of custom tool names where `visible: true` in the agent config.
-   * Their streaming input and output will be published to the space channel.
-   * `send_message` is always visible regardless of this set.
-   */
-  visibleTools: Set<string>;
-  /**
-   * Set of async tool names (space, external-without-url).
-   * Their execute returns { status: 'pending' } — real result arrives via inbox.
-   */
-  asyncTools: Set<string>;
 }
 
 export interface CollectedToolCall {
@@ -60,63 +48,31 @@ export interface StreamResult {
 }
 
 // =============================================================================
-// Internal per-tool tracking
-// =============================================================================
-
-interface ActiveToolStream {
-  toolName: string;
-  /** activeSpaceId captured at the moment the tool call started */
-  spaceId: string | null;
-  /** Accumulated partial JSON string of args */
-  argsText: string;
-  /** For send_message: length of the `text` field we've already emitted */
-  lastTextLen: number;
-  /** Should stream events to the space channel */
-  isVisible: boolean;
-  /** Special-cased: extract text field and stream as message content */
-  isSendMessage: boolean;
-  /** ID of the persisted SmartSpaceMessage (set at tool-call time) */
-  messageId?: string;
-  /** Timestamp when tool-input-start fired */
-  startedAt: number;
-}
-
-// =============================================================================
 // processStream
 // =============================================================================
 
 /**
  * Consumes a Vercel AI SDK `fullStream` and:
- *  - Emits Hsafa-native SSE events to the appropriate Redis channels
- *  - Extracts `text` from `send_message` partial JSON and streams it as
- *    `space.message.streaming` deltas (so the UI shows real-time typing)
  *  - Collects all tool calls for the process loop
+ *  - Tracks tool durations (input start → result)
+ *  - Emits run-stream events (for node-sdk `runs.subscribe()`)
+ *  - Handles stream errors (cleans up in-flight hooks)
  *
- * Event naming convention (Hsafa-native):
- *
- *  space.message.streaming  — send_message text delta (start / delta / done)
- *  space.message.failed     — send_message errored during streaming
- *  tool.started             — a visible custom tool call began
- *  tool.streaming           — partial args for a visible custom tool
- *  tool.done                — a tool call completed (result available)
- *  tool.error               — a tool call failed
+ * Space-facing events are handled by tool lifecycle hooks on each tool.
  */
 export async function processStream(
   fullStream: AsyncIterable<any>,
   options: StreamProcessorOptions,
 ): Promise<StreamResult> {
-  const { runId, agentEntityId, getActiveSpaceId, visibleTools, asyncTools } = options;
+  const { runId, agentEntityId } = options;
 
   const toolCalls: CollectedToolCall[] = [];
-  const active = new Map<string, ActiveToolStream>();
+  /** Minimal tracking: toolCallId → { toolName, startedAt } for duration + error cleanup */
+  const activeTiming = new Map<string, { toolName: string; startedAt: number }>();
   let internalText = '';
   let finishReason = 'unknown';
 
-  // ── Redis emit helpers ────────────────────────────────────────────────────
-
-  const toSpace = async (spaceId: string, payload: Record<string, unknown>) => {
-    await emitSmartSpaceEvent(spaceId, payload as { type: string } & Record<string, unknown>);
-  };
+  // ── Run-stream emit helper ──────────────────────────────────────────────
 
   const toRun = async (payload: Record<string, unknown>) => {
     await emitRunEvent(runId, payload as { type: string } & Record<string, unknown>);
@@ -139,44 +95,12 @@ export async function processStream(
       case 'reasoning-end':
         break;
 
-      // ── Tool call begins — args will follow as deltas ────────────────────
+      // ── Tool call begins — record start time for duration tracking ──────
       case 'tool-input-start': {
         const toolCallId = (part.id ?? part.toolCallId) as string;
         const toolName = part.toolName as string;
-        const spaceId = getActiveSpaceId();
-        const isSendMessage = toolName === TOOL_SEND_MESSAGE;
-        const isVisible = isSendMessage || visibleTools.has(toolName);
 
-        active.set(toolCallId, {
-          toolName,
-          spaceId,
-          argsText: '',
-          lastTextLen: 0,
-          isVisible,
-          isSendMessage,
-          startedAt: Date.now(),
-        });
-
-        if (isVisible && spaceId) {
-          if (isSendMessage) {
-            await toSpace(spaceId, {
-              type: 'space.message.streaming',
-              streamId: toolCallId,
-              runId,
-              agentEntityId,
-              phase: 'start',
-              delta: '',
-            });
-          } else {
-            await toSpace(spaceId, {
-              type: 'tool.started',
-              streamId: toolCallId,
-              runId,
-              agentEntityId,
-              toolName,
-            });
-          }
-        }
+        activeTiming.set(toolCallId, { toolName, startedAt: Date.now() });
 
         await toRun({
           type: 'tool.started',
@@ -184,113 +108,21 @@ export async function processStream(
           runId,
           agentEntityId,
           toolName,
-          spaceId,
         });
         break;
       }
 
-      // ── Partial args arriving ────────────────────────────────────────────
-      case 'tool-input-delta': {
-        const toolCallId = (part.id ?? part.toolCallId) as string;
-        const delta = ((part.delta ?? part.inputTextDelta) as string) ?? '';
-        const tool = active.get(toolCallId);
-        if (!tool || !delta) break;
-
-        tool.argsText += delta;
-        if (!tool.isVisible || !tool.spaceId) break;
-
-        if (tool.isSendMessage) {
-          try {
-            const parsed = parsePartialJson(tool.argsText) as Record<string, unknown> | null;
-            if (parsed && typeof parsed.text === 'string') {
-              const newText = parsed.text;
-              const textDelta = newText.slice(tool.lastTextLen);
-              if (textDelta) {
-                tool.lastTextLen = newText.length;
-                await toSpace(tool.spaceId, {
-                  type: 'space.message.streaming',
-                  streamId: toolCallId,
-                  runId,
-                  agentEntityId,
-                  phase: 'delta',
-                  delta: textDelta,
-                  text: newText,
-                });
-              }
-            }
-          } catch {
-            // Partial JSON not yet parseable
-          }
-        } else {
-          try {
-            const partialArgs = parsePartialJson(tool.argsText);
-            if (partialArgs !== undefined) {
-              await toSpace(tool.spaceId, {
-                type: 'tool.streaming',
-                streamId: toolCallId,
-                runId,
-                agentEntityId,
-                toolName: tool.toolName,
-                partialArgs,
-              });
-            }
-          } catch {
-            // Skip unparseable
-          }
-        }
+      // ── Partial args — handled by tool hooks, nothing to do here ────────
+      case 'tool-input-delta':
         break;
-      }
 
-      // ── Full args collected (tool call is now ready to execute) ──────────
+      // ── Full args collected (tool call ready to execute) ─────────────────
       case 'tool-call': {
         const toolCallId = part.toolCallId as string;
         const toolName = part.toolName as string;
         const args = part.input as unknown;
-        const tool = active.get(toolCallId);
 
         toolCalls.push({ toolCallId, toolName, args, durationMs: undefined });
-
-        if (tool?.isVisible && tool.spaceId && !tool.isSendMessage) {
-          await toSpace(tool.spaceId, {
-            type: 'tool.streaming',
-            streamId: toolCallId,
-            runId,
-            agentEntityId,
-            toolName,
-            partialArgs: args,
-          });
-
-          // Persist the tool call message
-          const isAsyncTool = asyncTools.has(toolName);
-          const finalStatus: ToolCallStatus = isAsyncTool ? 'requires_action' : 'running';
-          try {
-            const toolContent = buildToolCallContent(toolName, args, null, finalStatus);
-            const toolMeta = buildToolCallMessageMeta({
-              toolCallId, toolName, args, result: null, status: finalStatus, runId,
-            });
-            const dbMsg = await createSmartSpaceMessage({
-              smartSpaceId: tool.spaceId,
-              entityId: agentEntityId,
-              role: 'assistant',
-              content: toolContent,
-              metadata: toolMeta as unknown as Record<string, unknown>,
-              runId,
-            });
-            tool.messageId = dbMsg.id;
-
-            await toSpace(tool.spaceId, {
-              type: 'space.message',
-              streamId: toolCallId,
-              message: buildToolCallMessagePayload({
-                messageId: dbMsg.id, smartSpaceId: tool.spaceId,
-                entityId: agentEntityId, toolCallId, toolName, args,
-                result: null, status: finalStatus, runId,
-              }),
-            });
-          } catch (err) {
-            console.warn(`[stream-processor] Failed to persist tool call ${toolCallId}:`, err);
-          }
-        }
 
         await toRun({
           type: 'tool.ready',
@@ -308,66 +140,14 @@ export async function processStream(
         const toolCallId = part.toolCallId as string;
         const toolName = part.toolName as string;
         const result = part.output as unknown;
-        const tool = active.get(toolCallId);
-
-        // Check if this is a pending async tool result (not a real completion)
-        const isPendingResult = typeof result === 'object' && result !== null
-          && (result as Record<string, unknown>).status === 'pending';
-
-        if (tool?.isVisible && tool.spaceId) {
-          if (tool.isSendMessage) {
-            await toSpace(tool.spaceId, {
-              type: 'space.message.streaming',
-              streamId: toolCallId,
-              runId,
-              agentEntityId,
-              phase: 'done',
-            });
-          } else if (!isPendingResult) {
-            // Real result — update message to complete
-            await toSpace(tool.spaceId, {
-              type: 'tool.done',
-              streamId: toolCallId,
-              runId,
-              agentEntityId,
-              toolName,
-              result,
-            });
-
-            if (tool.messageId) {
-              const completedArgs = toolCalls.find((tc) => tc.toolCallId === toolCallId)?.args ?? null;
-              const completeMeta = buildToolCallMessageMeta({
-                toolCallId, toolName, args: completedArgs,
-                result, status: 'complete', runId,
-              });
-              const completeContent = buildToolCallContent(toolName, completedArgs, result, 'complete');
-              try {
-                await prisma.smartSpaceMessage.update({
-                  where: { id: tool.messageId },
-                  data: { content: completeContent, metadata: completeMeta as any },
-                });
-                await toSpace(tool.spaceId, {
-                  type: 'space.message',
-                  streamId: toolCallId,
-                  message: buildToolCallMessagePayload({
-                    messageId: tool.messageId, smartSpaceId: tool.spaceId,
-                    entityId: agentEntityId, toolCallId, toolName,
-                    args: completedArgs, result, status: 'complete', runId,
-                  }),
-                });
-              } catch (err) {
-                console.warn(`[stream-processor] Failed to update tool message ${tool.messageId}:`, err);
-              }
-            }
-          }
-          // isPendingResult: message stays as requires_action — will be updated when real result arrives
-        }
 
         // Record duration on the collected tool call
-        if (tool) {
-          const durationMs = Date.now() - tool.startedAt;
+        const timing = activeTiming.get(toolCallId);
+        if (timing) {
+          const durationMs = Date.now() - timing.startedAt;
           const tc = toolCalls.find((t) => t.toolCallId === toolCallId);
           if (tc) tc.durationMs = durationMs;
+          activeTiming.delete(toolCallId);
         }
 
         await toRun({
@@ -378,8 +158,6 @@ export async function processStream(
           toolName,
           result,
         });
-
-        active.delete(toolCallId);
         break;
       }
 
@@ -388,12 +166,12 @@ export async function processStream(
         if (part.finishReason) finishReason = part.finishReason as string;
         break;
 
-      // ── Final finish ─────────────────────────────────────────────────────────────
+      // ── Final finish ────────────────────────────────────────────────────
       case 'finish':
         if (part.finishReason) finishReason = part.finishReason as string;
         break;
 
-      // ── Stream error ─────────────────────────────────────────────────────────────
+      // ── Stream error ────────────────────────────────────────────────────
       case 'error': {
         const errMsg =
           part.error instanceof Error
@@ -403,27 +181,36 @@ export async function processStream(
 
         finishReason = 'error';
 
-        for (const [toolCallId, tool] of active) {
-          if (tool.isVisible && tool.spaceId) {
-            await toSpace(tool.spaceId, {
-              type: tool.isSendMessage ? 'space.message.failed' : 'tool.error',
+        // Clean up in-flight tool hooks — emit error events to spaces
+        for (const [toolCallId, state] of hookStates) {
+          if (state.runId !== runId) continue;
+
+          if (state.spaceId) {
+            const errorType = state.isSendMessage ? 'space.message.failed' : 'tool.error';
+            await emitSmartSpaceEvent(state.spaceId, {
+              type: errorType,
               streamId: toolCallId,
               runId,
               agentEntityId,
-              toolName: tool.toolName,
+              toolName: state.toolName,
               error: errMsg,
             });
           }
+          hookStates.delete(toolCallId);
+        }
+
+        // Also clean up any timing entries and emit run-stream errors
+        for (const [toolCallId, timing] of activeTiming) {
           await toRun({
             type: 'tool.error',
             streamId: toolCallId,
             runId,
             agentEntityId,
-            toolName: tool.toolName,
+            toolName: timing.toolName,
             error: errMsg,
           });
         }
-        active.clear();
+        activeTiming.clear();
         break;
       }
 

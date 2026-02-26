@@ -9,6 +9,7 @@ import {
   buildToolCallMessageMeta,
   buildToolCallMessagePayload,
 } from '../lib/tool-call-utils.js';
+import { publishToolResult } from '../agent-builder/builder.js';
 import Redis from 'ioredis';
 
 export const runsRouter = Router();
@@ -201,10 +202,12 @@ runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res:
       },
     });
 
-    // 2. Push tool_result inbox event → agent wakes in next cycle
-    //    Skip inbox push if the tool was in 'waiting' state — the inline
-    //    waiter (waitForPendingResult) will pick up the resolved result.
-    if (!wasWaiting) {
+    // 2. Notify waiting tool or push to inbox
+    if (wasWaiting) {
+      // Tool is actively waiting via Redis pub/sub — publish result to unblock it instantly
+      await publishToolResult(callId, result);
+    } else {
+      // Tool was async (pending) — push inbox event so agent wakes in next cycle
       await pushToolResultEvent(pending.agentEntityId, {
         toolCallId: callId,
         toolName: pending.toolName,

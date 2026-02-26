@@ -350,7 +350,7 @@ export async function recoverStuckEvents(agentEntityId: string): Promise<number>
 // Recent Context — Fetch last N messages from a space for inbox enrichment
 // =============================================================================
 
-const DEFAULT_CONTEXT_COUNT = 15;
+const DEFAULT_CONTEXT_COUNT = 50;
 
 /**
  * Fetch the last N messages from a space (before a specific message) to provide
@@ -393,14 +393,53 @@ export async function fetchRecentSpaceContext(
 // Format — Convert inbox events to a user message string for consciousness
 // =============================================================================
 
+// =============================================================================
+// Attention Prioritization (Ship #10)
+// =============================================================================
+
+/**
+ * Sort inbox events by importance so the agent handles urgent matters first.
+ * Priority: human messages > tool results > plan events > service events > agent messages.
+ * Within the same priority tier, preserve FIFO order.
+ */
+export function prioritizeEvents(events: InboxEvent[]): InboxEvent[] {
+  return [...events].sort((a, b) => {
+    const pa = eventPriority(a);
+    const pb = eventPriority(b);
+    return pa - pb; // Lower number = higher priority
+  });
+}
+
+function eventPriority(e: InboxEvent): number {
+  switch (e.type) {
+    case 'space_message': {
+      const d = e.data as SpaceMessageEventData;
+      // Human messages are highest priority
+      if (d.senderType === 'human') return 0;
+      // Agent messages are lower
+      return 3;
+    }
+    case 'tool_result':
+      return 1; // Results the agent is waiting for
+    case 'plan':
+      return 2; // Scheduled tasks
+    case 'service':
+      return 2; // External triggers
+    default:
+      return 4;
+  }
+}
+
 /**
  * Format drained inbox events into a single user-message string.
  * This becomes the injected user message in consciousness.
+ * Events are sorted by priority before formatting.
  */
 export function formatInboxEvents(events: InboxEvent[]): string {
   const now = new Date();
+  const sorted = prioritizeEvents(events);
 
-  const lines = events.map((e) => {
+  const lines = sorted.map((e) => {
     const ts = e.timestamp ? `${relativeTime(e.timestamp, now)}` : '';
 
     switch (e.type) {

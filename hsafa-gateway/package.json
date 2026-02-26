@@ -25,6 +25,7 @@
     "@openrouter/ai-sdk-provider": "^2.2.3",
     "@prisma/adapter-pg": "^7.4.1",
     "@prisma/client": "^7.4.1",
+    "@prisma/client-runtime-utils": "^7.4.1",
     "@types/pg": "^8.16.0",
     "ai": "^6.0.39",
     "bullmq": "^5.70.1",

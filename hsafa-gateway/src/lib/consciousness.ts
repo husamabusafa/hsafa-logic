@@ -36,8 +36,10 @@ export interface ToolResultPart {
 // Configuration defaults
 // =============================================================================
 
-const DEFAULT_MAX_TOKENS = 100_000;
-const DEFAULT_MIN_RECENT_CYCLES = 10;
+const DEFAULT_MAX_TOKENS = 200_000;
+
+/** Fraction of maxTokens reserved for recent full-detail cycles */
+const RECENT_BUDGET_RATIO = 0.7;
 
 /** Rough estimate: ~4 chars per token for English text */
 const CHARS_PER_TOKEN = 4;
@@ -85,21 +87,29 @@ export function estimateTokens(messages: ModelMessage[]): number {
  * Load consciousness from DB.
  * Returns empty array if no consciousness record exists (first cycle).
  */
+export interface ConsciousnessMetadata {
+  /** Persisted activeSpaceId — restored at cycle start so the agent doesn't
+   *  lose track of which space it was in across cycles. */
+  activeSpaceId?: string | null;
+}
+
 export async function loadConsciousness(agentEntityId: string): Promise<{
   messages: ModelMessage[];
   cycleCount: number;
+  metadata: ConsciousnessMetadata;
 }> {
   const record = await prisma.agentConsciousness.findUnique({
     where: { agentEntityId },
   });
 
   if (!record) {
-    return { messages: [], cycleCount: 0 };
+    return { messages: [], cycleCount: 0, metadata: {} };
   }
 
   return {
     messages: record.messages as unknown as ModelMessage[],
     cycleCount: record.cycleCount,
+    metadata: (record.metadata as ConsciousnessMetadata) ?? {},
   };
 }
 
@@ -111,6 +121,7 @@ export async function saveConsciousness(
   agentEntityId: string,
   messages: ModelMessage[],
   cycleCount: number,
+  metadata?: ConsciousnessMetadata,
 ): Promise<void> {
   const tokenEstimate = estimateTokens(messages);
 
@@ -121,11 +132,13 @@ export async function saveConsciousness(
       messages: messages as any,
       cycleCount,
       tokenEstimate,
+      metadata: metadata ? (metadata as any) : undefined,
     },
     update: {
       messages: messages as any,
       cycleCount,
       tokenEstimate,
+      metadata: metadata ? (metadata as any) : undefined,
       lastCycleAt: new Date(),
     },
   });
@@ -243,19 +256,19 @@ function extractCycleTimestamp(cycle: Cycle): string | null {
 /**
  * Compact consciousness when it exceeds the token budget.
  *
- * Strategy (self-summary):
+ * Strategy (token-budget-based):
  * 1. Keep the system prompt (always first message)
- * 2. Keep the last N cycles in full detail
+ * 2. Walk backwards through cycles — keep as many as fit in RECENT_BUDGET_RATIO
+ *    of the token budget in full detail
  * 3. For older cycles, extract only the agent's self-summary text
  * 4. Collapse old summaries into a single user message
  *
- * This is zero-cost — no extra LLM call needed. The summaries are
- * high-quality because the agent wrote them itself with full context.
+ * This naturally adapts: short cycles → more kept in full, long cycles → fewer.
+ * The token budget is the only constraint — no arbitrary cycle count minimum.
  */
 export function compactConsciousness(
   messages: ModelMessage[],
   maxTokens: number = DEFAULT_MAX_TOKENS,
-  minRecentCycles: number = DEFAULT_MIN_RECENT_CYCLES,
 ): ModelMessage[] {
   const tokenCount = estimateTokens(messages);
 
@@ -266,20 +279,32 @@ export function compactConsciousness(
 
   // Extract system prompt
   const systemPrompt = messages[0]?.role === 'system' ? messages[0] : null;
-  const withoutSystem = systemPrompt ? messages.slice(1) : messages;
 
   // Extract cycles
-  const cycles = extractCycles(systemPrompt ? messages : withoutSystem);
+  const cycles = extractCycles(messages);
 
-  if (cycles.length <= minRecentCycles) {
+  if (cycles.length <= 1) {
     // Not enough cycles to compact — return as-is
     return messages;
   }
 
-  // Split into old and recent
-  const splitPoint = cycles.length - minRecentCycles;
-  const oldCycles = cycles.slice(0, splitPoint);
-  const recentCycles = cycles.slice(splitPoint);
+  // Token-budget-based split: walk backwards, keep as many cycles as fit
+  const recentBudget = maxTokens * RECENT_BUDGET_RATIO;
+  let recentTokens = 0;
+  let splitIndex = cycles.length;
+
+  for (let i = cycles.length - 1; i >= 0; i--) {
+    const cycleTokens = estimateTokens(cycles[i].messages);
+    if (recentTokens + cycleTokens > recentBudget) break;
+    recentTokens += cycleTokens;
+    splitIndex = i;
+  }
+
+  // If everything fits, no compaction needed
+  if (splitIndex === 0) return messages;
+
+  const oldCycles = cycles.slice(0, splitIndex);
+  const recentCycles = cycles.slice(splitIndex);
 
   // Extract self-summaries from old cycles
   const summaries: string[] = [];

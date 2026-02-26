@@ -1,4 +1,4 @@
-import { streamText, stepCountIs, type LanguageModel } from 'ai';
+import { ToolLoopAgent, stepCountIs, hasToolCall, type LanguageModel } from 'ai';
 import type Redis from 'ioredis';
 import { prisma } from './db.js';
 import { createBlockingRedis } from './redis.js';
@@ -17,14 +17,16 @@ import {
   loadConsciousness,
   saveConsciousness,
   compactConsciousness,
+  estimateTokens,
   refreshSystemPrompt,
   type ModelMessage,
 } from './consciousness.js';
 import { processStream } from './stream-processor.js';
 import { emitSmartSpaceEvent } from './smartspace-events.js';
+import { getSpacesForEntity } from './membership-service.js';
 import { buildAgent } from '../agent-builder/builder.js';
 import { buildSystemPrompt } from '../agent-builder/prompt-builder.js';
-import type { AgentProcessContext, InboxEvent } from '../agent-builder/types.js';
+import type { AgentProcessContext, BuiltAgent, InboxEvent } from '../agent-builder/types.js';
 
 // =============================================================================
 // Agent Process (v3)
@@ -33,7 +35,57 @@ import type { AgentProcessContext, InboxEvent } from '../agent-builder/types.js'
 // One process per agent. Replaces the stateless run-runner from v2.
 // =============================================================================
 
-const DEFAULT_MAX_STEPS = 5;
+/** Safety net only — should never trigger. The agent uses the `done` tool to signal completion. */
+const SAFETY_MAX_STEPS = 50;
+
+/**
+ * Create a ToolLoopAgent instance with our configuration.
+ * Encapsulates model, tools, loop control, and step preparation.
+ * Rebuilt when the model changes (e.g. graceful degradation).
+ */
+function createAgentInstance(
+  built: BuiltAgent,
+  context: AgentProcessContext,
+  agentConfig: any,
+  cycleState: { start: number },
+): ToolLoopAgent {
+  return new ToolLoopAgent({
+    model: built.model as LanguageModel,
+    tools: built.tools as any,
+    toolChoice: agentConfig?.loop?.toolChoice ?? 'auto',
+    // temperature + maxOutputTokens are applied via model middleware (see model-registry.ts)
+    stopWhen: [
+      hasToolCall('done'),
+      stepCountIs(SAFETY_MAX_STEPS),
+    ],
+    experimental_context: context,
+    providerOptions: {
+      openai: { parallelToolCalls: false },
+    },
+    prepareStep: async ({ stepNumber, messages }) => {
+      if (stepNumber === 0) return {};
+      const parts: string[] = [];
+      const elapsed = Date.now() - cycleState.start;
+      parts.push(`Current time: ${new Date().toISOString()} (cycle running ${Math.round(elapsed / 1000)}s)`);
+      try {
+        const pending = await inboxSize(context.agentEntityId);
+        if (pending > 0) {
+          const preview = await peekInbox(context.agentEntityId, 3);
+          parts.push(formatInboxPreview(preview));
+        }
+      } catch {
+        // Non-critical — skip if Redis hiccups
+      }
+      if (parts.length === 0) return {};
+      return {
+        messages: [
+          ...messages,
+          { role: 'system' as const, content: parts.join('\n') },
+        ],
+      };
+    },
+  });
+}
 
 export interface AgentProcessOptions {
   agentId: string;
@@ -65,10 +117,13 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
   // Dedicated Redis connection for blocking BRPOP
   const blockingRedis: Redis = createBlockingRedis();
 
-  // Load consciousness
-  let { messages: consciousness, cycleCount } = await loadConsciousness(agentEntityId);
+  // Load consciousness (includes persisted runtime state)
+  let { messages: consciousness, cycleCount, metadata: consciousnessMetadata } = await loadConsciousness(agentEntityId);
 
-  let activeSpaceId: string | null = null;
+  // Restore activeSpaceId from persisted metadata — the agent remembers which
+  // space it was in from the previous cycle. Only reset if the space no longer
+  // exists or the agent is no longer a member.
+  let activeSpaceId: string | null = consciousnessMetadata.activeSpaceId ?? null;
   const agent = await prisma.agent.findUniqueOrThrow({
     where: { id: agentId },
     include: {
@@ -93,15 +148,14 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
     },
   });
 
-  // Safety reset: if consciousness is suspiciously large with no successful cycles,
-  // reset to empty to prevent infinite tool-call loops from corrupted history
-  const MAX_STARTUP_MESSAGES = 120;
-  if (consciousness.length > MAX_STARTUP_MESSAGES) {
-    console.log(`[agent-process] ${agentName} consciousness too large (${consciousness.length} messages), resetting to fresh start`);
-    consciousness = [];
-    cycleCount = 0;
-    activeSpaceId = null;
-    await saveConsciousness(agentEntityId, [], 0);
+  // Ship #4: Compaction instead of amnesia — if consciousness is large, compact it
+  // instead of wiping everything. The agent keeps compressed history.
+  const maxTokens = (agent.configJson as any)?.consciousness?.maxTokens ?? 200_000;
+  const startupTokens = estimateTokens(consciousness);
+  if (startupTokens > maxTokens) {
+    console.log(`[agent-process] ${agentName} consciousness large (${startupTokens} est. tokens), compacting...`);
+    consciousness = compactConsciousness(consciousness, maxTokens);
+    await saveConsciousness(agentEntityId, consciousness, cycleCount, { activeSpaceId });
   }
 
   // Build process context
@@ -118,12 +172,21 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
 
   // Build tools and model (once — rebuilt if config changes)
   const built = await buildAgent(agent.configJson as any, context);
+  const agentConfig = agent.configJson as any;
 
   // Crash recovery: re-push any events stuck in 'processing' from a previous crash
   const recovered = await recoverStuckEvents(agentEntityId);
   if (recovered > 0) {
     console.log(`[agent-process] ${agentName} recovered ${recovered} stuck inbox events`);
   }
+
+  // Ship #17: Graceful degradation — track consecutive failures for adaptive behavior
+  let consecutiveFailures = 0;
+  const originalModel = built.model;
+
+  // Create the ToolLoopAgent — encapsulates model, tools, loop control, prepareStep
+  const cycleState = { start: 0 };
+  let currentAgent = createAgentInstance(built, context, agentConfig, cycleState);
 
   console.log(`[agent-process] ${agentName} (${agentEntityId}) started — cycle ${cycleCount}, consciousness=${consciousness.length} messages`);
 
@@ -143,10 +206,10 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
 
       if (allEvents.length === 0) continue;
 
-      // Reset active space at the start of each cycle — the agent must explicitly
-      // call enter_space to select which space to act in. This ensures the model
-      // always makes a conscious decision about WHERE to respond.
-      activeSpaceId = null;
+      // activeSpaceId is preserved across cycles (persisted in consciousness
+      // metadata). The agent remembers being in a space and can send_message
+      // immediately without re-entering. It only changes when the agent calls
+      // enter_space explicitly.
       cycleCount++;
       context.cycleCount = cycleCount;
 
@@ -181,7 +244,7 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
       // Mark events as processing in Postgres (linked to this run)
       await markEventsProcessing(agentEntityId, eventIds, run.id);
 
-      const cycleStart = Date.now();
+      cycleState.start = Date.now();
 
       // 4. EMIT agent.active to all spaces
       await emitAgentStatus(agentEntityId, 'active', { runId: run.id, agentName });
@@ -201,83 +264,28 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
       };
       consciousness.push(inboxMessage);
 
-      // 7. THINK — one streamText call
-      const maxSteps = (agent.configJson as any)?.loop?.maxSteps ?? DEFAULT_MAX_STEPS;
-      const agentConfig = agent.configJson as any;
-
-      const result = streamText({
-        model: built.model as LanguageModel,
+      // 7. THINK — one ToolLoopAgent.stream() call
+      // All config (model, tools, stopWhen, prepareStep, experimental_context)
+      // is encapsulated in the agent. The agent decides when it's done via
+      // the `done` tool (hasToolCall('done') stops the loop after execution).
+      const result = await currentAgent.stream({
         messages: consciousness as any,
-        tools: built.tools as any,
-        toolChoice: (agentConfig?.loop?.toolChoice as any) ?? 'auto',
-        temperature: agentConfig?.model?.temperature,
-        maxOutputTokens: agentConfig?.model?.maxTokens,
-        stopWhen: stepCountIs(maxSteps),
-
-        providerOptions: {
-          openai: { parallelToolCalls: false },
-        },
-
-        prepareStep: async ({ stepNumber, messages }) => {
-          // Step 0: model sees full consciousness + inbox — no injection needed
-          if (stepNumber === 0) return {};
-
-          // Step 1+: provide situational awareness without being prescriptive
-          const parts: string[] = [];
-
-          // Time awareness — agent knows how long the cycle has been running
-          const elapsed = Date.now() - cycleStart;
-          parts.push(`Current time: ${new Date().toISOString()} (cycle running ${Math.round(elapsed / 1000)}s)`);
-
-          // Inbox awareness — let agent know if new events arrived mid-cycle
-          try {
-            const pending = await inboxSize(agentEntityId);
-            if (pending > 0) {
-              const preview = await peekInbox(agentEntityId, 3);
-              parts.push(formatInboxPreview(preview));
-            }
-          } catch {
-            // Non-critical — skip if Redis hiccups
-          }
-
-          if (parts.length === 0) return {};
-
-          // IMPORTANT: `messages` in return REPLACES the full array.
-          // Spread existing messages and append our system note.
-          return {
-            messages: [
-              ...messages,
-              { role: 'system' as const, content: parts.join('\n') },
-            ],
-          };
-        },
       });
 
-      // 8. PROCESS STREAM — handle tool events, streaming to spaces
+      // 8. PROCESS STREAM — collect tool calls, track durations, emit run events
+      // (Space-facing streaming is handled by tool lifecycle hooks on each tool)
       const streamResult = await processStream(result.fullStream, {
         runId: run.id,
         agentEntityId,
-        getActiveSpaceId: () => activeSpaceId,
-        visibleTools: built.visibleToolNames,
-        asyncTools: built.asyncToolNames,
       });
 
-      // 9. SKIP DETECTION — if the agent called skip (no execute), rollback
-      const skipped = streamResult.toolCalls.find((tc) => tc.toolName === 'skip');
-      if (skipped) {
-        const reason = (skipped.args as any)?.reason ?? 'no reason';
-        console.log(`[agent-process] ${agentName} cycle ${cycleCount} SKIPPED: ${reason}`);
+      // 9. EXTRACT done tool metadata (if agent called done)
+      const doneTool = streamResult.toolCalls.find((tc) => tc.toolName === 'done');
+      const doneSummary = doneTool ? (doneTool.args as any)?.summary : undefined;
+      const isNoAction = doneTool && !doneSummary;
 
-        // Rollback: restore pre-cycle consciousness, revert cycle count
-        consciousness = preCycleConsciousness!;
-        cycleCount = preCycleCycleCount;
-        context.cycleCount = cycleCount;
-
-        // Clean up: delete the run record and mark events as processed
-        await prisma.run.delete({ where: { id: run.id } }).catch(() => {});
-        await markEventsProcessed(agentEntityId, eventIds);
-        await emitAgentStatus(agentEntityId, 'inactive', { runId: run.id, agentName });
-        continue;
+      if (isNoAction) {
+        console.log(`[agent-process] ${agentName} cycle ${cycleCount} — done (nothing to do)`);
       }
 
       // 10. COLLECT response messages
@@ -288,16 +296,16 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
       consciousness.push(...newMessages);
 
       // 12. COMPACT if over budget
-      const maxTokens = (agent.configJson as any)?.consciousness?.maxTokens ?? 100_000;
-      const minCycles = (agent.configJson as any)?.consciousness?.minRecentCycles ?? 10;
-      consciousness = compactConsciousness(consciousness, maxTokens, minCycles);
+      consciousness = compactConsciousness(consciousness, maxTokens);
 
-      // 13. SAVE consciousness
-      await saveConsciousness(agentEntityId, consciousness, cycleCount);
+      // 13. SAVE consciousness (including runtime state like activeSpaceId)
+      await saveConsciousness(agentEntityId, consciousness, cycleCount, {
+        activeSpaceId,
+      });
 
       // 14. UPDATE audit record
       const usage = await result.totalUsage;
-      const durationMs = Date.now() - cycleStart;
+      const durationMs = Date.now() - cycleState.start;
 
       await prisma.run.update({
         where: { id: run.id },
@@ -317,6 +325,14 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
       // 14. EMIT agent.inactive
       await emitAgentStatus(agentEntityId, 'inactive', { runId: run.id, agentName });
 
+      // Success — reset failure counter and restore original model if degraded
+      consecutiveFailures = 0;
+      if (built.model !== originalModel) {
+        console.log(`[agent-process] ${agentName} restored to original model after recovery`);
+        built.model = originalModel;
+        currentAgent = createAgentInstance(built, context, agentConfig, cycleState);
+      }
+
       console.log(
         `[agent-process] ${agentName} cycle ${cycleCount} complete ` +
         `(${allEvents.length} events, ${streamResult.toolCalls.length} tools, ${durationMs}ms)`
@@ -325,12 +341,11 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
     } catch (error) {
       if (signal.aborted) break;
 
-      console.error(`[agent-process] ${agentName} cycle error:`, error);
+      consecutiveFailures++;
+      console.error(`[agent-process] ${agentName} cycle error (failure #${consecutiveFailures}):`, error);
       if (error instanceof Error) console.error(`[agent-process] stack:`, error.stack);
 
       // CRASH RECOVERY: rollback consciousness so the next cycle starts clean.
-      // Without this, the orphaned inbox user message (with no assistant reply)
-      // corrupts message ordering and the agent stops working forever.
       if (preCycleConsciousness) {
         consciousness = preCycleConsciousness;
         cycleCount = preCycleCycleCount;
@@ -338,17 +353,15 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         console.log(`[agent-process] ${agentName} consciousness rolled back to pre-cycle state`);
       }
 
-      // Mark events as failed in Postgres (they can be inspected / retried)
+      // Mark events as failed in Postgres
       if (context.currentRunId) {
-        // eventIds might not be in scope if the error was before drain
-        // Use a Postgres query to find events linked to this run
         await prisma.inboxEvent.updateMany({
           where: { runId: context.currentRunId, status: 'processing' },
           data: { status: 'failed' },
         }).catch(() => {});
       }
 
-      // Update run as failed if we have one
+      // Update run as failed
       if (context.currentRunId) {
         try {
           await prisma.run.update({
@@ -369,15 +382,104 @@ export async function startAgentProcess(options: AgentProcessOptions): Promise<v
         agentName,
       });
 
-      // Wait before retrying to avoid tight error loops
-      await new Promise((r) => setTimeout(r, 5000));
+      // Ship #13: Error classification + adaptive recovery
+      const errorClass = classifyError(error);
+      console.log(`[agent-process] ${agentName} error class: ${errorClass}`);
+
+      if (errorClass === 'auth') {
+        // Auth errors won't fix themselves — long rest, don't count as consecutive
+        console.warn(`[agent-process] ${agentName} auth error — resting 5 minutes`);
+        await sleep(300_000);
+        consecutiveFailures = 0;
+      } else if (consecutiveFailures >= 5) {
+        // Long rest, then retry with original model
+        console.warn(`[agent-process] ${agentName} resting for 5 minutes after ${consecutiveFailures} consecutive failures`);
+        await sleep(300_000);
+        consecutiveFailures = 0;
+        built.model = originalModel;
+        currentAgent = createAgentInstance(built, context, agentConfig, cycleState);
+      } else if (consecutiveFailures >= 3) {
+        // Try a simpler/cheaper model
+        try {
+          const { registry } = await import('./model-registry.js');
+          built.model = registry.languageModel('openai:gpt-4o-mini' as any);
+          currentAgent = createAgentInstance(built, context, agentConfig, cycleState);
+          console.log(`[agent-process] ${agentName} switching to fallback model after ${consecutiveFailures} failures`);
+        } catch {
+          // If registry fails, just use longer backoff
+        }
+        await sleep(jitter(10_000));
+      } else if (errorClass === 'rate_limit') {
+        // Rate limits: longer backoff with jitter to avoid thundering herd
+        const base = errorClass === 'rate_limit' ? 15_000 : 5_000;
+        const backoff = Math.min(base * Math.pow(2, consecutiveFailures - 1), 60_000);
+        await sleep(jitter(backoff));
+      } else if (errorClass === 'model_overloaded') {
+        // Model overloaded: medium backoff
+        await sleep(jitter(10_000 * consecutiveFailures));
+      } else {
+        // Default: exponential backoff with jitter
+        const backoff = Math.min(5_000 * Math.pow(2, consecutiveFailures - 1), 30_000);
+        await sleep(jitter(backoff));
+      }
     }
   }
 
   // Graceful shutdown
   console.log(`[agent-process] ${agentName} shutting down`);
-  await saveConsciousness(agentEntityId, consciousness, cycleCount);
+  await saveConsciousness(agentEntityId, consciousness, cycleCount, {
+    activeSpaceId,
+  });
   blockingRedis.disconnect();
+
+  // Close MCP clients
+  for (const mcp of built.mcpClients) {
+    try {
+      await mcp.close();
+      console.log(`[agent-process] ${agentName} closed MCP client "${mcp.name}"`);
+    } catch {
+      // Best effort
+    }
+  }
+}
+
+// =============================================================================
+// Error classification + backoff helpers (Ship #13)
+// =============================================================================
+
+type ErrorClass = 'rate_limit' | 'auth' | 'model_overloaded' | 'network' | 'unknown';
+
+/**
+ * Classify an error for adaptive recovery strategy.
+ * Matches common patterns from OpenAI, Anthropic, Google, and OpenRouter APIs.
+ */
+function classifyError(error: unknown): ErrorClass {
+  const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  const status = (error as any)?.status ?? (error as any)?.statusCode ?? 0;
+
+  if (status === 429 || msg.includes('rate limit') || msg.includes('too many requests')) {
+    return 'rate_limit';
+  }
+  if (status === 401 || status === 403 || msg.includes('unauthorized') || msg.includes('invalid api key') || msg.includes('permission denied')) {
+    return 'auth';
+  }
+  if (status === 503 || msg.includes('overloaded') || msg.includes('capacity') || msg.includes('service unavailable')) {
+    return 'model_overloaded';
+  }
+  if (msg.includes('econnrefused') || msg.includes('enotfound') || msg.includes('timeout') || msg.includes('network')) {
+    return 'network';
+  }
+  return 'unknown';
+}
+
+/** Sleep for a given number of milliseconds */
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Add ±25% random jitter to a delay to prevent thundering herd */
+function jitter(base: number): number {
+  return base * (0.75 + Math.random() * 0.5);
 }
 
 // =============================================================================
@@ -393,10 +495,7 @@ async function emitAgentStatus(
   meta: { runId: string | null; agentName: string },
 ): Promise<void> {
   try {
-    const memberships = await prisma.smartSpaceMembership.findMany({
-      where: { entityId: agentEntityId },
-      select: { smartSpaceId: true },
-    });
+    const spaces = await getSpacesForEntity(agentEntityId);
 
     const event = {
       type: `agent.${status}`,
@@ -406,7 +505,7 @@ async function emitAgentStatus(
     };
 
     await Promise.all(
-      memberships.map((m) => emitSmartSpaceEvent(m.smartSpaceId, event)),
+      spaces.map((s) => emitSmartSpaceEvent(s.spaceId, event)),
     );
   } catch (err) {
     console.warn(`[agent-process] Failed to emit agent.${status}:`, err);
