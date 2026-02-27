@@ -29,7 +29,7 @@ async function verifyRunAccess(req: Request, res: Response): Promise<boolean> {
 
   const run = await prisma.run.findUnique({
     where: { id: req.params.runId },
-    select: { triggerSpaceId: true },
+    select: { triggerSpaceId: true, agentEntityId: true },
   });
 
   if (!run) {
@@ -37,16 +37,21 @@ async function verifyRunAccess(req: Request, res: Response): Promise<boolean> {
     return false;
   }
 
-  if (run.triggerSpaceId) {
-    const membership = await prisma.smartSpaceMembership.findUnique({
-      where: {
-        smartSpaceId_entityId: { smartSpaceId: run.triggerSpaceId, entityId },
+  // Check if caller shares ANY space with the run's agent.
+  // This supports cross-space scenarios (e.g. tool displayed in a different
+  // space than the trigger space).
+  const sharedSpace = await prisma.smartSpaceMembership.findFirst({
+    where: {
+      entityId,
+      smartSpace: {
+        memberships: { some: { entityId: run.agentEntityId } },
       },
-    });
-    if (!membership) {
-      res.status(403).json({ error: 'Not a member of the trigger space' });
-      return false;
-    }
+    },
+  });
+
+  if (!sharedSpace) {
+    res.status(403).json({ error: 'No shared space with this agent' });
+    return false;
   }
 
   return true;
