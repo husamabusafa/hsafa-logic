@@ -212,7 +212,7 @@ export function ChartCard({ toolCall }: Props) {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#fff', overflow: 'hidden', marginVertical: 4, maxWidth: 320 },
+  card: { borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#fff', overflow: 'hidden', marginVertical: 4 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#F3F4F6', backgroundColor: '#F9FAFB' },
   headerIcon: { fontSize: 14, color: '#6B7280' },
   headerTitle: { fontSize: 14, fontWeight: '600', color: '#111827', flex: 1 },

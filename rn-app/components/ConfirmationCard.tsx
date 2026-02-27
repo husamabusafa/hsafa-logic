@@ -167,7 +167,7 @@ export function ConfirmationCard({ toolCall, runId }: Props) {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, marginVertical: 4, maxWidth: 300, gap: 10 },
+  card: { borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, marginVertical: 4, gap: 10 },
   cardPending: { borderColor: '#F59E0B', backgroundColor: '#FFFBEB' },
   cardConfirmed: { borderColor: '#10B981', backgroundColor: '#ECFDF5' },
   cardRejected: { borderColor: '#EF4444', backgroundColor: '#FEF2F2' },

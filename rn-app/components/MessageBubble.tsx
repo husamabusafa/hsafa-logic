@@ -43,11 +43,17 @@ export function MessageBubble({ message, membersById }: Props) {
   const toolCallParts = parts.filter((p): p is ToolCallContentPart => p.type === 'tool-call');
   const textParts = parts.filter((p) => p.type === 'text');
 
-  // Render tool call messages
+  // Render tool-call-only messages inside a message bubble
   if (toolCallParts.length > 0 && textParts.length === 0) {
     return (
-      <View>
-        {toolCallParts.map((tc) => renderToolCall(tc, message))}
+      <View style={[styles.row, styles.rowLeft]}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>✦</Text>
+        </View>
+        <View style={styles.toolBubble}>
+          {senderName && <Text style={styles.senderName}>{senderName}</Text>}
+          {toolCallParts.map((tc) => renderToolCall(tc, message))}
+        </View>
       </View>
     );
   }
@@ -98,6 +104,7 @@ const styles = StyleSheet.create({
   bubble: { maxWidth: '75%', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8, gap: 2 },
   bubbleOwn: { backgroundColor: '#3B82F6', borderBottomRightRadius: 4 },
   bubbleOther: { backgroundColor: '#F3F4F6', borderBottomLeftRadius: 4 },
+  toolBubble: { width: '75%', backgroundColor: '#F3F4F6', borderRadius: 18, borderBottomLeftRadius: 4, paddingHorizontal: 10, paddingVertical: 8, gap: 4 },
   senderName: { fontSize: 11, fontWeight: '600', color: '#6366F1', marginBottom: 2 },
   content: { fontSize: 15, lineHeight: 21 },
   contentOwn: { color: '#fff' },
