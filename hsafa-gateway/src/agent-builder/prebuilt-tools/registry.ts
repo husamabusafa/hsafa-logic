@@ -36,7 +36,7 @@ export interface PrebuiltToolsResult {
 export async function buildPrebuiltTools(ctx: AgentProcessContext): Promise<PrebuiltToolsResult> {
   const tools: Record<string, unknown> = {
     // Space tools
-    enter_space: await createEnterSpaceTool(ctx),
+    enter_space: createEnterSpaceTool(ctx),
     send_message: createSendMessageTool(ctx),
     read_messages: createReadMessagesTool(ctx),
     peek_inbox: createPeekInboxTool(ctx),

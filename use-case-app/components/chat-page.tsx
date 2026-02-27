@@ -84,26 +84,6 @@ export function ChatPage({ session, onLogout }: ChatPageProps) {
     window.history.replaceState({}, "", url.toString());
   }, []);
 
-  // Create new space via server-side API route (requires secret key)
-  const handleCreateSpace = useCallback(async () => {
-    const res = await fetch("/api/spaces/create", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.token}`,
-      },
-      body: JSON.stringify({
-        name: `Chat ${new Date().toLocaleTimeString()}`,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || "Failed to create space");
-    }
-    const { smartSpace } = await res.json();
-    return smartSpace.id as string;
-  }, [session.token]);
-
   return (
     <HsafaChatProvider
       gatewayUrl={GATEWAY_URL}
@@ -111,7 +91,6 @@ export function ChatPage({ session, onLogout }: ChatPageProps) {
       jwt={session.token}
       entityId={session.user.entityId}
       defaultSpaceId={initialSpaceId}
-      onCreateSpace={handleCreateSpace}
       onSpaceChange={handleSpaceChange}
     >
       <div className="flex h-dvh w-full bg-background">

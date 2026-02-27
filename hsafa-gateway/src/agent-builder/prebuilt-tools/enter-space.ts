@@ -7,8 +7,10 @@ import type { AgentProcessContext } from '../types.js';
 // =============================================================================
 // enter_space — Set the active space and return conversation history
 //
-// The spaceId input uses an enum populated from the agent's memberships at
-// tool creation time. This forces ANY model to pick a real, valid UUID.
+// The spaceId is validated at execution time (membership check) so that
+// spaces created after agent startup are immediately accessible.
+// The inbox event provides the spaceId, so the model always knows which
+// space to enter.
 //
 // Returns the last N messages from the space so the agent has full
 // conversational context. This is the primary way the agent learns
@@ -18,34 +20,22 @@ import type { AgentProcessContext } from '../types.js';
 const HISTORY_LIMIT = 100;
 
 /**
- * Create the enter_space tool. Async because it loads the agent's
- * memberships from DB to build the spaceId enum.
+ * Create the enter_space tool.
+ *
+ * The spaceId is validated at execution time (not via a static enum) so that
+ * spaces created after agent startup are immediately accessible.
  */
-export async function createEnterSpaceTool(ctx: AgentProcessContext) {
-  // Load memberships ONCE at tool creation time for the enum (cached)
-  const spaces = await getSpacesForEntity(ctx.agentEntityId);
-
-  const validSpaceIds = spaces.map((s) => s.spaceId);
-  const spaceLabels = spaces
-    .map((s) => `${s.spaceId} = "${s.spaceName}"`)
-    .join(', ');
-
-  // Build the JSON Schema for spaceId — with enum if we have memberships
-  const spaceIdSchema: Record<string, unknown> = {
-    type: 'string',
-    description: `UUID of the space to enter. Valid: ${spaceLabels || 'none'}`,
-  };
-  if (validSpaceIds.length > 0) {
-    spaceIdSchema.enum = validSpaceIds;
-  }
-
+export function createEnterSpaceTool(ctx: AgentProcessContext) {
   return tool({
     description:
       'Enter a space and load its conversation history. Call this first to see what was said. IMPORTANT: your text output is invisible — after reading the history you MUST call send_message({ text }) to actually deliver a reply. Calling enter_space alone sends nothing.',
     inputSchema: jsonSchema<{ spaceId: string }>({
       type: 'object',
       properties: {
-        spaceId: spaceIdSchema,
+        spaceId: {
+          type: 'string',
+          description: 'UUID of the space to enter. Use the spaceId from your inbox events.',
+        },
       },
       required: ['spaceId'],
     }),
@@ -53,9 +43,12 @@ export async function createEnterSpaceTool(ctx: AgentProcessContext) {
       // Validate UUID format
       const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       if (!UUID_RE.test(spaceId)) {
+        // Load current spaces to help the model recover
+        const spaces = await getSpacesForEntity(ctx.agentEntityId);
+        const spaceLabels = spaces.map((s) => `${s.spaceId} = "${s.spaceName}"`).join(', ');
         return {
           success: false,
-          error: `"${spaceId}" is not a valid UUID. Use one of: ${spaceLabels || 'none'}`,
+          error: `"${spaceId}" is not a valid UUID. Your spaces: ${spaceLabels || 'none'}`,
         };
       }
 
