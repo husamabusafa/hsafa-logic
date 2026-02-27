@@ -29,13 +29,11 @@ interface DrawerProps {
   spaces: SpaceInfo[];
   selectedSpaceId: string;
   onSelectSpace: (id: string) => void;
-  onCreateSpace: () => void;
-  creatingSpace: boolean;
   user: AuthSession['user'];
   onLogout: () => void;
 }
 
-function SpacesDrawer({ spaces, selectedSpaceId, onSelectSpace, onCreateSpace, creatingSpace, user, onLogout }: DrawerProps) {
+function SpacesDrawer({ spaces, selectedSpaceId, onSelectSpace, user, onLogout }: DrawerProps) {
   return (
     <View style={ds.drawer}>
       {/* Header */}
@@ -45,18 +43,6 @@ function SpacesDrawer({ spaces, selectedSpaceId, onSelectSpace, onCreateSpace, c
           <Text style={ds.logoText}>Hsafa</Text>
         </View>
       </View>
-
-      {/* New Chat Button */}
-      <TouchableOpacity style={ds.newChatBtn} onPress={onCreateSpace} disabled={creatingSpace} activeOpacity={0.7}>
-        {creatingSpace ? (
-          <ActivityIndicator size="small" color="#3B82F6" />
-        ) : (
-          <>
-            <Text style={ds.newChatIcon}>+</Text>
-            <Text style={ds.newChatText}>New Chat</Text>
-          </>
-        )}
-      </TouchableOpacity>
 
       {/* Spaces List */}
       <ScrollView style={ds.spacesList} showsVerticalScrollIndicator={false}>
@@ -248,7 +234,6 @@ export function ChatScreen({ session, gatewayUrl, onLogout, onUpdateSession }: C
   const [spaces, setSpaces] = useState<SpaceInfo[]>(initialSpaces);
   const [selectedSpaceId, setSelectedSpaceId] = useState(session.user.smartSpaceId);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [creatingSpace, setCreatingSpace] = useState(false);
   const drawerAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
 
   const toggleDrawer = useCallback(() => {
@@ -276,36 +261,6 @@ export function ChatScreen({ session, gatewayUrl, onLogout, onUpdateSession }: C
     closeDrawer();
   }, [closeDrawer]);
 
-  const handleCreateSpace = useCallback(async () => {
-    setCreatingSpace(true);
-    try {
-      const res = await fetch(`${AUTH_URL}/api/spaces/create`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.token}`,
-        },
-        body: JSON.stringify({ name: `Chat ${new Date().toLocaleTimeString()}` }),
-      });
-      if (!res.ok) throw new Error('Failed');
-      const { smartSpace } = await res.json();
-      const newSpace: SpaceInfo = { id: smartSpace.id, name: smartSpace.name };
-      const updatedSpaces = [newSpace, ...spaces];
-      setSpaces(updatedSpaces);
-      setSelectedSpaceId(smartSpace.id);
-      // Update session with new spaces
-      onUpdateSession({
-        ...session,
-        user: { ...session.user, spaces: updatedSpaces },
-      });
-      closeDrawer();
-    } catch {
-      // silent
-    } finally {
-      setCreatingSpace(false);
-    }
-  }, [session, spaces, onUpdateSession, closeDrawer]);
-
   const currentSpace = spaces.find((s) => s.id === selectedSpaceId);
 
   return (
@@ -331,8 +286,6 @@ export function ChatScreen({ session, gatewayUrl, onLogout, onUpdateSession }: C
               spaces={spaces}
               selectedSpaceId={selectedSpaceId}
               onSelectSpace={handleSelectSpace}
-              onCreateSpace={handleCreateSpace}
-              creatingSpace={creatingSpace}
               user={session.user}
               onLogout={onLogout}
             />
@@ -352,9 +305,6 @@ const ds = StyleSheet.create({
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   logoIcon: { fontSize: 20, color: '#3B82F6' },
   logoText: { fontSize: 17, fontWeight: '700', color: '#1E293B' },
-  newChatBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginHorizontal: 12, marginTop: 12, marginBottom: 8, height: 40, borderRadius: 10, borderWidth: 1, borderColor: '#CBD5E1', borderStyle: 'dashed', gap: 6 },
-  newChatIcon: { fontSize: 18, color: '#3B82F6', fontWeight: '500' },
-  newChatText: { fontSize: 14, color: '#3B82F6', fontWeight: '500' },
   spacesList: { flex: 1, paddingHorizontal: 8, paddingTop: 4 },
   spaceItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, gap: 10, marginVertical: 1 },
   spaceItemActive: { backgroundColor: '#EFF6FF' },

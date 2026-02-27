@@ -2,11 +2,25 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import type { ThreadMessageLike, ContentPart } from '@hsafa/react-native';
 import { ToolCallBubble } from './ToolCallBubble';
+import { ConfirmationCard } from './ConfirmationCard';
+import { ChartCard } from './ChartCard';
 import type { ToolCallContentPart } from '@hsafa/react-native';
 
 interface Props {
   message: ThreadMessageLike;
   membersById?: Record<string, { displayName?: string | null; type?: string }>;
+}
+
+function renderToolCall(tc: ToolCallContentPart, message: ThreadMessageLike) {
+  const runId = (message.metadata?.custom as any)?.runId as string | undefined;
+  switch (tc.toolName) {
+    case 'confirmAction':
+      return <ConfirmationCard key={tc.toolCallId} toolCall={tc} runId={runId} />;
+    case 'displayChart':
+      return <ChartCard key={tc.toolCallId} toolCall={tc} />;
+    default:
+      return <ToolCallBubble key={tc.toolCallId} toolCall={tc} />;
+  }
 }
 
 export function MessageBubble({ message, membersById }: Props) {
@@ -33,9 +47,7 @@ export function MessageBubble({ message, membersById }: Props) {
   if (toolCallParts.length > 0 && textParts.length === 0) {
     return (
       <View>
-        {toolCallParts.map((tc) => (
-          <ToolCallBubble key={tc.toolCallId} toolCall={tc} />
-        ))}
+        {toolCallParts.map((tc) => renderToolCall(tc, message))}
       </View>
     );
   }
@@ -64,9 +76,7 @@ export function MessageBubble({ message, membersById }: Props) {
           {text}
         </Text>
         {/* Inline tool calls after text */}
-        {toolCallParts.length > 0 && toolCallParts.map((tc) => (
-          <ToolCallBubble key={tc.toolCallId} toolCall={tc} />
-        ))}
+        {toolCallParts.length > 0 && toolCallParts.map((tc) => renderToolCall(tc, message))}
         {time ? (
           <Text style={[styles.time, isUser ? styles.timeOwn : styles.timeOther]}>
             {time}
