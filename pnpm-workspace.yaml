@@ -3,6 +3,7 @@ packages:
   - node-sdk
   - react-sdk
   - react-native-sdk
+  - rn-app
   - ui-sdk
   - nextjs-test-app
   - use-case-app

@@ -1,6 +1,10 @@
+import { HsafaClient } from "@hsafa/node";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { signToken } from "@/lib/auth";
+
+const GATEWAY_URL = process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
+const SECRET_KEY = process.env.HSAFA_SECRET_KEY || "";
 
 export async function POST(request: Request) {
   try {
@@ -41,15 +45,32 @@ export async function POST(request: Request) {
       agentEntityId: user.agentEntityId || "",
     });
 
+    // Fetch user's spaces from gateway
+    let spaces: Array<{ id: string; name?: string | null }> = [];
+    const entityId = user.hsafaEntityId || "";
+    if (entityId) {
+      try {
+        const hsafaClient = new HsafaClient({ gatewayUrl: GATEWAY_URL, secretKey: SECRET_KEY });
+        const { smartSpaces } = await hsafaClient.spaces.list({ entityId });
+        spaces = smartSpaces.map((s) => ({ id: s.id, name: s.name }));
+      } catch {
+        // Fallback to default space
+      }
+    }
+    if (spaces.length === 0 && user.hsafaSpaceId) {
+      spaces = [{ id: user.hsafaSpaceId, name: `${user.name}'s Chat` }];
+    }
+
     return Response.json({
       token,
       user: {
         id: user.id,
         email: user.email,
         name: user.name,
-        entityId: user.hsafaEntityId || "",
+        entityId,
         smartSpaceId: user.hsafaSpaceId || "",
         agentEntityId: user.agentEntityId || "",
+        spaces,
       },
     });
   } catch (error) {

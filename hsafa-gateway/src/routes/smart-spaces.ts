@@ -26,16 +26,17 @@ smartSpacesRouter.post('/', requireSecretKey(), async (req: Request, res: Respon
 smartSpacesRouter.get('/', requireAuth(), async (req: Request, res: Response) => {
   try {
     let smartSpaces;
-    if (req.auth?.method === 'secret_key') {
-      smartSpaces = await prisma.smartSpace.findMany({ orderBy: { createdAt: 'desc' } });
-    } else {
-      const entityId = req.auth?.entityId;
-      if (!entityId) { res.status(403).json({ error: 'No entity' }); return; }
+    const filterEntityId = (req.query.entityId as string) || (req.auth?.method !== 'secret_key' ? req.auth?.entityId : undefined);
+    if (filterEntityId) {
       const memberships = await prisma.smartSpaceMembership.findMany({
-        where: { entityId },
+        where: { entityId: filterEntityId },
         include: { smartSpace: true },
       });
       smartSpaces = memberships.map((m) => m.smartSpace);
+    } else if (req.auth?.method === 'secret_key') {
+      smartSpaces = await prisma.smartSpace.findMany({ orderBy: { createdAt: 'desc' } });
+    } else {
+      res.status(403).json({ error: 'No entity' }); return;
     }
     res.json({ smartSpaces });
   } catch (error) {

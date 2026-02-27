@@ -133,23 +133,27 @@ export interface StreamEvent {
 }
 
 export type EventType =
-  | 'space.message'
-  | 'space.message.streaming'
-  | 'space.message.failed'
+  // Space message events
+  | 'space.message'             // persisted DB message (human or agent)
+  | 'space.message.streaming'   // send_message text delta (phase: start | delta | done)
+  | 'space.message.failed'      // send_message errored during streaming
   | 'space.member.joined'
   | 'space.member.left'
+  // Run lifecycle
   | 'run.created'
   | 'run.started'
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
-  | 'run.waiting_tool'
+  | 'run.waiting_tool'    // deprecated in v3 — async tools don't block
+  // Agent status
   | 'agent.active'
   | 'agent.inactive'
-  | 'tool.started'
-  | 'tool.streaming'
-  | 'tool.done'
-  | 'tool.error'
+  // Visible tool call events
+  | 'tool.started'    // tool invocation began
+  | 'tool.streaming'  // partial args for visible custom tools
+  | 'tool.done'       // tool completed with result
+  | 'tool.error'      // tool execution failed
   | (string & {});
 
 // =============================================================================

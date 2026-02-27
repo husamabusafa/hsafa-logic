@@ -8,7 +8,7 @@ export { HsafaProvider } from './provider';
 export type { HsafaProviderProps } from './provider';
 export { HsafaContext, useHsafaClient } from './context';
 
-// Hooks
+// User-facing hooks
 export { useSmartSpace } from './hooks/useSmartSpace';
 export type { UseSmartSpaceReturn, ActiveRun } from './hooks/useSmartSpace';
 
@@ -21,6 +21,7 @@ export type { UseRunReturn, ToolCall } from './hooks/useRun';
 export { useMembers } from './hooks/useMembers';
 export type { UseMembersReturn } from './hooks/useMembers';
 
+// Admin hooks
 export { useAgents } from './hooks/useAgents';
 export type { UseAgentsReturn } from './hooks/useAgents';
 
@@ -33,8 +34,22 @@ export type { UseSpacesReturn } from './hooks/useSpaces';
 export { useRuns } from './hooks/useRuns';
 export type { UseRunsReturn, UseRunsOptions } from './hooks/useRuns';
 
+// Tool result hook
 export { useToolResult } from './hooks/useToolResult';
 export type { UseToolResultReturn } from './hooks/useToolResult';
+
+// Runtime adapter (full streaming + tool calls + active agents)
+export { useHsafaRuntime } from './runtime/useHsafaRuntime';
+export type {
+  UseHsafaRuntimeOptions,
+  UseHsafaRuntimeReturn,
+  ActiveAgent,
+  ThreadMessageLike,
+  AppendMessage,
+  TextContentPart,
+  ToolCallContentPart,
+  ContentPart,
+} from './runtime/useHsafaRuntime';
 
 // Types
 export type {

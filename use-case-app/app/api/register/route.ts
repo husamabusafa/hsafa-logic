@@ -137,6 +137,7 @@ export async function POST(request: Request) {
         entityId: human.id,
         smartSpaceId: smartSpace.id,
         agentEntityId,
+        spaces: [{ id: smartSpace.id, name: smartSpace.name }],
       },
     });
   } catch (error) {

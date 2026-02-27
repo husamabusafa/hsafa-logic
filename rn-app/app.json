@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Hsafa Chat",
+    "slug": "rn-app",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.hsafa.rnapp"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.hsafa.rnapp"
+    }
+  }
+}
