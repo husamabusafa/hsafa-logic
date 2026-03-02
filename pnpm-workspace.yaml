@@ -1,14 +1,15 @@
 packages:
-  - hsafa-gateway
-  - node-sdk
-  - react-sdk
-  - react-native-sdk
-  - rn-app
-  - ui-sdk
-  - nextjs-test-app
-  - use-case-app
-  - hsafa-docs
-  - vercel-ai-sdk-docs
+  - hsafa-core/gateway
+  - hsafa-spaces/sdks/node-sdk
+  - hsafa-spaces/sdks/react-sdk
+  - hsafa-spaces/sdks/react-native-sdk
+  - hsafa-spaces/sdks/ui-sdk
+  - hsafa-spaces/sdks/python-sdk
+  - hsafa-spaces/rn-app
+  - hsafa-spaces/use-case-app
+  - hsafa-core/external-docs/with-ai-sdk-v6
+  - hsafa-core/external-docs/assistant-ui-docs
+  - hsafa-core/external-docs/vercel-ai-sdk-docs
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver
