@@ -1,5 +1,5 @@
 import { jwtVerify, createRemoteJWKSet, type JWTPayload } from "jose";
-import { spacesPrisma } from "./spaces-db";
+import { prisma } from "./db";
 
 // =============================================================================
 // Auth helpers for spaces API routes (adapted from spaces-app middleware)
@@ -73,7 +73,7 @@ export async function authenticateRequest(
         const payload = await verifyJWT(authHeader.slice(7));
         externalId = extractExternalId(payload) ?? undefined;
         if (externalId) {
-          const entity = await spacesPrisma.entity.findUnique({
+          const entity = await prisma.entity.findUnique({
             where: { externalId },
             select: { id: true },
           });
@@ -107,7 +107,7 @@ export async function authenticateRequest(
     const externalId = extractExternalId(payload);
     if (!externalId) return null;
 
-    const entity = await spacesPrisma.entity.findUnique({
+    const entity = await prisma.entity.findUnique({
       where: { externalId },
       select: { id: true },
     });
@@ -130,7 +130,7 @@ export async function checkMembership(
   smartSpaceId: string,
   entityId: string
 ): Promise<boolean> {
-  const membership = await spacesPrisma.smartSpaceMembership.findUnique({
+  const membership = await prisma.smartSpaceMembership.findUnique({
     where: { smartSpaceId_entityId: { smartSpaceId, entityId } },
     select: { id: true },
   });

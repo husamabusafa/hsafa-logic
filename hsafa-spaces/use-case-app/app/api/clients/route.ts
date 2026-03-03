@@ -1,4 +1,4 @@
-import { spacesPrisma } from "@/lib/spaces-db";
+import { prisma } from "@/lib/db";
 import { requireAnyAuth, requireSecretKeyAuth } from "@/lib/spaces-auth";
 
 // POST /api/clients — Register a client
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const client = await spacesPrisma.client.upsert({
+    const client = await prisma.client.upsert({
       where: { clientKey },
       create: {
         entityId,
@@ -61,7 +61,7 @@ export async function GET(request: Request) {
     const where: Record<string, unknown> = {};
     if (entityId) where.entityId = entityId;
 
-    const clients = await spacesPrisma.client.findMany({
+    const clients = await prisma.client.findMany({
       where,
       orderBy: { lastSeenAt: "desc" },
     });

@@ -1,4 +1,4 @@
-import { spacesPrisma } from "./spaces-db";
+import { prisma } from "./db";
 
 // =============================================================================
 // Space Membership Service
@@ -49,7 +49,7 @@ export async function getSpacesForEntity(
   const cached = entitySpacesCache.get(entityId);
   if (!isExpired(cached)) return cached!.data;
 
-  const memberships = await spacesPrisma.smartSpaceMembership.findMany({
+  const memberships = await prisma.smartSpaceMembership.findMany({
     where: { entityId },
     include: { smartSpace: { select: { id: true, name: true } } },
   });
@@ -75,7 +75,7 @@ export async function getMembersOfSpace(
   const cached = spaceMembersCache.get(spaceId);
   if (!isExpired(cached)) return cached!.data;
 
-  const memberships = await spacesPrisma.smartSpaceMembership.findMany({
+  const memberships = await prisma.smartSpaceMembership.findMany({
     where: { smartSpaceId: spaceId },
     include: {
       entity: { select: { id: true, displayName: true, type: true } },
@@ -99,7 +99,7 @@ export async function getMembersOfSpace(
  * Get the name of a space by ID.
  */
 export async function getSpaceName(spaceId: string): Promise<string> {
-  const space = await spacesPrisma.smartSpace.findUnique({
+  const space = await prisma.smartSpace.findUnique({
     where: { id: spaceId },
     select: { name: true },
   });

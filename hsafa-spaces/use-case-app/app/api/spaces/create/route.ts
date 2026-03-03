@@ -1,4 +1,4 @@
-import { spacesPrisma } from "@/lib/spaces-db";
+import { prisma } from "@/lib/db";
 import { verifyToken } from "@/lib/auth";
 
 export async function POST(request: Request) {
@@ -22,14 +22,14 @@ export async function POST(request: Request) {
     const { name } = body as { name?: string };
 
     // 1. Create the SmartSpace directly in spaces DB
-    const smartSpace = await spacesPrisma.smartSpace.create({
+    const smartSpace = await prisma.smartSpace.create({
       data: {
         name: name || `Chat ${new Date().toLocaleTimeString()}`,
       },
     });
 
     // 2. Add user as admin
-    await spacesPrisma.smartSpaceMembership.create({
+    await prisma.smartSpaceMembership.create({
       data: {
         smartSpaceId: smartSpace.id,
         entityId: payload.entityId,
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     });
 
     // 3. Add agent as member
-    await spacesPrisma.smartSpaceMembership.create({
+    await prisma.smartSpaceMembership.create({
       data: {
         smartSpaceId: smartSpace.id,
         entityId: payload.agentEntityId,

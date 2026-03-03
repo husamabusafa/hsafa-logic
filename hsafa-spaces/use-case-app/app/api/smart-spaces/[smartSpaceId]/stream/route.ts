@@ -34,9 +34,14 @@ export async function GET(request: Request, { params }: Params) {
         .then(() => {
           subscriber.on("message", (_ch: string, message: string) => {
             try {
-              controller.enqueue(encoder.encode(`data: ${message}\n\n`));
+              // Parse the event type from the payload for named SSE events
+              const parsed = JSON.parse(message);
+              const eventType = parsed.type || "message";
+              controller.enqueue(
+                encoder.encode(`event: ${eventType}\ndata: ${message}\n\n`)
+              );
             } catch {
-              // Stream closed
+              // Stream closed or parse error
             }
           });
         })

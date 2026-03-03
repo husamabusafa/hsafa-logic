@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { spacesPrisma } from "@/lib/spaces-db";
+import { prisma } from "@/lib/db";
 import { requireSecretKeyAuth, requireAnyAuth } from "@/lib/spaces-auth";
 
 // POST /api/entities — Create a human entity
@@ -19,11 +19,11 @@ export async function POST(request: Request) {
 
     // Upsert by externalId if provided
     if (externalId) {
-      const existing = await spacesPrisma.entity.findUnique({
+      const existing = await prisma.entity.findUnique({
         where: { externalId },
       });
       if (existing) {
-        const updated = await spacesPrisma.entity.update({
+        const updated = await prisma.entity.update({
           where: { externalId },
           data: {
             ...(displayName !== undefined && { displayName }),
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const entity = await spacesPrisma.entity.create({
+    const entity = await prisma.entity.create({
       data: {
         id: crypto.randomUUID(),
         type: "human",
@@ -65,7 +65,7 @@ export async function GET(request: Request) {
     const where: Record<string, unknown> = {};
     if (type) where.type = type;
 
-    const entities = await spacesPrisma.entity.findMany({
+    const entities = await prisma.entity.findMany({
       where,
       orderBy: { createdAt: "desc" },
     });

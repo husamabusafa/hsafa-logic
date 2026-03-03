@@ -1,4 +1,4 @@
-import { spacesPrisma } from "@/lib/spaces-db";
+import { prisma } from "@/lib/db";
 import { requireSecretKeyAuth } from "@/lib/spaces-auth";
 import { invalidateSpace } from "@/lib/membership-service";
 
@@ -13,7 +13,7 @@ export async function DELETE(request: Request, { params }: Params) {
   if (auth instanceof Response) return auth;
 
   try {
-    await spacesPrisma.smartSpaceMembership.delete({
+    await prisma.smartSpaceMembership.delete({
       where: {
         smartSpaceId_entityId: { smartSpaceId, entityId },
       },

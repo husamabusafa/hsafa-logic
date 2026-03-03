@@ -1,4 +1,4 @@
-import { spacesPrisma } from "@/lib/spaces-db";
+import { prisma } from "@/lib/db";
 import { requireAuthWithMembership } from "@/lib/spaces-auth";
 
 type Params = { params: Promise<{ smartSpaceId: string }> };
@@ -20,7 +20,7 @@ export async function PATCH(request: Request, { params }: Params) {
       );
     }
 
-    await spacesPrisma.smartSpaceMembership.update({
+    await prisma.smartSpaceMembership.update({
       where: { smartSpaceId_entityId: { smartSpaceId, entityId } },
       data: { lastSeenMessageId },
     });

@@ -9,15 +9,6 @@ datasource db {
   provider = "postgresql"
 }
 
-// =============================================================================
-// ENUMS
-// =============================================================================
-
-enum EntityType {
-  human
-  agent
-}
-
 enum RunStatus {
   running
   completed
@@ -38,41 +29,6 @@ enum InboxEventStatus {
   failed
 }
 
-// =============================================================================
-// ENTITY — Unified identity (Human or Agent)
-// =============================================================================
-
-model Entity {
-  id          String     @id @default(uuid()) @db.Uuid
-  type        EntityType
-  externalId  String?    @unique @map("external_id")
-  displayName String?    @map("display_name")
-  metadata    Json?      @db.JsonB
-  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  // For Haseef Entities — link to haseef config
-  haseefId String? @unique @map("agent_id") @db.Uuid
-  haseef   Haseef? @relation(fields: [haseefId], references: [id])
-
-  // Relationships
-  runs                  Run[]
-  memories              Memory[]
-  plans                 Plan[]
-  goals                 Goal[]
-  consciousness         HaseefConsciousness?
-  inboxEvents           InboxEvent[]
-  pendingToolCalls      PendingToolCall[]
-
-  @@index([type])
-  @@index([externalId])
-  @@map("entities")
-}
-
-// =============================================================================
-// HASEEF — Haseef configuration (separate from Entity identity)
-// =============================================================================
-
 model Haseef {
   id          String   @id @default(uuid()) @db.Uuid
   name        String   @unique
@@ -82,46 +38,40 @@ model Haseef {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  entity      Entity?
-  runs        Run[]
-  connections HaseefExtension[]
+  runs             Run[]
+  memories         Memory[]
+  plans            Plan[]
+  goals            Goal[]
+  consciousness    HaseefConsciousness?
+  inboxEvents      InboxEvent[]
+  pendingToolCalls PendingToolCall[]
+  connections      HaseefExtension[]
 
   @@index([createdAt])
-  @@map("agents")
+  @@map("haseefs")
 }
-
-// =============================================================================
-// HASEEF CONSCIOUSNESS — Persistent ModelMessage[] across think cycles
-// The Haseef's continuous memory carried forward across cycles.
-// =============================================================================
 
 model HaseefConsciousness {
   id              String   @id @default(uuid()) @db.Uuid
-  haseefEntityId  String   @unique @map("agent_entity_id") @db.Uuid
-  messages      Json     @db.JsonB // ModelMessage[] serialized as JSON
-  cycleCount    Int      @default(0) @map("cycle_count")
-  tokenEstimate Int      @default(0) @map("token_estimate")
-  metadata      Json?    @db.JsonB // Runtime state persisted across cycles
-  lastCycleAt   DateTime @default(now()) @map("last_cycle_at") @db.Timestamptz(6)
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  haseefId        String   @unique @map("haseef_id") @db.Uuid
+  messages        Json     @db.JsonB
+  cycleCount      Int      @default(0) @map("cycle_count")
+  tokenEstimate   Int      @default(0) @map("token_estimate")
+  metadata        Json?    @db.JsonB
+  lastCycleAt     DateTime @default(now()) @map("last_cycle_at") @db.Timestamptz(6)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  entity Entity @relation(fields: [haseefEntityId], references: [id])
+  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
 
-  @@map("agent_consciousness")
+  @@map("haseef_consciousness")
 }
-
-// =============================================================================
-// RUN — Think cycle audit record
-// =============================================================================
 
 model Run {
   id              String    @id @default(uuid()) @db.Uuid
-  haseefEntityId  String    @map("agent_entity_id") @db.Uuid
-  haseefId        String    @map("agent_id") @db.Uuid
+  haseefId        String    @map("haseef_id") @db.Uuid
   status          RunStatus @default(running)
 
-  // v3: Cycle metadata
   cycleNumber      Int @default(0) @map("cycle_number")
   inboxEventCount  Int @default(0) @map("inbox_event_count")
   stepCount        Int @default(0) @map("step_count")
@@ -129,9 +79,8 @@ model Run {
   completionTokens Int @default(0) @map("completion_tokens")
   durationMs       Int @default(0) @map("duration_ms")
 
-  // Trigger context (from SenseEvent)
-  triggerType      String? @map("trigger_type") // v4: "channel:type" e.g. "ext-email:message", "core:plan"
-  triggerSource    String? @map("trigger_source") // source from the SenseEvent (e.g. room ID, mailbox)
+  triggerType      String? @map("trigger_type")
+  triggerSource    String? @map("trigger_source")
   triggerEntityId  String? @map("trigger_entity_id") @db.Uuid
   triggerPayload   Json?   @map("trigger_payload") @db.JsonB
 
@@ -143,45 +92,36 @@ model Run {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  haseefEntity Entity @relation(fields: [haseefEntityId], references: [id])
-  haseef       Haseef @relation(fields: [haseefId], references: [id])
+  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
 
   inboxEvents      InboxEvent[]
   pendingToolCalls PendingToolCall[]
 
-  @@index([haseefEntityId, createdAt])
-  @@index([haseefEntityId, status])
+  @@index([haseefId, createdAt])
+  @@index([haseefId, status])
   @@index([status, updatedAt])
   @@map("runs")
 }
 
-// =============================================================================
-// MEMORY — Long-term agent memory (persists across think cycles)
-// =============================================================================
-
 model Memory {
   id        String   @id @default(uuid()) @db.Uuid
-  entityId  String   @map("entity_id") @db.Uuid
+  haseefId  String   @map("haseef_id") @db.Uuid
   key       String
   value     String   @db.Text
   metadata  Json?    @db.JsonB
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
 
-  @@unique([entityId, key])
-  @@index([entityId])
+  @@unique([haseefId, key])
+  @@index([haseefId])
   @@map("memories")
 }
 
-// =============================================================================
-// PLAN — Agent scheduled executions
-// =============================================================================
-
 model Plan {
   id           String     @id @default(uuid()) @db.Uuid
-  entityId     String     @map("entity_id") @db.Uuid
+  haseefId     String     @map("haseef_id") @db.Uuid
   name         String
   instruction  String?    @db.Text
   isRecurring  Boolean    @default(false) @map("is_recurring")
@@ -194,84 +134,57 @@ model Plan {
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
 
-  @@index([entityId, status])
+  @@index([haseefId, status])
   @@index([nextRunAt, status])
   @@map("plans")
 }
 
-// =============================================================================
-// GOAL — Agent objectives
-// =============================================================================
-
 model Goal {
   id          String   @id @default(uuid()) @db.Uuid
-  entityId    String   @map("entity_id") @db.Uuid
+  haseefId    String   @map("haseef_id") @db.Uuid
   description String   @db.Text
-  status      String   @default("active") // active, completed, abandoned
+  status      String   @default("active")
   priority    Int      @default(0)
   metadata    Json?    @db.JsonB
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
 
-  @@index([entityId, status])
-  @@index([entityId, priority])
+  @@index([haseefId, status])
+  @@index([haseefId, priority])
   @@map("goals")
 }
 
-// =============================================================================
-// INBOX EVENT — Durable log of SenseEvents pushed to Haseef inboxes
-// v4: Redis is the fast queue (BRPOP wakeup). Postgres is the durable record.
-//     Enables crash recovery, audit trail, and per-cycle event inspection.
-//     Type column stores "channel:type" (e.g. "ext-email:message", "core:plan").
-// =============================================================================
-
 model InboxEvent {
   id              String           @id @default(uuid()) @db.Uuid
-  haseefEntityId  String           @map("agent_entity_id") @db.Uuid
-  eventId         String           @map("event_id") // dedup key (messageId, planId+ts, svc UUID)
-  type            String           // v4: "channel:type" e.g. "ext-email:message", "core:plan"
+  haseefId        String           @map("haseef_id") @db.Uuid
+  eventId         String           @map("event_id")
+  type            String
   data            Json             @db.JsonB
   status          InboxEventStatus @default(pending)
-
-  // Set when the think cycle starts processing this event
   runId           String?          @map("run_id") @db.Uuid
 
   createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   processedAt     DateTime?        @map("processed_at") @db.Timestamptz(6)
 
-  haseefEntity Entity @relation(fields: [haseefEntityId], references: [id], onDelete: Cascade)
-  run          Run?   @relation(fields: [runId], references: [id], onDelete: SetNull)
+  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
+  run    Run?   @relation(fields: [runId], references: [id], onDelete: SetNull)
 
-  @@unique([haseefEntityId, eventId])
-  @@index([haseefEntityId, status])
+  @@unique([haseefId, eventId])
+  @@index([haseefId, status])
   @@index([runId])
   @@map("inbox_events")
 }
 
-// =============================================================================
-// PENDING TOOL CALL — Async tool calls awaiting external results
-// Async tools (external-without-url) return { status: 'pending' }
-// immediately. The real result arrives via inbox as a tool_result event.
-// This table maps toolCallId → Haseef so the result endpoint knows where
-// to push the inbox event.
-// =============================================================================
-
-// =============================================================================
-// EXTENSION — Registered extension definition
-// v4: Extensions provide senses (events), actions (tools), and instructions
-//     (prompt guidance) to connected Haseefs.
-// =============================================================================
-
 model Extension {
   id             String   @id @default(uuid()) @db.Uuid
-  name           String   @unique // e.g. "ext-spaces", "ext-email"
+  name           String   @unique
   description    String?
-  extensionKey   String   @unique @map("extension_key") // auth key "ek_..."
-  instructions   String?  @db.Text // prompt text injected into system prompt
+  extensionKey   String   @unique @map("extension_key")
+  instructions   String?  @db.Text
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -281,16 +194,12 @@ model Extension {
   @@map("extensions")
 }
 
-// =============================================================================
-// EXTENSION TOOL — Tools registered by an extension
-// =============================================================================
-
 model ExtensionTool {
   id          String   @id @default(uuid()) @db.Uuid
   extensionId String   @map("extension_id") @db.Uuid
-  name        String   // tool name (unique per extension)
+  name        String
   description String   @db.Text
-  inputSchema Json     @map("input_schema") @db.JsonB // JSON Schema for parameters
+  inputSchema Json     @map("input_schema") @db.JsonB
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -300,15 +209,11 @@ model ExtensionTool {
   @@map("extension_tools")
 }
 
-// =============================================================================
-// HASEEF EXTENSION — Connection between a Haseef (Agent) and an Extension
-// =============================================================================
-
 model HaseefExtension {
   id          String   @id @default(uuid()) @db.Uuid
-  haseefId    String   @map("agent_id") @db.Uuid
+  haseefId    String   @map("haseef_id") @db.Uuid
   extensionId String   @map("extension_id") @db.Uuid
-  config      Json?    @db.JsonB // per-connection config (credentials, filters, etc.)
+  config      Json?    @db.JsonB
   enabled     Boolean  @default(true)
   connectedAt DateTime @default(now()) @map("connected_at") @db.Timestamptz(6)
 
@@ -321,33 +226,23 @@ model HaseefExtension {
   @@map("haseef_extensions")
 }
 
-// =============================================================================
-// PENDING TOOL CALL — Async tool calls awaiting external results
-// Async tools (external-without-url) return { status: 'pending' }
-// immediately. The real result arrives via inbox as a tool_result event.
-// This table maps toolCallId → Haseef so the result endpoint knows where
-// to push the inbox event.
-// v4: Also used for extension tool calls — extension polls or receives
-//     the call, executes, and returns the result.
-// =============================================================================
-
 model PendingToolCall {
   id              String    @id @default(uuid()) @db.Uuid
-  haseefEntityId  String    @map("agent_entity_id") @db.Uuid
+  haseefId        String    @map("haseef_id") @db.Uuid
   runId           String    @map("run_id") @db.Uuid
   toolCallId      String    @unique @map("tool_call_id")
   toolName        String    @map("tool_name")
   args            Json      @db.JsonB
-  status          String    @default("pending") // pending, resolved, expired
+  status          String    @default("pending")
   result          Json?     @db.JsonB
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(6)
   expiresAt       DateTime? @map("expires_at") @db.Timestamptz(6)
 
-  haseefEntity Entity @relation(fields: [haseefEntityId], references: [id], onDelete: Cascade)
-  run          Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
+  run    Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
 
-  @@index([haseefEntityId, status])
+  @@index([haseefId, status])
   @@index([status, expiresAt])
   @@map("pending_tool_calls")
 }

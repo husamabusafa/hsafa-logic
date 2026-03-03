@@ -1,7 +1,6 @@
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
-import { spacesPrisma } from "@/lib/spaces-db";
 import { signToken } from "@/lib/auth";
 
 let cachedAgentEntityId: string | null = null;
@@ -10,7 +9,7 @@ async function ensureAgentEntity(): Promise<string> {
   if (cachedAgentEntityId) return cachedAgentEntityId;
 
   // Check if an agent entity already exists
-  const existing = await spacesPrisma.entity.findFirst({
+  const existing = await prisma.entity.findFirst({
     where: { type: "agent" },
   });
 
@@ -71,7 +70,7 @@ export async function POST(request: Request) {
 
     // 3. Create human entity directly in spaces DB
     //    externalId = user.id so it matches the JWT sub claim
-    const human = await spacesPrisma.entity.create({
+    const human = await prisma.entity.create({
       data: {
         id: crypto.randomUUID(),
         type: "human",
@@ -82,12 +81,12 @@ export async function POST(request: Request) {
     });
 
     // 4. Create a SmartSpace for this user + agent
-    const smartSpace = await spacesPrisma.smartSpace.create({
+    const smartSpace = await prisma.smartSpace.create({
       data: { name: `${name}'s Chat` },
     });
 
     // 5. Add human as admin
-    await spacesPrisma.smartSpaceMembership.create({
+    await prisma.smartSpaceMembership.create({
       data: {
         smartSpaceId: smartSpace.id,
         entityId: human.id,
@@ -96,7 +95,7 @@ export async function POST(request: Request) {
     });
 
     // 6. Add agent as member
-    await spacesPrisma.smartSpaceMembership.create({
+    await prisma.smartSpaceMembership.create({
       data: {
         smartSpaceId: smartSpace.id,
         entityId: agentEntityId,

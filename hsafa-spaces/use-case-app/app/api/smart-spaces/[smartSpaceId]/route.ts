@@ -1,4 +1,4 @@
-import { spacesPrisma } from "@/lib/spaces-db";
+import { prisma } from "@/lib/db";
 import {
   requireSecretKeyAuth,
   requireAuthWithMembership,
@@ -13,7 +13,7 @@ export async function GET(request: Request, { params }: Params) {
   if (auth instanceof Response) return auth;
 
   try {
-    const smartSpace = await spacesPrisma.smartSpace.findUnique({
+    const smartSpace = await prisma.smartSpace.findUnique({
       where: { id: smartSpaceId },
     });
     if (!smartSpace) {
@@ -34,7 +34,7 @@ export async function PATCH(request: Request, { params }: Params) {
 
   try {
     const { name, description, metadata } = await request.json();
-    const smartSpace = await spacesPrisma.smartSpace.update({
+    const smartSpace = await prisma.smartSpace.update({
       where: { id: smartSpaceId },
       data: {
         ...(name !== undefined && { name }),
@@ -56,7 +56,7 @@ export async function DELETE(request: Request, { params }: Params) {
   if (auth instanceof Response) return auth;
 
   try {
-    await spacesPrisma.smartSpace.delete({ where: { id: smartSpaceId } });
+    await prisma.smartSpace.delete({ where: { id: smartSpaceId } });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Delete space error:", error);

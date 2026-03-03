@@ -1,7 +1,11 @@
 import { SignJWT, jwtVerify } from "jose";
 
+const JWT_SECRET_RAW = process.env.JWT_SECRET;
+if (!JWT_SECRET_RAW) {
+  console.warn("[auth] JWT_SECRET env var not set — using insecure default. Set it in .env!");
+}
 const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || "use-case-app-dev-secret-change-me"
+  JWT_SECRET_RAW || "dev-jwt-secret-change-in-prod"
 );
 
 const JWT_ISSUER = "hsafa-use-case-app";

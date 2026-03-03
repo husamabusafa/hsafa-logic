@@ -1,4 +1,4 @@
-import { spacesPrisma } from "@/lib/spaces-db";
+import { prisma } from "@/lib/db";
 import {
   requireSecretKeyAuth,
   requireAnyAuth,
@@ -11,7 +11,7 @@ export async function POST(request: Request) {
 
   try {
     const { name, description, metadata } = await request.json();
-    const smartSpace = await spacesPrisma.smartSpace.create({
+    const smartSpace = await prisma.smartSpace.create({
       data: { name, description, metadata: metadata ?? undefined },
     });
     return Response.json({ smartSpace }, { status: 201 });
@@ -34,13 +34,13 @@ export async function GET(request: Request) {
 
     let smartSpaces;
     if (filterEntityId) {
-      const memberships = await spacesPrisma.smartSpaceMembership.findMany({
+      const memberships = await prisma.smartSpaceMembership.findMany({
         where: { entityId: filterEntityId },
         include: { smartSpace: true },
       });
       smartSpaces = memberships.map((m: any) => m.smartSpace);
     } else if (auth.method === "secret_key") {
-      smartSpaces = await spacesPrisma.smartSpace.findMany({
+      smartSpaces = await prisma.smartSpace.findMany({
         orderBy: { createdAt: "desc" },
       });
     } else {

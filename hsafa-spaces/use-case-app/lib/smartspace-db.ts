@@ -1,4 +1,4 @@
-import { spacesPrisma } from "./spaces-db";
+import { prisma } from "./db";
 
 // =============================================================================
 // SmartSpace message persistence helpers
@@ -23,7 +23,7 @@ export async function createSmartSpaceMessage(params: CreateMessageParams) {
 
   for (let attempt = 0; attempt < MAX_SEQ_RETRIES; attempt++) {
     try {
-      const result = await spacesPrisma.$transaction(async (tx) => {
+      const result = await prisma.$transaction(async (tx) => {
         // Get next seq
         const latest = await tx.smartSpaceMessage.findFirst({
           where: { smartSpaceId },

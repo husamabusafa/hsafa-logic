@@ -1,4 +1,4 @@
-import { spacesPrisma } from "@/lib/spaces-db";
+import { prisma } from "@/lib/db";
 import { requireAuthWithMembership } from "@/lib/spaces-auth";
 import { postSpaceMessage } from "@/lib/space-service";
 
@@ -40,7 +40,7 @@ export async function POST(request: Request, { params }: Params) {
     });
 
     // Return the message in the response
-    const message = await spacesPrisma.smartSpaceMessage.findUnique({
+    const message = await prisma.smartSpaceMessage.findUnique({
       where: { id: result.messageId },
     });
 
@@ -78,7 +78,7 @@ export async function GET(request: Request, { params }: Params) {
     if (beforeSeq !== undefined)
       where.seq = { ...((where.seq as any) ?? {}), lt: beforeSeq };
 
-    const messages = await spacesPrisma.smartSpaceMessage.findMany({
+    const messages = await prisma.smartSpaceMessage.findMany({
       where,
       orderBy: { seq: "desc" },
       take: limit,

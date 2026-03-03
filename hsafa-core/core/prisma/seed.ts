@@ -1,6 +1,10 @@
 import { PrismaClient } from './generated/client/index.js';
+import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
 
-const prisma = new PrismaClient();
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter } as any);
 
 async function main() {
   console.log('🌱 Seeding v3 agents...\n');
@@ -8,7 +12,7 @@ async function main() {
   // =========================================================================
   // Agent 1: Atlas — General-purpose assistant
   // =========================================================================
-  const atlas = await prisma.agent.upsert({
+  const atlas = await prisma.haseef.upsert({
     where: { name: 'Atlas' },
     update: {},
     create: {
@@ -37,22 +41,12 @@ async function main() {
     },
   });
 
-  const atlasEntity = await prisma.entity.upsert({
-    where: { agentId: atlas.id },
-    update: {},
-    create: {
-      type: 'agent',
-      displayName: 'Atlas',
-      agentId: atlas.id,
-    },
-  });
-
-  console.log(`  ✅ Atlas — agent: ${atlas.id}, entity: ${atlasEntity.id}`);
+  console.log(`  ✅ Atlas — ${atlas.id}`);
 
   // =========================================================================
   // Agent 2: Nova — Creative writer & brainstormer
   // =========================================================================
-  const nova = await prisma.agent.upsert({
+  const nova = await prisma.haseef.upsert({
     where: { name: 'Nova' },
     update: {},
     create: {
@@ -81,22 +75,12 @@ async function main() {
     },
   });
 
-  const novaEntity = await prisma.entity.upsert({
-    where: { agentId: nova.id },
-    update: {},
-    create: {
-      type: 'agent',
-      displayName: 'Nova',
-      agentId: nova.id,
-    },
-  });
-
-  console.log(`  ✅ Nova  — agent: ${nova.id}, entity: ${novaEntity.id}`);
+  console.log(`  ✅ Nova — ${nova.id}`);
 
   // =========================================================================
   // Agent 3: Sentinel — Code reviewer & technical advisor
   // =========================================================================
-  const sentinel = await prisma.agent.upsert({
+  const sentinel = await prisma.haseef.upsert({
     where: { name: 'Sentinel' },
     update: {},
     create: {
@@ -126,28 +110,17 @@ async function main() {
     },
   });
 
-  const sentinelEntity = await prisma.entity.upsert({
-    where: { agentId: sentinel.id },
-    update: {},
-    create: {
-      type: 'agent',
-      displayName: 'Sentinel',
-      agentId: sentinel.id,
-    },
-  });
-
-  console.log(`  ✅ Sentinel — agent: ${sentinel.id}, entity: ${sentinelEntity.id}`);
+  console.log(`  ✅ Sentinel — ${sentinel.id}`);
 
   // =========================================================================
   // Summary
   // =========================================================================
-  console.log('\n🎉 Seed complete! 3 agents created:\n');
-  console.log('  Agent        | Entity ID                            | Agent ID');
-  console.log('  -------------|--------------------------------------|--------------------------------------');
-  console.log(`  Atlas        | ${atlasEntity.id} | ${atlas.id}`);
-  console.log(`  Nova         | ${novaEntity.id} | ${nova.id}`);
-  console.log(`  Sentinel     | ${sentinelEntity.id} | ${sentinel.id}`);
-  console.log('\n  Now create your human entities and smart spaces to start testing!');
+  console.log('\n🎉 Seed complete! 3 Haseefs created:\n');
+  console.log('  Name      | ID');
+  console.log('  ----------|--------------------------------------');
+  console.log(`  Atlas     | ${atlas.id}`);
+  console.log(`  Nova      | ${nova.id}`);
+  console.log(`  Sentinel  | ${sentinel.id}`);
 }
 
 main()

@@ -1,4 +1,4 @@
-import { spacesPrisma } from "@/lib/spaces-db";
+import { prisma } from "@/lib/db";
 import {
   requireSecretKeyAuth,
   requireAuthWithMembership,
@@ -15,7 +15,7 @@ export async function POST(request: Request, { params }: Params) {
 
   try {
     const { entityId, role } = await request.json();
-    const membership = await spacesPrisma.smartSpaceMembership.create({
+    const membership = await prisma.smartSpaceMembership.create({
       data: {
         smartSpaceId,
         entityId,
@@ -37,7 +37,7 @@ export async function GET(request: Request, { params }: Params) {
   if (auth instanceof Response) return auth;
 
   try {
-    const memberships = await spacesPrisma.smartSpaceMembership.findMany({
+    const memberships = await prisma.smartSpaceMembership.findMany({
       where: { smartSpaceId },
       include: {
         entity: { select: { id: true, type: true, displayName: true } },

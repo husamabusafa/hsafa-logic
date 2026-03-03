@@ -1,4 +1,4 @@
-import { spacesPrisma } from "@/lib/spaces-db";
+import { prisma } from "@/lib/db";
 import { requireSecretKeyAuth } from "@/lib/spaces-auth";
 
 type Params = { params: Promise<{ id: string }> };
@@ -10,7 +10,7 @@ export async function DELETE(request: Request, { params }: Params) {
   if (auth instanceof Response) return auth;
 
   try {
-    await spacesPrisma.client.delete({ where: { id } });
+    await prisma.client.delete({ where: { id } });
     return Response.json({ success: true });
   } catch (error) {
     console.error("Delete client error:", error);

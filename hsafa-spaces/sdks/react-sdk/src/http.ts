@@ -45,15 +45,23 @@ export class HttpClient {
   }
 
   buildUrl(path: string, params?: Record<string, string | number | undefined>): string {
-    const url = new URL(`${this.baseUrl}${path}`);
-    if (params) {
+    // When baseUrl is empty (same-origin), use relative path with window.location.origin
+    const fullUrl = this.baseUrl
+      ? `${this.baseUrl}${path}`
+      : path;
+
+    if (params && Object.keys(params).length > 0) {
+      const base = this.baseUrl || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+      const url = new URL(fullUrl, base);
       for (const [key, value] of Object.entries(params)) {
         if (value !== undefined) {
           url.searchParams.set(key, String(value));
         }
       }
+      return this.baseUrl ? url.toString() : `${url.pathname}${url.search}`;
     }
-    return url.toString();
+
+    return fullUrl;
   }
 
   async request<T>(method: HttpMethod, path: string, body?: unknown, params?: Record<string, string | number | undefined>): Promise<T> {

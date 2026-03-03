@@ -1,6 +1,5 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
-import { spacesPrisma } from "@/lib/spaces-db";
 import { signToken } from "@/lib/auth";
 
 export async function POST(request: Request) {
@@ -47,7 +46,7 @@ export async function POST(request: Request) {
     const entityId = user.hsafaEntityId || "";
     if (entityId) {
       try {
-        const memberships = await spacesPrisma.smartSpaceMembership.findMany({
+        const memberships = await prisma.smartSpaceMembership.findMany({
           where: { entityId },
           include: { smartSpace: { select: { id: true, name: true } } },
         });

@@ -1,5 +1,4 @@
 import { prisma } from "@/lib/db";
-import { spacesPrisma } from "@/lib/spaces-db";
 import { verifyToken } from "@/lib/auth";
 
 export async function GET(request: Request) {
@@ -29,7 +28,7 @@ export async function GET(request: Request) {
     const entityId = user.hsafaEntityId || "";
     if (entityId) {
       try {
-        const memberships = await spacesPrisma.smartSpaceMembership.findMany({
+        const memberships = await prisma.smartSpaceMembership.findMany({
           where: { entityId },
           include: { smartSpace: { select: { id: true, name: true } } },
         });

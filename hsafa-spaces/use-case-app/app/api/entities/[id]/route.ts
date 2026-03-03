@@ -1,4 +1,4 @@
-import { spacesPrisma } from "@/lib/spaces-db";
+import { prisma } from "@/lib/db";
 import { requireAnyAuth } from "@/lib/spaces-auth";
 
 type Params = { params: Promise<{ id: string }> };
@@ -10,7 +10,7 @@ export async function GET(request: Request, { params }: Params) {
   if (auth instanceof Response) return auth;
 
   try {
-    const entity = await spacesPrisma.entity.findUnique({
+    const entity = await prisma.entity.findUnique({
       where: { id },
     });
     if (!entity) {

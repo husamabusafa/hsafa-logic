@@ -132,9 +132,68 @@ exports.Prisma.UserScalarFieldEnum = {
   updatedAt: 'updatedAt'
 };
 
+exports.Prisma.EntityScalarFieldEnum = {
+  id: 'id',
+  type: 'type',
+  externalId: 'externalId',
+  displayName: 'displayName',
+  metadata: 'metadata',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+};
+
+exports.Prisma.SmartSpaceScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  description: 'description',
+  metadata: 'metadata',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+};
+
+exports.Prisma.SmartSpaceMembershipScalarFieldEnum = {
+  id: 'id',
+  smartSpaceId: 'smartSpaceId',
+  entityId: 'entityId',
+  role: 'role',
+  joinedAt: 'joinedAt',
+  lastSeenMessageId: 'lastSeenMessageId'
+};
+
+exports.Prisma.SmartSpaceMessageScalarFieldEnum = {
+  id: 'id',
+  smartSpaceId: 'smartSpaceId',
+  entityId: 'entityId',
+  role: 'role',
+  content: 'content',
+  metadata: 'metadata',
+  seq: 'seq',
+  createdAt: 'createdAt'
+};
+
+exports.Prisma.ClientScalarFieldEnum = {
+  id: 'id',
+  entityId: 'entityId',
+  clientKey: 'clientKey',
+  clientType: 'clientType',
+  displayName: 'displayName',
+  capabilities: 'capabilities',
+  createdAt: 'createdAt',
+  lastSeenAt: 'lastSeenAt'
+};
+
 exports.Prisma.SortOrder = {
   asc: 'asc',
   desc: 'desc'
+};
+
+exports.Prisma.NullableJsonNullValueInput = {
+  DbNull: Prisma.DbNull,
+  JsonNull: Prisma.JsonNull
+};
+
+exports.Prisma.JsonNullValueInput = {
+  JsonNull: Prisma.JsonNull
 };
 
 exports.Prisma.QueryMode = {
@@ -147,9 +206,23 @@ exports.Prisma.NullsOrder = {
   last: 'last'
 };
 
+exports.Prisma.JsonNullValueFilter = {
+  DbNull: Prisma.DbNull,
+  JsonNull: Prisma.JsonNull,
+  AnyNull: Prisma.AnyNull
+};
+exports.EntityType = exports.$Enums.EntityType = {
+  human: 'human',
+  agent: 'agent'
+};
 
 exports.Prisma.ModelName = {
-  User: 'User'
+  User: 'User',
+  Entity: 'Entity',
+  SmartSpace: 'SmartSpace',
+  SmartSpaceMembership: 'SmartSpaceMembership',
+  SmartSpaceMessage: 'SmartSpaceMessage',
+  Client: 'Client'
 };
 
 /**
