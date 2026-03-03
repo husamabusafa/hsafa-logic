@@ -834,6 +834,215 @@ Extensions: [ext-spaces, ext-email, ext-crm, ext-social-monitor, ext-calendar]
 
 ---
 
+## Architectural Pattern Scenarios
+
+These scenarios verify critical v4 patterns that go beyond industry use cases.
+
+### A1: Feature Extension — The Dreaming Haseef
+
+```
+Haseef "Atlas"
+Extensions: [ext-spaces, ext-dreaming, ext-learning]
+```
+
+ext-dreaming runs on a nightly schedule. At 11pm, it reads the day's consciousness summary from the core and pushes a reflection event.
+
+**Event (11pm, no other activity):**
+- ext-dreaming: `{ type: "dream_cycle", data: { day_summary: "12 events processed, 3 unresolved goals, pattern: Husam stressed before meetings", suggested_reflections: ["meeting prep strategy", "stress detection response"] } }`
+
+```
+1. Think: Dream cycle. Today: helped with budget, missed reminding Husam to eat lunch
+   (he was stressed, HR was up). Pattern: I should check on meals when stress is high.
+2. Act: set_memory({ key: "pattern:stress-meals", value: "When Husam is stressed, he skips meals. Proactively suggest lunch." })
+3. Act: set_plan({ cron: "0 12 * * *", instruction: "Check Husam's stress level. If elevated, remind him to eat." })
+4. Act: review_dream({ reflection: "I'm getting better at reading stress signals across health + calendar. Need to act faster on meals." })
+5. Act: set_tomorrow_intentions({ priorities: ["Complete Q3 budget follow-up", "Monitor Husam's stress for board meeting"] })
+```
+
+**Why it matters:** ext-dreaming is a pure feature extension — no external service. It runs its own schedule, generates its own events, and the Haseef reflects and grows from it.
+
+### A2: Feature Extension — Emotional Awareness
+
+```
+Haseef "Atlas"
+Extensions: [ext-spaces, ext-emotion, ext-health]
+```
+
+ext-emotion analyzes the Haseef's recent interactions and pushes emotional state updates.
+
+**Events:**
+- ext-emotion: `{ type: "emotional_state", data: { mood: "concerned", confidence: 0.8, trigger: "grandmother's health readings declining 3 days" } }`
+- ext-health: `{ person: "Grandmother Fatima", hr: 88, trend: "gradually_rising_3_days" }`
+
+```
+1. Think: I'm concerned about grandmother. My emotional awareness + health data confirm
+   a real trend. This isn't a one-time spike — it's 3 days. I should act proactively.
+2. Act: send_space_message(family-care-space, "I've been tracking grandmother's heart rate
+   for 3 days — it's gradually rising. Not urgent yet, but worth a doctor visit.
+   @Husam @Maryam — can someone schedule a checkup?")
+3. Act: set_plan({ delay: "24h", instruction: "Re-check grandmother HR trend" })
+4. Act: set_memory({ key: "person-model:grandmother", value: "HR trending up since March 1. Monitoring closely." })
+```
+
+**Why it matters:** ext-emotion enriches the Haseef's inner life. The Haseef doesn't just process data — it *feels* concern and acts from that.
+
+### A3: Skip Cycle — Irrelevant Events
+
+```
+Haseef "Atlas"
+Extensions: [ext-spaces-work, ext-spaces-family]
+```
+
+**Events:**
+- ext-spaces-work: `{ from: "Rami", text: "Anyone want to order shawarma for lunch?" }`
+- ext-spaces-work: `{ from: "Layla", text: "I'm in! Extra garlic 🧄" }`
+
+```
+1. Think: Lunch order conversation. Not directed at me. Not relevant to any goal or task.
+2. Act: skip()
+```
+
+**Result:** Full cycle rollback. No consciousness update. No run record. Near-zero cost.
+
+**Why it matters:** skip() is critical for efficiency. In busy spaces, most messages aren't relevant to the Haseef. Without skip(), every message burns tokens and pollutes consciousness.
+
+### A4: Multi-Haseef Interaction
+
+```
+Haseef "SalesBot" (Company A)
+Extensions: [ext-spaces, ext-marketplace]
+
+Haseef "ProcureBot" (Company B)
+Extensions: [ext-spaces, ext-marketplace, ext-inventory]
+```
+
+Two Haseefs from different organizations negotiate through a shared marketplace.
+
+**SalesBot event:**
+- ext-marketplace: `{ type: "inquiry", from: "ProcureBot", text: "Need 500 units of Widget-X. Budget $25/unit." }`
+
+**SalesBot cycle:**
+```
+1. Think: 500 units at $25. Our floor is $22. Good margin.
+2. Act: check_inventory({ item: "Widget-X" }) → 800 in stock
+3. Act: send_marketplace_message({ to: "ProcureBot", text: "500 units available. $24/unit, ships in 48h." })
+```
+
+**ProcureBot event:**
+- ext-marketplace: `{ type: "offer", from: "SalesBot", text: "500 units available. $24/unit, ships in 48h." }`
+
+**ProcureBot cycle:**
+```
+1. Think: $24 is under budget. 48h delivery works. Accept.
+2. Act: accept_offer({ orderId: "...", terms: "$24/unit, 48h" })
+3. Act: send_space_message(procurement-space, "Widget-X: 500 units at $24 from Company A. 48h delivery. ✅")
+```
+
+**Why it matters:** Two independent minds, two organizations, zero shared state. They interact only through extensions connected to the same marketplace service.
+
+### A5: Async Tool — Long-Running Operation
+
+```
+Haseef "AnalyticsBot"
+Extensions: [ext-spaces, ext-data-pipeline]
+```
+
+**Event:**
+- ext-spaces: `{ from: "Ahmad", text: "Run the Q3 revenue analysis across all regions" }`
+
+**Cycle 1:**
+```
+1. Think: Q3 analysis — this will take a few minutes.
+2. Act: run_analysis({ query: "Q3 revenue by region", async: true })
+   → Tool returns immediately: { status: "processing", jobId: "job-789" }
+3. Act: send_space_message(analytics-space, "Running Q3 analysis now. I'll share results when ready.")
+```
+
+**…5 minutes later, result arrives via inbox…**
+
+**Cycle 2 event:**
+- ext-data-pipeline: `{ type: "job_complete", jobId: "job-789", result: { total: "$4.2M", top_region: "EMEA" } }`
+
+```
+1. Think: Analysis done. Share results.
+2. Act: send_space_message(analytics-space, "Q3 Revenue: $4.2M total. EMEA led at $1.8M (+23%).
+   Full report: [link]. @Ahmad")
+```
+
+**Why it matters:** Not all tools return instantly. Async tools fire and return later via a new sense event. The Haseef handles both cycles naturally.
+
+### A6: Tool Failure — Graceful Recovery
+
+```
+Haseef "Atlas"
+Extensions: [ext-spaces, ext-email, ext-calendar]
+```
+
+**Event:**
+- ext-spaces: `{ from: "Husam", text: "Send the proposal to client@corp.com" }`
+
+```
+1. Act: send_email({ to: "client@corp.com", subject: "Proposal", body: "..." })
+   → Error: { success: false, error: "SMTP connection refused" }
+2. Think: Email failed. Don't silently fail — tell Husam.
+3. Act: send_space_message(husam-1on1, "Email to client@corp.com failed (SMTP error).
+   I'll retry in 10 minutes. Want me to send via WhatsApp instead?")
+4. Act: set_plan({ delay: "10m", instruction: "Retry email to client@corp.com with proposal" })
+```
+
+**Why it matters:** Extensions can fail. The Haseef must handle errors gracefully — inform the user, attempt recovery, offer alternatives.
+
+### A7: Capability Discovery — New Extension Connects
+
+```
+Haseef "Atlas"
+Extensions: [ext-spaces, ext-email]  ← initially
+```
+
+**Event (before ext-weather connected):**
+- ext-spaces: `{ from: "Husam", text: "What's the weather tomorrow?" }`
+
+```
+1. Think: No weather tools available. Be honest.
+2. Act: send_space_message(husam-space, "I don't have weather access yet.
+   Want me to check your email for any weather alerts?")
+```
+
+**…Admin connects ext-weather…**
+
+**Event (after ext-weather connected):**
+- ext-spaces: `{ from: "Husam", text: "What's the weather tomorrow?" }`
+
+```
+1. Think: I have get_forecast now!
+2. Act: get_forecast({ city: "Amman", days: 1 }) → { temp: 28, condition: "sunny" }
+3. Act: send_space_message(husam-space, "Tomorrow: 28°C, sunny ☀️ Perfect for the outdoor lunch!")
+```
+
+**Why it matters:** The mind doesn't change. A new extension just adds new tools to the flat list, and the Haseef immediately knows how to use them.
+
+### A8: Headless Single-Extension — Data Processor
+
+```
+Haseef "ETLBot"
+Extensions: [ext-webhook]  ← just ONE extension, no chat, no UI
+```
+
+**Event:**
+- ext-webhook: `{ type: "csv_uploaded", url: "https://s3.../report.csv", rows: 50000 }`
+
+```
+1. Act: download_file({ url: "..." })
+2. Act: analyze_data({ query: "Find anomalies in revenue column" })
+   → 3 anomalies: rows 4521, 8903, 22401
+3. Act: generate_report({ format: "pdf", findings: [...] })
+4. Act: send_webhook({ url: "https://callback.../done", data: { reportUrl: "...", anomalies: 3 } })
+```
+
+**Why it matters:** A Haseef doesn't need chat, email, or any human-facing extension. It can operate headlessly with a single webhook extension, processing data autonomously.
+
+---
+
 ## Architecture Verification
 
 Every scenario works because they all follow the same pattern:
@@ -841,54 +1050,63 @@ Every scenario works because they all follow the same pattern:
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  1. SERVICES are independent (own DB, API, auth)               │
-│  2. EXTENSIONS are thin adapters (senses + actions + instructions)│
+│  2. EXTENSIONS plug capabilities into the mind                  │
+│     (senses + actions + instructions — adapter, feature, or both)│
 │  3. CORE is pure cognition (consciousness, think cycle, tools)  │
 │  4. AUTH flows correctly (service → extension → core)           │
 │  5. MULTI-EXTENSION composition is natural (flat tool list)     │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Checklist: All 34 Scenarios Pass
+### Checklist: All 42 Scenarios Pass
 
-| Scenario | Services | Extensions | Core | Auth | Multi-Ext |
-|----------|----------|-----------|------|------|-----------|
-| H1 Hospital | ✅ | ✅ | ✅ | ✅ | 4 ext |
-| H2 Mental Health | ✅ | ✅ | ✅ | ✅ | 3 ext |
-| E1 University | ✅ | ✅ | ✅ | ✅ | 3 ext |
-| E2 Kids Tutor | ✅ | ✅ | ✅ | ✅ | 2 ext |
-| L1 Law Firm | ✅ | ✅ | ✅ | ✅ | 4 ext |
-| F1 Trading | ✅ | ✅ | ✅ | ✅ | 3 ext |
-| F2 Banking | ✅ | ✅ | ✅ | ✅ | 3 ext |
-| R1 E-Commerce | ✅ | ✅ | ✅ | ✅ | 4 ext |
-| CS1 Support | ✅ | ✅ | ✅ | ✅ | 4 ext |
-| CS2 Escalation | ✅ | ✅ | ✅ | ✅ | 2 ext |
-| RE1 Property | ✅ | ✅ | ✅ | ✅ | 4 ext |
-| RH1 Restaurant | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| SC1 Logistics | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| HR1 Recruiting | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| HR2 Onboarding | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| AG1 Agriculture | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| CO1 Construction | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| GOV1 City | ✅ | ✅ | ✅ | ✅ | 4 ext |
-| GOV2 Emergency | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| M1 Newsroom | ✅ | ✅ | ✅ | ✅ | 4 ext |
-| M2 Podcast | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| P1 Family | ✅ | ✅ | ✅ | ✅ | 4 ext |
-| P2 Elderly Care | ✅ | ✅ | ✅ | ✅ | 4 ext |
-| P3 Travel | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| G1 Game Mod | ✅ | ✅ | ✅ | ✅ | 4 ext |
-| G2 Game Economy | ✅ | ✅ | ✅ | ✅ | 3 ext |
-| RO1 Factory | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| RO2 Robot | ✅ | ✅ | ✅ | ✅ | 4 ext |
-| SCI1 Lab | ✅ | ✅ | ✅ | ✅ | 4 ext |
-| SEC1 Security | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| NP1 Nonprofit | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| X1 Full Life | ✅ | ✅ | ✅ | ✅ | 9 ext |
-| X2 Crisis | ✅ | ✅ | ✅ | ✅ | 5 ext |
-| X3 Opportunity | ✅ | ✅ | ✅ | ✅ | 5 ext |
+| Scenario | Category | Extensions | Key Pattern |
+|----------|----------|-----------|-------------|
+| H1 Hospital | Healthcare | 4 ext | Multi-source diagnosis |
+| H2 Mental Health | Healthcare | 3 ext | Person-model + plans |
+| E1 University | Education | 3 ext | Person-model + grading |
+| E2 Kids Tutor | Education | 2 ext | Adaptive learning style |
+| L1 Law Firm | Legal | 4 ext | Cross-domain triage |
+| F1 Trading | Finance | 3 ext | Real-time risk response |
+| F2 Banking | Finance | 3 ext | Theory of Mind (no nagging) |
+| R1 E-Commerce | E-Commerce | 4 ext | Viral demand response |
+| CS1 Support | Support | 4 ext | Multi-ticket triage |
+| CS2 Escalation | Support | 2 ext | Escalation rules |
+| RE1 Property | Real Estate | 4 ext | Crisis + retention |
+| RH1 Restaurant | Restaurant | 5 ext | Real-time ops |
+| SC1 Logistics | Logistics | 5 ext | Weather rerouting |
+| HR1 Recruiting | HR | 5 ext | Fast-track pipeline |
+| HR2 Onboarding | HR | 5 ext | Automated setup |
+| AG1 Agriculture | Agriculture | 5 ext | IoT + market intelligence |
+| CO1 Construction | Construction | 5 ext | Weather-adaptive scheduling |
+| GOV1 City | Government | 4 ext | Cross-system correlation |
+| GOV2 Emergency | Government | 5 ext | Multi-agency response |
+| M1 Newsroom | Media | 4 ext | Breaking news triage |
+| M2 Podcast | Media | 5 ext | Opportunity detection |
+| P1 Family | Personal | 4 ext | Family logistics + Theory of Mind |
+| P2 Elderly Care | Personal | 4 ext | Health monitoring + escalation |
+| P3 Travel | Personal | 5 ext | Multi-constraint planning |
+| G1 Game Mod | Gaming | 4 ext | Multi-signal cheater detection |
+| G2 Game Economy | Gaming | 3 ext | Root cause + rollback |
+| RO1 Factory | Manufacturing | 5 ext | Root cause + reroute |
+| RO2 Robot | Robotics | 4 ext | Physical + digital |
+| SCI1 Lab | Science | 4 ext | Contamination detection |
+| SEC1 Cybersecurity | Security | 5 ext | Threat response chain |
+| NP1 Nonprofit | Nonprofit | 5 ext | Donor relationship |
+| X1 Full Life | Crossover | 9 ext | One mind, all domains |
+| X2 Crisis Cascade | Crossover | 5 ext | Cross-domain triage |
+| X3 Opportunity | Crossover | 5 ext | Pattern detection |
+| **A1 Dreaming** | **Architecture** | **3 ext** | **Feature extension (no external service)** |
+| **A2 Emotion** | **Architecture** | **3 ext** | **Feature extension (inner life)** |
+| **A3 Skip Cycle** | **Architecture** | **2 ext** | **Irrelevant events → zero cost** |
+| **A4 Multi-Haseef** | **Architecture** | **2-3 ext** | **Cross-org Haseef interaction** |
+| **A5 Async Tool** | **Architecture** | **2 ext** | **Long-running tool, result via inbox** |
+| **A6 Tool Failure** | **Architecture** | **3 ext** | **Graceful error recovery** |
+| **A7 Capability Discovery** | **Architecture** | **2→3 ext** | **New extension = new abilities** |
+| **A8 Headless** | **Architecture** | **1 ext** | **No UI, pure data processing** |
 
-**34 scenarios. 20+ industries. 0 architecture gaps.**
+**42 scenarios. 20+ industries. 8 architectural patterns. 0 gaps.**
 
 The core never changes. Extensions never need to know about each other. Services stay independent. Auth flows correctly. And the Haseef — the mind — reasons across all of them as one consciousness.
 
-**One mind. Any number of bodies. Infinite possibilities.**
+**One mind. Any number of extensions. Infinite possibilities.**

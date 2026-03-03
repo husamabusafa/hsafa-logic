@@ -1,17 +1,35 @@
-# 02 — Extensions: Connecting to Reality
+# 02 — Extensions: Expanding the Mind
 
 ## Overview
 
-An extension is a **thin adapter** between an independent external service and a Haseef's mind. It is the bridge that lets a mind perceive and act in the real world — without the mind knowing anything about the specific technology, protocol, or domain.
+An extension is **any capability you plug into a Haseef's mind**. It gives the Haseef new senses (perception), new actions (tools), and new understanding (instructions) — without the core knowing anything about the implementation.
 
-**Extension ≠ Service.**
+Every extension provides the same three things to the core:
+1. **Senses** — events pushed to the Haseef's inbox
+2. **Actions** — tools the Haseef can call
+3. **Instructions** — prompt guidance injected into the system prompt
 
-A service (Spaces App, Gmail, Shopify, a robot) exists independently. It has its own database, its own API, its own authentication, its own clients. It would exist even if Hsafa didn't.
+That's the universal interface. **What's inside the extension is completely up to the developer.** An extension can:
 
-An extension is the thin layer that:
-1. **Listens** to the service for events → pushes them as SenseEvents to the core
-2. **Receives** tool calls from the core → forwards them to the service's API
-3. **Stores** only a connection map: `haseefId → service credentials`
+- **Bridge an external service** — connect WhatsApp, Gmail, Shopify, a robot
+- **Be a self-contained feature** — dreaming, emotion tracking, learning from mistakes
+- **Be both** — bridge WhatsApp AND add smart features like auto-translate, message scheduling, read-receipt intelligence
+
+The core doesn't know or care. It just sees: "this extension gives me these senses and these tools."
+
+### Examples
+
+| Extension | What's Inside |
+|-----------|--------------|
+| **ext-whatsapp** | Bridges WhatsApp API (adapter) + auto-translates messages + smart notification batching (features) |
+| **ext-dreaming** | Pure feature — nightly reflection, day summarization, tomorrow planning. No external service. |
+| **ext-spaces** | Bridges the Spaces App chat platform (adapter) |
+| **ext-email** | Bridges Gmail IMAP/SMTP (adapter) + smart email categorization (feature) |
+| **ext-health** | Bridges wearable API (adapter) + pattern detection for stress/sleep (feature) |
+| **ext-learning** | Pure feature — monitors mistakes and successes, generates learning summaries |
+| **ext-reachy** | Bridges Reachy robot REST API (adapter) |
+
+The extension system is general. An extension is a **service** in its own right — it can have its own logic, its own data, its own schedule. Some extensions happen to also bridge an external system. Some don't. The interface to the core is always the same.
 
 ---
 
@@ -139,18 +157,19 @@ The core never sees these credentials. When it routes a tool call to `ext-email`
 
 ---
 
-## Extension ≠ Service: Examples
+## Extension Examples in Detail
 
-| Service (Independent App) | Extension (Thin Adapter) |
-|---------------------------|--------------------------|
-| **Spaces App** — chat platform with own DB, API, JWT auth, React client | **ext-spaces** — listens to SSE, routes messages as senses, forwards send_message calls |
-| **Gmail** — Google's email with OAuth, IMAP/SMTP, web client | **ext-email** — listens to IMAP, routes new emails as senses, forwards send_email calls |
-| **Shopify** — e-commerce platform with own DB, API, admin dashboard | **ext-shopify** — receives webhooks, routes orders as senses, forwards inventory calls |
-| **Reachy Mini** — robot with REST API running on hardware | **ext-reachy** — receives camera events, forwards motor commands |
-| **Home Assistant** — smart home with own DB, API, mobile app | **ext-smart-home** — listens to state changes, forwards device commands |
-| **Zendesk** — support platform with own DB, API, agent dashboard | **ext-zendesk** — receives ticket webhooks, forwards ticket updates |
+| Extension | Senses It Pushes | Tools It Provides | Internal Logic |
+|-----------|-----------------|-------------------|----------------|
+| **ext-spaces** | Messages from spaces | `send_space_message`, `read_space_messages` | Bridges Spaces App SSE/API |
+| **ext-email** | New emails | `send_email`, `search_emails` | Bridges IMAP/SMTP + categorization |
+| **ext-dreaming** | Nightly reflection prompts | `review_dream`, `set_tomorrow_intentions` | Scheduled summarization, pattern detection |
+| **ext-whatsapp** | Messages from WhatsApp | `send_whatsapp_message` | Bridges WhatsApp API + auto-translate |
+| **ext-health** | Elevated heart rate, anomalies | `get_health_summary` | Bridges wearable API + stress pattern detection |
+| **ext-smart-home** | Doorbell, water leak, temperature | `set_thermostat`, `lock_door` | Bridges Home Assistant API |
+| **ext-learning** | Learning insights, mistake patterns | `consolidate_memories`, `reinforce_success` | Analyzes Haseef's history, generates insights |
 
-The service has thousands of features. The extension exposes only what the Haseef needs.
+Every row follows the same pattern: senses in, tools out, instructions included. What's inside (bridging, scheduling, analyzing, etc.) is the extension's business.
 
 ---
 
@@ -175,33 +194,34 @@ One Haseef can be connected to many extensions simultaneously:
 
 ```
 Haseef "Atlas":
+  ADAPTER EXTENSIONS (body — connect to the world):
   ├── ext-spaces      → senses: messages, actions: send/read messages
   ├── ext-email       → senses: new emails, actions: send/search email
   ├── ext-calendar    → senses: reminders, actions: create/update events
   ├── ext-smart-home  → senses: doorbell/leak, actions: lock/unlock/shutoff
   ├── ext-health      → senses: heart rate, actions: none (read-only)
-  ├── ext-bank        → senses: transactions, actions: none (read-only)
   ├── ext-whatsapp    → senses: messages, actions: send messages
-  ├── ext-reachy      → senses: camera, actions: move head/play emotion
-  └── ext-weather     → senses: alerts, actions: get forecast
+  └── ext-reachy      → senses: camera, actions: move head/play emotion
+
+  FEATURE EXTENSIONS (inner life — enrich the mind):
+  ├── ext-dreaming    → senses: nightly reflection prompt, actions: review_dream, plan_tomorrow
+  ├── ext-emotion     → senses: emotional state updates, actions: express_emotion
+  └── ext-learning    → senses: learning insights, actions: consolidate, reinforce
 ```
 
 All tools from all extensions → one flat list for the LLM. The LLM picks the right tool based on context. The core routes the call to the right extension. No integration layer needed.
 
 ---
 
-## The Body Metaphor
+## The Human Metaphor
 
-If the core is the **mind**, extensions are the **body parts**:
+If the core is the **mind**, extensions are everything else that makes a person:
 
-| Body Part | Extension | Senses | Actions |
-|-----------|-----------|--------|---------|
-| Eyes | ext-camera, ext-email, ext-social | See images, read emails, see trends | — |
-| Ears | ext-spaces, ext-whatsapp | Hear messages | — |
-| Mouth | ext-spaces, ext-email | — | Send messages, send emails |
-| Hands | ext-shopify, ext-jira, ext-github | — | Create orders, tickets, PRs |
-| Legs | ext-reachy | — | Move robot |
-| Skin | ext-health, ext-iot | Feel heart rate, temperature | — |
-| Internal organs | ext-bank, ext-crm | Feel transactions, deals | — |
+| Aspect | Extension Type | Examples |
+|--------|---------------|----------|
+| **Body** (senses + actions) | Adapter | ext-spaces (ears/mouth), ext-email (eyes/hands), ext-reachy (legs) |
+| **Subconscious** (background processing) | Feature | ext-dreaming (nightly reflection), ext-emotion (emotional awareness) |
+| **Habits** (learned patterns) | Feature | ext-learning (pattern recognition), ext-reflection (self-improvement) |
+| **Instincts** (automatic responses) | Feature | ext-safety (emergency detection), ext-routine (daily habits) |
 
-A mind with more body parts is more capable — not because the mind changed, but because it can perceive and act in more of the world.
+A mind with more extensions is more capable — not because the mind changed, but because it can perceive, act, and grow in more ways. Some extensions give it new body parts. Others give it richer inner life.

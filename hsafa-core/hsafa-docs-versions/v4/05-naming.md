@@ -13,7 +13,7 @@ Consistent naming matters. This document defines every term in the Hsafa v4 ecos
 | **Hsafa** | The platform/framework. Pronounced "ha-SA-fa". The system that enables Haseefs to exist. |
 | **Haseef** | A single AI agent instance — a mind. Plural: Haseefs. Each Haseef has its own consciousness, identity, and connected extensions. |
 | **Hsafa Core** | The runtime that hosts Haseefs. Pure cognition engine. No domain logic. |
-| **Extension** | A thin adapter between a service and the core. Provides senses, actions, and instructions. |
+| **Extension** | Any capability plugged into a Haseef's mind. Provides senses, actions, and instructions. What's inside is up to the developer — it can bridge an external service, be a standalone feature, or both. |
 | **Service** | An independent application (Spaces App, Gmail, Shopify, etc.) with its own DB, API, auth, and clients. |
 
 ---
@@ -64,7 +64,7 @@ Consistent naming matters. This document defines every term in the Hsafa v4 ecos
 ### Naming Convention
 
 - **Services**: Plain name (e.g., `spaces-app`, not `hsafa-spaces-app`). They're independent — they don't need the Hsafa prefix.
-- **Extensions**: `ext-` prefix (e.g., `ext-spaces`, `ext-email`). Always a thin adapter.
+- **Extensions**: `ext-` prefix (e.g., `ext-spaces`, `ext-email`, `ext-dreaming`). Any capability plugged into the mind.
 - **Core**: `hsafa-core`. The one thing that IS Hsafa.
 - **SDKs**: `@hsafa/` scope (e.g., `@hsafa/spaces-react`, `@hsafa/admin`).
 
@@ -113,7 +113,7 @@ Consistent naming matters. This document defines every term in the Hsafa v4 ecos
 | When you say... | You mean... |
 |----------------|-------------|
 | "The core" | hsafa-core — the cognition engine |
-| "An extension" | A thin adapter (ext-spaces, ext-email, etc.) |
+| "An extension" | A capability plugged into the mind (ext-spaces, ext-dreaming, etc.) |
 | "A service" | An independent app (Spaces App, Gmail, etc.) |
 | "A Haseef" | One AI agent instance — a mind |
 | "Consciousness" | The ModelMessage[] array |

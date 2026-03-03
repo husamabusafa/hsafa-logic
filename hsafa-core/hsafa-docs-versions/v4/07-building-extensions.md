@@ -8,12 +8,12 @@ This guide walks through building an extension from scratch, using the **Spaces 
 
 ## What You're Building
 
-An extension is a thin adapter that:
-1. **Listens** to a service for events → pushes SenseEvents to the core
-2. **Registers** tools → receives tool calls from the core → forwards to service API
-3. **Provides** instructions → injected into the Haseef's system prompt
+An extension provides capabilities to a Haseef's mind through a universal interface:
+1. **Senses** — pushes events to the core (from a service, a schedule, or its own logic)
+2. **Actions** — registers tools that the core routes back when the LLM calls them
+3. **Instructions** — prompt guidance injected into the Haseef's system prompt
 
-That's it. No business logic. No UI. No client-facing API.
+An extension can bridge an external service, be a standalone feature, or both. No client-facing API.
 
 ---
 
@@ -340,10 +340,10 @@ Haseef "Atlas" — connected to 9 extensions:
 
 | Question | Expected Answer |
 |----------|----------------|
-| Does your extension have its own database? | ❌ No — the service has the DB |
-| Does your extension have a client-facing API? | ❌ No — the service faces clients |
-| Does your extension contain business logic? | ❌ No — just translate and route |
-| Does your extension filter noise from the service? | ✅ Yes — only meaningful events pass |
-| Does your extension store service credentials? | ✅ Yes — in its connection map |
+| Does your extension provide senses, actions, or instructions (at least one)? | ✅ Yes — that's the universal interface |
 | Does your extension use the core's extension key? | ✅ Yes — to push events and receive calls |
-| Could you swap the service for a different one with the same tools? | ✅ Yes — the core wouldn't know |
+| Does the core need to know what's inside your extension? | ❌ No — the core just sees senses and tools |
+| Does your extension have a client-facing API? | ❌ No — services face clients, not extensions |
+| Could you replace the internals without changing the senses/tools interface? | ✅ Yes — the core wouldn't know |
+
+**Note:** An extension can be a thin adapter (bridging Gmail), a full feature (dreaming, emotion tracking), or both (WhatsApp bridge + auto-translate). The checklist applies equally to all.

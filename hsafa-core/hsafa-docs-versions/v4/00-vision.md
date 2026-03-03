@@ -40,20 +40,19 @@ v4 separates the system into three clean layers:
                         ▼
 ┌─────────────────────────────────────────────────────────┐
 │                    EXTENSIONS                           │
-│  Thin adapters — bridge between services and core      │
+│  Capabilities plugged into the mind                    │
 │                                                        │
 │  Each extension provides three things:                 │
-│  • Senses      — events from the service → core       │
+│  • Senses      — events → core                        │
 │  • Actions     — tool calls from core → service API   │
 │  • Instructions — prompt guidance for the LLM          │
 │                                                        │
-│  No business logic. No client-facing API.              │
-│  Just translate and route.                             │
+│  No client-facing API.                                 │
 │                                                        │
-│  ext-spaces: listens to Spaces App SSE                 │
-│  ext-email:  listens to IMAP                           │
-│  ext-github: receives GitHub webhooks                  │
-│  ext-reachy: bridges Reachy REST API                   │
+│  ext-spaces:   bridges Spaces App SSE                  │
+│  ext-email:    bridges IMAP/SMTP                       │
+│  ext-dreaming: nightly reflection (standalone feature) │
+│  ext-reachy:   bridges Reachy REST API                 │
 └───────────────────────┬─────────────────────────────────┘
                         │ extension key (push events / receive tool calls)
                         ▼
@@ -80,15 +79,15 @@ v4 separates the system into three clean layers:
 
 ### The Key Insight
 
-**Extension ≠ Service.**
+**Extension = any capability plugged into the mind.**
 
-A service is an independent application (Spaces App, Gmail, Shopify). It has its own database, its own API, its own authentication, its own clients. It exists whether or not Hsafa exists.
+An extension provides senses (events → core), actions (tools the Haseef can call), and instructions (prompt guidance). What's inside is up to the developer:
 
-An extension is a thin adapter that connects a service to a Haseef's mind. It stores a connection map (haseefId → service credentials) and does two things:
-1. Listens to the service for events → pushes them as sense events to the core
-2. Receives tool calls from the core → forwards them to the service's API
+- It can **bridge an external service** (Spaces App, Gmail, WhatsApp) — translating events and forwarding tool calls
+- It can **be a standalone feature** (dreaming, emotion tracking, learning) — running its own logic and schedule
+- It can **be both** — bridge WhatsApp AND add smart features like auto-translate or notification batching
 
-That's it. No business logic. No UI. No client-facing API.
+The core treats them all identically. It just sees senses and tools.
 
 ---
 

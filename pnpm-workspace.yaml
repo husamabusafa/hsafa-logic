@@ -1,5 +1,8 @@
 packages:
-  - hsafa-core/gateway
+  - hsafa-core/core
+  - hsafa-core/extensions/ext-spaces
+  - hsafa-core/sdks/extension-node
+  - hsafa-spaces/spaces-app
   - hsafa-spaces/sdks/node-sdk
   - hsafa-spaces/sdks/react-sdk
   - hsafa-spaces/sdks/react-native-sdk
@@ -7,9 +10,10 @@ packages:
   - hsafa-spaces/sdks/python-sdk
   - hsafa-spaces/rn-app
   - hsafa-spaces/use-case-app
-  - hsafa-core/external-docs/with-ai-sdk-v6
-  - hsafa-core/external-docs/assistant-ui-docs
-  - hsafa-core/external-docs/vercel-ai-sdk-docs
+  # External docs (reference only, broken workspace deps)
+  # - hsafa-core/external-docs/with-ai-sdk-v6
+  # - hsafa-core/external-docs/assistant-ui-docs
+  # - hsafa-core/external-docs/vercel-ai-sdk-docs
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver

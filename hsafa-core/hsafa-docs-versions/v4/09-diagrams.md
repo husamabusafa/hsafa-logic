@@ -36,7 +36,7 @@
 │    API ←         SMTP ←      API ←        REST ←            │
 │    actions)      actions)    actions)     actions)           │
 │                                                             │
-│   Thin adapters. No business logic. No client-facing API.   │
+│   Capabilities plugged into the mind. No client-facing API. │
 └──────┬──────────────┬──────────────┬──────────────┬─────────┘
        │              │              │              │
        │         extension keys (push events / receive calls)

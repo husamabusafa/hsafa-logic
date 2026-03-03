@@ -4,7 +4,7 @@
 
 v4 has **three layers**, and each layer handles its own authentication. The core never sees a user password, JWT, or OAuth token. Auth is cleanly separated.
 
-Client apps never talk to the core. They talk to the **services** (Spaces App, Gmail, etc.). Extensions are thin adapters between services and the core — most have no client-facing API at all.
+Client apps never talk to the core. They talk to the **services** (Spaces App, Gmail, etc.). Extensions are capabilities plugged into the mind — they have no client-facing API.
 
 ```
 ┌───────────────┐   ┌───────────────┐
@@ -23,7 +23,7 @@ Client apps never talk to the core. They talk to the **services** (Spaces App, G
                     │ service events (SSE, webhooks, etc.)
                     ▼
 ┌───────────────────────────────────────┐
-│          EXTENSIONS (thin adapters)        │
+│          EXTENSIONS (capabilities)              │
 │  ext-spaces: listens to Spaces App SSE     │
 │  ext-email: listens to IMAP                │
 │  ext-github: receives GitHub webhooks      │
