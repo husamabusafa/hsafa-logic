@@ -23,7 +23,7 @@ export function createDeleteMemoriesTool(ctx: HaseefProcessContext) {
     }),
     execute: async ({ keys }) => {
       const result = await prisma.memory.deleteMany({
-        where: { entityId: ctx.haseefEntityId, key: { in: keys } },
+        where: { haseefId: ctx.haseefId, key: { in: keys } },
       });
       return { success: true, deleted: result.count };
     },

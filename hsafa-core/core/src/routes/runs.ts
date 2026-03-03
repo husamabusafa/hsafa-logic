@@ -17,15 +17,15 @@ async function verifyRunAccess(req: Request, res: Response): Promise<boolean> {
   // Public key users need entity resolution.
   if (req.auth?.method === 'secret_key' || req.auth?.method === 'extension_key') return true;
 
-  const entityId = req.auth?.entityId;
-  if (!entityId) {
+  const haseefId = req.auth?.haseefId;
+  if (!haseefId) {
     res.status(403).json({ error: 'No entity resolved' });
     return false;
   }
 
   const run = await prisma.run.findUnique({
     where: { id: req.params.runId },
-    select: { haseefEntityId: true },
+    select: { haseefId: true },
   });
 
   if (!run) {
@@ -194,7 +194,7 @@ runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res:
       await publishToolResult(callId, result);
     } else {
       // Tool was async (pending) — push inbox event so agent wakes in next cycle
-      await pushToolResultEvent(pending.haseefEntityId, {
+      await pushToolResultEvent(pending.haseefId, {
         toolCallId: callId,
         toolName: pending.toolName,
         originRunId: runId,
@@ -202,7 +202,7 @@ runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res:
       });
     }
 
-    res.json({ success: true, haseefEntityId: pending.haseefEntityId });
+    res.json({ success: true, haseefId: pending.haseefId });
   } catch (error) {
     console.error('Tool result error:', error);
     res.status(500).json({ error: 'Failed to submit tool result' });

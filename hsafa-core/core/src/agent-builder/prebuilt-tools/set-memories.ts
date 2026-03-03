@@ -39,8 +39,8 @@ export function createSetMemoriesTool(ctx: HaseefProcessContext) {
       let count = 0;
       for (const { key, value } of memories) {
         await prisma.memory.upsert({
-          where: { entityId_key: { entityId: ctx.haseefEntityId, key } },
-          create: { entityId: ctx.haseefEntityId, key, value },
+          where: { haseefId_key: { haseefId: ctx.haseefId, key } },
+          create: { haseefId: ctx.haseefId, key, value },
           update: { value },
         });
         count++;

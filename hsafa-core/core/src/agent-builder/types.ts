@@ -197,7 +197,7 @@ export const SENSE_TYPE = {
 // =============================================================================
 
 export interface HaseefProcessContext {
-  haseefEntityId: string;
+  haseefId: string;
   haseefName: string;
   /** Haseef's DB id (for memory/goal/plan queries) */
   haseefId: string;

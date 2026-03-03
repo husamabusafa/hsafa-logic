@@ -50,7 +50,7 @@ import {
  */
 export async function buildSystemPrompt(
   haseefId: string,
-  haseefEntityId: string,
+  haseefId: string,
   haseefName: string,
   extensionInstructions: string[] = [],
 ): Promise<string> {
@@ -61,18 +61,18 @@ export async function buildSystemPrompt(
       select: { configJson: true, description: true },
     }),
     prisma.memory.findMany({
-      where: { entityId: haseefEntityId },
+      where: { haseefId: haseefId },
       select: { key: true, value: true },
       orderBy: { updatedAt: 'desc' },
     }),
     prisma.plan.findMany({
-      where: { entityId: haseefEntityId, status: 'pending' },
+      where: { haseefId: haseefId, status: 'pending' },
       select: { name: true, instruction: true, cron: true, nextRunAt: true, scheduledAt: true },
       orderBy: { nextRunAt: 'asc' },
     }),
-    computeGrowthTrajectory(haseefEntityId),
+    computeGrowthTrajectory(haseefId),
     prisma.haseefConsciousness.findUnique({
-      where: { haseefEntityId },
+      where: { haseefId },
       select: { lastCycleAt: true, cycleCount: true },
     }),
   ]);
@@ -83,7 +83,7 @@ export async function buildSystemPrompt(
   // ── Identity analysis (pure computation, no DB calls) ──────────────────
   const selfModel = analyzeSelfModel(memories);
   const personModels = analyzePersonModels(memories);
-  const will = await analyzeWill(haseefEntityId, memories);
+  const will = await analyzeWill(haseefId, memories);
 
   // ── Categorize remaining memories ──────────────────────────────────────
   const knowledgeMemories = memories.filter(
@@ -97,7 +97,7 @@ export async function buildSystemPrompt(
   // =====================================================================
   // IDENTITY — factual grounding: who am I, when, where
   // =====================================================================
-  sections.push(buildIdentitySection(haseefName, haseefEntityId, haseef?.description ?? null, consciousness, now));
+  sections.push(buildIdentitySection(haseefName, haseefId, haseef?.description ?? null, consciousness, now));
 
   // =====================================================================
   // GROWTH — trajectory awareness: how am I developing
@@ -178,14 +178,14 @@ export async function buildSystemPrompt(
 
 function buildIdentitySection(
   name: string,
-  entityId: string,
+  haseefId: string,
   description: string | null,
   consciousness: { lastCycleAt: Date | null; cycleCount: number } | null,
   now: Date,
 ): string {
   const lines = [
     `  name: "${name}"`,
-    `  entityId: "${entityId}"`,
+    `  haseefId: "${haseefId}"`,
   ];
   if (description) lines.push(`  description: "${description}"`);
   lines.push(`  currentTime: "${now.toISOString()}"`);

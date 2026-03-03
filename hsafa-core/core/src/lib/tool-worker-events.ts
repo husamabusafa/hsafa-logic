@@ -17,7 +17,7 @@ export interface ToolCallWorkerEvent {
   toolName: string;
   args: unknown;
   runId: string;
-  haseefEntityId: string;
+  haseefId: string;
   ts: string;
 }
 

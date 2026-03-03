@@ -92,13 +92,13 @@ export interface ConsciousnessMetadata {
   [key: string]: unknown;
 }
 
-export async function loadConsciousness(haseefEntityId: string): Promise<{
+export async function loadConsciousness(haseefId: string): Promise<{
   messages: ModelMessage[];
   cycleCount: number;
   metadata: ConsciousnessMetadata;
 }> {
   const record = await prisma.haseefConsciousness.findUnique({
-    where: { haseefEntityId },
+    where: { haseefId },
   });
 
   if (!record) {
@@ -117,7 +117,7 @@ export async function loadConsciousness(haseefEntityId: string): Promise<{
  * Uses upsert — creates on first save, updates thereafter.
  */
 export async function saveConsciousness(
-  haseefEntityId: string,
+  haseefId: string,
   messages: ModelMessage[],
   cycleCount: number,
   metadata?: ConsciousnessMetadata,
@@ -125,9 +125,9 @@ export async function saveConsciousness(
   const tokenEstimate = estimateTokens(messages);
 
   await prisma.haseefConsciousness.upsert({
-    where: { haseefEntityId },
+    where: { haseefId },
     create: {
-      haseefEntityId,
+      haseefId,
       messages: messages as any,
       cycleCount,
       tokenEstimate,

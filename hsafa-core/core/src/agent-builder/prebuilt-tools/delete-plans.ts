@@ -24,7 +24,7 @@ export function createDeletePlansTool(ctx: HaseefProcessContext) {
     execute: async ({ planIds }) => {
       // Remove BullMQ jobs first (need cron info for repeatable removal)
       const plans = await prisma.plan.findMany({
-        where: { id: { in: planIds }, entityId: ctx.haseefEntityId },
+        where: { id: { in: planIds }, entityId: ctx.haseefId },
         select: { id: true, cron: true },
       });
       for (const plan of plans) {
@@ -32,7 +32,7 @@ export function createDeletePlansTool(ctx: HaseefProcessContext) {
       }
 
       const result = await prisma.plan.deleteMany({
-        where: { id: { in: planIds }, entityId: ctx.haseefEntityId },
+        where: { id: { in: planIds }, entityId: ctx.haseefId },
       });
       return { success: true, deleted: result.count };
     },

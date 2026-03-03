@@ -59,7 +59,7 @@ export const costTrackingMiddleware = {
 
   wrapGenerate: async ({ doGenerate, params }: any) => {
     const result = await doGenerate();
-    const haseefId = params.providerMetadata?.hsafa?.haseefEntityId as string | undefined;
+    const haseefId = params.providerMetadata?.hsafa?.haseefId as string | undefined;
     if (haseefId && result.usage) {
       const inputTotal = typeof result.usage.inputTokens === 'object'
         ? result.usage.inputTokens.total ?? 0

@@ -34,7 +34,7 @@ import type { SenseEvent } from '../agent-builder/types.js';
 export const haseefsRouter = Router();
 
 // =============================================================================
-// Helper: Resolve haseefId to haseefEntityId
+// Helper: Resolve haseefId to haseefId
 // =============================================================================
 
 async function resolveHaseefEntityId(haseefId: string): Promise<string | null> {
@@ -67,8 +67,8 @@ haseefsRouter.post('/:id/senses', requireExtensionKey(), async (req: Request, re
       return;
     }
 
-    const haseefEntityId = await resolveHaseefEntityId(haseefId);
-    if (!haseefEntityId) {
+    const haseefId = await resolveHaseefEntityId(haseefId);
+    if (!haseefId) {
       res.status(404).json({ error: 'Haseef not found' });
       return;
     }
@@ -92,7 +92,7 @@ haseefsRouter.post('/:id/senses', requireExtensionKey(), async (req: Request, re
         res.status(400).json({ error: 'Each event must have eventId, channel, and type' });
         return;
       }
-      await pushSenseEvent(haseefEntityId, {
+      await pushSenseEvent(haseefId, {
         eventId: e.eventId,
         channel: e.channel,
         source: e.source ?? '',
@@ -161,7 +161,7 @@ haseefsRouter.post('/:id/tools/:callId/result', requireExtensionKey(), async (re
       await publishToolResult(callId, result);
     } else {
       // Push to inbox for next cycle
-      await pushToolResultEvent(pending.haseefEntityId, {
+      await pushToolResultEvent(pending.haseefId, {
         toolCallId: callId,
         toolName: pending.toolName,
         originRunId: pending.runId,
@@ -235,7 +235,7 @@ haseefsRouter.get('/', requireSecretKey(), async (_req: Request, res: Response) 
         id: h.id,
         name: h.name,
         description: h.description,
-        entityId: h.entity?.id,
+        haseefId: h.entity?.id,
         displayName: h.entity?.displayName,
         extensions: h.connections.map((c) => ({
           extensionId: c.extension.id,
@@ -278,7 +278,7 @@ haseefsRouter.get('/:id', requireSecretKey(), async (req: Request, res: Response
         id: haseef.id,
         name: haseef.name,
         description: haseef.description,
-        entityId: haseef.entity?.id,
+        haseefId: haseef.entity?.id,
         displayName: haseef.entity?.displayName,
         extensions: haseef.connections.map((c) => ({
           extensionId: c.extension.id,

@@ -31,19 +31,19 @@ const BRPOP_TIMEOUT = 30;
  * Uses LPUSH (left push) so RPOP (right pop) gives FIFO order.
  */
 export async function pushToInbox(
-  haseefEntityId: string,
+  haseefId: string,
   event: InboxEvent,
 ): Promise<void> {
-  const key = `${INBOX_PREFIX}${haseefEntityId}`;
+  const key = `${INBOX_PREFIX}${haseefId}`;
 
   // Durable write — Postgres (upsert to handle dedup on retry)
   // Store channel:type as the DB 'type' column for queryability
   await prisma.inboxEvent.upsert({
     where: {
-      haseefEntityId_eventId: { haseefEntityId, eventId: event.eventId },
+      haseefId_eventId: { haseefId, eventId: event.eventId },
     },
     create: {
-      haseefEntityId,
+      haseefId,
       eventId: event.eventId,
       type: `${event.channel}:${event.type}`,
       data: event.data as any,
@@ -54,7 +54,7 @@ export async function pushToInbox(
 
   // Fast write — Redis (queue + wakeup signal)
   await redis.lpush(key, JSON.stringify(event));
-  await redis.publish(`${WAKEUP_PREFIX}${haseefEntityId}`, '1');
+  await redis.publish(`${WAKEUP_PREFIX}${haseefId}`, '1');
 }
 
 /**
@@ -62,10 +62,10 @@ export async function pushToInbox(
  * This is the primary API — all events flow through here.
  */
 export async function pushSenseEvent(
-  haseefEntityId: string,
+  haseefId: string,
   sense: SenseEvent & { eventId: string },
 ): Promise<void> {
-  await pushToInbox(haseefEntityId, sense);
+  await pushToInbox(haseefId, sense);
 }
 
 // =============================================================================
@@ -76,10 +76,10 @@ export async function pushSenseEvent(
  * Push a plan event (core channel).
  */
 export async function pushPlanEvent(
-  haseefEntityId: string,
+  haseefId: string,
   data: PlanEventData,
 ): Promise<void> {
-  await pushToInbox(haseefEntityId, {
+  await pushToInbox(haseefId, {
     eventId: `${data.planId}:${new Date().toISOString()}`,
     channel: CHANNEL.CORE,
     source: data.planId,
@@ -93,10 +93,10 @@ export async function pushPlanEvent(
  * Push a service event (core channel).
  */
 export async function pushServiceEvent(
-  haseefEntityId: string,
+  haseefId: string,
   data: ServiceEventData,
 ): Promise<void> {
-  await pushToInbox(haseefEntityId, {
+  await pushToInbox(haseefId, {
     eventId: `svc:${crypto.randomUUID()}`,
     channel: CHANNEL.CORE,
     source: data.serviceName,
@@ -111,10 +111,10 @@ export async function pushServiceEvent(
  * Called when an async tool's result arrives (user submit, webhook callback).
  */
 export async function pushToolResultEvent(
-  haseefEntityId: string,
+  haseefId: string,
   data: ToolResultEventData,
 ): Promise<void> {
-  await pushToInbox(haseefEntityId, {
+  await pushToInbox(haseefId, {
     eventId: `tr:${data.toolCallId}`,
     channel: CHANNEL.CORE,
     source: data.toolName,
@@ -133,8 +133,8 @@ export async function pushToolResultEvent(
  * Deduplicates by eventId — if the same event was pushed twice
  * (e.g. during reconnect), it's only returned once.
  */
-export async function drainInbox(haseefEntityId: string): Promise<InboxEvent[]> {
-  const key = `${INBOX_PREFIX}${haseefEntityId}`;
+export async function drainInbox(haseefId: string): Promise<InboxEvent[]> {
+  const key = `${INBOX_PREFIX}${haseefId}`;
   const events: InboxEvent[] = [];
   const seen = new Set<string>();
 
@@ -171,11 +171,11 @@ export async function drainInbox(haseefEntityId: string): Promise<InboxEvent[]> 
  * @param signal - AbortSignal for graceful shutdown
  */
 export async function waitForInbox(
-  haseefEntityId: string,
+  haseefId: string,
   blockingRedis: import('ioredis').default,
   signal?: AbortSignal,
 ): Promise<InboxEvent | null> {
-  const key = `${INBOX_PREFIX}${haseefEntityId}`;
+  const key = `${INBOX_PREFIX}${haseefId}`;
 
   while (!signal?.aborted) {
     try {
@@ -210,10 +210,10 @@ export async function waitForInbox(
  * Used by prepareStep for mid-cycle inbox awareness.
  */
 export async function peekInbox(
-  haseefEntityId: string,
+  haseefId: string,
   count: number = 10,
 ): Promise<InboxEvent[]> {
-  const key = `${INBOX_PREFIX}${haseefEntityId}`;
+  const key = `${INBOX_PREFIX}${haseefId}`;
   // LRANGE with negative indices: -count to -1 gives the oldest `count` items
   // (since we LPUSH and RPOP, the right side is oldest)
   const items = await redis.lrange(key, 0, count - 1);
@@ -233,8 +233,8 @@ export async function peekInbox(
 /**
  * Get the count of pending events in the inbox.
  */
-export async function inboxSize(haseefEntityId: string): Promise<number> {
-  const key = `${INBOX_PREFIX}${haseefEntityId}`;
+export async function inboxSize(haseefId: string): Promise<number> {
+  const key = `${INBOX_PREFIX}${haseefId}`;
   return redis.llen(key);
 }
 
@@ -247,14 +247,14 @@ export async function inboxSize(haseefEntityId: string): Promise<number> {
  * Called at the start of a think cycle, after drain.
  */
 export async function markEventsProcessing(
-  haseefEntityId: string,
+  haseefId: string,
   eventIds: string[],
   runId: string,
 ): Promise<void> {
   if (eventIds.length === 0) return;
   await prisma.inboxEvent.updateMany({
     where: {
-      haseefEntityId,
+      haseefId,
       eventId: { in: eventIds },
       status: 'pending',
     },
@@ -269,13 +269,13 @@ export async function markEventsProcessing(
  * Mark a batch of events as 'processed' after a successful think cycle.
  */
 export async function markEventsProcessed(
-  haseefEntityId: string,
+  haseefId: string,
   eventIds: string[],
 ): Promise<void> {
   if (eventIds.length === 0) return;
   await prisma.inboxEvent.updateMany({
     where: {
-      haseefEntityId,
+      haseefId,
       eventId: { in: eventIds },
       status: 'processing',
     },
@@ -290,13 +290,13 @@ export async function markEventsProcessed(
  * Mark a batch of events as 'failed' when a think cycle errors.
  */
 export async function markEventsFailed(
-  haseefEntityId: string,
+  haseefId: string,
   eventIds: string[],
 ): Promise<void> {
   if (eventIds.length === 0) return;
   await prisma.inboxEvent.updateMany({
     where: {
-      haseefEntityId,
+      haseefId,
       eventId: { in: eventIds },
       status: 'processing',
     },
@@ -311,10 +311,10 @@ export async function markEventsFailed(
  * (Redis signals lost after gateway restart) and re-push them to the Redis
  * inbox so the agent process picks them up.
  */
-export async function recoverStuckEvents(haseefEntityId: string): Promise<number> {
+export async function recoverStuckEvents(haseefId: string): Promise<number> {
   const stuck = await prisma.inboxEvent.findMany({
     where: {
-      haseefEntityId,
+      haseefId,
       status: { in: ['processing', 'pending'] },
     },
     orderBy: { createdAt: 'asc' },
@@ -322,7 +322,7 @@ export async function recoverStuckEvents(haseefEntityId: string): Promise<number
 
   if (stuck.length === 0) return 0;
 
-  const key = `${INBOX_PREFIX}${haseefEntityId}`;
+  const key = `${INBOX_PREFIX}${haseefId}`;
   for (const row of stuck) {
     // Reconstruct SenseEvent from DB row.
     // DB 'type' column stores "channel:type" (e.g. "ext-email:message", "core:plan").
@@ -344,7 +344,7 @@ export async function recoverStuckEvents(haseefEntityId: string): Promise<number
   if (processingCount > 0) {
     await prisma.inboxEvent.updateMany({
       where: {
-        haseefEntityId,
+        haseefId,
         status: 'processing',
       },
       data: {

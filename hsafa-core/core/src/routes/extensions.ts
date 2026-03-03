@@ -69,7 +69,7 @@ extensionsRouter.get('/me', requireExtensionKey(), async (req: Request, res: Res
           connectionId: c.id,
           haseefId: c.haseef.id,
           haseefName: c.haseef.name,
-          haseefEntityId: c.haseef.entity?.id,
+          haseefId: c.haseef.entity?.id,
           haseefDisplayName: c.haseef.entity?.displayName,
           config: c.config,
           connectedAt: c.connectedAt,

@@ -159,22 +159,22 @@ export interface GrowthTrajectory {
  * Compute growth trajectory from DB data.
  */
 export async function computeGrowthTrajectory(
-  haseefEntityId: string,
+  haseefId: string,
 ): Promise<GrowthTrajectory> {
   const [consciousness, memoryCounts, goalCount, planCount] = await Promise.all([
     prisma.haseefConsciousness.findUnique({
-      where: { haseefEntityId },
+      where: { haseefId },
       select: { cycleCount: true, lastCycleAt: true, createdAt: true },
     }),
     prisma.memory.findMany({
-      where: { entityId: haseefEntityId },
+      where: { haseefId: haseefId },
       select: { key: true },
     }),
     prisma.goal.count({
-      where: { entityId: haseefEntityId, status: 'active' },
+      where: { haseefId: haseefId, status: 'active' },
     }),
     prisma.plan.count({
-      where: { entityId: haseefEntityId, status: 'pending' },
+      where: { haseefId: haseefId, status: 'pending' },
     }),
   ]);
 
@@ -215,17 +215,17 @@ export interface WillAnalysis {
 }
 
 export async function analyzeWill(
-  haseefEntityId: string,
+  haseefId: string,
   memories: Array<{ key: string; value: string }>,
 ): Promise<WillAnalysis> {
   const [activeGoals, completedGoals] = await Promise.all([
     prisma.goal.findMany({
-      where: { entityId: haseefEntityId, status: 'active' },
+      where: { haseefId: haseefId, status: 'active' },
       select: { description: true, status: true, priority: true },
       orderBy: { priority: 'desc' },
     }),
     prisma.goal.findMany({
-      where: { entityId: haseefEntityId, status: 'completed' },
+      where: { haseefId: haseefId, status: 'completed' },
       select: { description: true },
       orderBy: { updatedAt: 'desc' },
       take: 5,

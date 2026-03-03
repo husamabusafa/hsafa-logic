@@ -67,9 +67,9 @@ function createHaseefInstance(
       const elapsed = Date.now() - cycleState.start;
       parts.push(`Current time: ${new Date().toISOString()} (cycle running ${Math.round(elapsed / 1000)}s)`);
       try {
-        const pending = await inboxSize(context.haseefEntityId);
+        const pending = await inboxSize(context.haseefId);
         if (pending > 0) {
-          const preview = await peekInbox(context.haseefEntityId, 3);
+          const preview = await peekInbox(context.haseefId, 3);
           parts.push(formatInboxPreview(preview));
         }
       } catch {
@@ -88,7 +88,6 @@ function createHaseefInstance(
 
 export interface HaseefProcessOptions {
   haseefId: string;
-  haseefEntityId: string;
   haseefName: string;
   signal: AbortSignal;
 }
@@ -111,25 +110,16 @@ export interface HaseefProcessOptions {
  * 11. Loop back to step 2
  */
 export async function startHaseefProcess(options: HaseefProcessOptions): Promise<void> {
-  const { haseefId, haseefEntityId, haseefName, signal } = options;
+  const { haseefId, haseefName, signal } = options;
 
   // Dedicated Redis connection for blocking BRPOP
   const blockingRedis: Redis = createBlockingRedis();
 
   // Load consciousness (includes persisted runtime state)
-  let { messages: consciousness, cycleCount } = await loadConsciousness(haseefEntityId);
+  let { messages: consciousness, cycleCount } = await loadConsciousness(haseefId);
 
   const haseef = await prisma.haseef.findUniqueOrThrow({
     where: { id: haseefId },
-    include: {
-      entity: {
-        include: {
-          memories: true,
-          goals: true,
-          plans: { where: { status: 'pending' } },
-        },
-      },
-    },
   });
 
   // Ship #4: Compaction instead of amnesia — if consciousness is large, compact it
@@ -139,14 +129,13 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
   if (startupTokens > maxTokens) {
     console.log(`[haseef-process] ${haseefName} consciousness large (${startupTokens} est. tokens), compacting...`);
     consciousness = compactConsciousness(consciousness, maxTokens);
-    await saveConsciousness(haseefEntityId, consciousness, cycleCount, {});
+    await saveConsciousness(haseefId, consciousness, cycleCount, {});
   }
 
   // Build process context
   const context: HaseefProcessContext = {
-    haseefEntityId,
-    haseefName,
     haseefId,
+    haseefName,
     cycleCount,
     currentRunId: null,
   };
@@ -156,7 +145,7 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
   const haseefConfig = haseef.configJson as any;
 
   // Crash recovery: re-push any events stuck in 'processing' from a previous crash
-  const recovered = await recoverStuckEvents(haseefEntityId);
+  const recovered = await recoverStuckEvents(haseefId);
   if (recovered > 0) {
     console.log(`[haseef-process] ${haseefName} recovered ${recovered} stuck inbox events`);
   }
@@ -169,7 +158,7 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
   const cycleState = { start: 0 };
   let currentInstance = createHaseefInstance(built, context, haseefConfig, cycleState);
 
-  console.log(`[haseef-process] ${haseefName} (${haseefEntityId}) started — cycle ${cycleCount}, consciousness=${consciousness.length} messages`);
+  console.log(`[haseef-process] ${haseefName} (${haseefId}) started — cycle ${cycleCount}, consciousness=${consciousness.length} messages`);
 
   // ── Main loop ─────────────────────────────────────────────────────────────
 
@@ -178,11 +167,11 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
     let preCycleCycleCount = cycleCount;
     try {
       // 1. SLEEP — block until inbox has events
-      const firstEvent = await waitForInbox(haseefEntityId, blockingRedis, signal);
+      const firstEvent = await waitForInbox(haseefId, blockingRedis, signal);
       if (signal.aborted || !firstEvent) break;
 
       // 2. DRAIN — pull all pending events
-      const remainingEvents = await drainInbox(haseefEntityId);
+      const remainingEvents = await drainInbox(haseefId);
       const allEvents: InboxEvent[] = [firstEvent, ...remainingEvents];
 
       if (allEvents.length === 0) continue;
@@ -197,7 +186,6 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
       const isService = first.type === SENSE_TYPE.SERVICE;
       const run = await prisma.run.create({
         data: {
-          haseefEntityId,
           haseefId,
           status: 'running',
           cycleNumber: cycleCount,
@@ -216,12 +204,12 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
       const eventIds = allEvents.map((e) => e.eventId);
 
       // Mark events as processing in Postgres (linked to this run)
-      await markEventsProcessing(haseefEntityId, eventIds, run.id);
+      await markEventsProcessing(haseefId, eventIds, run.id);
 
       cycleState.start = Date.now();
 
       // 4. REFRESH system prompt (v4: includes extension instructions)
-      const systemPrompt = await buildSystemPrompt(haseefId, haseefEntityId, haseefName, built.extensionInstructions);
+      const systemPrompt = await buildSystemPrompt(haseefId, haseefName, built.extensionInstructions);
       consciousness = refreshSystemPrompt(consciousness, systemPrompt);
 
       // 6. INJECT inbox events as user message
@@ -247,7 +235,7 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
       // (Space-facing streaming is handled by tool lifecycle hooks on each tool)
       const streamResult = await processStream(result.fullStream, {
         runId: run.id,
-        haseefEntityId,
+        haseefId,
       });
 
       // 9. EXTRACT done tool metadata (if agent called done)
@@ -270,7 +258,7 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
       consciousness = compactConsciousness(consciousness, maxTokens);
 
       // 13. SAVE consciousness
-      await saveConsciousness(haseefEntityId, consciousness, cycleCount, {});
+      await saveConsciousness(haseefId, consciousness, cycleCount, {});
 
       // 14. UPDATE audit record
       const usage = await result.totalUsage;
@@ -289,7 +277,7 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
       });
 
       // Mark all events as processed in Postgres
-      await markEventsProcessed(haseefEntityId, eventIds);
+      await markEventsProcessed(haseefId, eventIds);
 
       // Success — reset failure counter and restore original model if degraded
       consecutiveFailures = 0;
@@ -388,7 +376,7 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
 
   // Graceful shutdown
   console.log(`[haseef-process] ${haseefName} shutting down`);
-  await saveConsciousness(haseefEntityId, consciousness, cycleCount, {});
+  await saveConsciousness(haseefId, consciousness, cycleCount, {});
   blockingRedis.disconnect();
 
   // Close MCP clients

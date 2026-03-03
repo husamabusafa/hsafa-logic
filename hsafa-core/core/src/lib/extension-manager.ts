@@ -210,7 +210,7 @@ export async function buildExtensionTools(
           // Create PendingToolCall so the extension can poll for it
           await prisma.pendingToolCall.create({
             data: {
-              haseefEntityId: context.haseefEntityId,
+              haseefId: context.haseefId,
               runId: context.currentRunId!,
               toolCallId,
               toolName: extTool.name,
@@ -226,7 +226,7 @@ export async function buildExtensionTools(
             toolName: extTool.name,
             args,
             runId: context.currentRunId!,
-            haseefEntityId: context.haseefEntityId,
+            haseefId: context.haseefId,
             extensionId: ext.id,
             ts: new Date().toISOString(),
           };
@@ -284,7 +284,7 @@ export async function getPendingToolCalls(
   // Find pending/waiting calls for this Haseef's tools
   return prisma.pendingToolCall.findMany({
     where: {
-      haseefEntityId: haseef.entity.id,
+      haseefId: haseef.entity.id,
       toolName: { in: toolNames },
       status: { in: ['pending', 'waiting'] },
     },

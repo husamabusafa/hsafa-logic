@@ -23,7 +23,7 @@ import { emitRunEvent } from './run-events.js';
 
 export interface StreamProcessorOptions {
   runId: string;
-  haseefEntityId: string;
+  haseefId: string;
 }
 
 export interface CollectedToolCall {
@@ -61,7 +61,7 @@ export async function processStream(
   fullStream: AsyncIterable<any>,
   options: StreamProcessorOptions,
 ): Promise<StreamResult> {
-  const { runId, haseefEntityId } = options;
+  const { runId, haseefId } = options;
 
   const toolCalls: CollectedToolCall[] = [];
   /** Minimal tracking: toolCallId → { toolName, startedAt } for duration + error cleanup */
@@ -88,7 +88,7 @@ export async function processStream(
           await toRun({
             type: 'text.delta',
             runId,
-            haseefEntityId,
+            haseefId,
             text: delta,
           });
         }
@@ -113,7 +113,7 @@ export async function processStream(
           type: 'tool.started',
           streamId: toolCallId,
           runId,
-          haseefEntityId,
+          haseefId,
           toolName,
         });
         break;
@@ -129,7 +129,7 @@ export async function processStream(
             type: 'tool-input.delta',
             streamId: toolCallId,
             runId,
-            haseefEntityId,
+            haseefId,
             toolName: timing.toolName,
             delta: argsDelta,
           });
@@ -149,7 +149,7 @@ export async function processStream(
           type: 'tool.ready',
           streamId: toolCallId,
           runId,
-          haseefEntityId,
+          haseefId,
           toolName,
           args,
         });
@@ -175,7 +175,7 @@ export async function processStream(
           type: 'tool.done',
           streamId: toolCallId,
           runId,
-          haseefEntityId,
+          haseefId,
           toolName,
           result,
         });
@@ -188,7 +188,7 @@ export async function processStream(
         await toRun({
           type: 'step.finish',
           runId,
-          haseefEntityId,
+          haseefId,
           finishReason: part.finishReason as string,
         });
         break;
@@ -199,7 +199,7 @@ export async function processStream(
         await toRun({
           type: 'run.finish',
           runId,
-          haseefEntityId,
+          haseefId,
           finishReason: part.finishReason as string,
         });
         break;
@@ -220,7 +220,7 @@ export async function processStream(
             type: 'tool.error',
             streamId: toolCallId,
             runId,
-            haseefEntityId,
+            haseefId,
             toolName: timing.toolName,
             error: errMsg,
           });

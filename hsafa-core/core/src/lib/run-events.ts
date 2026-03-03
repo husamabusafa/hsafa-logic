@@ -15,7 +15,7 @@ export interface RunEvent {
  * Publish an event to a run-specific channel AND a haseef-level stream channel.
  *
  * - `run:{runId}` — for run-specific subscribers (e.g. admin SSE endpoint)
- * - `haseef:{haseefEntityId}:stream` — for extension subscribers that want
+ * - `haseef:{haseefId}:stream` — for extension subscribers that want
  *   real-time streaming without knowing runIds ahead of time
  */
 export async function emitRunEvent(
@@ -27,8 +27,8 @@ export async function emitRunEvent(
   await redis.publish(runChannel, json);
 
   // Also publish to haseef-level stream channel for extensions
-  if (event.haseefEntityId && typeof event.haseefEntityId === 'string') {
-    const haseefChannel = `haseef:${event.haseefEntityId}:stream`;
+  if (event.haseefId && typeof event.haseefId === 'string') {
+    const haseefChannel = `haseef:${event.haseefId}:stream`;
     await redis.publish(haseefChannel, json);
   }
 }

@@ -10,7 +10,6 @@ import { startHaseefProcess } from './agent-process.js';
 
 interface HaseefProcessHandle {
   haseefId: string;
-  haseefEntityId: string;
   haseefName: string;
   abortController: AbortController;
   /** The running promise — resolves when the process exits */
@@ -29,10 +28,9 @@ const processes = new Map<string, HaseefProcessHandle>();
  */
 export async function startProcess(
   haseefId: string,
-  haseefEntityId: string,
   haseefName: string,
 ): Promise<void> {
-  if (processes.has(haseefEntityId)) {
+  if (processes.has(haseefId)) {
     console.log(`[process-manager] ${haseefName} already running — skipping`);
     return;
   }
@@ -41,31 +39,29 @@ export async function startProcess(
 
   const promise = startHaseefProcess({
     haseefId,
-    haseefEntityId,
     haseefName,
     signal: abortController.signal,
   }).catch((err) => {
     console.error(`[process-manager] ${haseefName} process crashed:`, err);
-    processes.delete(haseefEntityId);
+    processes.delete(haseefId);
   });
 
-  processes.set(haseefEntityId, {
+  processes.set(haseefId, {
     haseefId,
-    haseefEntityId,
     haseefName,
     abortController,
     promise,
   });
 
-  console.log(`[process-manager] Started process for ${haseefName} (${haseefEntityId})`);
+  console.log(`[process-manager] Started process for ${haseefName} (${haseefId})`);
 }
 
 /**
  * Stop a process for a single Haseef.
  * Signals abort and waits for graceful shutdown.
  */
-export async function stopProcess(haseefEntityId: string): Promise<void> {
-  const handle = processes.get(haseefEntityId);
+export async function stopProcess(haseefId: string): Promise<void> {
+  const handle = processes.get(haseefId);
   if (!handle) return;
 
   console.log(`[process-manager] Stopping ${handle.haseefName}...`);
@@ -77,7 +73,7 @@ export async function stopProcess(haseefEntityId: string): Promise<void> {
     new Promise((r) => setTimeout(r, 10_000)),
   ]);
 
-  processes.delete(haseefEntityId);
+  processes.delete(haseefId);
   console.log(`[process-manager] Stopped ${handle.haseefName}`);
 }
 
@@ -90,27 +86,12 @@ export async function stopProcess(haseefEntityId: string): Promise<void> {
  * Called at gateway startup.
  */
 export async function startAllProcesses(): Promise<void> {
-  const haseefs = await prisma.haseef.findMany({
-    include: {
-      entity: {
-        select: { id: true, displayName: true },
-      },
-    },
-  });
+  const haseefs = await prisma.haseef.findMany();
 
   console.log(`[process-manager] Starting ${haseefs.length} Haseef processes...`);
 
   for (const h of haseefs) {
-    if (!h.entity) {
-      console.warn(`[process-manager] Haseef ${h.name} has no entity — skipping`);
-      continue;
-    }
-
-    await startProcess(
-      h.id,
-      h.entity.id,
-      h.name,
-    );
+    await startProcess(h.id, h.name);
   }
 
   console.log(`[process-manager] All ${haseefs.length} processes started`);
@@ -123,8 +104,8 @@ export async function startAllProcesses(): Promise<void> {
 export async function stopAllProcesses(): Promise<void> {
   console.log(`[process-manager] Stopping all ${processes.size} processes...`);
 
-  const stopPromises = Array.from(processes.keys()).map((entityId) =>
-    stopProcess(entityId),
+  const stopPromises = Array.from(processes.keys()).map((haseefId) =>
+    stopProcess(haseefId),
   );
 
   await Promise.allSettled(stopPromises);
@@ -138,8 +119,8 @@ export async function stopAllProcesses(): Promise<void> {
 /**
  * Check if a Haseef process is running.
  */
-export function isProcessRunning(haseefEntityId: string): boolean {
-  return processes.has(haseefEntityId);
+export function isProcessRunning(haseefId: string): boolean {
+  return processes.has(haseefId);
 }
 
 /**
@@ -154,12 +135,10 @@ export function getProcessCount(): number {
  */
 export function getProcessStatuses(): Array<{
   haseefId: string;
-  haseefEntityId: string;
   haseefName: string;
 }> {
   return Array.from(processes.values()).map((h) => ({
     haseefId: h.haseefId,
-    haseefEntityId: h.haseefEntityId,
     haseefName: h.haseefName,
   }));
 }

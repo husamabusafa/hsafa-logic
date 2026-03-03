@@ -22,7 +22,7 @@ export function createDeleteGoalsTool(ctx: HaseefProcessContext) {
     }),
     execute: async ({ goalIds }) => {
       const result = await prisma.goal.deleteMany({
-        where: { id: { in: goalIds }, entityId: ctx.haseefEntityId },
+        where: { id: { in: goalIds }, entityId: ctx.haseefId },
       });
       return { success: true, deleted: result.count };
     },

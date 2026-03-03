@@ -18,7 +18,7 @@ export function createPeekInboxTool(ctx: HaseefProcessContext) {
     }),
     execute: async ({ count }) => {
       const pullCount = Math.min(count ?? 1, 10);
-      const events = await drainInbox(ctx.haseefEntityId);
+      const events = await drainInbox(ctx.haseefId);
 
       // Take only the requested number, push the rest back
       // Since drainInbox removes all, we re-push excess events
@@ -28,13 +28,13 @@ export function createPeekInboxTool(ctx: HaseefProcessContext) {
       if (remaining.length > 0) {
         // Re-push remaining events back to inbox
         const { redis } = await import('../../lib/redis.js');
-        const key = `inbox:${ctx.haseefEntityId}`;
+        const key = `inbox:${ctx.haseefId}`;
         for (const evt of remaining.reverse()) {
           await redis.rpush(key, JSON.stringify(evt));
         }
       }
 
-      const pendingCount = await inboxSize(ctx.haseefEntityId);
+      const pendingCount = await inboxSize(ctx.haseefId);
 
       return {
         events: pulled.map((e) => ({

@@ -32,7 +32,7 @@ agentsRouter.post('/', requireSecretKey(), async (req, res) => {
     // Start Haseef process
     await startProcess(haseef.id, entity.id, name);
 
-    res.status(201).json({ haseef, entityId: entity.id });
+    res.status(201).json({ haseef, haseefId: entity.id });
   } catch (error) {
     console.error('Create haseef error:', error);
     res.status(500).json({ error: 'Failed to create haseef' });
@@ -136,7 +136,7 @@ agentsRouter.post('/:haseefId/trigger', requireSecretKey(), async (req, res) => 
       payload: payload ?? {},
     });
 
-    res.json({ success: true, haseefEntityId: haseef.entity.id });
+    res.json({ success: true, haseefId: haseef.entity.id });
   } catch (error) {
     console.error('Trigger agent error:', error);
     res.status(500).json({ error: 'Failed to trigger agent' });

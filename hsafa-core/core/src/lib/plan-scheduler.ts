@@ -80,18 +80,18 @@ export async function stopPlanScheduler(): Promise<void> {
 
 interface PlanJobData {
   planId: string;
-  haseefEntityId: string;
+  haseefId: string;
 }
 
 async function handlePlanJob(job: Job<PlanJobData>): Promise<void> {
-  const { planId, haseefEntityId } = job.data;
+  const { planId, haseefId } = job.data;
 
   // Load the plan from DB (it may have been deleted or completed)
   const plan = await prisma.plan.findUnique({ where: { id: planId } });
   if (!plan || plan.status !== 'pending') return;
 
   // Push plan event to Haseef's inbox
-  await pushPlanEvent(haseefEntityId, {
+  await pushPlanEvent(haseefId, {
     planId: plan.id,
     planName: plan.name,
     instruction: plan.instruction ?? '',
@@ -118,7 +118,7 @@ async function handlePlanJob(job: Job<PlanJobData>): Promise<void> {
     });
   }
 
-  console.log(`[plan-scheduler] Fired plan "${plan.name}" for Haseef ${haseefEntityId}`);
+  console.log(`[plan-scheduler] Fired plan "${plan.name}" for Haseef ${haseefId}`);
 }
 
 // =============================================================================
@@ -132,7 +132,7 @@ async function handlePlanJob(job: Job<PlanJobData>): Promise<void> {
  */
 export async function enqueuePlan(plan: {
   id: string;
-  entityId: string;
+  haseefId: string;
   cron: string | null;
   nextRunAt: Date | null;
   isRecurring: boolean;
@@ -141,7 +141,7 @@ export async function enqueuePlan(plan: {
 
   const jobData: PlanJobData = {
     planId: plan.id,
-    haseefEntityId: plan.entityId,
+    haseefId: plan.haseefId,
   };
 
   if (plan.isRecurring && plan.cron) {
@@ -191,7 +191,7 @@ async function reconcilePlans(): Promise<void> {
     where: { status: 'pending' },
     select: {
       id: true,
-      entityId: true,
+      haseefId: true,
       cron: true,
       nextRunAt: true,
       isRecurring: true,

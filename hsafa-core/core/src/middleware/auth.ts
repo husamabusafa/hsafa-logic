@@ -8,7 +8,7 @@ import { prisma } from '../lib/db.js';
 
 export interface AuthContext {
   method: 'secret_key' | 'public_key_jwt' | 'extension_key';
-  entityId?: string;
+  haseefId?: string;
   externalId?: string;
   /** Set when method === 'extension_key' */
   extensionId?: string;
@@ -83,7 +83,7 @@ export function requireSecretKey() {
       }
 
       // Optionally resolve entity from JWT if provided
-      let entityId: string | undefined;
+      let haseefId: string | undefined;
       let externalId: string | undefined;
       const authHeader = req.headers['authorization'] as string | undefined;
 
@@ -96,14 +96,14 @@ export function requireSecretKey() {
               where: { externalId },
               select: { id: true },
             });
-            if (entity) entityId = entity.id;
+            if (entity) haseefId = entity.id;
           }
         } catch {
           // JWT is optional with secret key
         }
       }
 
-      req.auth = { method: 'secret_key', entityId, externalId };
+      req.auth = { method: 'secret_key', haseefId, externalId };
       next();
     } catch (error) {
       console.error('Secret key auth error:', error);
@@ -161,7 +161,7 @@ export function requirePublicKeyJWT() {
         return;
       }
 
-      req.auth = { method: 'public_key_jwt', entityId: entity.id, externalId };
+      req.auth = { method: 'public_key_jwt', haseefId: entity.id, externalId };
       next();
     } catch (error) {
       console.error('Public key + JWT auth error:', error);

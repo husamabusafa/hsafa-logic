@@ -121,7 +121,7 @@ function buildCustomTools(
           const toolCallId = options.toolCallId;
           await prisma.pendingToolCall.create({
             data: {
-              haseefEntityId: context.haseefEntityId,
+              haseefId: context.haseefId,
               runId: context.currentRunId!,
               toolCallId,
               toolName: tc.name,
@@ -146,7 +146,7 @@ function buildCustomTools(
           const toolCallId = options.toolCallId;
           await prisma.pendingToolCall.create({
             data: {
-              haseefEntityId: context.haseefEntityId,
+              haseefId: context.haseefId,
               runId: context.currentRunId!,
               toolCallId,
               toolName: tc.name,
@@ -162,7 +162,7 @@ function buildCustomTools(
             toolName: tc.name,
             args,
             runId: context.currentRunId!,
-            haseefEntityId: context.haseefEntityId,
+            haseefId: context.haseefId,
             ts: new Date().toISOString(),
           }).catch((err: unknown) => console.warn('[builder] Failed to emit tool worker event:', err));
 
