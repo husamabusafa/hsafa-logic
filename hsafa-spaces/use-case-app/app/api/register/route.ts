@@ -1,35 +1,26 @@
-import { HsafaClient } from "@hsafa/node";
+import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
+import { spacesPrisma } from "@/lib/spaces-db";
 import { signToken } from "@/lib/auth";
-
-const GATEWAY_URL = process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
-const SECRET_KEY = process.env.HSAFA_SECRET_KEY || "";
-
-const AGENT_ID = "010bc5c6-b0fa-4788-aea6-8ec98a2deea4";
 
 let cachedAgentEntityId: string | null = null;
 
-async function ensureAgentEntity(client: HsafaClient): Promise<string> {
+async function ensureAgentEntity(): Promise<string> {
   if (cachedAgentEntityId) return cachedAgentEntityId;
 
-  // Check if an agent entity already exists for this agent
-  const { entities } = await client.entities.list({ type: "agent" });
-  const existing = entities.find((e: any) => e.agentId === AGENT_ID);
+  // Check if an agent entity already exists
+  const existing = await spacesPrisma.entity.findFirst({
+    where: { type: "agent" },
+  });
 
   if (existing) {
     cachedAgentEntityId = existing.id;
     return existing.id;
   }
 
-  // Create the agent entity (agent itself already exists in the DB)
-  const { entity: agentEntity } = await client.entities.createAgent({
-    agentId: AGENT_ID,
-    displayName: "Hsafa Assistant",
-  });
-
-  cachedAgentEntityId = agentEntity.id;
-  return agentEntity.id;
+  // No agent entity found — this should be created by core's seed
+  throw new Error("No agent entity found. Run core seed first.");
 }
 
 export async function POST(request: Request) {
@@ -75,38 +66,42 @@ export async function POST(request: Request) {
       },
     });
 
-    const hsafaClient = new HsafaClient({
-      gatewayUrl: GATEWAY_URL,
-      secretKey: SECRET_KEY,
-    });
+    // 2. Ensure the agent entity exists (created by core seed)
+    const agentEntityId = await ensureAgentEntity();
 
-    // 2. Ensure the agent + agent entity exist
-    const agentEntityId = await ensureAgentEntity(hsafaClient);
-
-    // 3. Create human entity in hsafa gateway
+    // 3. Create human entity directly in spaces DB
     //    externalId = user.id so it matches the JWT sub claim
-    const { entity: human } = await hsafaClient.entities.create({
-      type: "human",
-      externalId: user.id,
-      displayName: name,
-      metadata: { email },
+    const human = await spacesPrisma.entity.create({
+      data: {
+        id: crypto.randomUUID(),
+        type: "human",
+        externalId: user.id,
+        displayName: name,
+        metadata: { email },
+      },
     });
 
     // 4. Create a SmartSpace for this user + agent
-    const { smartSpace } = await hsafaClient.spaces.create({
-      name: `${name}'s Chat`,
+    const smartSpace = await spacesPrisma.smartSpace.create({
+      data: { name: `${name}'s Chat` },
     });
 
     // 5. Add human as admin
-    await hsafaClient.spaces.addMember(smartSpace.id, {
-      entityId: human.id,
-      role: "admin",
+    await spacesPrisma.smartSpaceMembership.create({
+      data: {
+        smartSpaceId: smartSpace.id,
+        entityId: human.id,
+        role: "admin",
+      },
     });
 
     // 6. Add agent as member
-    await hsafaClient.spaces.addMember(smartSpace.id, {
-      entityId: agentEntityId,
-      role: "member",
+    await spacesPrisma.smartSpaceMembership.create({
+      data: {
+        smartSpaceId: smartSpace.id,
+        entityId: agentEntityId,
+        role: "member",
+      },
     });
 
     // 7. Update user with hsafa references

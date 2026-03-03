@@ -7,6 +7,8 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  const ALLOWED_HEADERS = "Content-Type, Authorization, x-secret-key, x-public-key, x-extension-key";
+
   // Handle preflight OPTIONS requests
   if (request.method === "OPTIONS") {
     return new NextResponse(null, {
@@ -14,7 +16,7 @@ export function middleware(request: NextRequest) {
       headers: {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Headers": ALLOWED_HEADERS,
         "Access-Control-Max-Age": "86400",
       },
     });
@@ -24,7 +26,7 @@ export function middleware(request: NextRequest) {
   const response = NextResponse.next();
   response.headers.set("Access-Control-Allow-Origin", "*");
   response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-  response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  response.headers.set("Access-Control-Allow-Headers", ALLOWED_HEADERS);
   return response;
 }
 

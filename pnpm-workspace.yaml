@@ -2,7 +2,8 @@ packages:
   - hsafa-core/core
   - hsafa-core/extensions/ext-spaces
   - hsafa-core/sdks/extension-node
-  - hsafa-spaces/spaces-app
+  # spaces-app merged into use-case-app
+  # - hsafa-spaces/spaces-app
   - hsafa-spaces/sdks/node-sdk
   - hsafa-spaces/sdks/react-sdk
   - hsafa-spaces/sdks/react-native-sdk

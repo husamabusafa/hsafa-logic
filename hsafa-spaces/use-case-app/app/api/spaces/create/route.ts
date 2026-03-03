@@ -1,8 +1,5 @@
-import { HsafaClient } from "@hsafa/node";
+import { spacesPrisma } from "@/lib/spaces-db";
 import { verifyToken } from "@/lib/auth";
-
-const GATEWAY_URL = process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
-const SECRET_KEY = process.env.HSAFA_SECRET_KEY || "";
 
 export async function POST(request: Request) {
   try {
@@ -24,26 +21,29 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { name } = body as { name?: string };
 
-    const hsafaClient = new HsafaClient({
-      gatewayUrl: GATEWAY_URL,
-      secretKey: SECRET_KEY,
-    });
-
-    // 1. Create the SmartSpace
-    const { smartSpace } = await hsafaClient.spaces.create({
-      name: name || `Chat ${new Date().toLocaleTimeString()}`,
+    // 1. Create the SmartSpace directly in spaces DB
+    const smartSpace = await spacesPrisma.smartSpace.create({
+      data: {
+        name: name || `Chat ${new Date().toLocaleTimeString()}`,
+      },
     });
 
     // 2. Add user as admin
-    await hsafaClient.spaces.addMember(smartSpace.id, {
-      entityId: payload.entityId,
-      role: "admin",
+    await spacesPrisma.smartSpaceMembership.create({
+      data: {
+        smartSpaceId: smartSpace.id,
+        entityId: payload.entityId,
+        role: "admin",
+      },
     });
 
     // 3. Add agent as member
-    await hsafaClient.spaces.addMember(smartSpace.id, {
-      entityId: payload.agentEntityId,
-      role: "member",
+    await spacesPrisma.smartSpaceMembership.create({
+      data: {
+        smartSpaceId: smartSpace.id,
+        entityId: payload.agentEntityId,
+        role: "member",
+      },
     });
 
     return Response.json({

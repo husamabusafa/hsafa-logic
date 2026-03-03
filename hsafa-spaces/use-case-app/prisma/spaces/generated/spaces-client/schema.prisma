@@ -1,0 +1,129 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "./generated/spaces-client"
+  engineType    = "library"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum EntityType {
+  human
+  agent
+}
+
+// =============================================================================
+// ENTITY — Read-only reference to Core entities
+// Spaces App shares the same Postgres (or reads from core's DB).
+// Entities are created/managed by Core. Spaces App only reads them.
+// =============================================================================
+
+model Entity {
+  id          String     @id @db.Uuid
+  type        EntityType
+  externalId  String?    @unique @map("external_id")
+  displayName String?    @map("display_name")
+  metadata    Json?      @db.JsonB
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Spaces-specific relations
+  smartSpaceMemberships SmartSpaceMembership[]
+  messages              SmartSpaceMessage[]
+  clients               Client[]
+
+  @@index([type])
+  @@index([externalId])
+  @@map("entities")
+}
+
+// =============================================================================
+// SMART SPACE — Shared context space (timeline of events/messages)
+// =============================================================================
+
+model SmartSpace {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String?
+  description String?
+  metadata    Json?    @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships SmartSpaceMembership[]
+  messages    SmartSpaceMessage[]
+
+  @@index([createdAt])
+  @@map("smart_spaces")
+}
+
+// =============================================================================
+// SMART SPACE MEMBERSHIP
+// =============================================================================
+
+model SmartSpaceMembership {
+  id           String   @id @default(uuid()) @db.Uuid
+  smartSpaceId String   @map("smart_space_id") @db.Uuid
+  entityId     String   @map("entity_id") @db.Uuid
+  role         String?
+  joinedAt     DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
+
+  // For humans: last message seen in the UI (unread badges)
+  lastSeenMessageId String? @map("last_seen_message_id") @db.Uuid
+
+  smartSpace SmartSpace @relation(fields: [smartSpaceId], references: [id], onDelete: Cascade)
+  entity     Entity     @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([smartSpaceId, entityId])
+  @@index([entityId])
+  @@map("smart_space_memberships")
+}
+
+// =============================================================================
+// SMART SPACE MESSAGE — Messages/events in a SmartSpace
+// =============================================================================
+
+model SmartSpaceMessage {
+  id           String   @id @default(uuid()) @db.Uuid
+  smartSpaceId String   @map("smart_space_id") @db.Uuid
+  entityId     String   @map("entity_id") @db.Uuid
+  role         String // user, assistant, system, tool
+  content      String?  @db.Text
+  metadata     Json?    @db.JsonB
+  seq          BigInt
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  smartSpace SmartSpace @relation(fields: [smartSpaceId], references: [id], onDelete: Cascade)
+  entity     Entity     @relation(fields: [entityId], references: [id])
+
+  @@unique([smartSpaceId, seq])
+  @@index([smartSpaceId, createdAt])
+  @@index([entityId])
+  @@map("smart_space_messages")
+}
+
+// =============================================================================
+// CLIENT — Connection points (web, mobile, node backend, etc.)
+// =============================================================================
+
+model Client {
+  id           String    @id @default(uuid()) @db.Uuid
+  entityId     String    @map("entity_id") @db.Uuid
+  clientKey    String    @unique @map("client_key")
+  clientType   String?   @map("client_type")
+  displayName  String?   @map("display_name")
+  capabilities Json      @default(dbgenerated("'{}'::jsonb")) @db.JsonB
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt   DateTime? @map("last_seen_at") @db.Timestamptz(6)
+
+  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@index([entityId])
+  @@index([clientType])
+  @@map("clients")
+}

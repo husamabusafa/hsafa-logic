@@ -1,9 +1,6 @@
-import { HsafaClient } from "@hsafa/node";
 import { prisma } from "@/lib/db";
+import { spacesPrisma } from "@/lib/spaces-db";
 import { verifyToken } from "@/lib/auth";
-
-const GATEWAY_URL = process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
-const SECRET_KEY = process.env.HSAFA_SECRET_KEY || "";
 
 export async function GET(request: Request) {
   try {
@@ -27,14 +24,19 @@ export async function GET(request: Request) {
       return Response.json({ error: "User not found" }, { status: 404 });
     }
 
-    // Fetch user's spaces from gateway
+    // Fetch user's spaces directly from spaces DB
     let spaces: Array<{ id: string; name?: string | null }> = [];
     const entityId = user.hsafaEntityId || "";
     if (entityId) {
       try {
-        const hsafaClient = new HsafaClient({ gatewayUrl: GATEWAY_URL, secretKey: SECRET_KEY });
-        const { smartSpaces } = await hsafaClient.spaces.list({ entityId });
-        spaces = smartSpaces.map((s) => ({ id: s.id, name: s.name }));
+        const memberships = await spacesPrisma.smartSpaceMembership.findMany({
+          where: { entityId },
+          include: { smartSpace: { select: { id: true, name: true } } },
+        });
+        spaces = memberships.map((m: any) => ({
+          id: m.smartSpace.id,
+          name: m.smartSpace.name,
+        }));
       } catch {
         // Fallback to default space
       }

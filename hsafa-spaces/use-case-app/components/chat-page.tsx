@@ -16,7 +16,8 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 import type { AuthSession } from "@/components/register-form";
 
-const GATEWAY_URL = process.env.NEXT_PUBLIC_HSAFA_GATEWAY_URL || "http://localhost:3001";
+// After merge: spaces API is served from the same Next.js app (same origin)
+const GATEWAY_URL = process.env.NEXT_PUBLIC_HSAFA_GATEWAY_URL || "";
 const PUBLIC_KEY = process.env.NEXT_PUBLIC_HSAFA_PUBLIC_KEY || "";
 
 function SpaceHeader() {

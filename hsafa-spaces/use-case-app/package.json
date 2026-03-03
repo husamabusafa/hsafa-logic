@@ -7,11 +7,11 @@
     "dev": "next dev --port 3005",
     "build": "next build",
     "start": "next start --port 3005",
-    "tool-worker": "tsx --env-file=.env scripts/tool-worker.ts"
+    "tool-worker": "tsx --env-file=.env scripts/tool-worker.ts",
+    "prisma:generate:spaces": "npx prisma generate --schema prisma/spaces/schema.prisma"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.10.25",
-    "@hsafa/node": "workspace:*",
     "@hsafa/react": "workspace:*",
     "@hsafa/ui": "workspace:*",
     "@prisma/adapter-pg": "^7.4.1",
@@ -21,6 +21,7 @@
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "ioredis": "^5.9.2",
     "jose": "^6.1.3",
     "lucide-react": "^0.563.0",
     "next": "^15.3.3",

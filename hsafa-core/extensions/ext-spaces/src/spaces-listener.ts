@@ -20,7 +20,7 @@ export class SpacesListener {
   private config: Config;
   private coreClient: CoreClient;
   private connection: HaseefConnection;
-  private eventSource: EventSource | null = null;
+  private eventSources: Map<string, EventSource> = new Map();
   private running = false;
 
   constructor(config: Config, coreClient: CoreClient, connection: HaseefConnection) {
@@ -37,19 +37,36 @@ export class SpacesListener {
 
   stop(): void {
     this.running = false;
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
+    for (const es of this.eventSources.values()) {
+      es.close();
     }
+    this.eventSources.clear();
   }
 
   private connect(): void {
     if (!this.running) return;
 
     const { agentEntityId, agentName, connectedSpaceIds } = this.connection;
-    const url = `${this.config.spacesAppUrl}/api/smart-spaces/stream?entityId=${agentEntityId}`;
 
-    console.log(`[spaces-listener] Connecting SSE for ${agentName} (${agentEntityId}) → ${url}`);
+    // Connect to per-space SSE streams (one EventSource per space)
+    if (connectedSpaceIds.length > 0) {
+      for (const spaceId of connectedSpaceIds) {
+        this.connectToSpace(spaceId);
+      }
+      return;
+    }
+
+    // Fallback: if no specific spaces, log warning
+    console.warn(`[spaces-listener] No connected spaces for ${agentName} — no SSE listeners started`);
+  }
+
+  private connectToSpace(spaceId: string): void {
+    if (!this.running) return;
+
+    const { agentEntityId, agentName } = this.connection;
+    const url = `${this.config.spacesAppUrl}/api/smart-spaces/${spaceId}/stream`;
+
+    console.log(`[spaces-listener] Connecting SSE for ${agentName} space=${spaceId} → ${url}`);
 
     const es = new EventSource(url, {
       fetch: (input, init) =>
@@ -74,17 +91,17 @@ export class SpacesListener {
     });
 
     es.onerror = (err: Event) => {
-      console.error(`[spaces-listener] SSE error for ${agentName}:`, err);
+      console.error(`[spaces-listener] SSE error for ${agentName} space=${spaceId}:`, err);
       es.close();
-      this.eventSource = null;
+      this.eventSources.delete(spaceId);
 
       if (this.running) {
-        console.log(`[spaces-listener] Reconnecting in ${RECONNECT_DELAY_MS}ms...`);
-        setTimeout(() => this.connect(), RECONNECT_DELAY_MS);
+        console.log(`[spaces-listener] Reconnecting space=${spaceId} in ${RECONNECT_DELAY_MS}ms...`);
+        setTimeout(() => this.connectToSpace(spaceId), RECONNECT_DELAY_MS);
       }
     };
 
-    this.eventSource = es;
+    this.eventSources.set(spaceId, es);
   }
 
   private async handleSpaceMessage(rawData: string): Promise<void> {
