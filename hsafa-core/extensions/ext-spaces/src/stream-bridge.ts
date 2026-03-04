@@ -10,11 +10,21 @@ import type { Config } from './config.js';
 // can show typing indicators and live token streaming.
 //
 // Event mapping (Core → spaces-app):
-//   text.delta       → space.message.streaming (phase: delta)
+//
+// For message_tools (messageTool: true in manifest):
+//   tool.started     → space.message.streaming (phase: start, toolName)
+//   tool-input.delta → space.message.streaming (phase: delta, toolName, partialArgs)
+//   tool.ready       → space.message.streaming (phase: args_complete, toolName, args)
+//   tool.done        → (no-op — persist happens in webhook handler)
+//
+// For regular tools:
 //   tool-input.delta → tool.streaming
 //   tool.started     → tool.started
 //   tool.ready       → tool.ready (with args)
 //   tool.done        → tool.done (with result)
+//
+// Always:
+//   text.delta       → space.message.streaming (phase: delta)
 //   run.start        → agent.active
 //   run.finish       → agent.inactive + space.message.streaming (phase: done)
 //
@@ -28,6 +38,7 @@ export interface StreamBridgeOptions {
   haseefName: string;
   agentEntityId: string;
   spaceIds: string[];
+  messageToolNames: Set<string>;
 }
 
 export class HaseefStreamBridge {
@@ -37,9 +48,12 @@ export class HaseefStreamBridge {
   private pub: Redis | null = null;
   private running = false;
 
+  private messageToolNames: Set<string>;
+
   constructor(config: Config, opts: StreamBridgeOptions) {
     this.config = config;
     this.opts = opts;
+    this.messageToolNames = opts.messageToolNames;
   }
 
   async start(): Promise<void> {
@@ -130,64 +144,21 @@ export class HaseefStreamBridge {
         break;
       }
 
-      case 'tool-input.delta': {
-        // Forward as tool.streaming
-        await this.emitToSpaces({
-          type: 'tool.streaming',
-          agentEntityId: this.opts.agentEntityId,
-          runId: streamId,
-          data: {
-            streamId: (event.streamId ?? event.toolCallId) as string,
-            toolName: event.toolName as string,
-            delta: event.delta as string,
-            partialArgs: event.partialArgs,
-          },
-        });
-        break;
-      }
-
-      case 'tool.started': {
-        // Core emits tool.started when tool-input-start fires
-        await this.emitToSpaces({
-          type: 'tool.started',
-          agentEntityId: this.opts.agentEntityId,
-          runId: streamId,
-          data: {
-            streamId: (event.streamId ?? event.toolCallId) as string,
-            toolName: event.toolName as string,
-          },
-        });
-        break;
-      }
-
-      case 'tool.ready': {
-        // Core emits tool.ready when full args are collected (tool-call)
-        // Forward args to spaces for display
-        await this.emitToSpaces({
-          type: 'tool.ready',
-          agentEntityId: this.opts.agentEntityId,
-          runId: streamId,
-          data: {
-            streamId: (event.streamId ?? event.toolCallId) as string,
-            toolName: event.toolName as string,
-            args: event.args,
-          },
-        });
-        break;
-      }
-
+      case 'tool-input.delta':
+      case 'tool.started':
+      case 'tool.ready':
       case 'tool.done': {
-        // Core emits tool.done when tool-result fires
-        await this.emitToSpaces({
-          type: 'tool.done',
-          agentEntityId: this.opts.agentEntityId,
-          runId: streamId,
-          data: {
-            streamId: (event.streamId ?? event.toolCallId) as string,
-            toolName: event.toolName as string,
-            result: event.result,
-          },
-        });
+        const toolName = event.toolName as string;
+        const toolStreamId = (event.streamId ?? event.toolCallId) as string;
+        const isMsgTool = this.messageToolNames.has(toolName);
+
+        if (isMsgTool) {
+          // message_tool: stream as space.message.streaming so frontend renders as message
+          await this.handleMessageToolEvent(type, event, toolStreamId, toolName, streamId);
+        } else {
+          // Regular tool: forward as tool.* events
+          await this.handleRegularToolEvent(type, event, toolStreamId, toolName, streamId);
+        }
         break;
       }
 
@@ -229,6 +200,127 @@ export class HaseefStreamBridge {
       }
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // message_tool events → space.message.streaming (frontend renders as message)
+  // ---------------------------------------------------------------------------
+
+  private async handleMessageToolEvent(
+    type: string,
+    event: Record<string, unknown>,
+    toolStreamId: string,
+    toolName: string,
+    runStreamId: string,
+  ): Promise<void> {
+    switch (type) {
+      case 'tool.started':
+        await this.emitToSpaces({
+          type: 'space.message.streaming',
+          agentEntityId: this.opts.agentEntityId,
+          runId: runStreamId,
+          data: {
+            streamId: toolStreamId,
+            agentEntityId: this.opts.agentEntityId,
+            phase: 'start',
+            toolName,
+          },
+        });
+        break;
+
+      case 'tool-input.delta':
+        await this.emitToSpaces({
+          type: 'space.message.streaming',
+          agentEntityId: this.opts.agentEntityId,
+          runId: runStreamId,
+          data: {
+            streamId: toolStreamId,
+            agentEntityId: this.opts.agentEntityId,
+            phase: 'delta',
+            toolName,
+            delta: event.delta as string,
+            partialArgs: event.partialArgs,
+          },
+        });
+        break;
+
+      case 'tool.ready':
+        await this.emitToSpaces({
+          type: 'space.message.streaming',
+          agentEntityId: this.opts.agentEntityId,
+          runId: runStreamId,
+          data: {
+            streamId: toolStreamId,
+            agentEntityId: this.opts.agentEntityId,
+            phase: 'args_complete',
+            toolName,
+            args: event.args,
+          },
+        });
+        break;
+
+      case 'tool.done':
+        // No-op for message_tools — the webhook handler persists the final message.
+        // The space.message event from persistence is the authoritative "done" signal.
+        break;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Regular tool events → tool.* (not rendered as messages)
+  // ---------------------------------------------------------------------------
+
+  private async handleRegularToolEvent(
+    type: string,
+    event: Record<string, unknown>,
+    toolStreamId: string,
+    toolName: string,
+    runStreamId: string,
+  ): Promise<void> {
+    switch (type) {
+      case 'tool.started':
+        await this.emitToSpaces({
+          type: 'tool.started',
+          agentEntityId: this.opts.agentEntityId,
+          runId: runStreamId,
+          data: { streamId: toolStreamId, toolName },
+        });
+        break;
+
+      case 'tool-input.delta':
+        await this.emitToSpaces({
+          type: 'tool.streaming',
+          agentEntityId: this.opts.agentEntityId,
+          runId: runStreamId,
+          data: {
+            streamId: toolStreamId,
+            toolName,
+            delta: event.delta as string,
+            partialArgs: event.partialArgs,
+          },
+        });
+        break;
+
+      case 'tool.ready':
+        await this.emitToSpaces({
+          type: 'tool.ready',
+          agentEntityId: this.opts.agentEntityId,
+          runId: runStreamId,
+          data: { streamId: toolStreamId, toolName, args: event.args },
+        });
+        break;
+
+      case 'tool.done':
+        await this.emitToSpaces({
+          type: 'tool.done',
+          agentEntityId: this.opts.agentEntityId,
+          runId: runStreamId,
+          data: { streamId: toolStreamId, toolName, result: event.result },
+        });
+        break;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
 
   private async emitToSpaces(event: Record<string, unknown>): Promise<void> {
     if (!this.pub) return;

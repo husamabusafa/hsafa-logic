@@ -33,6 +33,7 @@ export class SpacesClient {
     spaceId: string,
     entityId: string,
     content: string,
+    metadata?: Record<string, unknown>,
   ): Promise<{ message: SpaceMessage }> {
     const res = await fetch(
       `${this.config.spacesAppUrl}/api/smart-spaces/${spaceId}/messages`,
@@ -42,7 +43,7 @@ export class SpacesClient {
           'x-secret-key': this.config.spacesAppSecretKey,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ entityId, content, role: 'assistant' }),
+        body: JSON.stringify({ entityId, content, role: 'assistant', ...(metadata ? { metadata } : {}) }),
       },
     );
 

@@ -47,6 +47,7 @@ const MANIFEST = {
     {
       name: 'send_space_message',
       description: 'Send a message to a space. You MUST call enter_space first to load context. Returns {success:true, messageId} on delivery — do NOT retry on success.',
+      messageTool: true,
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -114,6 +115,11 @@ When you receive a message from a space in your sense events:
 // Active state — listeners managed by lifecycle webhooks
 // =============================================================================
 
+// Derive set of message_tool names from manifest
+const MESSAGE_TOOL_NAMES = new Set(
+  MANIFEST.tools.filter((t) => (t as any).messageTool).map((t) => t.name),
+);
+
 const activeListeners = new Map<string, SpacesListener>(); // haseefId → listener
 const activeBridges = new Map<string, HaseefStreamBridge>(); // haseefId → stream bridge
 const resolvedConfigs = new Map<string, Record<string, unknown>>(); // haseefId → auto-resolved config
@@ -154,7 +160,13 @@ async function handleToolCall(
       if (!spaceId || !text) return { error: 'spaceId and text are required' };
       if (!agentEntityId) return { error: 'agentEntityId not configured — set it in the extension config for this haseef' };
 
-      const result = await spacesClient.sendMessage(spaceId, agentEntityId, text);
+      // messageTool: persist as SmartSpaceMessage with metadata
+      const toolCallId = body.toolCallId as string | undefined;
+      const result = await spacesClient.sendMessage(spaceId, agentEntityId, text, {
+        type: 'message_tool',
+        toolName,
+        ...(toolCallId ? { toolCallId } : {}),
+      });
       return { success: true, messageId: result.message.id };
     }
 
@@ -226,7 +238,7 @@ async function handleLifecycle(
     activeListeners.set(haseefId, listener);
 
     // Start stream bridge (forwards haseef LLM streaming to spaces-app SSE)
-    const bridgeOpts: StreamBridgeOptions = { haseefId, haseefName, agentEntityId, spaceIds };
+    const bridgeOpts: StreamBridgeOptions = { haseefId, haseefName, agentEntityId, spaceIds, messageToolNames: MESSAGE_TOOL_NAMES };
     const bridge = new HaseefStreamBridge(config_obj, bridgeOpts);
     await bridge.start();
     activeBridges.set(haseefId, bridge);
