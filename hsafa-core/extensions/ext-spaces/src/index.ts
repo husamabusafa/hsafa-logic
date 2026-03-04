@@ -116,6 +116,7 @@ When you receive a message from a space in your sense events:
 
 const activeListeners = new Map<string, SpacesListener>(); // haseefId → listener
 const activeBridges = new Map<string, HaseefStreamBridge>(); // haseefId → stream bridge
+const resolvedConfigs = new Map<string, Record<string, unknown>>(); // haseefId → auto-resolved config
 
 // =============================================================================
 // Webhook Handlers
@@ -127,7 +128,10 @@ async function handleToolCall(
 ): Promise<unknown> {
   const toolName = body.toolName as string;
   const args = body.args as Record<string, unknown>;
-  const config = (body.config ?? {}) as Record<string, unknown>;
+  const haseefId = body.haseefId as string;
+  const dbConfig = (body.config ?? {}) as Record<string, unknown>;
+  const resolved = resolvedConfigs.get(haseefId) ?? {};
+  const config = { ...resolved, ...dbConfig };
   const agentEntityId = config.agentEntityId as string | undefined;
 
   switch (toolName) {
@@ -227,6 +231,9 @@ async function handleLifecycle(
     await bridge.start();
     activeBridges.set(haseefId, bridge);
 
+    // Store resolved config so tool calls can access agentEntityId
+    resolvedConfigs.set(haseefId, { agentEntityId, connectedSpaceIds: spaceIds });
+
     console.log(`[ext-spaces] Listener + bridge started for ${haseefName} (${spaceIds.length} spaces)`);
 
   } else if (type === 'haseef.disconnected') {
@@ -240,6 +247,7 @@ async function handleLifecycle(
       await existingBridge.stop();
       activeBridges.delete(haseefId);
     }
+    resolvedConfigs.delete(haseefId);
     if (existing || existingBridge) {
       console.log(`[ext-spaces] Listener + bridge stopped for ${haseefName}`);
     }

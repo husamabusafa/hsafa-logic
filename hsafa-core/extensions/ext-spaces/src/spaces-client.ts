@@ -42,7 +42,7 @@ export class SpacesClient {
           'x-secret-key': this.config.spacesAppSecretKey,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ entityId, content }),
+        body: JSON.stringify({ entityId, content, role: 'assistant' }),
       },
     );
 

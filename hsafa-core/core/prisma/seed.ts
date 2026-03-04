@@ -44,83 +44,12 @@ async function main() {
   console.log(`  ✅ Atlas — ${atlas.id}`);
 
   // =========================================================================
-  // Agent 2: Nova — Creative writer & brainstormer
-  // =========================================================================
-  const nova = await prisma.haseef.upsert({
-    where: { name: 'Nova' },
-    update: {},
-    create: {
-      name: 'Nova',
-      description: 'A creative writing assistant that excels at brainstorming, storytelling, and content creation.',
-      configJson: {
-        version: '3',
-        model: {
-          provider: 'openai',
-          model: 'gpt-5.2',
-        },
-        instructions: [
-          'You are Nova, a creative and imaginative assistant.',
-          'You excel at brainstorming ideas, writing stories, crafting content, and thinking outside the box.',
-          'Be expressive and enthusiastic. Offer multiple creative angles when asked.',
-          'Use vivid language and metaphors when appropriate.',
-        ].join('\n'),
-        consciousness: {
-          maxTokens: 200000,
-          minRecentCycles: 10,
-          compactionStrategy: 'summarize',
-        },
-        loop: {},
-        tools: [],
-      },
-    },
-  });
-
-  console.log(`  ✅ Nova — ${nova.id}`);
-
-  // =========================================================================
-  // Agent 3: Sentinel — Code reviewer & technical advisor
-  // =========================================================================
-  const sentinel = await prisma.haseef.upsert({
-    where: { name: 'Sentinel' },
-    update: {},
-    create: {
-      name: 'Sentinel',
-      description: 'A technical advisor focused on code review, architecture decisions, and engineering best practices.',
-      configJson: {
-        version: '3',
-        model: {
-          provider: 'openai',
-          model: 'gpt-5.2',
-        },
-        instructions: [
-          'You are Sentinel, a precise and thorough technical advisor.',
-          'You review code, suggest architectural improvements, and enforce best practices.',
-          'Be direct and factual. Cite specific issues with line references when reviewing code.',
-          'Prioritize security, performance, and maintainability in your recommendations.',
-          'When you find no issues, say so briefly — do not over-explain.',
-        ].join('\n'),
-        consciousness: {
-          maxTokens: 200000,
-          minRecentCycles: 10,
-          compactionStrategy: 'summarize',
-        },
-        loop: {},
-        tools: [],
-      },
-    },
-  });
-
-  console.log(`  ✅ Sentinel — ${sentinel.id}`);
-
-  // =========================================================================
   // Summary
   // =========================================================================
-  console.log('\n🎉 Seed complete! 3 Haseefs created:\n');
+  console.log('\n🎉 Seed complete!\n');
   console.log('  Name      | ID');
   console.log('  ----------|--------------------------------------');
   console.log(`  Atlas     | ${atlas.id}`);
-  console.log(`  Nova      | ${nova.id}`);
-  console.log(`  Sentinel  | ${sentinel.id}`);
 }
 
 main()

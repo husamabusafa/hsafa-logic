@@ -205,14 +205,11 @@ export async function processStream(
         break;
 
       // ── Final finish ────────────────────────────────────────────────────
+      // Note: run.finish is NOT emitted here — agent-process emits it
+      // at step 15 after all DB operations (consciousness save, run update)
+      // are complete. Emitting here would cause duplicate events.
       case 'finish':
         if (part.finishReason) finishReason = part.finishReason as string;
-        await toRun({
-          type: 'run.finish',
-          runId,
-          haseefId,
-          finishReason: part.finishReason as string,
-        });
         break;
 
       // ── Stream error ────────────────────────────────────────────────────

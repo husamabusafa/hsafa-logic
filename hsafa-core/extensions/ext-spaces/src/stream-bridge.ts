@@ -12,11 +12,11 @@ import type { Config } from './config.js';
 // Event mapping (Core → spaces-app):
 //   text.delta       → space.message.streaming (phase: delta)
 //   tool-input.delta → tool.streaming
-//   tool-call        → tool.started / tool.done
-//   tool-result      → tool.done (with result)
-//   step.complete    → (ignored)
-//   run.complete     → agent.inactive
-//   run.started      → agent.active
+//   tool.started     → tool.started
+//   tool.ready       → tool.ready (with args)
+//   tool.done        → tool.done (with result)
+//   run.start        → agent.active
+//   run.finish       → agent.inactive + space.message.streaming (phase: done)
 //
 // One bridge per haseef connection. Started/stopped via lifecycle webhooks.
 // =============================================================================
@@ -82,16 +82,6 @@ export class HaseefStreamBridge {
 
     this.es.onopen = () => {
       console.log(`[stream-bridge] Connected to haseef stream for ${this.opts.haseefName}`);
-
-      // Emit agent.active to all connected spaces
-      this.emitToSpaces({
-        type: 'agent.active',
-        agentEntityId: this.opts.agentEntityId,
-        data: {
-          agentEntityId: this.opts.agentEntityId,
-          agentName: this.opts.haseefName,
-        },
-      });
     };
 
     this.es.onmessage = (event: MessageEvent) => {
@@ -124,6 +114,7 @@ export class HaseefStreamBridge {
     switch (type) {
       case 'text.delta': {
         // Forward as space.message.streaming for the React SDK
+        const textDelta = (event.text as string) ?? '';
         await this.emitToSpaces({
           type: 'space.message.streaming',
           agentEntityId: this.opts.agentEntityId,
@@ -132,8 +123,8 @@ export class HaseefStreamBridge {
             streamId,
             agentEntityId: this.opts.agentEntityId,
             phase: 'delta',
-            delta: event.delta as string,
-            text: event.text as string,
+            delta: textDelta,
+            text: textDelta,
           },
         });
         break;
@@ -146,22 +137,38 @@ export class HaseefStreamBridge {
           agentEntityId: this.opts.agentEntityId,
           runId: streamId,
           data: {
-            streamId: event.toolCallId as string,
+            streamId: (event.streamId ?? event.toolCallId) as string,
             toolName: event.toolName as string,
+            delta: event.delta as string,
             partialArgs: event.partialArgs,
           },
         });
         break;
       }
 
-      case 'tool-call': {
-        // Forward as tool.started
+      case 'tool.started': {
+        // Core emits tool.started when tool-input-start fires
         await this.emitToSpaces({
           type: 'tool.started',
           agentEntityId: this.opts.agentEntityId,
           runId: streamId,
           data: {
-            streamId: event.toolCallId as string,
+            streamId: (event.streamId ?? event.toolCallId) as string,
+            toolName: event.toolName as string,
+          },
+        });
+        break;
+      }
+
+      case 'tool.ready': {
+        // Core emits tool.ready when full args are collected (tool-call)
+        // Forward args to spaces for display
+        await this.emitToSpaces({
+          type: 'tool.ready',
+          agentEntityId: this.opts.agentEntityId,
+          runId: streamId,
+          data: {
+            streamId: (event.streamId ?? event.toolCallId) as string,
             toolName: event.toolName as string,
             args: event.args,
           },
@@ -169,14 +176,14 @@ export class HaseefStreamBridge {
         break;
       }
 
-      case 'tool-result': {
-        // Forward as tool.done
+      case 'tool.done': {
+        // Core emits tool.done when tool-result fires
         await this.emitToSpaces({
           type: 'tool.done',
           agentEntityId: this.opts.agentEntityId,
           runId: streamId,
           data: {
-            streamId: event.toolCallId as string,
+            streamId: (event.streamId ?? event.toolCallId) as string,
             toolName: event.toolName as string,
             result: event.result,
           },
@@ -184,7 +191,7 @@ export class HaseefStreamBridge {
         break;
       }
 
-      case 'run.started': {
+      case 'run.start': {
         await this.emitToSpaces({
           type: 'agent.active',
           agentEntityId: this.opts.agentEntityId,
@@ -198,8 +205,8 @@ export class HaseefStreamBridge {
         break;
       }
 
-      case 'run.complete': {
-        // Emit agent.inactive + streaming done
+      case 'run.finish': {
+        // Emit streaming done + agent.inactive
         await this.emitToSpaces({
           type: 'space.message.streaming',
           agentEntityId: this.opts.agentEntityId,

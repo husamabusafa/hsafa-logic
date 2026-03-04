@@ -16,11 +16,12 @@ export async function POST(request: Request, { params }: Params) {
   if (auth instanceof Response) return auth;
 
   try {
-    let { entityId, content, metadata: msgMeta } = await request.json();
+    let { entityId, content, role: requestedRole, metadata: msgMeta } = await request.json();
 
-    // Anti-impersonation: force entityId from JWT for public_key_jwt auth
+    // Anti-impersonation: force entityId and role for public_key_jwt auth
     if (auth.method === "public_key_jwt") {
       entityId = auth.entityId;
+      requestedRole = "user";
     }
 
     if (!entityId || !content) {
@@ -34,7 +35,7 @@ export async function POST(request: Request, { params }: Params) {
     const result = await postSpaceMessage({
       spaceId: smartSpaceId,
       entityId,
-      role: "user",
+      role: requestedRole || "user",
       content,
       metadata: msgMeta ?? undefined,
     });
