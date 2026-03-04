@@ -189,9 +189,11 @@ export class StreamBridge {
 
         await this.emitStreamingEvent(stream.spaceId, {
           type: 'space.message.streaming',
-          streamId: toolCallId,
-          entityId: stream.haseefEntityId,
-          delta: newText,
+          runId: stream.runId,
+          data: {
+            phase: 'delta',
+            delta: newText,
+          },
         });
       }
     }
@@ -199,6 +201,11 @@ export class StreamBridge {
 
   // ---------------------------------------------------------------------------
   // tool.ready — full args available, send any remaining text
+  //
+  // When the model doesn't produce tool-input-delta parts (common with many
+  // providers), textSentLen will be 0 and we get the entire text here at once.
+  // In that case, simulate token-by-token streaming by emitting word-sized
+  // chunks with small delays so the UI shows a typing effect.
   // ---------------------------------------------------------------------------
 
   private async onToolReady(event: Record<string, unknown>): Promise<void> {
@@ -214,13 +221,45 @@ export class StreamBridge {
 
     if (spaceId && text && text.length > stream.textSentLen) {
       const remaining = text.slice(stream.textSentLen);
+
+      // If deltas were already streamed, just send the leftover tail
+      if (stream.textSentLen > 0) {
+        await this.emitStreamingEvent(spaceId, {
+          type: 'space.message.streaming',
+          runId: stream.runId,
+          data: { phase: 'delta', delta: remaining },
+        });
+      } else {
+        // No deltas were streamed — simulate token-by-token from the full text
+        await this.emitChunked(spaceId, stream.runId, remaining);
+      }
+
+      stream.textSentLen = text.length;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // emitChunked — simulate token-by-token streaming for a full text block
+  // ---------------------------------------------------------------------------
+
+  private async emitChunked(
+    spaceId: string,
+    runId: string,
+    text: string,
+  ): Promise<void> {
+    // Split into word-boundary chunks (~1-3 words each)
+    const tokens = text.match(/\S+\s*/g) ?? [text];
+    const DELAY_MS = 25; // small delay between chunks
+
+    for (let i = 0; i < tokens.length; i++) {
       await this.emitStreamingEvent(spaceId, {
         type: 'space.message.streaming',
-        streamId: toolCallId,
-        entityId: stream.haseefEntityId,
-        delta: remaining,
+        runId,
+        data: { phase: 'delta', delta: tokens[i] },
       });
-      stream.textSentLen = text.length;
+      if (i < tokens.length - 1) {
+        await new Promise((r) => setTimeout(r, DELAY_MS));
+      }
     }
   }
 

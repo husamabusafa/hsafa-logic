@@ -264,8 +264,9 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
     }).catch(() => {});
 
     // space.message.streaming → live text delta from send_message
+    // ext-spaces stream-bridge sends runId (not streamId), so fall back to runId
     stream.on('space.message.streaming', (e: StreamEvent) => {
-      const streamId = e.data?.streamId as string;
+      const streamId = (e.data?.streamId as string) || e.runId || (e.data?.runId as string);
       const phase = e.data?.phase as string;
       const delta = (e.data?.delta as string) || '';
       if (!streamId) return;
@@ -411,6 +412,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       if (!rid) return;
       activeRunsRef.current.delete(rid);
       setActiveAgents(deriveActiveAgents(activeRunsRef.current));
+      // Clean up streaming entries keyed by runId (ext-spaces uses runId as streamId)
+      setStreaming(prev => prev.filter(s => s.streamId !== rid));
     });
 
     // space.message → persisted message arrived (from human send or agent send_message)
