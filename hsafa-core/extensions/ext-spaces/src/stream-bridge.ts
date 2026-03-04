@@ -33,6 +33,8 @@ interface ActiveStream {
 export class StreamBridge {
   private config: Config;
   private connections: Map<string, HaseefConnection>; // agentEntityId → connection
+  /** Map from haseefId (core DB ID) → agentEntityId (spaces-app entity ID) */
+  private haseefIdToEntityId: Map<string, string>;
   private subscriber: InstanceType<typeof Redis> | null = null;
   private publisher: InstanceType<typeof Redis> | null = null;
   private running = false;
@@ -41,6 +43,7 @@ export class StreamBridge {
   constructor(config: Config, connections: HaseefConnection[]) {
     this.config = config;
     this.connections = new Map(connections.map((c) => [c.agentEntityId, c]));
+    this.haseefIdToEntityId = new Map(connections.map((c) => [c.agentId, c.agentEntityId]));
   }
 
   async start(): Promise<void> {
@@ -53,10 +56,11 @@ export class StreamBridge {
     // Publisher for spaces-app channels
     this.publisher = new Redis(this.config.redisUrl, { maxRetriesPerRequest: null });
 
-    // Subscribe to each connected haseef's stream channel
+    // Subscribe to each connected haseef's stream channel.
+    // Core publishes to haseef:{haseefId}:stream where haseefId = Haseef DB record ID = agentId.
     const channels: string[] = [];
     for (const conn of this.connections.values()) {
-      channels.push(`haseef:${conn.agentEntityId}:stream`);
+      channels.push(`haseef:${conn.agentId}:stream`);
     }
 
     if (channels.length === 0) return;
@@ -122,6 +126,12 @@ export class StreamBridge {
       case 'tool.error':
         this.onToolError(event);
         break;
+      case 'run.start':
+        await this.onRunStart(event);
+        break;
+      case 'run.finish':
+        await this.onRunFinish(event);
+        break;
       default:
         break;
     }
@@ -136,10 +146,14 @@ export class StreamBridge {
     if (toolName !== 'send_space_message') return;
 
     const toolCallId = (event.streamId ?? event.toolCallId) as string;
+    // Core sends haseefId (DB record ID), map to agentEntityId (spaces-app entity ID)
+    const haseefId = event.haseefId as string;
+    const entityId = this.haseefIdToEntityId.get(haseefId) ?? haseefId;
+
     this.activeStreams.set(toolCallId, {
       toolCallId,
       toolName,
-      haseefEntityId: event.haseefEntityId as string,
+      haseefEntityId: entityId,
       runId: event.runId as string,
       accumulated: '',
       spaceId: null,
@@ -241,6 +255,52 @@ export class StreamBridge {
   private onToolError(event: Record<string, unknown>): void {
     const toolCallId = (event.streamId ?? event.toolCallId) as string;
     this.activeStreams.delete(toolCallId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // agent.active / agent.inactive — emitted when a run starts/finishes
+  // ---------------------------------------------------------------------------
+
+  private async onRunStart(event: Record<string, unknown>): Promise<void> {
+    const haseefId = event.haseefId as string;
+    const entityId = this.haseefIdToEntityId.get(haseefId);
+    if (!entityId) return;
+
+    const conn = this.connections.get(entityId);
+    if (!conn) return;
+
+    const payload = {
+      type: 'agent.active',
+      agentEntityId: entityId,
+      agentName: conn.agentName,
+      runId: event.runId as string,
+    };
+
+    // Emit to all connected spaces for this haseef
+    await Promise.all(
+      conn.connectedSpaceIds.map((spaceId) => this.emitStreamingEvent(spaceId, payload)),
+    );
+  }
+
+  private async onRunFinish(event: Record<string, unknown>): Promise<void> {
+    const haseefId = event.haseefId as string;
+    const entityId = this.haseefIdToEntityId.get(haseefId);
+    if (!entityId) return;
+
+    const conn = this.connections.get(entityId);
+    if (!conn) return;
+
+    const payload = {
+      type: 'agent.inactive',
+      agentEntityId: entityId,
+      agentName: conn.agentName,
+      runId: event.runId as string,
+    };
+
+    // Emit to all connected spaces for this haseef
+    await Promise.all(
+      conn.connectedSpaceIds.map((spaceId) => this.emitStreamingEvent(spaceId, payload)),
+    );
   }
 
   // ---------------------------------------------------------------------------

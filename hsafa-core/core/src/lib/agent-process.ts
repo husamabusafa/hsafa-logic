@@ -22,6 +22,7 @@ import {
   type ModelMessage,
 } from './consciousness.js';
 import { processStream } from './stream-processor.js';
+import { emitRunEvent } from './run-events.js';
 import { buildHaseef } from '../agent-builder/builder.js';
 import { buildSystemPrompt } from '../agent-builder/prompt-builder.js';
 import type { HaseefProcessContext, BuiltHaseef, InboxEvent, ServiceEventData } from '../agent-builder/types.js';
@@ -208,7 +209,14 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
 
       cycleState.start = Date.now();
 
-      // 4. REFRESH system prompt (v4: includes extension instructions)
+      // 4. EMIT run.start for extensions (e.g. ext-spaces emits agent.active to spaces)
+      await emitRunEvent(run.id, {
+        type: 'run.start',
+        runId: run.id,
+        haseefId,
+      });
+
+      // 5. REFRESH system prompt (v4: includes extension instructions)
       const systemPrompt = await buildSystemPrompt(haseefId, haseefName, built.extensionInstructions);
       consciousness = refreshSystemPrompt(consciousness, systemPrompt);
 
@@ -279,6 +287,14 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
       // Mark all events as processed in Postgres
       await markEventsProcessed(haseefId, eventIds);
 
+      // 15. EMIT run.finish for extensions (e.g. ext-spaces emits agent.inactive to spaces)
+      await emitRunEvent(run.id, {
+        type: 'run.finish',
+        runId: run.id,
+        haseefId,
+        status: 'completed',
+      });
+
       // Success — reset failure counter and restore original model if degraded
       consecutiveFailures = 0;
       if (built.model !== originalModel) {
@@ -329,6 +345,16 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
         } catch {
           // Best effort
         }
+      }
+
+      // Emit run.finish on failure for extensions
+      if (context.currentRunId) {
+        await emitRunEvent(context.currentRunId, {
+          type: 'run.finish',
+          runId: context.currentRunId,
+          haseefId,
+          status: 'failed',
+        }).catch(() => {});
       }
 
       // Ship #13: Error classification + adaptive recovery
