@@ -3,7 +3,6 @@ import { prisma } from '../lib/db.js';
 import { redis } from '../lib/redis.js';
 import { requireSecretKey, requireAuth } from '../middleware/auth.js';
 import { pushToolResultEvent } from '../lib/inbox.js';
-import { publishToolResult } from '../agent-builder/builder.js';
 import Redis from 'ioredis';
 
 export const runsRouter = Router();
@@ -191,7 +190,7 @@ runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res:
     // 2. Notify waiting tool or push to inbox
     if (wasWaiting) {
       // Tool is actively waiting via Redis pub/sub — publish result to unblock it instantly
-      await publishToolResult(callId, result);
+      await redis.publish(`tool-result:${callId}`, JSON.stringify(result));
     } else {
       // Tool was async (pending) — push inbox event so agent wakes in next cycle
       await pushToolResultEvent(pending.haseefId, {

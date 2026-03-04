@@ -4,22 +4,21 @@ import { requireSecretKey, requireExtensionKey } from '../middleware/auth.js';
 import {
   registerExtension,
   updateExtension,
-  syncExtensionTools,
-  type ExtensionToolDef,
+  refreshManifest,
 } from '../lib/extension-manager.js';
 
 // =============================================================================
-// Extension Routes (v4)
+// Extension Routes (v4 — Manifest + Webhook)
 //
 // Admin routes for managing extensions + self-discovery for extensions.
 //
-// GET    /api/extensions/me           — Self-discovery (extension key)
-// POST   /api/extensions              — Register a new extension (secret key)
-// GET    /api/extensions              — List all extensions (secret key)
-// GET    /api/extensions/:extId       — Get extension details (secret key)
-// PATCH  /api/extensions/:extId       — Update extension metadata (secret key)
-// PUT    /api/extensions/:extId/tools — Sync extension tools (secret key)
-// DELETE /api/extensions/:extId       — Delete extension (secret key)
+// GET    /api/extensions/me                     — Self-discovery (extension key)
+// POST   /api/extensions                        — Install extension via URL (secret key)
+// GET    /api/extensions                        — List all extensions (secret key)
+// GET    /api/extensions/:extId                 — Get extension details (secret key)
+// PATCH  /api/extensions/:extId                 — Update extension metadata (secret key)
+// POST   /api/extensions/:extId/refresh-manifest — Refresh manifest from URL (secret key)
+// DELETE /api/extensions/:extId                 — Delete extension (secret key)
 // =============================================================================
 
 export const extensionsRouter = Router();
@@ -37,7 +36,6 @@ extensionsRouter.get('/me', requireExtensionKey(), async (req: Request, res: Res
     const extension = await prisma.extension.findUnique({
       where: { id: extensionId },
       include: {
-        tools: { select: { id: true, name: true, description: true } },
         connections: {
           where: { enabled: true },
           include: {
@@ -62,8 +60,9 @@ extensionsRouter.get('/me', requireExtensionKey(), async (req: Request, res: Res
         id: extension.id,
         name: extension.name,
         description: extension.description,
+        url: (extension as any).url,
         instructions: extension.instructions,
-        tools: extension.tools,
+        manifest: (extension as any).manifest,
         connections: extension.connections.map((c: any) => ({
           connectionId: c.id,
           haseefId: c.haseef.id,
@@ -79,10 +78,12 @@ extensionsRouter.get('/me', requireExtensionKey(), async (req: Request, res: Res
   }
 });
 
-// POST /api/extensions — Register a new extension
+// POST /api/extensions — Install a new extension
+// Accepts { name, url?, description?, instructions? }
+// If url is provided, fetches manifest from GET {url}/manifest
 extensionsRouter.post('/', requireSecretKey(), async (req: Request, res: Response) => {
   try {
-    const { name, description, instructions } = req.body;
+    const { name, url, description, instructions } = req.body;
 
     if (!name) {
       res.status(400).json({ error: 'name is required' });
@@ -96,20 +97,16 @@ extensionsRouter.post('/', requireSecretKey(), async (req: Request, res: Respons
       return;
     }
 
-    const result = await registerExtension({ name, description, instructions });
+    const result = await registerExtension({ name, url, description, instructions });
 
     res.status(201).json({
-      extension: {
-        id: result.id,
-        name,
-        description: description ?? null,
-        instructions: instructions ?? null,
-        extensionKey: result.extensionKey,
-      },
+      extension: result.extension,
+      extensionKey: result.extensionKey,
     });
   } catch (error) {
     console.error('Register extension error:', error);
-    res.status(500).json({ error: 'Failed to register extension' });
+    const msg = error instanceof Error ? error.message : 'Failed to register extension';
+    res.status(500).json({ error: msg });
   }
 });
 
@@ -118,7 +115,6 @@ extensionsRouter.get('/', requireSecretKey(), async (_req: Request, res: Respons
   try {
     const extensions = await prisma.extension.findMany({
       include: {
-        tools: { select: { id: true, name: true, description: true } },
         _count: { select: { connections: true } },
       },
       orderBy: { createdAt: 'asc' },
@@ -137,7 +133,6 @@ extensionsRouter.get('/:extId', requireSecretKey(), async (req: Request, res: Re
     const extension = await prisma.extension.findUnique({
       where: { id: req.params.extId },
       include: {
-        tools: true,
         connections: {
           include: {
             haseef: { select: { id: true, name: true } },
@@ -161,7 +156,7 @@ extensionsRouter.get('/:extId', requireSecretKey(), async (req: Request, res: Re
 // PATCH /api/extensions/:extId — Update extension metadata
 extensionsRouter.patch('/:extId', requireSecretKey(), async (req: Request, res: Response) => {
   try {
-    const { description, instructions } = req.body;
+    const { description, instructions, url } = req.body;
 
     const extension = await prisma.extension.findUnique({
       where: { id: req.params.extId },
@@ -172,12 +167,7 @@ extensionsRouter.patch('/:extId', requireSecretKey(), async (req: Request, res: 
       return;
     }
 
-    await updateExtension(req.params.extId, { description, instructions });
-
-    const updated = await prisma.extension.findUnique({
-      where: { id: req.params.extId },
-      include: { tools: true },
-    });
+    const updated = await updateExtension(req.params.extId, { description, instructions, url });
 
     res.json({ extension: updated });
   } catch (error) {
@@ -186,47 +176,19 @@ extensionsRouter.patch('/:extId', requireSecretKey(), async (req: Request, res: 
   }
 });
 
-// PUT /api/extensions/:extId/tools — Sync extension tools (full replace)
-extensionsRouter.put('/:extId/tools', requireSecretKey(), async (req: Request, res: Response) => {
+// POST /api/extensions/:extId/refresh-manifest — Re-fetch manifest from extension URL
+extensionsRouter.post('/:extId/refresh-manifest', requireSecretKey(), async (req: Request, res: Response) => {
   try {
-    const { tools } = req.body as { tools?: ExtensionToolDef[] };
-
-    if (!tools || !Array.isArray(tools)) {
-      res.status(400).json({ error: 'tools array is required' });
-      return;
-    }
-
-    // Validate each tool
-    for (const t of tools) {
-      if (!t.name || !t.description) {
-        res.status(400).json({ error: `Each tool must have name and description` });
-        return;
-      }
-    }
-
-    const extension = await prisma.extension.findUnique({
-      where: { id: req.params.extId },
-    });
-
-    if (!extension) {
-      res.status(404).json({ error: 'Extension not found' });
-      return;
-    }
-
-    await syncExtensionTools(req.params.extId, tools);
-
-    const updated = await prisma.extensionTool.findMany({
-      where: { extensionId: req.params.extId },
-    });
-
-    res.json({ tools: updated });
+    const manifest = await refreshManifest(req.params.extId);
+    res.json({ manifest });
   } catch (error) {
-    console.error('Sync extension tools error:', error);
-    res.status(500).json({ error: 'Failed to sync tools' });
+    console.error('Refresh manifest error:', error);
+    const msg = error instanceof Error ? error.message : 'Failed to refresh manifest';
+    res.status(500).json({ error: msg });
   }
 });
 
-// DELETE /api/extensions/:extId — Delete extension (cascades tools + connections)
+// DELETE /api/extensions/:extId — Delete extension (cascades connections)
 extensionsRouter.delete('/:extId', requireSecretKey(), async (req: Request, res: Response) => {
   try {
     const extension = await prisma.extension.findUnique({

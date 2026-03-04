@@ -183,30 +183,16 @@ model Extension {
   id             String   @id @default(uuid()) @db.Uuid
   name           String   @unique
   description    String?
+  url            String?
   extensionKey   String   @unique @map("extension_key")
   instructions   String?  @db.Text
+  manifest       Json?    @db.JsonB
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tools       ExtensionTool[]
   connections HaseefExtension[]
 
   @@map("extensions")
-}
-
-model ExtensionTool {
-  id          String   @id @default(uuid()) @db.Uuid
-  extensionId String   @map("extension_id") @db.Uuid
-  name        String
-  description String   @db.Text
-  inputSchema Json     @map("input_schema") @db.JsonB
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  extension Extension @relation(fields: [extensionId], references: [id], onDelete: Cascade)
-
-  @@unique([extensionId, name])
-  @@map("extension_tools")
 }
 
 model HaseefExtension {

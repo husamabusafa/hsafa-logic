@@ -1,7 +1,6 @@
 import { tool, jsonSchema, type ToolExecutionOptions } from 'ai';
 import { createMCPClient } from '@ai-sdk/mcp';
 import { prisma } from '../lib/db.js';
-import { redis } from '../lib/redis.js';
 import { resolveModel } from '../lib/model-registry.js';
 import { waitForToolResult } from '../lib/tool-result-wait.js';
 import {
@@ -181,14 +180,6 @@ function buildCustomTools(
   return { tools };
 }
 
-/**
- * Publish a tool result to the Redis channel so waitForToolResult resolves.
- * Called from the tool-results API endpoint.
- */
-export async function publishToolResult(toolCallId: string, result: unknown): Promise<void> {
-  const channel = `tool-result:${toolCallId}`;
-  await redis.publish(channel, JSON.stringify(result));
-}
 
 // =============================================================================
 // MCP Server Connection

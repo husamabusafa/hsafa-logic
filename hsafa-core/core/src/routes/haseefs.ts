@@ -1,34 +1,33 @@
 import { Router, type Request, type Response } from 'express';
+import Redis from 'ioredis';
 import { prisma } from '../lib/db.js';
 import { requireSecretKey, requireExtensionKey } from '../middleware/auth.js';
 import { pushSenseEvent } from '../lib/inbox.js';
-import { publishToolResult } from '../agent-builder/builder.js';
-import { pushToolResultEvent } from '../lib/inbox.js';
 import {
   connectExtension,
   disconnectExtension,
   getConnectedExtensions,
-  getPendingToolCalls,
+  updateExtensionConfig,
   verifyExtensionConnection,
+  type ExtensionManifest,
 } from '../lib/extension-manager.js';
 import type { SenseEvent } from '../agent-builder/types.js';
 
 // =============================================================================
-// Haseef Routes (v4 Core API)
+// Haseef Routes (v4 — Manifest + Webhook)
 //
-// These are the core API endpoints for interacting with Haseefs.
 // Two auth modes:
-//   - secret key (admin): create, get, manage extensions
-//   - extension key: push senses, return tool results, poll tool calls
+//   - secret key (admin): manage haseefs, connect/disconnect extensions
+//   - extension key: push senses
 //
 // POST   /haseefs/:id/senses                        (extension key) — push sense events
-// POST   /haseefs/:id/tools/:callId/result           (extension key) — return tool results
-// GET    /haseefs/:id/tools/calls                    (extension key) — poll pending calls
-// POST   /haseefs/:id/extensions/:extId/connect      (secret key) — connect extension
-// DELETE /haseefs/:id/extensions/:extId/disconnect    (secret key) — disconnect extension
-// GET    /haseefs/:id/extensions                      (secret key) — list connected extensions
-// GET    /haseefs/:id                                 (secret key) — get haseef details
-// GET    /haseefs                                     (secret key) — list haseefs
+// GET    /haseefs/:id/stream                        (secret key) — SSE haseef stream
+// POST   /haseefs/:id/extensions/:extId/connect     (secret key) — connect extension
+// DELETE /haseefs/:id/extensions/:extId/disconnect   (secret key) — disconnect extension
+// PATCH  /haseefs/:id/extensions/:extId             (secret key) — update extension config
+// GET    /haseefs/:id/extensions                     (secret key) — list connected extensions
+// GET    /haseefs/:id                                (secret key) — get haseef details
+// GET    /haseefs                                    (secret key) — list haseefs
 // =============================================================================
 
 export const haseefsRouter = Router();
@@ -110,106 +109,46 @@ haseefsRouter.post('/:id/senses', requireExtensionKey(), async (req: Request, re
   }
 });
 
-// POST /haseefs/:id/tools/:callId/result — Return a tool call result
-haseefsRouter.post('/:id/tools/:callId/result', requireExtensionKey(), async (req: Request, res: Response) => {
-  try {
-    const haseefId = req.params.id;
-    const { callId } = req.params;
-    const extensionId = req.auth?.extensionId;
+// =============================================================================
+// SSE Haseef Stream (real-time LLM output streaming)
+// =============================================================================
 
-    if (!extensionId) {
-      res.status(401).json({ error: 'No extension resolved' });
-      return;
-    }
+// GET /haseefs/:id/stream — SSE stream of haseef events (text deltas, tool input deltas, etc.)
+haseefsRouter.get('/:id/stream', requireSecretKey(), async (req: Request, res: Response) => {
+  const haseefId = req.params.id;
 
-    const connected = await verifyExtensionConnection(extensionId, haseefId);
-    if (!connected) {
-      res.status(403).json({ error: 'Extension is not connected to this Haseef' });
-      return;
-    }
-
-    const { result } = req.body;
-
-    // Look up the pending tool call
-    const pending = await prisma.pendingToolCall.findUnique({
-      where: { toolCallId: callId },
-    });
-
-    if (!pending) {
-      res.status(404).json({ error: 'Pending tool call not found' });
-      return;
-    }
-
-    if (pending.status !== 'pending' && pending.status !== 'waiting') {
-      res.status(409).json({ error: `Tool call already ${pending.status}` });
-      return;
-    }
-
-    const wasWaiting = pending.status === 'waiting';
-
-    // Resolve the pending tool call
-    await prisma.pendingToolCall.update({
-      where: { toolCallId: callId },
-      data: {
-        status: 'resolved',
-        result: result as any,
-        resolvedAt: new Date(),
-      },
-    });
-
-    if (wasWaiting) {
-      // Unblock the waiting tool via Redis pub/sub
-      await publishToolResult(callId, result);
-    } else {
-      // Push to inbox for next cycle
-      await pushToolResultEvent(pending.haseefId, {
-        toolCallId: callId,
-        toolName: pending.toolName,
-        originRunId: pending.runId,
-        result,
-      });
-    }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Tool result error:', error);
-    res.status(500).json({ error: 'Failed to submit tool result' });
+  const exists = await verifyHaseefExists(haseefId);
+  if (!exists) {
+    res.status(404).json({ error: 'Haseef not found' });
+    return;
   }
-});
 
-// GET /haseefs/:id/tools/calls — Poll pending tool calls for this extension
-haseefsRouter.get('/:id/tools/calls', requireExtensionKey(), async (req: Request, res: Response) => {
-  try {
-    const haseefId = req.params.id;
-    const extensionId = req.auth?.extensionId;
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
 
-    if (!extensionId) {
-      res.status(401).json({ error: 'No extension resolved' });
-      return;
-    }
+  res.write(`data: ${JSON.stringify({ type: 'connected', haseefId, ts: new Date().toISOString() })}\n\n`);
 
-    const connected = await verifyExtensionConnection(extensionId, haseefId);
-    if (!connected) {
-      res.status(403).json({ error: 'Extension is not connected to this Haseef' });
-      return;
-    }
+  const subscriber = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+  const channel = `haseef:${haseefId}:stream`;
+  await subscriber.subscribe(channel);
 
-    const calls = await getPendingToolCalls(haseefId, extensionId);
+  subscriber.on('message', (_ch: string, message: string) => {
+    res.write(`data: ${message}\n\n`);
+  });
 
-    res.json({
-      calls: calls.map((c) => ({
-        toolCallId: c.toolCallId,
-        toolName: c.toolName,
-        args: c.args,
-        runId: c.runId,
-        status: c.status,
-        createdAt: c.createdAt,
-      })),
-    });
-  } catch (error) {
-    console.error('Poll tool calls error:', error);
-    res.status(500).json({ error: 'Failed to get pending tool calls' });
-  }
+  const pingInterval = setInterval(() => {
+    res.write(': ping\n\n');
+  }, 30_000);
+
+  req.on('close', () => {
+    clearInterval(pingInterval);
+    subscriber.unsubscribe(channel).catch(() => {});
+    subscriber.disconnect();
+  });
 });
 
 // =============================================================================
@@ -259,9 +198,7 @@ haseefsRouter.get('/:id', requireSecretKey(), async (req: Request, res: Response
       include: {
         connections: {
           include: {
-            extension: {
-              include: { tools: { select: { name: true, description: true } } },
-            },
+            extension: true,
           },
         },
       },
@@ -279,13 +216,16 @@ haseefsRouter.get('/:id', requireSecretKey(), async (req: Request, res: Response
         description: haseef.description,
         haseefId: haseef.id,
         displayName: haseef.name,
-        extensions: haseef.connections.map((c: any) => ({
-          extensionId: c.extension.id,
-          extensionName: c.extension.name,
-          enabled: c.enabled,
-          config: c.config,
-          tools: c.extension.tools,
-        })),
+        extensions: haseef.connections.map((c: any) => {
+          const manifest = c.extension.manifest as ExtensionManifest | null;
+          return {
+            extensionId: c.extension.id,
+            extensionName: c.extension.name,
+            enabled: c.enabled,
+            config: c.config,
+            tools: manifest?.tools ?? [],
+          };
+        }),
         createdAt: haseef.createdAt,
       },
     });
@@ -340,6 +280,27 @@ haseefsRouter.delete('/:id/extensions/:extId/disconnect', requireSecretKey(), as
   }
 });
 
+// PATCH /haseefs/:id/extensions/:extId — Update extension config for this Haseef
+haseefsRouter.patch('/:id/extensions/:extId', requireSecretKey(), async (req: Request, res: Response) => {
+  try {
+    const haseefId = req.params.id;
+    const extensionId = req.params.extId;
+    const { config } = req.body;
+
+    if (!config || typeof config !== 'object') {
+      res.status(400).json({ error: 'config object is required' });
+      return;
+    }
+
+    const connection = await updateExtensionConfig(haseefId, extensionId, config);
+
+    res.json({ success: true, connectionId: connection.id, config: connection.config });
+  } catch (error) {
+    console.error('Update extension config error:', error);
+    res.status(500).json({ error: 'Failed to update extension config' });
+  }
+});
+
 // GET /haseefs/:id/extensions — List connected extensions for a Haseef
 haseefsRouter.get('/:id/extensions', requireSecretKey(), async (req: Request, res: Response) => {
   try {
@@ -354,18 +315,22 @@ haseefsRouter.get('/:id/extensions', requireSecretKey(), async (req: Request, re
     const connections = await getConnectedExtensions(haseefId);
 
     res.json({
-      extensions: connections.map((c) => ({
-        extensionId: c.extension.id,
-        extensionName: c.extension.name,
-        enabled: c.enabled,
-        config: c.config,
-        connectedAt: c.connectedAt,
-        tools: c.extension.tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-        })),
-        instructions: c.extension.instructions,
-      })),
+      extensions: connections.map((c: any) => {
+        const manifest = c.extension.manifest as ExtensionManifest | null;
+        return {
+          extensionId: c.extension.id,
+          extensionName: c.extension.name,
+          extensionUrl: c.extension.url,
+          enabled: c.enabled,
+          config: c.config,
+          connectedAt: c.connectedAt,
+          tools: manifest?.tools?.map((t: any) => ({
+            name: t.name,
+            description: t.description,
+          })) ?? [],
+          instructions: c.extension.instructions,
+        };
+      }),
     });
   } catch (error) {
     console.error('List connected extensions error:', error);

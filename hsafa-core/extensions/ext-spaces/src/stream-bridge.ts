@@ -1,233 +1,237 @@
+import { EventSource } from 'eventsource';
 import Redis from 'ioredis';
-import type { Config, HaseefConnection } from './config.js';
+import type { Config } from './config.js';
 
 // =============================================================================
-// Stream Bridge (simplified)
+// Haseef Stream Bridge
 //
-// Subscribes to haseef-level stream channels (haseef:{haseefId}:stream) and
-// forwards streaming events to spaces-app Redis channels for SSE clients.
+// Subscribes to Core's haseef stream SSE endpoint and forwards relevant
+// streaming events to the spaces-app's Redis channels so the React SDK
+// can show typing indicators and live token streaming.
 //
-// Core's stream-processor now provides pre-parsed `partialArgs` on each
-// tool-input.delta event, so this bridge is a thin forwarder — no manual
-// JSON parsing, no fake streaming.
+// Event mapping (Core → spaces-app):
+//   text.delta       → space.message.streaming (phase: delta)
+//   tool-input.delta → tool.streaming
+//   tool-call        → tool.started / tool.done
+//   tool-result      → tool.done (with result)
+//   step.complete    → (ignored)
+//   run.complete     → agent.inactive
+//   run.started      → agent.active
 //
-// For send_space_message:
-//   1. tool.started → begin tracking
-//   2. tool-input.delta → read partialArgs.spaceId + partialArgs.text, forward delta
-//   3. tool.ready → send any remaining text (full args available)
-//   4. tool.done → emit streaming done marker
-//
-// For run lifecycle:
-//   run.start → agent.active, run.finish → agent.inactive
+// One bridge per haseef connection. Started/stopped via lifecycle webhooks.
 // =============================================================================
 
-interface ActiveStream {
-  toolCallId: string;
-  haseefEntityId: string;
-  runId: string;
-  spaceId: string | null;
-  textSentLen: number;
+const RECONNECT_DELAY_MS = 3000;
+
+export interface StreamBridgeOptions {
+  haseefId: string;
+  haseefName: string;
+  agentEntityId: string;
+  spaceIds: string[];
 }
 
-export class StreamBridge {
+export class HaseefStreamBridge {
   private config: Config;
-  private connections: Map<string, HaseefConnection>;
-  private haseefIdToEntityId: Map<string, string>;
-  private subscriber: InstanceType<typeof Redis> | null = null;
-  private publisher: InstanceType<typeof Redis> | null = null;
+  private opts: StreamBridgeOptions;
+  private es: EventSource | null = null;
+  private pub: Redis | null = null;
   private running = false;
-  private activeStreams = new Map<string, ActiveStream>();
 
-  constructor(config: Config, connections: HaseefConnection[]) {
+  constructor(config: Config, opts: StreamBridgeOptions) {
     this.config = config;
-    this.connections = new Map(connections.map((c) => [c.agentEntityId, c]));
-    this.haseefIdToEntityId = new Map(connections.map((c) => [c.agentId, c.agentEntityId]));
+    this.opts = opts;
   }
 
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
 
-    this.subscriber = new Redis(this.config.redisUrl, { maxRetriesPerRequest: null });
-    this.publisher = new Redis(this.config.redisUrl, { maxRetriesPerRequest: null });
-
-    const channels = [...this.connections.values()].map((c) => `haseef:${c.agentId}:stream`);
-    if (channels.length === 0) return;
-
-    console.log(`[stream-bridge] Subscribing to ${channels.length} haseef stream channel(s)`);
-    await this.subscriber.subscribe(...channels).catch((err: Error) => {
-      console.error('[stream-bridge] Subscribe failed:', err);
-    });
-
-    this.subscriber.on('message', (_ch: string, msg: string) => {
-      this.handleEvent(msg).catch((err) =>
-        console.error('[stream-bridge] Error handling stream event:', err),
-      );
-    });
-
-    this.subscriber.on('error', (err: Error) => {
-      console.error('[stream-bridge] Redis error:', err);
-    });
+    this.pub = new Redis(this.config.spacesRedisUrl, { maxRetriesPerRequest: null });
+    this.connect();
   }
 
   async stop(): Promise<void> {
     this.running = false;
-    if (this.subscriber) {
-      await this.subscriber.unsubscribe().catch(() => {});
-      this.subscriber.disconnect();
-      this.subscriber = null;
+    if (this.es) {
+      this.es.close();
+      this.es = null;
     }
-    if (this.publisher) {
-      this.publisher.disconnect();
-      this.publisher = null;
+    if (this.pub) {
+      this.pub.disconnect();
+      this.pub = null;
     }
-    this.activeStreams.clear();
   }
 
-  private async handleEvent(raw: string): Promise<void> {
-    let event: Record<string, unknown>;
-    try { event = JSON.parse(raw); } catch { return; }
+  private connect(): void {
+    if (!this.running) return;
 
+    const url = `${this.config.coreUrl}/api/haseefs/${this.opts.haseefId}/stream`;
+
+    console.log(`[stream-bridge] Connecting to haseef stream for ${this.opts.haseefName}`);
+
+    this.es = new EventSource(url, {
+      fetch: (input, init) =>
+        fetch(input, {
+          ...init,
+          headers: {
+            ...(init?.headers as Record<string, string> | undefined),
+            'x-secret-key': this.config.secretKey,
+          },
+        }),
+    });
+
+    this.es.onopen = () => {
+      console.log(`[stream-bridge] Connected to haseef stream for ${this.opts.haseefName}`);
+
+      // Emit agent.active to all connected spaces
+      this.emitToSpaces({
+        type: 'agent.active',
+        agentEntityId: this.opts.agentEntityId,
+        data: {
+          agentEntityId: this.opts.agentEntityId,
+          agentName: this.opts.haseefName,
+        },
+      });
+    };
+
+    this.es.onmessage = (event: MessageEvent) => {
+      this.handleEvent(event.data).catch((err) =>
+        console.error(`[stream-bridge] Error handling event:`, err),
+      );
+    };
+
+    this.es.onerror = () => {
+      console.error(`[stream-bridge] SSE error for ${this.opts.haseefName}`);
+      if (this.es) {
+        this.es.close();
+        this.es = null;
+      }
+      if (this.running) {
+        setTimeout(() => this.connect(), RECONNECT_DELAY_MS);
+      }
+    };
+  }
+
+  private async handleEvent(rawData: string): Promise<void> {
+    const event = JSON.parse(rawData) as Record<string, unknown>;
     const type = event.type as string;
-    const toolCallId = (event.streamId ?? event.toolCallId) as string;
+
+    if (!type || type === 'connected') return;
+
+    const runId = event.runId as string | undefined;
+    const streamId = runId || this.opts.haseefId;
 
     switch (type) {
-      case 'tool.started': {
-        if ((event.toolName as string) !== 'send_space_message') break;
-        const haseefId = event.haseefId as string;
-        const entityId = this.haseefIdToEntityId.get(haseefId) ?? haseefId;
-        this.activeStreams.set(toolCallId, {
-          toolCallId, haseefEntityId: entityId,
-          runId: event.runId as string, spaceId: null, textSentLen: 0,
+      case 'text.delta': {
+        // Forward as space.message.streaming for the React SDK
+        await this.emitToSpaces({
+          type: 'space.message.streaming',
+          agentEntityId: this.opts.agentEntityId,
+          runId: streamId,
+          data: {
+            streamId,
+            agentEntityId: this.opts.agentEntityId,
+            phase: 'delta',
+            delta: event.delta as string,
+            text: event.text as string,
+          },
         });
         break;
       }
 
       case 'tool-input.delta': {
-        const stream = this.activeStreams.get(toolCallId);
-        if (!stream) break;
-
-        // Use core's pre-parsed partialArgs — no manual JSON parsing needed
-        const partialArgs = event.partialArgs as Record<string, unknown> | undefined;
-        if (!partialArgs) break;
-
-        if (!stream.spaceId && partialArgs.spaceId) {
-          stream.spaceId = partialArgs.spaceId as string;
-        }
-
-        if (stream.spaceId && typeof partialArgs.text === 'string') {
-          const text = partialArgs.text as string;
-          if (text.length > stream.textSentLen) {
-            const newText = text.slice(stream.textSentLen);
-            stream.textSentLen = text.length;
-            await this.emitToSpace(stream.spaceId, {
-              type: 'space.message.streaming',
-              runId: stream.runId,
-              data: { phase: 'delta', delta: newText },
-            });
-          }
-        }
+        // Forward as tool.streaming
+        await this.emitToSpaces({
+          type: 'tool.streaming',
+          agentEntityId: this.opts.agentEntityId,
+          runId: streamId,
+          data: {
+            streamId: event.toolCallId as string,
+            toolName: event.toolName as string,
+            partialArgs: event.partialArgs,
+          },
+        });
         break;
       }
 
-      case 'tool.ready': {
-        const stream = this.activeStreams.get(toolCallId);
-        if (!stream) break;
-
-        const args = event.args as Record<string, unknown> | undefined;
-        if (!args) break;
-
-        const spaceId = args.spaceId as string;
-        const text = args.text as string;
-
-        if (spaceId && text && text.length > stream.textSentLen) {
-          const remaining = text.slice(stream.textSentLen);
-
-          if (stream.textSentLen > 0) {
-            // Deltas were already streamed — just send the leftover tail
-            await this.emitToSpace(spaceId, {
-              type: 'space.message.streaming',
-              runId: stream.runId,
-              data: { phase: 'delta', delta: remaining },
-            });
-          } else {
-            // No deltas were streamed (model doesn't emit tool-input-delta,
-            // e.g. OpenAI Responses API) — simulate token-by-token streaming
-            await this.emitChunked(spaceId, stream.runId, remaining);
-          }
-
-          stream.textSentLen = text.length;
-        }
+      case 'tool-call': {
+        // Forward as tool.started
+        await this.emitToSpaces({
+          type: 'tool.started',
+          agentEntityId: this.opts.agentEntityId,
+          runId: streamId,
+          data: {
+            streamId: event.toolCallId as string,
+            toolName: event.toolName as string,
+            args: event.args,
+          },
+        });
         break;
       }
 
-      case 'tool.done': {
-        const stream = this.activeStreams.get(toolCallId);
-        if (stream?.spaceId) {
-          await this.emitToSpace(stream.spaceId, {
-            type: 'space.message.streaming.done',
-            streamId: toolCallId,
-            entityId: stream.haseefEntityId,
-          });
-        }
-        this.activeStreams.delete(toolCallId);
+      case 'tool-result': {
+        // Forward as tool.done
+        await this.emitToSpaces({
+          type: 'tool.done',
+          agentEntityId: this.opts.agentEntityId,
+          runId: streamId,
+          data: {
+            streamId: event.toolCallId as string,
+            toolName: event.toolName as string,
+            result: event.result,
+          },
+        });
         break;
       }
 
-      case 'tool.error':
-        this.activeStreams.delete(toolCallId);
+      case 'run.started': {
+        await this.emitToSpaces({
+          type: 'agent.active',
+          agentEntityId: this.opts.agentEntityId,
+          runId: event.runId as string,
+          data: {
+            runId: event.runId,
+            agentEntityId: this.opts.agentEntityId,
+            agentName: this.opts.haseefName,
+          },
+        });
         break;
+      }
 
-      case 'run.start':
-        await this.emitRunLifecycle(event, 'agent.active');
+      case 'run.complete': {
+        // Emit agent.inactive + streaming done
+        await this.emitToSpaces({
+          type: 'space.message.streaming',
+          agentEntityId: this.opts.agentEntityId,
+          runId: streamId,
+          data: {
+            streamId,
+            phase: 'done',
+          },
+        });
+        await this.emitToSpaces({
+          type: 'agent.inactive',
+          agentEntityId: this.opts.agentEntityId,
+          runId: event.runId as string,
+          data: {
+            runId: event.runId,
+            agentEntityId: this.opts.agentEntityId,
+          },
+        });
         break;
-
-      case 'run.finish':
-        await this.emitRunLifecycle(event, 'agent.inactive');
-        break;
-    }
-  }
-
-  private async emitRunLifecycle(event: Record<string, unknown>, type: string): Promise<void> {
-    const haseefId = event.haseefId as string;
-    const entityId = this.haseefIdToEntityId.get(haseefId);
-    if (!entityId) return;
-
-    const conn = this.connections.get(entityId);
-    if (!conn) return;
-
-    const payload = {
-      type,
-      agentEntityId: entityId,
-      agentName: conn.agentName,
-      runId: event.runId as string,
-    };
-
-    await Promise.all(
-      conn.connectedSpaceIds.map((spaceId) => this.emitToSpace(spaceId, payload)),
-    );
-  }
-
-  private async emitChunked(spaceId: string, runId: string, text: string): Promise<void> {
-    const words = text.match(/\S+\s*/g) ?? [text];
-    const WORDS_PER_CHUNK = 3;
-    const DELAY_MS = 35;
-
-    for (let i = 0; i < words.length; i += WORDS_PER_CHUNK) {
-      const chunk = words.slice(i, i + WORDS_PER_CHUNK).join('');
-      await this.emitToSpace(spaceId, {
-        type: 'space.message.streaming',
-        runId,
-        data: { phase: 'delta', delta: chunk },
-      });
-      if (i + WORDS_PER_CHUNK < words.length) {
-        await new Promise((r) => setTimeout(r, DELAY_MS));
       }
     }
   }
 
-  private async emitToSpace(spaceId: string, event: Record<string, unknown>): Promise<void> {
-    if (!this.publisher) return;
-    await this.publisher.publish(`smartspace:${spaceId}`, JSON.stringify(event));
+  private async emitToSpaces(event: Record<string, unknown>): Promise<void> {
+    if (!this.pub) return;
+
+    const payload = JSON.stringify(event);
+    for (const spaceId of this.opts.spaceIds) {
+      const channel = `smartspace:${spaceId}`;
+      await this.pub.publish(channel, payload).catch((err: unknown) =>
+        console.error(`[stream-bridge] Redis publish error:`, err),
+      );
+    }
   }
 }

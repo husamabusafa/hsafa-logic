@@ -1,5 +1,8 @@
 // =============================================================================
 // ext-spaces Configuration
+//
+// All configuration comes from environment variables.
+// No haseef-specific state — the extension is stateless and generic.
 // =============================================================================
 
 export interface Config {
@@ -8,7 +11,8 @@ export interface Config {
   secretKey: string;
   spacesAppUrl: string;
   spacesAppSecretKey: string;
-  redisUrl: string;
+  spacesRedisUrl: string;
+  port: number;
 }
 
 export function loadConfig(): Config {
@@ -24,15 +28,7 @@ export function loadConfig(): Config {
     secretKey: required('HSAFA_SECRET_KEY'),
     spacesAppUrl: required('SPACES_APP_URL'),
     spacesAppSecretKey: required('SPACES_APP_SECRET_KEY'),
-    redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
+    spacesRedisUrl: process.env.SPACES_REDIS_URL || process.env.REDIS_URL || 'redis://localhost:6379',
+    port: parseInt(process.env.PORT || '4100', 10),
   };
-}
-
-// Per-haseef connection info (from HaseefExtension.config JSON field)
-export interface HaseefConnection {
-  agentId: string;
-  agentName: string;
-  agentEntityId: string;
-  // Which space IDs this haseef is connected to (filter for SSE events)
-  connectedSpaceIds: string[];
 }

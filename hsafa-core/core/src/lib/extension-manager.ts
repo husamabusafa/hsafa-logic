@@ -1,252 +1,401 @@
 import { prisma } from './db.js';
 import { tool, jsonSchema, type ToolExecutionOptions } from 'ai';
-import { redis } from './redis.js';
-import { emitToolWorkerEvent } from './tool-worker-events.js';
-import { waitForToolResult } from './tool-result-wait.js';
 import type { HaseefProcessContext } from '../agent-builder/types.js';
 
 // =============================================================================
-// Extension Manager (v4)
+// Extension Manager (v4 — Manifest + Webhook)
 //
-// Handles extension registration, connection to Haseefs, and tool routing.
-// Extensions provide senses (events), actions (tools), and instructions
-// (prompt guidance) to connected Haseefs.
+// Extensions are generic, stateless HTTP servers. Core manages their lifecycle:
+//   - Install: POST url → Core fetches GET {url}/manifest, caches it
+//   - Tool calls: Core POSTs to {url}/webhook with { type: 'tool_call', ... }
+//                 Extension returns result synchronously in the HTTP response
+//   - Lifecycle: Core notifies extension of haseef.connected / disconnected /
+//                config_updated via POST {url}/webhook
+//   - Sense events: Extension pushes to Core via POST /api/haseefs/:id/senses
+//
+// No Redis pub/sub for tool calls, no PendingToolCall for extension tools,
+// no polling endpoints. Simple request/response.
 // =============================================================================
 
+const EXTENSION_TOOL_TIMEOUT = 60_000; // 60s HTTP timeout for webhook calls
+
 // =============================================================================
-// Registration — Create and manage extensions
+// Manifest Types
+// =============================================================================
+
+export interface ExtensionManifest {
+  name: string;
+  description?: string;
+  version?: string;
+  tools: Array<{
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+  }>;
+  instructions?: string;
+  configSchema?: Record<string, unknown>;
+  events?: string[];
+}
+
+// =============================================================================
+// Manifest Fetching
 // =============================================================================
 
 /**
- * Register a new extension with a generated extension key.
+ * Fetch the manifest from an extension's URL.
+ * Extensions serve their manifest at GET {url}/manifest.
  */
-export async function registerExtension(params: {
+export async function fetchManifest(url: string): Promise<ExtensionManifest> {
+  const manifestUrl = `${url.replace(/\/$/, '')}/manifest`;
+  const res = await fetch(manifestUrl, {
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch manifest from ${manifestUrl}: ${res.status} ${res.statusText}`);
+  }
+
+  return (await res.json()) as ExtensionManifest;
+}
+
+// =============================================================================
+// Webhook Notifications
+// =============================================================================
+
+/**
+ * Send a webhook event to an extension.
+ * Used for lifecycle events (haseef.connected, haseef.disconnected, haseef.config_updated)
+ * and tool_call events.
+ */
+export async function notifyExtension(
+  extensionUrl: string,
+  payload: Record<string, unknown>,
+  timeoutMs: number = 10_000,
+): Promise<unknown> {
+  const webhookUrl = `${extensionUrl.replace(/\/$/, '')}/webhook`;
+
+  const res = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Webhook to ${webhookUrl} failed: ${res.status} ${text}`);
+  }
+
+  return res.json().catch(() => ({ ok: true }));
+}
+
+// =============================================================================
+// Extension Registration & Management
+// =============================================================================
+
+/**
+ * Register a new extension. Generates a unique extensionKey for auth.
+ * If a URL is provided, fetches the manifest and caches it.
+ */
+export async function registerExtension(data: {
   name: string;
   description?: string;
   instructions?: string;
-}): Promise<{ id: string; extensionKey: string }> {
+  url?: string;
+}): Promise<{ extension: any; extensionKey: string }> {
   const extensionKey = `ek_${crypto.randomUUID().replace(/-/g, '')}`;
+
+  let manifest: ExtensionManifest | null = null;
+  let instructions = data.instructions ?? null;
+
+  // If URL provided, fetch manifest
+  if (data.url) {
+    manifest = await fetchManifest(data.url);
+    // Use manifest instructions if none provided explicitly
+    if (!instructions && manifest.instructions) {
+      instructions = manifest.instructions;
+    }
+  }
 
   const extension = await prisma.extension.create({
     data: {
-      name: params.name,
-      description: params.description ?? null,
-      instructions: params.instructions ?? null,
+      name: data.name,
+      description: data.description ?? manifest?.description ?? null,
+      url: data.url ?? null,
+      instructions,
       extensionKey,
+      manifest: manifest ? (manifest as any) : undefined,
     },
-    select: { id: true, extensionKey: true },
   });
 
-  return extension;
+  return { extension, extensionKey };
 }
 
 /**
- * Update an extension's metadata and/or instructions.
+ * Update extension metadata (name, description, instructions, url).
  */
 export async function updateExtension(
   extensionId: string,
-  params: { description?: string; instructions?: string },
-): Promise<void> {
-  await prisma.extension.update({
+  data: { name?: string; description?: string; instructions?: string; url?: string },
+): Promise<any> {
+  return prisma.extension.update({
     where: { id: extensionId },
     data: {
-      ...(params.description !== undefined && { description: params.description }),
-      ...(params.instructions !== undefined && { instructions: params.instructions }),
+      ...(data.name !== undefined && { name: data.name }),
+      ...(data.description !== undefined && { description: data.description }),
+      ...(data.instructions !== undefined && { instructions: data.instructions }),
+      ...(data.url !== undefined && { url: data.url }),
     },
   });
 }
 
-// =============================================================================
-// Tool Registration — Extensions register their tools
-// =============================================================================
-
-export interface ExtensionToolDef {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-}
-
 /**
- * Sync an extension's tool list. Upserts all provided tools and removes
- * any tools not in the list (full replacement).
+ * Refresh an extension's manifest from its URL.
  */
-export async function syncExtensionTools(
-  extensionId: string,
-  tools: ExtensionToolDef[],
-): Promise<void> {
-  // Get existing tool names
-  const existing = await prisma.extensionTool.findMany({
-    where: { extensionId },
-    select: { name: true },
+export async function refreshManifest(extensionId: string): Promise<ExtensionManifest> {
+  const ext = await prisma.extension.findUniqueOrThrow({
+    where: { id: extensionId },
   });
-  const existingNames = new Set(existing.map((t) => t.name));
-  const newNames = new Set(tools.map((t) => t.name));
 
-  // Delete tools that are no longer in the list
-  const toDelete = [...existingNames].filter((n) => !newNames.has(n));
-  if (toDelete.length > 0) {
-    await prisma.extensionTool.deleteMany({
-      where: { extensionId, name: { in: toDelete } },
-    });
+  if (!ext.url) {
+    throw new Error('Extension has no URL configured');
   }
 
-  // Upsert all tools
-  for (const t of tools) {
-    await prisma.extensionTool.upsert({
-      where: { extensionId_name: { extensionId, name: t.name } },
-      create: {
-        extensionId,
-        name: t.name,
-        description: t.description,
-        inputSchema: t.inputSchema as any,
-      },
-      update: {
-        description: t.description,
-        inputSchema: t.inputSchema as any,
-      },
-    });
-  }
+  const manifest = await fetchManifest(ext.url);
+
+  await prisma.extension.update({
+    where: { id: extensionId },
+    data: {
+      manifest: manifest as any,
+      // Update instructions from manifest if extension has no custom instructions
+      ...(!ext.instructions && manifest.instructions ? { instructions: manifest.instructions } : {}),
+    },
+  });
+
+  return manifest;
 }
 
 // =============================================================================
-// Connection — Link extensions to Haseefs (agents)
+// Haseef ↔ Extension Connection
 // =============================================================================
 
 /**
- * Connect an extension to a Haseef. Optionally pass per-connection config.
+ * Connect an extension to a Haseef. Sends haseef.connected lifecycle webhook.
  */
 export async function connectExtension(
   haseefId: string,
   extensionId: string,
   config?: Record<string, unknown>,
-): Promise<{ id: string }> {
+): Promise<any> {
   const connection = await prisma.haseefExtension.upsert({
-    where: { haseefId_extensionId: { haseefId, extensionId } },
+    where: {
+      haseefId_extensionId: { haseefId, extensionId },
+    },
     create: {
       haseefId,
       extensionId,
-      config: (config ?? null) as any,
-      enabled: true,
+      config: config ? (config as any) : undefined,
     },
     update: {
-      config: config as any,
+      config: config ? (config as any) : undefined,
       enabled: true,
     },
-    select: { id: true },
+    include: {
+      extension: { select: { url: true } },
+      haseef: { select: { name: true } },
+    },
   });
+
+  // Notify extension via lifecycle webhook
+  if (connection.extension.url) {
+    notifyExtension(connection.extension.url, {
+      type: 'haseef.connected',
+      haseefId,
+      haseefName: connection.haseef.name,
+      config: config ?? null,
+    }).catch((err) => console.warn(`[ext-manager] haseef.connected webhook failed:`, err));
+  }
 
   return connection;
 }
 
 /**
- * Disconnect an extension from a Haseef.
+ * Disconnect an extension from a Haseef. Sends haseef.disconnected lifecycle webhook.
  */
 export async function disconnectExtension(
   haseefId: string,
   extensionId: string,
 ): Promise<void> {
+  // Look up extension URL before deleting
+  const ext = await prisma.extension.findUnique({
+    where: { id: extensionId },
+    select: { url: true },
+  });
+
+  const haseef = await prisma.haseef.findUnique({
+    where: { id: haseefId },
+    select: { name: true },
+  });
+
   await prisma.haseefExtension.deleteMany({
     where: { haseefId, extensionId },
   });
+
+  // Notify extension via lifecycle webhook
+  if (ext?.url) {
+    notifyExtension(ext.url, {
+      type: 'haseef.disconnected',
+      haseefId,
+      haseefName: haseef?.name ?? haseefId,
+    }).catch((err) => console.warn(`[ext-manager] haseef.disconnected webhook failed:`, err));
+  }
 }
 
 /**
- * Get all connected extensions for a Haseef, with their tools and instructions.
+ * Update a Haseef ↔ Extension connection config. Sends haseef.config_updated webhook.
  */
-export async function getConnectedExtensions(haseefId: string) {
-  return prisma.haseefExtension.findMany({
+export async function updateExtensionConfig(
+  haseefId: string,
+  extensionId: string,
+  config: Record<string, unknown>,
+): Promise<any> {
+  const connection = await prisma.haseefExtension.update({
+    where: {
+      haseefId_extensionId: { haseefId, extensionId },
+    },
+    data: {
+      config: config as any,
+    },
+    include: {
+      extension: { select: { url: true } },
+      haseef: { select: { name: true } },
+    },
+  });
+
+  // Notify extension via lifecycle webhook
+  if (connection.extension.url) {
+    notifyExtension(connection.extension.url, {
+      type: 'haseef.config_updated',
+      haseefId,
+      haseefName: connection.haseef.name,
+      config,
+    }).catch((err) => console.warn(`[ext-manager] haseef.config_updated webhook failed:`, err));
+  }
+
+  return connection;
+}
+
+/**
+ * Get all extensions connected to a Haseef.
+ */
+export async function getConnectedExtensions(haseefId: string): Promise<any[]> {
+  const connections = await prisma.haseefExtension.findMany({
     where: { haseefId, enabled: true },
     include: {
       extension: {
-        include: { tools: true },
+        select: {
+          id: true,
+          name: true,
+          url: true,
+          instructions: true,
+          manifest: true,
+        },
       },
     },
   });
+
+  return connections;
 }
 
 // =============================================================================
-// Tool Building — Build AI SDK tools from connected extensions
+// Build AI SDK Tools from Extensions
 // =============================================================================
 
-export interface ExtensionToolsResult {
+interface ExtensionToolsResult {
   tools: Record<string, unknown>;
   instructions: string[];
 }
 
 /**
- * Build AI SDK tool objects from all connected extensions' tools.
- * Extension tools are "remote" — when called, they create a PendingToolCall
- * and notify the extension via Redis pub/sub. The extension polls or
- * receives the call, executes it, and returns the result.
+ * Build AI SDK–compatible tools from all extensions connected to a Haseef.
+ * Each extension tool executes via synchronous HTTP POST to the extension's
+ * webhook endpoint. No PendingToolCall, no Redis pub/sub.
  */
 export async function buildExtensionTools(
   haseefId: string,
   context: HaseefProcessContext,
-  timeout: number = 30_000,
 ): Promise<ExtensionToolsResult> {
-  const connections = await getConnectedExtensions(haseefId);
+  const connections = await prisma.haseefExtension.findMany({
+    where: { haseefId, enabled: true },
+    include: {
+      extension: true,
+    },
+  });
+
   const tools: Record<string, unknown> = {};
   const instructions: string[] = [];
 
   for (const conn of connections) {
     const ext = conn.extension;
+    const manifest = ext.manifest as ExtensionManifest | null;
 
-    // Collect instructions
+    // Collect extension instructions
     if (ext.instructions) {
       instructions.push(ext.instructions);
     }
 
-    // Build tools
-    for (const extTool of ext.tools) {
-      const schema = (Object.keys(extTool.inputSchema as object).length > 0)
-        ? extTool.inputSchema
-        : { type: 'object' as const, properties: {} };
+    // Get tools from manifest
+    const manifestTools = manifest?.tools ?? [];
 
-      tools[extTool.name] = tool({
-        description: extTool.description,
-        inputSchema: jsonSchema<Record<string, unknown>>(schema as any),
+    if (!ext.url) {
+      console.warn(`[ext-manager] Extension "${ext.name}" has no URL — skipping tool registration`);
+      continue;
+    }
+
+    const extensionUrl = ext.url;
+    const extensionConfig = conn.config as Record<string, unknown> | null;
+
+    // Build a tool for each manifest tool
+    for (const mt of manifestTools) {
+      const schema = mt.inputSchema as Record<string, unknown>;
+      const inputSchema = jsonSchema<Record<string, unknown>>(
+        Object.keys(schema).length > 0
+          ? schema
+          : { type: 'object' as const, properties: {} }
+      );
+
+      tools[mt.name] = tool({
+        description: mt.description,
+        inputSchema,
         execute: async (args: Record<string, unknown>, options: ToolExecutionOptions) => {
           const toolCallId = options.toolCallId;
 
-          // Create PendingToolCall so the extension can poll for it
-          await prisma.pendingToolCall.create({
-            data: {
-              haseefId: context.haseefId,
-              runId: context.currentRunId!,
+          try {
+            // Synchronous HTTP POST to extension webhook
+            const result = await notifyExtension(
+              extensionUrl,
+              {
+                type: 'tool_call',
+                toolCallId,
+                toolName: mt.name,
+                args,
+                haseefId: context.haseefId,
+                haseefName: context.haseefName,
+                runId: context.currentRunId,
+                config: extensionConfig,
+              },
+              EXTENSION_TOOL_TIMEOUT,
+            );
+
+            return result;
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            console.error(`[ext-manager] Tool "${mt.name}" webhook failed:`, errMsg);
+            return {
+              error: `Extension tool "${mt.name}" failed: ${errMsg}`,
               toolCallId,
-              toolName: extTool.name,
-              args: args as any,
-              status: 'waiting',
-            },
-          });
-
-          // Notify via Redis pub/sub (generic tool-workers channel + extension-specific)
-          const event = {
-            type: 'tool.call' as const,
-            toolCallId,
-            toolName: extTool.name,
-            args,
-            runId: context.currentRunId!,
-            haseefId: context.haseefId,
-            extensionId: ext.id,
-            ts: new Date().toISOString(),
-          };
-          emitToolWorkerEvent(event).catch((err) =>
-            console.warn('[extension-manager] Failed to emit tool worker event:', err),
-          );
-          // Also publish to extension-specific channel
-          redis.publish(`ext:${ext.id}:tools`, JSON.stringify(event)).catch((err) =>
-            console.warn('[extension-manager] Failed to publish to extension channel:', err),
-          );
-
-          // Wait for result with timeout
-          const result = await waitForToolResult(toolCallId, timeout);
-          if (result !== null) return result;
-
-          return {
-            error: `Extension tool "${extTool.name}" timed out after ${timeout}ms. No result was received.`,
-            toolCallId,
-          };
+            };
+          }
         },
       });
     }
@@ -256,52 +405,20 @@ export async function buildExtensionTools(
 }
 
 // =============================================================================
-// Polling — Extensions poll for pending tool calls
-// =============================================================================
-
-/**
- * Get pending tool calls for a specific extension connected to a Haseef.
- * Extensions poll this to discover calls they need to execute.
- */
-export async function getPendingToolCalls(
-  haseefId: string,
-  extensionId: string,
-) {
-  // Get tool names for this extension
-  const extTools = await prisma.extensionTool.findMany({
-    where: { extensionId },
-    select: { name: true },
-  });
-  const toolNames = extTools.map((t) => t.name);
-  if (toolNames.length === 0) return [];
-
-  // Find pending/waiting calls for this Haseef's tools
-  return prisma.pendingToolCall.findMany({
-    where: {
-      haseefId,
-      toolName: { in: toolNames },
-      status: { in: ['pending', 'waiting'] },
-    },
-    orderBy: { createdAt: 'asc' },
-  });
-}
-
-// =============================================================================
-// Verify — Check that an extension is connected to a Haseef
+// Verification Helpers
 // =============================================================================
 
 /**
  * Verify that an extension is connected to a specific Haseef.
- * Used by routes to enforce access control.
  */
 export async function verifyExtensionConnection(
   extensionId: string,
   haseefId: string,
 ): Promise<boolean> {
   const connection = await prisma.haseefExtension.findUnique({
-    where: { haseefId_extensionId: { haseefId, extensionId } },
-    select: { enabled: true },
+    where: {
+      haseefId_extensionId: { haseefId, extensionId },
+    },
   });
-  return connection?.enabled === true;
+  return !!connection;
 }
-

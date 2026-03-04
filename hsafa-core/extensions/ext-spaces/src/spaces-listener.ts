@@ -1,5 +1,5 @@
 import { EventSource } from 'eventsource';
-import type { Config, HaseefConnection } from './config.js';
+import type { Config } from './config.js';
 import type { CoreClient } from './core-client.js';
 
 // =============================================================================
@@ -10,29 +10,46 @@ import type { CoreClient } from './core-client.js';
 //
 // Sensory filtering:
 //   - Skip messages from the haseef itself (avoid loops)
-//   - Skip messages from non-connected spaces
 //   - Only pass meaningful events (messages, not typing indicators)
+//
+// Lifecycle:
+//   - Created when Core sends haseef.connected webhook
+//   - Destroyed when Core sends haseef.disconnected webhook
 // =============================================================================
 
 const RECONNECT_DELAY_MS = 3000;
 
+export interface ListenerOptions {
+  haseefId: string;
+  haseefName: string;
+  agentEntityId: string;
+  spaceIds: string[];
+}
+
 export class SpacesListener {
   private config: Config;
   private coreClient: CoreClient;
-  private connection: HaseefConnection;
+  private opts: ListenerOptions;
   private eventSources: Map<string, EventSource> = new Map();
   private running = false;
 
-  constructor(config: Config, coreClient: CoreClient, connection: HaseefConnection) {
+  constructor(config: Config, coreClient: CoreClient, opts: ListenerOptions) {
     this.config = config;
     this.coreClient = coreClient;
-    this.connection = connection;
+    this.opts = opts;
   }
 
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.connect();
+
+    if (this.opts.spaceIds.length > 0) {
+      for (const spaceId of this.opts.spaceIds) {
+        this.connectToSpace(spaceId);
+      }
+    } else {
+      console.warn(`[spaces-listener] No spaces for ${this.opts.haseefName} — no SSE listeners started`);
+    }
   }
 
   stop(): void {
@@ -43,30 +60,12 @@ export class SpacesListener {
     this.eventSources.clear();
   }
 
-  private connect(): void {
-    if (!this.running) return;
-
-    const { agentEntityId, agentName, connectedSpaceIds } = this.connection;
-
-    // Connect to per-space SSE streams (one EventSource per space)
-    if (connectedSpaceIds.length > 0) {
-      for (const spaceId of connectedSpaceIds) {
-        this.connectToSpace(spaceId);
-      }
-      return;
-    }
-
-    // Fallback: if no specific spaces, log warning
-    console.warn(`[spaces-listener] No connected spaces for ${agentName} — no SSE listeners started`);
-  }
-
   private connectToSpace(spaceId: string): void {
     if (!this.running) return;
 
-    const { agentEntityId, agentName } = this.connection;
     const url = `${this.config.spacesAppUrl}/api/smart-spaces/${spaceId}/stream`;
 
-    console.log(`[spaces-listener] Connecting SSE for ${agentName} space=${spaceId} → ${url}`);
+    console.log(`[spaces-listener] Connecting SSE for ${this.opts.haseefName} space=${spaceId}`);
 
     const es = new EventSource(url, {
       fetch: (input, init) =>
@@ -80,23 +79,21 @@ export class SpacesListener {
     });
 
     es.onopen = () => {
-      console.log(`[spaces-listener] SSE connected for ${agentName}`);
+      console.log(`[spaces-listener] SSE connected for ${this.opts.haseefName} space=${spaceId}`);
     };
 
-    // Listen for space.message events
     es.addEventListener('space.message', (event: MessageEvent) => {
       this.handleSpaceMessage(event.data).catch((err) =>
         console.error(`[spaces-listener] Error handling space.message:`, err),
       );
     });
 
-    es.onerror = (err: Event) => {
-      console.error(`[spaces-listener] SSE error for ${agentName} space=${spaceId}:`, err);
+    es.onerror = (_err: Event) => {
+      console.error(`[spaces-listener] SSE error for ${this.opts.haseefName} space=${spaceId}`);
       es.close();
       this.eventSources.delete(spaceId);
 
       if (this.running) {
-        console.log(`[spaces-listener] Reconnecting space=${spaceId} in ${RECONNECT_DELAY_MS}ms...`);
         setTimeout(() => this.connectToSpace(spaceId), RECONNECT_DELAY_MS);
       }
     };
@@ -122,15 +119,9 @@ export class SpacesListener {
     const msg = data.message;
     if (!msg) return;
 
-    const { agentEntityId, agentId, connectedSpaceIds } = this.connection;
-
     // SENSORY FILTER: Skip messages from the haseef itself (avoid loops)
-    if (msg.entityId === agentEntityId) return;
+    if (msg.entityId === this.opts.agentEntityId) return;
 
-    // SENSORY FILTER: Skip messages from non-connected spaces
-    if (connectedSpaceIds.length > 0 && !connectedSpaceIds.includes(msg.smartSpaceId)) return;
-
-    // Push to core as a SenseEvent
     const senseEvent = {
       eventId: msg.id,
       channel: 'ext-spaces',
@@ -149,10 +140,9 @@ export class SpacesListener {
     };
 
     console.log(
-      `[spaces-listener] → Pushing sense event for ${this.connection.agentName}: ` +
-      `${senseEvent.data.senderName} in "${senseEvent.data.spaceName}": "${(senseEvent.data.content as string).slice(0, 50)}"`,
+      `[spaces-listener] → sense: ${senseEvent.data.senderName} in "${senseEvent.data.spaceName}": "${(senseEvent.data.content as string).slice(0, 50)}"`,
     );
 
-    await this.coreClient.pushSenseEvent(agentId, senseEvent);
+    await this.coreClient.pushSenseEvent(this.opts.haseefId, senseEvent);
   }
 }
