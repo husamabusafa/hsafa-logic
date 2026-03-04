@@ -20,19 +20,10 @@ agentsRouter.post('/', requireSecretKey(), async (req, res) => {
       data: { name, description, configJson },
     });
 
-    // Auto-create an entity for the Haseef
-    const entity = await prisma.entity.create({
-      data: {
-        type: 'agent',
-        haseefId: haseef.id,
-        displayName: name,
-      },
-    });
-
     // Start Haseef process
-    await startProcess(haseef.id, entity.id, name);
+    await startProcess(haseef.id, name);
 
-    res.status(201).json({ haseef, haseefId: entity.id });
+    res.status(201).json({ haseef, haseefId: haseef.id });
   } catch (error) {
     console.error('Create haseef error:', error);
     res.status(500).json({ error: 'Failed to create haseef' });
@@ -43,7 +34,6 @@ agentsRouter.post('/', requireSecretKey(), async (req, res) => {
 agentsRouter.get('/', requireSecretKey(), async (req, res) => {
   try {
     const haseefs = await prisma.haseef.findMany({
-      include: { entity: { select: { id: true } } },
       orderBy: { createdAt: 'desc' },
     });
     res.json({ haseefs });
@@ -58,7 +48,6 @@ agentsRouter.get('/:id', requireSecretKey(), async (req, res) => {
   try {
     const haseef = await prisma.haseef.findUnique({
       where: { id: req.params.id },
-      include: { entity: { select: { id: true } } },
     });
     if (!haseef) {
       res.status(404).json({ error: 'Haseef not found' });
@@ -95,11 +84,10 @@ agentsRouter.delete('/:id', requireSecretKey(), async (req, res) => {
   try {
     const haseef = await prisma.haseef.findUnique({
       where: { id: req.params.id },
-      include: { entity: { select: { id: true } } },
     });
 
-    if (haseef?.entity) {
-      await stopProcess(haseef.entity.id);
+    if (haseef) {
+      await stopProcess(haseef.id);
     }
 
     await prisma.haseef.delete({ where: { id: req.params.id } });
@@ -123,20 +111,19 @@ agentsRouter.post('/:haseefId/trigger', requireSecretKey(), async (req, res) => 
 
     const haseef = await prisma.haseef.findUnique({
       where: { id: haseefId },
-      include: { entity: { select: { id: true } } },
     });
 
-    if (!haseef || !haseef.entity) {
+    if (!haseef) {
       res.status(404).json({ error: 'Haseef not found' });
       return;
     }
 
-    await pushServiceEvent(haseef.entity.id, {
+    await pushServiceEvent(haseefId, {
       serviceName,
       payload: payload ?? {},
     });
 
-    res.json({ success: true, haseefId: haseef.entity.id });
+    res.json({ success: true, haseefId });
   } catch (error) {
     console.error('Trigger agent error:', error);
     res.status(500).json({ error: 'Failed to trigger agent' });

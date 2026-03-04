@@ -194,7 +194,7 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
           triggerSource: first.source || undefined,
           triggerEntityId: (firstData.senderEntityId as string) || undefined,
           triggerPayload: isService
-            ? (firstData as unknown as ServiceEventData).payload
+            ? (firstData as unknown as ServiceEventData).payload as any
             : undefined,
         },
       });

@@ -99,23 +99,78 @@ export class SpacesClient {
   }
 
   // ---------------------------------------------------------------------------
-  // Get memberships for an entity (discover connected spaces)
+  // Get members of a space
   // ---------------------------------------------------------------------------
 
-  async getMemberships(entityId: string): Promise<Array<{ smartSpaceId: string; spaceName: string | null }>> {
+  async getMembers(spaceId: string): Promise<Array<{ entityId: string; type: string; displayName: string | null; role: string | null }>> {
     const res = await fetch(
-      `${this.config.spacesAppUrl}/api/entities/${entityId}/spaces`,
+      `${this.config.spacesAppUrl}/api/smart-spaces/${spaceId}/members`,
       {
         headers: { 'x-secret-key': this.config.spacesAppSecretKey },
       },
     );
 
     if (!res.ok) {
-      // Endpoint may not exist yet — return empty
       return [];
     }
 
-    const body = await res.json() as { spaces: Array<{ smartSpaceId: string; spaceName: string | null }> };
-    return body.spaces ?? [];
+    const body = await res.json() as {
+      members: Array<{
+        entityId: string;
+        role: string | null;
+        entity: { id: string; type: string; displayName: string | null };
+      }>;
+    };
+    return (body.members ?? []).map((m) => ({
+      entityId: m.entityId,
+      type: m.entity.type,
+      displayName: m.entity.displayName,
+      role: m.role,
+    }));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Find agent entity by displayName (for resolving agentEntityId)
+  // ---------------------------------------------------------------------------
+
+  async findAgentEntityByName(name: string): Promise<{ id: string; displayName: string | null } | null> {
+    const res = await fetch(
+      `${this.config.spacesAppUrl}/api/entities?type=agent`,
+      {
+        headers: { 'x-secret-key': this.config.spacesAppSecretKey },
+      },
+    );
+
+    if (!res.ok) return null;
+
+    const body = await res.json() as {
+      entities: Array<{ id: string; type: string; displayName: string | null; externalId: string | null }>;
+    };
+
+    // Match by displayName (case-insensitive)
+    const match = body.entities.find(
+      (e) => e.displayName?.toLowerCase() === name.toLowerCase(),
+    );
+    return match ?? null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Get spaces an entity is a member of
+  // ---------------------------------------------------------------------------
+
+  async getEntitySpaces(entityId: string): Promise<Array<{ id: string; name: string | null }>> {
+    const res = await fetch(
+      `${this.config.spacesAppUrl}/api/smart-spaces?entityId=${entityId}`,
+      {
+        headers: { 'x-secret-key': this.config.spacesAppSecretKey },
+      },
+    );
+
+    if (!res.ok) return [];
+
+    const body = await res.json() as {
+      smartSpaces: Array<{ id: string; name: string | null }>;
+    };
+    return body.smartSpaces ?? [];
   }
 }

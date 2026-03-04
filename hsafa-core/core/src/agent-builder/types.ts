@@ -199,8 +199,6 @@ export const SENSE_TYPE = {
 export interface HaseefProcessContext {
   haseefId: string;
   haseefName: string;
-  /** Haseef's DB id (for memory/goal/plan queries) */
-  haseefId: string;
   /** Current cycle number (monotonically increasing) */
   cycleCount: number;
   /** The run ID for the current think cycle (audit record) */

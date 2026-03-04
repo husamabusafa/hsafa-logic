@@ -45,7 +45,6 @@ extensionsRouter.get('/me', requireExtensionKey(), async (req: Request, res: Res
               select: {
                 id: true,
                 name: true,
-                entity: { select: { id: true, displayName: true } },
               },
             },
           },
@@ -69,8 +68,6 @@ extensionsRouter.get('/me', requireExtensionKey(), async (req: Request, res: Res
           connectionId: c.id,
           haseefId: c.haseef.id,
           haseefName: c.haseef.name,
-          haseefId: c.haseef.entity?.id,
-          haseefDisplayName: c.haseef.entity?.displayName,
           config: c.config,
           connectedAt: c.connectedAt,
         })),
@@ -143,7 +140,7 @@ extensionsRouter.get('/:extId', requireSecretKey(), async (req: Request, res: Re
         tools: true,
         connections: {
           include: {
-            agent: { select: { id: true, name: true } },
+            haseef: { select: { id: true, name: true } },
           },
         },
       },

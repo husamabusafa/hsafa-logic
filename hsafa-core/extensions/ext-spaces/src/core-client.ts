@@ -21,10 +21,8 @@ export interface ExtensionInfo {
   name: string;
   connections: Array<{
     connectionId: string;
-    agentId: string;
-    agentName: string;
-    agentEntityId: string;
-    agentDisplayName: string;
+    haseefId: string;
+    haseefName: string;
     config: Record<string, unknown> | null;
   }>;
 }
@@ -128,12 +126,12 @@ export class CoreClient {
   // Parse connection config into HaseefConnection
   // ---------------------------------------------------------------------------
 
-  parseConnection(conn: ExtensionInfo['connections'][number]): HaseefConnection {
+  parseConnection(conn: ExtensionInfo['connections'][number]): Omit<HaseefConnection, 'agentEntityId' | 'connectedSpaceIds'> & { agentEntityId?: string; connectedSpaceIds: string[] } {
     const cfg = (conn.config ?? {}) as Record<string, unknown>;
     return {
-      agentId: conn.agentId,
-      agentName: conn.agentName,
-      agentEntityId: conn.agentEntityId,
+      agentId: conn.haseefId,
+      agentName: conn.haseefName,
+      agentEntityId: (cfg.agentEntityId as string) ?? undefined,
       connectedSpaceIds: (cfg.connectedSpaceIds as string[]) ?? [],
     };
   }

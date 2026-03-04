@@ -124,11 +124,11 @@ export async function connectExtension(
     create: {
       haseefId,
       extensionId,
-      config: config ?? null,
+      config: (config ?? null) as any,
       enabled: true,
     },
     update: {
-      config: config ?? undefined,
+      config: config as any,
       enabled: true,
     },
     select: { id: true },
@@ -274,17 +274,10 @@ export async function getPendingToolCalls(
   const toolNames = extTools.map((t) => t.name);
   if (toolNames.length === 0) return [];
 
-  // Get the Haseef's entity ID
-  const haseef = await prisma.haseef.findUnique({
-    where: { id: haseefId },
-    include: { entity: { select: { id: true } } },
-  });
-  if (!haseef?.entity) return [];
-
   // Find pending/waiting calls for this Haseef's tools
   return prisma.pendingToolCall.findMany({
     where: {
-      haseefId: haseef.entity.id,
+      haseefId,
       toolName: { in: toolNames },
       status: { in: ['pending', 'waiting'] },
     },

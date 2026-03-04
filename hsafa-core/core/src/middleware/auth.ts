@@ -91,13 +91,8 @@ export function requireSecretKey() {
         try {
           const payload = await verifyJWT(authHeader.slice(7));
           externalId = extractExternalId(payload) ?? undefined;
-          if (externalId) {
-            const entity = await prisma.entity.findUnique({
-              where: { externalId },
-              select: { id: true },
-            });
-            if (entity) haseefId = entity.id;
-          }
+          // haseefId from JWT sub claim
+          haseefId = (payload.sub as string) ?? undefined;
         } catch {
           // JWT is optional with secret key
         }
@@ -151,17 +146,15 @@ export function requirePublicKeyJWT() {
         return;
       }
 
-      const entity = await prisma.entity.findUnique({
-        where: { externalId },
-        select: { id: true },
-      });
+      // haseefId comes from JWT sub claim directly
+      const haseefId = payload.sub as string;
 
-      if (!entity) {
-        res.status(403).json({ error: 'No entity found for this user' });
+      if (!haseefId) {
+        res.status(403).json({ error: 'No haseefId found in JWT' });
         return;
       }
 
-      req.auth = { method: 'public_key_jwt', haseefId: entity.id, externalId };
+      req.auth = { method: 'public_key_jwt', haseefId, externalId };
       next();
     } catch (error) {
       console.error('Public key + JWT auth error:', error);

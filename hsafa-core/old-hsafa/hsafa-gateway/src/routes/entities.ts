@@ -25,27 +25,27 @@ entitiesRouter.post('/', requireSecretKey(), async (req, res) => {
   }
 });
 
-// POST /api/entities/agent — Create an agent entity (linked to a Haseef record)
+// POST /api/entities/agent — Create an agent entity (linked to an Agent record)
 entitiesRouter.post('/agent', requireSecretKey(), async (req, res) => {
   try {
-    const { haseefId, displayName, metadata } = req.body;
+    const { agentId, displayName, metadata } = req.body;
 
-    if (!haseefId) {
-      res.status(400).json({ error: 'haseefId is required' });
+    if (!agentId) {
+      res.status(400).json({ error: 'agentId is required' });
       return;
     }
 
-    const haseef = await prisma.haseef.findUnique({ where: { id: haseefId } });
-    if (!haseef) {
-      res.status(404).json({ error: 'Haseef not found' });
+    const agent = await prisma.agent.findUnique({ where: { id: agentId } });
+    if (!agent) {
+      res.status(404).json({ error: 'Agent not found' });
       return;
     }
 
     const entity = await prisma.entity.create({
       data: {
         type: 'agent',
-        haseefId,
-        displayName: displayName ?? haseef.name,
+        agentId,
+        displayName: displayName ?? agent.name,
         metadata: metadata ?? undefined,
       },
     });

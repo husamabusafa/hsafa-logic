@@ -47,7 +47,7 @@ export function createSetGoalsTool(ctx: HaseefProcessContext) {
         } else {
           await prisma.goal.create({
             data: {
-              entityId: ctx.haseefId,
+              haseefId: ctx.haseefId,
               description: goal.description,
               status: goal.status ?? 'active',
               priority: goal.priority ?? 0,

@@ -50,7 +50,6 @@ import {
  */
 export async function buildSystemPrompt(
   haseefId: string,
-  haseefId: string,
   haseefName: string,
   extensionInstructions: string[] = [],
 ): Promise<string> {

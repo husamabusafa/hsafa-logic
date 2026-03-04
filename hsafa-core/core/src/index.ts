@@ -4,7 +4,6 @@
 import express from 'express';
 import { createServer } from 'http';
 import { agentsRouter } from './routes/agents.js';
-import { entitiesRouter } from './routes/entities.js';
 import { runsRouter } from './routes/runs.js';
 import { toolWorkersRouter } from './routes/tool-workers.js';
 import { extensionsRouter } from './routes/extensions.js';
@@ -37,7 +36,6 @@ app.use(express.json());
 
 // Routes
 app.use('/api/agents', agentsRouter);
-app.use('/api/entities', entitiesRouter);
 app.use('/api/runs', runsRouter);
 app.use('/api/tools', toolWorkersRouter);
 // v4: Extension system routes

@@ -11,8 +11,9 @@ import type { SpacesClient } from './spaces-client.js';
 // the result to core.
 //
 // Tools handled:
-//   - send_space_message  → POST /api/smart-spaces/:spaceId/messages
-//   - read_space_messages → GET  /api/smart-spaces/:spaceId/messages
+//   - enter_space          → GET space info + members + messages (context loading)
+//   - send_space_message   → POST /api/smart-spaces/:spaceId/messages
+//   - read_space_messages  → GET  /api/smart-spaces/:spaceId/messages
 // =============================================================================
 
 interface ToolCallEvent {
@@ -21,7 +22,7 @@ interface ToolCallEvent {
   toolName: string;
   args: Record<string, unknown>;
   runId: string;
-  agentEntityId: string;
+  haseefId: string;       // The haseef ID from core (= agentId in HaseefConnection)
   extensionId: string;
   ts: string;
 }
@@ -30,7 +31,8 @@ export class ToolHandler {
   private config: Config;
   private coreClient: CoreClient;
   private spacesClient: SpacesClient;
-  private connections: Map<string, HaseefConnection>; // agentEntityId → connection
+  private connectionsByEntityId: Map<string, HaseefConnection>; // agentEntityId → connection
+  private connectionsByHaseefId: Map<string, HaseefConnection>; // agentId (haseefId) → connection
   private subscriber: InstanceType<typeof Redis> | null = null;
   private extensionId: string;
   private running = false;
@@ -46,7 +48,8 @@ export class ToolHandler {
     this.coreClient = coreClient;
     this.spacesClient = spacesClient;
     this.extensionId = extensionId;
-    this.connections = new Map(connections.map((c) => [c.agentEntityId, c]));
+    this.connectionsByEntityId = new Map(connections.map((c) => [c.agentEntityId, c]));
+    this.connectionsByHaseefId = new Map(connections.map((c) => [c.agentId, c]));
   }
 
   async start(): Promise<void> {
@@ -86,7 +89,8 @@ export class ToolHandler {
 
   // Update connections at runtime (e.g. after a new haseef connects)
   updateConnections(connections: HaseefConnection[]): void {
-    this.connections = new Map(connections.map((c) => [c.agentEntityId, c]));
+    this.connectionsByEntityId = new Map(connections.map((c) => [c.agentEntityId, c]));
+    this.connectionsByHaseefId = new Map(connections.map((c) => [c.agentId, c]));
   }
 
   private async handleMessage(raw: string): Promise<void> {
@@ -100,9 +104,10 @@ export class ToolHandler {
 
     if (event.type !== 'tool.call') return;
 
-    const conn = this.connections.get(event.agentEntityId);
+    // Core sends haseefId (= agentId), look up by that
+    const conn = this.connectionsByHaseefId.get(event.haseefId);
     if (!conn) {
-      console.warn(`[tool-handler] No connection for agentEntityId=${event.agentEntityId}`);
+      console.warn(`[tool-handler] No connection for haseefId=${event.haseefId}`);
       return;
     }
 
@@ -114,6 +119,9 @@ export class ToolHandler {
     let result: unknown;
     try {
       switch (event.toolName) {
+        case 'enter_space':
+          result = await this.executeEnterSpace(event.args, conn);
+          break;
         case 'send_space_message':
           result = await this.executeSendMessage(event.args, conn);
           break;
@@ -136,6 +144,48 @@ export class ToolHandler {
   // ---------------------------------------------------------------------------
   // Tool executors
   // ---------------------------------------------------------------------------
+
+  private async executeEnterSpace(
+    args: Record<string, unknown>,
+    conn: HaseefConnection,
+  ): Promise<unknown> {
+    const spaceId = args.spaceId as string;
+    if (!spaceId) {
+      return { error: 'spaceId is required' };
+    }
+
+    // Fetch space info, members, and recent messages in parallel
+    const [space, members, messagesResult] = await Promise.all([
+      this.spacesClient.getSpace(spaceId).catch(() => null),
+      this.spacesClient.getMembers(spaceId).catch(() => []),
+      this.spacesClient.readMessages(spaceId, 20).catch(() => ({ messages: [] })),
+    ]);
+
+    if (!space) {
+      return { error: `Space not found: ${spaceId}` };
+    }
+
+    return {
+      success: true,
+      space: {
+        id: space.id,
+        name: space.name,
+      },
+      members: members.map((m) => ({
+        entityId: m.entityId,
+        displayName: m.displayName,
+        type: m.type,
+        isMe: m.entityId === conn.agentEntityId,
+      })),
+      messages: messagesResult.messages.map((m) => ({
+        id: m.id,
+        content: m.content,
+        role: m.role,
+        entityId: m.entityId,
+        createdAt: m.createdAt,
+      })),
+    };
+  }
 
   private async executeSendMessage(
     args: Record<string, unknown>,

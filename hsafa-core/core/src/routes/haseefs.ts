@@ -34,15 +34,15 @@ import type { SenseEvent } from '../agent-builder/types.js';
 export const haseefsRouter = Router();
 
 // =============================================================================
-// Helper: Resolve haseefId to haseefId
+// Helper: Verify haseef exists
 // =============================================================================
 
-async function resolveHaseefEntityId(haseefId: string): Promise<string | null> {
+async function verifyHaseefExists(haseefId: string): Promise<boolean> {
   const haseef = await prisma.haseef.findUnique({
     where: { id: haseefId },
-    include: { entity: { select: { id: true } } },
+    select: { id: true },
   });
-  return haseef?.entity?.id ?? null;
+  return !!haseef;
 }
 
 // =============================================================================
@@ -67,8 +67,9 @@ haseefsRouter.post('/:id/senses', requireExtensionKey(), async (req: Request, re
       return;
     }
 
-    const haseefId = await resolveHaseefEntityId(haseefId);
-    if (!haseefId) {
+    // Verify haseef exists
+    const exists = await verifyHaseefExists(haseefId);
+    if (!exists) {
       res.status(404).json({ error: 'Haseef not found' });
       return;
     }
@@ -220,7 +221,6 @@ haseefsRouter.get('/', requireSecretKey(), async (_req: Request, res: Response) 
   try {
     const haseefs = await prisma.haseef.findMany({
       include: {
-        entity: { select: { id: true, displayName: true } },
         connections: {
           include: {
             extension: { select: { id: true, name: true } },
@@ -235,9 +235,9 @@ haseefsRouter.get('/', requireSecretKey(), async (_req: Request, res: Response) 
         id: h.id,
         name: h.name,
         description: h.description,
-        haseefId: h.entity?.id,
-        displayName: h.entity?.displayName,
-        extensions: h.connections.map((c) => ({
+        haseefId: h.id,
+        displayName: h.name,
+        extensions: h.connections.map((c: any) => ({
           extensionId: c.extension.id,
           extensionName: c.extension.name,
           enabled: c.enabled,
@@ -257,7 +257,6 @@ haseefsRouter.get('/:id', requireSecretKey(), async (req: Request, res: Response
     const haseef = await prisma.haseef.findUnique({
       where: { id: req.params.id },
       include: {
-        entity: { select: { id: true, displayName: true } },
         connections: {
           include: {
             extension: {
@@ -278,9 +277,9 @@ haseefsRouter.get('/:id', requireSecretKey(), async (req: Request, res: Response
         id: haseef.id,
         name: haseef.name,
         description: haseef.description,
-        haseefId: haseef.entity?.id,
-        displayName: haseef.entity?.displayName,
-        extensions: haseef.connections.map((c) => ({
+        haseefId: haseef.id,
+        displayName: haseef.name,
+        extensions: haseef.connections.map((c: any) => ({
           extensionId: c.extension.id,
           extensionName: c.extension.name,
           enabled: c.enabled,

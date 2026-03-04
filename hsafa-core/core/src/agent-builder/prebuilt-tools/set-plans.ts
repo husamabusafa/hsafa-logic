@@ -115,11 +115,11 @@ export function createSetPlansTool(ctx: HaseefProcessContext) {
           });
 
           // Enqueue updated plan
-          await enqueuePlan({ id: plan.id, entityId: ctx.haseefId, cron: plan.cron ?? null, nextRunAt, isRecurring });
+          await enqueuePlan({ id: plan.id, haseefId: ctx.haseefId, cron: plan.cron ?? null, nextRunAt, isRecurring });
         } else {
           const created = await prisma.plan.create({
             data: {
-              entityId: ctx.haseefId,
+              haseefId: ctx.haseefId,
               name: plan.name,
               instruction: plan.instruction,
               cron: plan.cron ?? null,
@@ -131,7 +131,7 @@ export function createSetPlansTool(ctx: HaseefProcessContext) {
           });
 
           // Enqueue new plan
-          await enqueuePlan({ id: created.id, entityId: ctx.haseefId, cron: plan.cron ?? null, nextRunAt, isRecurring });
+          await enqueuePlan({ id: created.id, haseefId: ctx.haseefId, cron: plan.cron ?? null, nextRunAt, isRecurring });
         }
         count++;
       }
