@@ -1,9 +1,9 @@
 import { tool, jsonSchema, type ToolExecutionOptions } from 'ai';
 import { createMCPClient } from '@ai-sdk/mcp';
-import Redis from 'ioredis';
 import { prisma } from '../lib/db.js';
 import { redis } from '../lib/redis.js';
 import { resolveModel } from '../lib/model-registry.js';
+import { waitForToolResult } from '../lib/tool-result-wait.js';
 import {
   HaseefConfigSchema,
   type HaseefConfig,
@@ -166,7 +166,7 @@ function buildCustomTools(
             ts: new Date().toISOString(),
           }).catch((err: unknown) => console.warn('[builder] Failed to emit tool worker event:', err));
 
-          const result = await waitForPendingResult(toolCallId, timeout);
+          const result = await waitForToolResult(toolCallId, timeout);
           if (result !== null) return result;
 
           return {
@@ -181,76 +181,12 @@ function buildCustomTools(
   return { tools };
 }
 
-/** Redis channel prefix for tool result pub/sub */
-const TOOL_RESULT_CHANNEL = 'tool-result:';
-
 /**
- * Wait for a PendingToolCall to be resolved using Redis pub/sub.
- * Returns the result instantly when published, or null on timeout.
- * On timeout, flips status 'waiting' → 'pending' so that if the result
- * arrives later, the tool-results API pushes it to the inbox.
- *
- * This replaces the old polling approach (500ms intervals × 30s = ~60 DB queries)
- * with a single pub/sub subscription (~0 DB queries, <5ms latency).
- */
-async function waitForPendingResult(
-  toolCallId: string,
-  timeoutMs: number,
-): Promise<unknown | null> {
-  // First check if already resolved (e.g. very fast worker)
-  const existing = await prisma.pendingToolCall.findUnique({ where: { toolCallId } });
-  if (existing?.status === 'resolved') return existing.result;
-
-  return new Promise((resolve) => {
-    const channel = `${TOOL_RESULT_CHANNEL}${toolCallId}`;
-    const subscriber = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
-      maxRetriesPerRequest: null,
-    });
-
-    const timer = setTimeout(async () => {
-      subscriber.unsubscribe(channel).catch(() => {});
-      subscriber.disconnect();
-
-      // Timeout — flip to 'pending' so late results reach the agent via inbox
-      await prisma.pendingToolCall.updateMany({
-        where: { toolCallId, status: 'waiting' },
-        data: { status: 'pending' },
-      });
-
-      // Final check — result may have arrived between subscribe end and status flip
-      const final = await prisma.pendingToolCall.findUnique({ where: { toolCallId } });
-      if (final?.status === 'resolved') {
-        resolve(final.result);
-      } else {
-        resolve(null);
-      }
-    }, timeoutMs);
-
-    subscriber.subscribe(channel).catch(() => {
-      clearTimeout(timer);
-      subscriber.disconnect();
-      resolve(null);
-    });
-
-    subscriber.on('message', (_ch, msg) => {
-      clearTimeout(timer);
-      subscriber.unsubscribe(channel).catch(() => {});
-      subscriber.disconnect();
-      try {
-        resolve(JSON.parse(msg));
-      } catch {
-        resolve(msg);
-      }
-    });
-  });
-}
-
-/**
- * Publish a tool result to the Redis channel so waitForPendingResult resolves.
+ * Publish a tool result to the Redis channel so waitForToolResult resolves.
  * Called from the tool-results API endpoint.
  */
 export async function publishToolResult(toolCallId: string, result: unknown): Promise<void> {
-  const channel = `${TOOL_RESULT_CHANNEL}${toolCallId}`;
+  const channel = `tool-result:${toolCallId}`;
   await redis.publish(channel, JSON.stringify(result));
 }
 

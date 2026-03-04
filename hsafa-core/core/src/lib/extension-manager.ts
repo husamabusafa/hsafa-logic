@@ -2,6 +2,7 @@ import { prisma } from './db.js';
 import { tool, jsonSchema, type ToolExecutionOptions } from 'ai';
 import { redis } from './redis.js';
 import { emitToolWorkerEvent } from './tool-worker-events.js';
+import { waitForToolResult } from './tool-result-wait.js';
 import type { HaseefProcessContext } from '../agent-builder/types.js';
 
 // =============================================================================
@@ -239,7 +240,7 @@ export async function buildExtensionTools(
           );
 
           // Wait for result with timeout
-          const result = await waitForExtensionToolResult(toolCallId, timeout);
+          const result = await waitForToolResult(toolCallId, timeout);
           if (result !== null) return result;
 
           return {
@@ -304,62 +305,3 @@ export async function verifyExtensionConnection(
   return connection?.enabled === true;
 }
 
-// =============================================================================
-// Internal — Wait for extension tool result via Redis pub/sub
-// =============================================================================
-
-const TOOL_RESULT_CHANNEL = 'tool-result:';
-
-async function waitForExtensionToolResult(
-  toolCallId: string,
-  timeoutMs: number,
-): Promise<unknown | null> {
-  // Check if already resolved
-  const existing = await prisma.pendingToolCall.findUnique({ where: { toolCallId } });
-  if (existing?.status === 'resolved') return existing.result;
-
-  const Redis = (await import('ioredis')).default;
-
-  return new Promise((resolve) => {
-    const channel = `${TOOL_RESULT_CHANNEL}${toolCallId}`;
-    const subscriber = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
-      maxRetriesPerRequest: null,
-    });
-
-    const timer = setTimeout(async () => {
-      subscriber.unsubscribe(channel).catch(() => {});
-      subscriber.disconnect();
-
-      // Timeout — flip to 'pending' so late results reach agent via inbox
-      await prisma.pendingToolCall.updateMany({
-        where: { toolCallId, status: 'waiting' },
-        data: { status: 'pending' },
-      });
-
-      // Final check
-      const final = await prisma.pendingToolCall.findUnique({ where: { toolCallId } });
-      if (final?.status === 'resolved') {
-        resolve(final.result);
-      } else {
-        resolve(null);
-      }
-    }, timeoutMs);
-
-    subscriber.subscribe(channel).catch(() => {
-      clearTimeout(timer);
-      subscriber.disconnect();
-      resolve(null);
-    });
-
-    subscriber.on('message', (_ch: string, msg: string) => {
-      clearTimeout(timer);
-      subscriber.unsubscribe(channel).catch(() => {});
-      subscriber.disconnect();
-      try {
-        resolve(JSON.parse(msg));
-      } catch {
-        resolve(msg);
-      }
-    });
-  });
-}

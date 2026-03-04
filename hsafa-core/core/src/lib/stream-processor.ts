@@ -64,8 +64,8 @@ export async function processStream(
   const { runId, haseefId } = options;
 
   const toolCalls: CollectedToolCall[] = [];
-  /** Minimal tracking: toolCallId → { toolName, startedAt } for duration + error cleanup */
-  const activeTiming = new Map<string, { toolName: string; startedAt: number }>();
+  /** Tracking: toolCallId → { toolName, startedAt, accumulatedArgs } for duration + partial args */
+  const activeTiming = new Map<string, { toolName: string; startedAt: number; accumulatedArgs: string }>();
   let internalText = '';
   let finishReason = 'unknown';
 
@@ -107,7 +107,7 @@ export async function processStream(
         const toolCallId = (part.id ?? part.toolCallId) as string;
         const toolName = part.toolName as string;
 
-        activeTiming.set(toolCallId, { toolName, startedAt: Date.now() });
+        activeTiming.set(toolCallId, { toolName, startedAt: Date.now(), accumulatedArgs: '' });
 
         await toRun({
           type: 'tool.started',
@@ -120,11 +120,19 @@ export async function processStream(
       }
 
       // ── Partial args — published for streaming-capable extensions ────────
+      // Core accumulates the raw args text and attempts to parse it into
+      // `partialArgs` on each delta. Extensions receive pre-parsed partial
+      // args — no manual JSON parsing needed on their side.
       case 'tool-input-delta': {
         const toolCallId = (part.id ?? part.toolCallId) as string;
         const argsDelta = (part.argsTextDelta ?? part.inputTextDelta ?? '') as string;
         const timing = activeTiming.get(toolCallId);
         if (argsDelta && timing) {
+          timing.accumulatedArgs += argsDelta;
+
+          // Try to parse accumulated args into a usable object
+          const partialArgs = tryParsePartialJson(timing.accumulatedArgs);
+
           await toRun({
             type: 'tool-input.delta',
             streamId: toolCallId,
@@ -132,6 +140,8 @@ export async function processStream(
             haseefId,
             toolName: timing.toolName,
             delta: argsDelta,
+            accumulatedArgs: timing.accumulatedArgs,
+            ...(partialArgs ? { partialArgs } : {}),
           });
         }
         break;
@@ -236,4 +246,31 @@ export async function processStream(
   }
 
   return { toolCalls, finishReason, internalText };
+}
+
+// =============================================================================
+// Partial JSON Parser
+//
+// Attempts to parse incomplete JSON by trying common closing suffixes.
+// This is the general-purpose helper that lets extensions receive pre-parsed
+// partial args without implementing their own JSON parsing.
+//
+// Example: '{"spaceId":"abc","text":"Hello, how are'
+//   → try + '"}' → {"spaceId":"abc","text":"Hello, how are"} ✓
+// =============================================================================
+
+const CLOSE_SUFFIXES = ['', '"}', '}', '"]}', ']}'];
+
+function tryParsePartialJson(text: string): Record<string, unknown> | null {
+  for (const suffix of CLOSE_SUFFIXES) {
+    try {
+      const result = JSON.parse(text + suffix);
+      if (result && typeof result === 'object' && !Array.isArray(result)) {
+        return result as Record<string, unknown>;
+      }
+    } catch {
+      // Try next suffix
+    }
+  }
+  return null;
 }

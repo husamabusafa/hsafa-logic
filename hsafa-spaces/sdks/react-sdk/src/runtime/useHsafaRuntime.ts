@@ -193,6 +193,9 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
   // Active agents: Map<runId, { entityId, entityName }> for reference counting
   const activeRunsRef = useRef(new Map<string, { entityId: string; entityName?: string }>());
   const [activeAgents, setActiveAgents] = useState<ActiveAgent[]>([]);
+  // Streaming buffer: accumulate deltas without re-rendering, flush at ~30fps
+  const streamingBufferRef = useRef(new Map<string, { entityId: string; text: string; done: boolean }>());
+  const rafRef = useRef<number | null>(null);
 
   // ── Load messages ──
   useEffect(() => {
@@ -265,39 +268,60 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
 
     // space.message.streaming → live text delta from send_message
     // ext-spaces stream-bridge sends runId (not streamId), so fall back to runId
+    //
+    // Deltas are buffered in streamingBufferRef (no re-render per event).
+    // A requestAnimationFrame loop flushes the buffer to React state at ~30fps
+    // for smooth, jitter-free streaming.
+    const scheduleFlush = () => {
+      if (rafRef.current != null) return; // already scheduled
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        const buf = streamingBufferRef.current;
+        if (buf.size === 0) return;
+        setStreaming(prev => {
+          let next = prev;
+          for (const [sid, entry] of buf) {
+            const idx = next.findIndex(s => s.streamId === sid);
+            if (idx >= 0) {
+              next = next.map(s => s.streamId === sid ? { ...s, text: entry.text, done: entry.done } : s);
+            } else {
+              next = [...next, { streamId: sid, entityId: entry.entityId, text: entry.text, done: entry.done }];
+            }
+          }
+          return next;
+        });
+      });
+    };
+
     stream.on('space.message.streaming', (e: StreamEvent) => {
       const streamId = (e.data?.streamId as string) || e.runId || (e.data?.runId as string);
       const phase = e.data?.phase as string;
       const delta = (e.data?.delta as string) || '';
       if (!streamId) return;
 
+      const buf = streamingBufferRef.current;
+      const existing = buf.get(streamId);
+
       if (phase === 'start') {
-        setStreaming(prev =>
-          prev.some(s => s.streamId === streamId)
-            ? prev
-            : [...prev, { streamId, entityId: e.agentEntityId || '', text: '', done: false }]
-        );
+        if (!existing) {
+          buf.set(streamId, { entityId: e.agentEntityId || '', text: '', done: false });
+        }
       } else if (phase === 'delta' && delta) {
-        // Use full accumulated text if available (survives page refresh),
-        // otherwise fall back to appending the delta.
         const fullText = (e.data?.text as string) || '';
-        setStreaming(prev => {
-          const exists = prev.some(s => s.streamId === streamId);
-          if (exists) {
-            return prev.map(s =>
-              s.streamId === streamId
-                ? { ...s, text: fullText || (s.text + delta) }
-                : s
-            );
-          }
-          // Auto-create entry if we missed the 'start' (e.g. page refresh mid-stream)
-          return [...prev, { streamId, entityId: (e.data?.agentEntityId as string) || e.agentEntityId || '', text: fullText || delta, done: false }];
-        });
+        if (existing) {
+          existing.text = fullText || (existing.text + delta);
+        } else {
+          buf.set(streamId, {
+            entityId: (e.data?.agentEntityId as string) || e.agentEntityId || '',
+            text: fullText || delta,
+            done: false,
+          });
+        }
       } else if (phase === 'done') {
-        setStreaming(prev => prev.map(s =>
-          s.streamId === streamId ? { ...s, done: true } : s
-        ));
+        if (existing) existing.done = true;
       }
+
+      scheduleFlush();
     });
 
     // space.message.failed → remove streaming entry
@@ -413,6 +437,7 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       activeRunsRef.current.delete(rid);
       setActiveAgents(deriveActiveAgents(activeRunsRef.current));
       // Clean up streaming entries keyed by runId (ext-spaces uses runId as streamId)
+      streamingBufferRef.current.delete(rid);
       setStreaming(prev => prev.filter(s => s.streamId !== rid));
     });
 
@@ -476,6 +501,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       setToolCalls([]);
       persistedRef.current.clear();
       activeRunsRef.current.clear();
+      streamingBufferRef.current.clear();
+      if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
       setActiveAgents([]);
     };
   }, [client, smartSpaceId, loaded]);
