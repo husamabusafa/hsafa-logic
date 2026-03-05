@@ -47,16 +47,6 @@ export interface ThreadListAdapter {
   onSwitchToNewThread?: () => void;
 }
 
-// ─── Streaming state ─────────────────────────────────────────────────────────
-
-/** Live streaming message from send_message — shown while the agent is typing */
-interface StreamingMessage {
-  streamId: string;
-  entityId: string;
-  text: string;
-  done: boolean;
-}
-
 interface ToolCallEntry {
   toolCallId: string;
   toolName: string;
@@ -117,48 +107,18 @@ function convertMessage(msg: SmartSpaceMessage, currentEntityId?: string): Threa
     isOtherHuman = true;
   }
 
-  // Extract text and tool_call parts from structured parts or plain content
+  // Extract only text parts — tool_call parts are never shown in the UI
   const content: ContentPart[] = [];
   const meta = msg.metadata as any;
   const parts = meta?.uiMessage?.parts;
   if (Array.isArray(parts)) {
     for (const p of parts) {
       if (p.type === 'text' && p.text) content.push({ type: 'text', text: p.text });
-      if (p.type === 'tool_call' && p.toolCallId) {
-        content.push({
-          type: 'tool-call',
-          toolCallId: p.toolCallId,
-          toolName: p.toolName || 'unknown',
-          argsText: JSON.stringify(p.args ?? {}),
-          args: p.args ?? {},
-          result: p.result,
-          status: p.status === 'complete'
-            ? { type: 'complete' }
-            : (p.status === 'waiting' || p.status === 'requires_action' || p.status === 'running' || p.status === 'streaming')
-              ? { type: 'running' }
-              : { type: 'incomplete', reason: 'error' },
-        } as ToolCallContentPart);
-      }
     }
   }
 
-  // Handle flat tool_call metadata format from gateway
-  // (gateway stores { type: 'tool_call', toolCallId, toolName, args, result, status, runId })
-  if (content.length === 0 && meta?.type === 'tool_call' && meta?.toolCallId) {
-    content.push({
-      type: 'tool-call',
-      toolCallId: meta.toolCallId,
-      toolName: meta.toolName || 'unknown',
-      argsText: JSON.stringify(meta.args ?? {}),
-      args: meta.args ?? {},
-      result: meta.result ?? undefined,
-      status: meta.status === 'complete'
-        ? { type: 'complete' }
-        : (meta.status === 'waiting' || meta.status === 'requires_action' || meta.status === 'running' || meta.status === 'streaming')
-          ? { type: 'running' }
-          : { type: 'incomplete', reason: 'error' },
-    } as ToolCallContentPart);
-  }
+  // Skip messages that are purely tool_call metadata (no text content)
+  if (content.length === 0 && meta?.type === 'tool_call') return null;
 
   if (content.length === 0) {
     const text = msg.content || '';
@@ -182,20 +142,13 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
   const { smartSpaceId, entityId, smartSpaces = [], onSwitchThread, onNewThread } = options;
 
   const [rawMessages, setRawMessages] = useState<SmartSpaceMessage[]>([]);
-  const [streaming, setStreaming] = useState<StreamingMessage[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([]);
   const [membersById, setMembersById] = useState<Record<string, Entity>>({});
   const [loaded, setLoaded] = useState(false);
   const streamRef = useRef<HsafaStream | null>(null);
-  // Dedup: track which streamIds already have a persisted message.
-  // Ref updates synchronously — always correct regardless of React batching.
-  const persistedRef = useRef(new Set<string>());
   // Active agents: Map<runId, { entityId, entityName }> for reference counting
   const activeRunsRef = useRef(new Map<string, { entityId: string; entityName?: string }>());
   const [activeAgents, setActiveAgents] = useState<ActiveAgent[]>([]);
-  // Streaming buffer: accumulate deltas without re-rendering, flush at ~30fps
-  const streamingBufferRef = useRef(new Map<string, { entityId: string; text: string; done: boolean }>());
-  const rafRef = useRef<number | null>(null);
 
   // ── Load messages ──
   useEffect(() => {
@@ -266,70 +219,6 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       });
     }).catch(() => {});
 
-    // space.message.streaming → live text delta from send_message
-    // ext-spaces stream-bridge sends runId (not streamId), so fall back to runId
-    //
-    // Deltas are buffered in streamingBufferRef (no re-render per event).
-    // A requestAnimationFrame loop flushes the buffer to React state at ~30fps
-    // for smooth, jitter-free streaming.
-    const scheduleFlush = () => {
-      if (rafRef.current != null) return; // already scheduled
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null;
-        const buf = streamingBufferRef.current;
-        if (buf.size === 0) return;
-        setStreaming(prev => {
-          let next = prev;
-          for (const [sid, entry] of buf) {
-            const idx = next.findIndex(s => s.streamId === sid);
-            if (idx >= 0) {
-              next = next.map(s => s.streamId === sid ? { ...s, text: entry.text, done: entry.done } : s);
-            } else {
-              next = [...next, { streamId: sid, entityId: entry.entityId, text: entry.text, done: entry.done }];
-            }
-          }
-          return next;
-        });
-      });
-    };
-
-    stream.on('space.message.streaming', (e: StreamEvent) => {
-      const streamId = (e.data?.streamId as string) || e.runId || (e.data?.runId as string);
-      const phase = e.data?.phase as string;
-      const delta = (e.data?.delta as string) || '';
-      if (!streamId) return;
-
-      const buf = streamingBufferRef.current;
-      const existing = buf.get(streamId);
-
-      if (phase === 'start') {
-        if (!existing) {
-          buf.set(streamId, { entityId: e.agentEntityId || '', text: '', done: false });
-        }
-      } else if (phase === 'delta' && delta) {
-        const fullText = (e.data?.text as string) || '';
-        if (existing) {
-          existing.text = fullText || (existing.text + delta);
-        } else {
-          buf.set(streamId, {
-            entityId: (e.data?.agentEntityId as string) || e.agentEntityId || '',
-            text: fullText || delta,
-            done: false,
-          });
-        }
-      } else if (phase === 'done') {
-        if (existing) existing.done = true;
-      }
-
-      scheduleFlush();
-    });
-
-    // space.message.failed → remove streaming entry
-    stream.on('space.message.failed', (e: StreamEvent) => {
-      const streamId = e.data?.streamId as string;
-      if (streamId) setStreaming(prev => prev.filter(s => s.streamId !== streamId));
-    });
-
     // tool.started → create tool call entry (running)
     stream.on('tool.started', (e: StreamEvent) => {
       const toolCallId = e.data?.streamId as string;
@@ -341,32 +230,6 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
           ? prev
           : [...prev, { toolCallId, toolName, entityId: e.agentEntityId || '', runId, status: 'running' as const }]
       );
-    });
-
-    // tool.streaming → progressively update partial args
-    // Auto-creates entry if tool.started was missed (e.g. page refresh mid-stream)
-    stream.on('tool.streaming', (e: StreamEvent) => {
-      const toolCallId = e.data?.streamId as string;
-      const partialArgs = e.data?.partialArgs as Record<string, unknown> | undefined;
-      const toolName = e.data?.toolName as string;
-      if (!toolCallId || !partialArgs) return;
-      setToolCalls(prev => {
-        const exists = prev.some(tc => tc.toolCallId === toolCallId);
-        if (exists) {
-          return prev.map(tc =>
-            tc.toolCallId === toolCallId ? { ...tc, args: partialArgs } : tc
-          );
-        }
-        // Auto-create entry if we missed tool.started (e.g. page refresh)
-        return [...prev, {
-          toolCallId,
-          toolName: toolName || 'unknown',
-          entityId: e.agentEntityId || '',
-          runId: e.runId as string | undefined,
-          args: partialArgs,
-          status: 'running' as const,
-        }];
-      });
     });
 
     // tool.done → mark complete with result
@@ -436,9 +299,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       if (!rid) return;
       activeRunsRef.current.delete(rid);
       setActiveAgents(deriveActiveAgents(activeRunsRef.current));
-      // Clean up streaming entries keyed by runId (ext-spaces uses runId as streamId)
-      streamingBufferRef.current.delete(rid);
-      setStreaming(prev => prev.filter(s => s.streamId !== rid));
+      // Clean up tool calls for this run
+      setToolCalls(prev => prev.filter(tc => tc.runId !== rid));
     });
 
     // space.message → persisted message arrived (from human send or agent send_message)
@@ -465,17 +327,14 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         metadata,
         createdAt: (raw.createdAt as string) || new Date().toISOString(),
       };
-      // Skip if no text content AND no tool_call in metadata
+      // Skip messages with no text content (tool-call-only messages are not displayed)
       if (!msg.content?.trim()) {
         const uiParts = (metadata?.uiMessage as any)?.parts;
-        const hasToolCallParts = Array.isArray(uiParts) && uiParts.some((p: any) => p.type === 'tool_call');
-        const isFlatToolCall = (metadata as any)?.type === 'tool_call' && (metadata as any)?.toolCallId;
-        if (!hasToolCallParts && !isFlatToolCall) return;
+        const hasTextParts = Array.isArray(uiParts) && uiParts.some((p: any) => p.type === 'text' && p.text);
+        if (!hasTextParts) return;
       }
-
-      // Dedup: mark streamId persisted BEFORE setState
-      const streamId = e.data?.streamId as string | undefined;
-      if (streamId) persistedRef.current.add(streamId);
+      // Skip flat tool_call metadata messages (no text to show)
+      if ((metadata as any)?.type === 'tool_call') return;
 
       setRawMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === msg.id);
@@ -487,88 +346,25 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         }
         return [...prev, msg];
       });
-      if (streamId) {
-        // Remove the live streaming/tool-call entry — persisted message replaces it
-        setStreaming((prev) => prev.filter((s) => s.streamId !== streamId));
-        setToolCalls((prev) => prev.filter((tc) => tc.toolCallId !== streamId));
-      }
     });
 
     return () => {
       stream.close();
       streamRef.current = null;
-      setStreaming([]);
       setToolCalls([]);
-      persistedRef.current.clear();
       activeRunsRef.current.clear();
-      streamingBufferRef.current.clear();
-      if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
       setActiveAgents([]);
     };
   }, [client, smartSpaceId, loaded]);
 
   // ── Build message list ──
-  // isRunning: only when there is actual streaming content or tool calls in-flight.
-  // activeAgents is NOT included — it fires before streaming starts and would show
-  // an empty assistant bubble. It's still exposed for typing indicators.
-  const isRunning = streaming.some((s) => !s.done && s.text.length > 0)
-    || toolCalls.some((tc) => tc.status === 'running');
+  const isRunning = activeAgents.length > 0;
 
   const messages = useMemo<ThreadMessageLike[]>(() => {
-    // Build set of active tool call IDs to skip their persisted duplicates
-    const activeToolCallIds = new Set(toolCalls.map((tc) => tc.toolCallId));
-
-    const persisted = rawMessages
-      .filter((m) => {
-        // Skip persisted messages whose tool_call parts are all covered by live toolCalls
-        const parts = (m.metadata as any)?.uiMessage?.parts as Array<Record<string, unknown>> | undefined;
-        if (Array.isArray(parts) && parts.length > 0 && parts.every((p) => p.type === 'tool_call' && activeToolCallIds.has(p.toolCallId as string))) {
-          return false;
-        }
-        // Also check flat tool_call metadata format
-        const flatMeta = m.metadata as any;
-        if (flatMeta?.type === 'tool_call' && flatMeta?.toolCallId && activeToolCallIds.has(flatMeta.toolCallId)) {
-          return false;
-        }
-        return true;
-      })
+    return rawMessages
       .map((m) => convertMessage(m, entityId))
       .filter((m): m is ThreadMessageLike => m !== null);
-
-    // Visible tool calls as assistant messages with tool-call content parts
-    const tcMessages = toolCalls.map((tc): ThreadMessageLike => ({
-      id: `tc-${tc.toolCallId}`,
-      role: 'assistant',
-      content: [{
-        type: 'tool-call',
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        argsText: JSON.stringify(tc.args ?? {}),
-        args: tc.args ?? {},
-        result: tc.result,
-        status: tc.status === 'running'
-          ? { type: 'running' }
-          : tc.status === 'complete'
-            ? { type: 'complete' }
-            : { type: 'incomplete', reason: 'error' },
-      } as ToolCallContentPart],
-      createdAt: new Date(),
-      metadata: { custom: { entityId: tc.entityId, runId: tc.runId } },
-    }));
-
-    // Live streaming messages from send_message (shown while agent is typing)
-    const streamingMessages = streaming
-      .filter((s) => s.text && !persistedRef.current.has(s.streamId))
-      .map((s): ThreadMessageLike => ({
-        id: s.streamId,
-        role: 'assistant',
-        content: [{ type: 'text', text: s.text }],
-        createdAt: new Date(),
-        metadata: { custom: { entityId: s.entityId } },
-      }));
-
-    return [...persisted, ...tcMessages, ...streamingMessages];
-  }, [rawMessages, streaming, toolCalls, entityId]);
+  }, [rawMessages, entityId]);
 
   // ── Send message ──
   const onNew = useCallback(

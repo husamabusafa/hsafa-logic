@@ -1,14 +1,14 @@
 import { createSmartSpaceMessage } from "./smartspace-db";
 import { emitSmartSpaceEvent } from "./smartspace-events";
+import { notifyNewMessage } from "./extension/inbox";
+import { prisma } from "./db";
 
 // =============================================================================
 // Space Service
 //
-// Consolidates "post message → emit SSE" logic.
-//
-// v4: NO inbox fan-out. The Spaces App doesn't know about Core's inbox.
-// ext-spaces (the extension) listens to the SSE stream and pushes
-// SenseEvents to Core when appropriate.
+// Consolidates "post message → emit SSE → notify extension" logic.
+// The extension inbox handler pushes sense events to Core directly —
+// no more SpacesListener SSE subscription needed.
 // =============================================================================
 
 export interface PostMessageParams {
@@ -60,6 +60,36 @@ export async function postSpaceMessage(
       createdAt: message.createdAt.toISOString(),
     },
   });
+
+  // 3. Notify extension inbox (replaces SpacesListener)
+  // Non-blocking — errors are caught internally
+  if (role !== "assistant") {
+    const [entity, space] = await Promise.all([
+      prisma.entity
+        .findUnique({
+          where: { id: entityId },
+          select: { displayName: true, type: true },
+        })
+        .catch(() => null),
+      prisma.smartSpace
+        .findUnique({
+          where: { id: spaceId },
+          select: { name: true },
+        })
+        .catch(() => null),
+    ]);
+
+    notifyNewMessage({
+      spaceId,
+      spaceName: space?.name ?? spaceId,
+      entityId,
+      senderName: entity?.displayName ?? "Unknown",
+      senderType: entity?.type ?? "human",
+      messageId: message.id,
+      content: content ?? "",
+      role,
+    }).catch(() => {});
+  }
 
   return {
     messageId: message.id,

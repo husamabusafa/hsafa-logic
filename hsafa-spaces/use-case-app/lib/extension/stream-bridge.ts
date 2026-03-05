@@ -1,21 +1,17 @@
-import { EventSource } from 'eventsource';
-import Redis from 'ioredis';
-import type { Config } from './config.js';
-
+// @ts-nocheck — EventSource types differ between packages
 // =============================================================================
 // Haseef Stream Bridge
 //
-// Subscribes to Core's haseef stream SSE endpoint and forwards relevant
-// streaming events to the spaces-app's Redis channels so the React SDK
-// can show typing indicators and live token streaming.
+// Subscribes to Core's haseef stream SSE and forwards events to spaces Redis.
+// Simplified: uses emitSmartSpaceEvent directly (same process, same Redis).
 //
-// Event mapping (Core → spaces-app):
+// Event mapping (Core → spaces Redis):
 //
 // For message_tools (messageTool: true in manifest):
 //   tool.started     → space.message.streaming (phase: start, toolName)
 //   tool-input.delta → space.message.streaming (phase: delta, toolName, partialArgs)
 //   tool.ready       → space.message.streaming (phase: args_complete, toolName, args)
-//   tool.done        → (no-op — persist happens in webhook handler)
+//   tool.done        → (no-op — tool handler persists the message)
 //
 // For regular tools:
 //   tool-input.delta → tool.streaming
@@ -27,9 +23,11 @@ import type { Config } from './config.js';
 //   text.delta       → space.message.streaming (phase: delta)
 //   run.start        → agent.active
 //   run.finish       → agent.inactive + space.message.streaming (phase: done)
-//
-// One bridge per haseef connection. Started/stopped via lifecycle webhooks.
 // =============================================================================
+
+import { EventSource } from "eventsource";
+import { emitSmartSpaceEvent } from "../smartspace-events";
+import type { ExtensionConfig } from "./config";
 
 const RECONNECT_DELAY_MS = 3000;
 
@@ -42,37 +40,29 @@ export interface StreamBridgeOptions {
 }
 
 export class HaseefStreamBridge {
-  private config: Config;
+  private config: ExtensionConfig;
   private opts: StreamBridgeOptions;
   private es: EventSource | null = null;
-  private pub: Redis | null = null;
   private running = false;
-
   private messageToolNames: Set<string>;
 
-  constructor(config: Config, opts: StreamBridgeOptions) {
+  constructor(config: ExtensionConfig, opts: StreamBridgeOptions) {
     this.config = config;
     this.opts = opts;
     this.messageToolNames = opts.messageToolNames;
   }
 
-  async start(): Promise<void> {
+  start(): void {
     if (this.running) return;
     this.running = true;
-
-    this.pub = new Redis(this.config.spacesRedisUrl, { maxRetriesPerRequest: null });
     this.connect();
   }
 
-  async stop(): Promise<void> {
+  stop(): void {
     this.running = false;
     if (this.es) {
       this.es.close();
       this.es = null;
-    }
-    if (this.pub) {
-      this.pub.disconnect();
-      this.pub = null;
     }
   }
 
@@ -80,22 +70,25 @@ export class HaseefStreamBridge {
     if (!this.running) return;
 
     const url = `${this.config.coreUrl}/api/haseefs/${this.opts.haseefId}/stream`;
-
-    console.log(`[stream-bridge] Connecting to haseef stream for ${this.opts.haseefName}`);
+    console.log(
+      `[stream-bridge] Connecting to haseef stream for ${this.opts.haseefName}`,
+    );
 
     this.es = new EventSource(url, {
-      fetch: (input, init) =>
+      fetch: (input: any, init: any) =>
         fetch(input, {
           ...init,
           headers: {
             ...(init?.headers as Record<string, string> | undefined),
-            'x-secret-key': this.config.secretKey,
+            "x-secret-key": this.config.secretKey,
           },
         }),
     });
 
     this.es.onopen = () => {
-      console.log(`[stream-bridge] Connected to haseef stream for ${this.opts.haseefName}`);
+      console.log(
+        `[stream-bridge] Connected to haseef stream for ${this.opts.haseefName}`,
+      );
     };
 
     this.es.onmessage = (event: MessageEvent) => {
@@ -105,7 +98,9 @@ export class HaseefStreamBridge {
     };
 
     this.es.onerror = () => {
-      console.error(`[stream-bridge] SSE error for ${this.opts.haseefName}`);
+      console.error(
+        `[stream-bridge] SSE error for ${this.opts.haseefName}`,
+      );
       if (this.es) {
         this.es.close();
         this.es = null;
@@ -120,51 +115,53 @@ export class HaseefStreamBridge {
     const event = JSON.parse(rawData) as Record<string, unknown>;
     const type = event.type as string;
 
-    if (!type || type === 'connected') return;
+    if (!type || type === "connected") return;
+
+    console.log(`[stream-bridge] event: ${type}`, type === 'tool-input.delta' ? { toolName: event.toolName, hasPartialArgs: !!event.partialArgs, partialText: (event.partialArgs as any)?.text?.slice(0, 50) } : '');
 
     const runId = event.runId as string | undefined;
     const streamId = runId || this.opts.haseefId;
 
     switch (type) {
-      case 'text.delta': {
-        // Forward as space.message.streaming for the React SDK
-        const textDelta = (event.text as string) ?? '';
+      case "text.delta": {
+        const textDelta = (event.text as string) ?? "";
         await this.emitToSpaces({
-          type: 'space.message.streaming',
+          type: "space.message.streaming",
           agentEntityId: this.opts.agentEntityId,
           runId: streamId,
           data: {
             streamId,
             agentEntityId: this.opts.agentEntityId,
-            phase: 'delta',
+            phase: "delta",
             delta: textDelta,
-            text: textDelta,
           },
         });
         break;
       }
 
-      case 'tool-input.delta':
-      case 'tool.started':
-      case 'tool.ready':
-      case 'tool.done': {
+      case "tool-input.delta":
+      case "tool.started":
+      case "tool.ready":
+      case "tool.done": {
         const toolName = event.toolName as string;
         const toolStreamId = (event.streamId ?? event.toolCallId) as string;
         const isMsgTool = this.messageToolNames.has(toolName);
 
         if (isMsgTool) {
-          // message_tool: stream as space.message.streaming so frontend renders as message
-          await this.handleMessageToolEvent(type, event, toolStreamId, toolName, streamId);
+          await this.handleMessageToolEvent(
+            type, event, toolStreamId, toolName, streamId,
+          );
         } else {
-          // Regular tool: forward as tool.* events
-          await this.handleRegularToolEvent(type, event, toolStreamId, toolName, streamId);
+          await this.handleRegularToolEvent(
+            type, event, toolStreamId, toolName, streamId,
+          );
         }
         break;
       }
 
-      case 'run.start': {
+      case "run.start": {
         await this.emitToSpaces({
-          type: 'agent.active',
+          type: "agent.active",
           agentEntityId: this.opts.agentEntityId,
           runId: event.runId as string,
           data: {
@@ -176,19 +173,15 @@ export class HaseefStreamBridge {
         break;
       }
 
-      case 'run.finish': {
-        // Emit streaming done + agent.inactive
+      case "run.finish": {
         await this.emitToSpaces({
-          type: 'space.message.streaming',
+          type: "space.message.streaming",
           agentEntityId: this.opts.agentEntityId,
           runId: streamId,
-          data: {
-            streamId,
-            phase: 'done',
-          },
+          data: { streamId, phase: "done" },
         });
         await this.emitToSpaces({
-          type: 'agent.inactive',
+          type: "agent.inactive",
           agentEntityId: this.opts.agentEntityId,
           runId: event.runId as string,
           data: {
@@ -202,7 +195,7 @@ export class HaseefStreamBridge {
   }
 
   // ---------------------------------------------------------------------------
-  // message_tool events → space.message.streaming (frontend renders as message)
+  // message_tool events → space.message.streaming
   // ---------------------------------------------------------------------------
 
   private async handleMessageToolEvent(
@@ -213,60 +206,64 @@ export class HaseefStreamBridge {
     runStreamId: string,
   ): Promise<void> {
     switch (type) {
-      case 'tool.started':
+      case "tool.started":
         await this.emitToSpaces({
-          type: 'space.message.streaming',
+          type: "space.message.streaming",
           agentEntityId: this.opts.agentEntityId,
           runId: runStreamId,
           data: {
             streamId: toolStreamId,
             agentEntityId: this.opts.agentEntityId,
-            phase: 'start',
+            phase: "start",
             toolName,
           },
         });
         break;
 
-      case 'tool-input.delta':
-        await this.emitToSpaces({
-          type: 'space.message.streaming',
-          agentEntityId: this.opts.agentEntityId,
-          runId: runStreamId,
-          data: {
-            streamId: toolStreamId,
+      case "tool-input.delta": {
+        // Core sends pre-parsed partialArgs — extract text field directly
+        const partialArgs = event.partialArgs as Record<string, unknown> | undefined;
+        const partialText = partialArgs?.text as string | undefined;
+        if (typeof partialText === 'string' && partialText.length > 0) {
+          await this.emitToSpaces({
+            type: "space.message.streaming",
             agentEntityId: this.opts.agentEntityId,
-            phase: 'delta',
-            toolName,
-            delta: event.delta as string,
-            partialArgs: event.partialArgs,
-          },
-        });
+            runId: runStreamId,
+            data: {
+              streamId: toolStreamId,
+              agentEntityId: this.opts.agentEntityId,
+              phase: "delta",
+              toolName,
+              text: partialText,
+            },
+          });
+        }
         break;
+      }
 
-      case 'tool.ready':
+      case "tool.ready":
         await this.emitToSpaces({
-          type: 'space.message.streaming',
+          type: "space.message.streaming",
           agentEntityId: this.opts.agentEntityId,
           runId: runStreamId,
           data: {
             streamId: toolStreamId,
             agentEntityId: this.opts.agentEntityId,
-            phase: 'args_complete',
+            phase: "args_complete",
             toolName,
             args: event.args,
           },
         });
         break;
 
-      case 'tool.done':
-        // No-op for message_tools — the webhook handler persists the final message.
-        // The space.message event from persistence is the authoritative "done" signal.
+      case "tool.done":
+        // No-op — the tool handler persists the final message
         break;
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Regular tool events → tool.* (not rendered as messages)
+  // Regular tool events → tool.*
   // ---------------------------------------------------------------------------
 
   private async handleRegularToolEvent(
@@ -277,18 +274,18 @@ export class HaseefStreamBridge {
     runStreamId: string,
   ): Promise<void> {
     switch (type) {
-      case 'tool.started':
+      case "tool.started":
         await this.emitToSpaces({
-          type: 'tool.started',
+          type: "tool.started",
           agentEntityId: this.opts.agentEntityId,
           runId: runStreamId,
           data: { streamId: toolStreamId, toolName },
         });
         break;
 
-      case 'tool-input.delta':
+      case "tool-input.delta":
         await this.emitToSpaces({
-          type: 'tool.streaming',
+          type: "tool.streaming",
           agentEntityId: this.opts.agentEntityId,
           runId: runStreamId,
           data: {
@@ -300,18 +297,18 @@ export class HaseefStreamBridge {
         });
         break;
 
-      case 'tool.ready':
+      case "tool.ready":
         await this.emitToSpaces({
-          type: 'tool.ready',
+          type: "tool.ready",
           agentEntityId: this.opts.agentEntityId,
           runId: runStreamId,
           data: { streamId: toolStreamId, toolName, args: event.args },
         });
         break;
 
-      case 'tool.done':
+      case "tool.done":
         await this.emitToSpaces({
-          type: 'tool.done',
+          type: "tool.done",
           agentEntityId: this.opts.agentEntityId,
           runId: runStreamId,
           data: { streamId: toolStreamId, toolName, result: event.result },
@@ -321,15 +318,13 @@ export class HaseefStreamBridge {
   }
 
   // ---------------------------------------------------------------------------
+  // Emit to all connected spaces (uses shared Redis — no separate connection)
+  // ---------------------------------------------------------------------------
 
   private async emitToSpaces(event: Record<string, unknown>): Promise<void> {
-    if (!this.pub) return;
-
-    const payload = JSON.stringify(event);
     for (const spaceId of this.opts.spaceIds) {
-      const channel = `smartspace:${spaceId}`;
-      await this.pub.publish(channel, payload).catch((err: unknown) =>
-        console.error(`[stream-bridge] Redis publish error:`, err),
+      await emitSmartSpaceEvent(spaceId, event as any).catch((err: unknown) =>
+        console.error(`[stream-bridge] Emit error:`, err),
       );
     }
   }

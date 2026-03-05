@@ -60,15 +60,6 @@ export function useRun(runId: string | null | undefined): UseRunReturn {
     streamRef.current = stream;
     setIsStreaming(true);
 
-    stream.on('space.message.streaming', (event: StreamEvent) => {
-      const phase = event.data?.phase as string;
-      const delta = (event.data?.delta as string) || '';
-      if (phase === 'delta' && delta) {
-        setText((prev) => prev + delta);
-      }
-      setEvents((prev) => [...prev, event]);
-    });
-
     stream.on('tool.started', (event: StreamEvent) => {
       const tc: ToolCall = {
         toolCallId: (event.data?.streamId as string) || (event.data?.toolCallId as string) || '',
@@ -119,7 +110,7 @@ export function useRun(runId: string | null | undefined): UseRunReturn {
     // Catch-all for other event types
     stream.on('*', (event: StreamEvent) => {
       const handled = [
-        'space.message.streaming', 'tool.started', 'tool.done',
+        'tool.started', 'tool.done',
         'run.started', 'run.completed', 'run.failed', 'run.cancelled',
       ];
       if (!handled.includes(event.type)) {

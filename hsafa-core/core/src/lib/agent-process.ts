@@ -39,6 +39,26 @@ import { SENSE_TYPE } from '../agent-builder/types.js';
 const SAFETY_MAX_STEPS = 50;
 
 /**
+ * Normalize system messages for Anthropic compatibility.
+ * Anthropic doesn't support multiple system messages separated by user/assistant
+ * messages. This converts any non-first system messages to user messages.
+ * Safe for all providers — user messages are universally supported.
+ */
+function normalizeSystemMessages(messages: ModelMessage[]): ModelMessage[] {
+  let seenFirst = false;
+  return messages.map((msg) => {
+    if (msg.role === 'system') {
+      if (!seenFirst) {
+        seenFirst = true;
+        return msg;
+      }
+      return { role: 'user' as const, content: msg.content };
+    }
+    return msg;
+  });
+}
+
+/**
  * Create a ToolLoopAgent instance with our configuration.
  * Encapsulates model, tools, loop control, and step preparation.
  * Rebuilt when the model changes (e.g. graceful degradation).
@@ -61,6 +81,7 @@ function createHaseefInstance(
     experimental_context: context,
     providerOptions: {
       openai: { parallelToolCalls: false },
+      anthropic: { thinking: { type: 'enabled', budgetTokens: 16000 } },
     },
     prepareStep: async ({ stepNumber, messages }) => {
       if (stepNumber === 0) return {};
@@ -235,8 +256,13 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
       // All config (model, tools, stopWhen, prepareStep, experimental_context)
       // is encapsulated in the agent. The agent decides when it's done via
       // the `done` tool (hasToolCall('done') stops the loop after execution).
+      //
+      // Normalize: Anthropic doesn't support multiple system messages separated
+      // by user/assistant messages. Convert any non-first system messages to
+      // user messages. This is safe for all providers.
+      const normalizedMessages = normalizeSystemMessages(consciousness);
       const result = await currentInstance.stream({
-        messages: consciousness as any,
+        messages: normalizedMessages as any,
       });
 
       // 8. PROCESS STREAM — collect tool calls, track durations, emit run events

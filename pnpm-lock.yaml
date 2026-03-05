@@ -263,6 +263,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      eventsource:
+        specifier: ^3.0.2
+        version: 3.0.7
       ioredis:
         specifier: ^5.9.2
         version: 5.9.3
@@ -275,6 +278,9 @@ importers:
       next:
         specifier: ^15.3.3
         version: 15.5.11(@opentelemetry/api@1.9.0)(babel-plugin-react-compiler@1.0.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      partial-json:
+        specifier: ^0.1.7
+        version: 0.1.7
       react:
         specifier: 19.1.0
         version: 19.1.0
@@ -289,6 +295,9 @@ importers:
         specifier: ^4.1.18
         version: 4.1.18
       '@types/bcryptjs':
+        specifier: ^3.0.0
+        version: 3.0.0
+      '@types/eventsource':
         specifier: ^3.0.0
         version: 3.0.0
       '@types/node':
@@ -2031,6 +2040,10 @@ packages:
 
   '@types/cors@2.8.19':
     resolution: {integrity: sha512-mFNylyeyqN93lfe/9CSxOGREz8cpzAhH+E93xJ4xWQf62V8sQ/24reV2nyzUWM6H6Xji+GGHpkbLe7pVoUEskg==}
+
+  '@types/eventsource@3.0.0':
+    resolution: {integrity: sha512-yEhFj31FTD29DtNeqePu+A+lD6loRef6YOM5XfN1kUwBHyy2DySGlA3jJU+FbQSkrfmlBVluf2Dub/OyReFGKA==}
+    deprecated: This is a stub types definition. eventsource provides its own type definitions, so you do not need this installed.
 
   '@types/express-serve-static-core@4.19.8':
     resolution: {integrity: sha512-02S5fmqeoKzVZCHPZid4b8JH2eM5HzQLZWN2FohQEy/0eXTq8VXZfSN6Pcr3F6N9R/vNrj7cpgbhjie6m/1tCA==}
@@ -6725,6 +6738,10 @@ snapshots:
   '@types/cors@2.8.19':
     dependencies:
       '@types/node': 22.19.8
+
+  '@types/eventsource@3.0.0':
+    dependencies:
+      eventsource: 3.0.7
 
   '@types/express-serve-static-core@4.19.8':
     dependencies:

@@ -149,22 +149,6 @@ export function useSmartSpace(smartSpaceId: string | null | undefined): UseSmart
       });
     });
 
-    // space.message.streaming → live text delta from send_message
-    stream.on('space.message.streaming', (event: StreamEvent) => {
-      const phase = event.data?.phase as string;
-      const delta = (event.data?.delta as string) || '';
-      const runId = event.runId || (event.data?.runId as string);
-      if (!runId) return;
-
-      if (phase === 'delta' && delta) {
-        setRuns((prev) =>
-          prev.map((r) =>
-            r.id === runId ? { ...r, text: r.text + delta } : r
-          )
-        );
-      }
-    });
-
     // tool.started → new tool call in-flight
     stream.on('tool.started', (event: StreamEvent) => {
       const runId = event.runId || (event.data?.runId as string);
