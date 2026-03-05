@@ -16,7 +16,6 @@ import { CHANNEL, SENSE_TYPE } from '../agent-builder/types.js';
 // =============================================================================
 
 const INBOX_PREFIX = 'inbox:';
-const WAKEUP_PREFIX = 'wakeup:';
 
 /** Maximum time (seconds) to block on BRPOP before re-checking. 0 = infinite. */
 const BRPOP_TIMEOUT = 30;
@@ -52,9 +51,8 @@ export async function pushToInbox(
     update: {}, // no-op if already exists (dedup)
   });
 
-  // Fast write — Redis (queue + wakeup signal)
+  // Fast write — Redis queue
   await redis.lpush(key, JSON.stringify(event));
-  await redis.publish(`${WAKEUP_PREFIX}${haseefId}`, '1');
 }
 
 /**
@@ -286,25 +284,6 @@ export async function markEventsProcessed(
   });
 }
 
-/**
- * Mark a batch of events as 'failed' when a think cycle errors.
- */
-export async function markEventsFailed(
-  haseefId: string,
-  eventIds: string[],
-): Promise<void> {
-  if (eventIds.length === 0) return;
-  await prisma.inboxEvent.updateMany({
-    where: {
-      haseefId,
-      eventId: { in: eventIds },
-      status: 'processing',
-    },
-    data: {
-      status: 'failed',
-    },
-  });
-}
 
 /**
  * Crash recovery: find events stuck in 'processing' or orphaned as 'pending'

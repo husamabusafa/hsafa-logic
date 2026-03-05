@@ -12,28 +12,10 @@ export const runsRouter = Router();
 // =============================================================================
 
 async function verifyRunAccess(req: Request, res: Response): Promise<boolean> {
-  // v4: secret_key and extension_key have full access.
-  // Public key users need entity resolution.
-  if (req.auth?.method === 'secret_key' || req.auth?.method === 'extension_key') return true;
-
-  const haseefId = req.auth?.haseefId;
-  if (!haseefId) {
-    res.status(403).json({ error: 'No entity resolved' });
+  if (!req.auth) {
+    res.status(401).json({ error: 'Unauthorized' });
     return false;
   }
-
-  const run = await prisma.run.findUnique({
-    where: { id: req.params.runId },
-    select: { haseefId: true },
-  });
-
-  if (!run) {
-    res.status(404).json({ error: 'Run not found' });
-    return false;
-  }
-
-  // For now, any authenticated entity can access runs.
-  // Fine-grained access control will be handled by extensions.
   return true;
 }
 

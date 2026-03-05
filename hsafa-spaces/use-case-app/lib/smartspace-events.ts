@@ -21,14 +21,3 @@ export async function emitSmartSpaceEvent(
   await redis.publish(channel, JSON.stringify(event));
 }
 
-/**
- * Publish an event to an entity-specific channel.
- * Used for per-entity SSE connections (e.g. admin dashboard).
- */
-export async function emitEntityEvent(
-  entityId: string,
-  event: SmartSpaceEvent
-): Promise<void> {
-  const channel = `entity:${entityId}`;
-  await redis.publish(channel, JSON.stringify(event));
-}

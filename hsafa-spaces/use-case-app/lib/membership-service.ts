@@ -96,17 +96,6 @@ export async function getMembersOfSpace(
 }
 
 /**
- * Get the name of a space by ID.
- */
-export async function getSpaceName(spaceId: string): Promise<string> {
-  const space = await prisma.smartSpace.findUnique({
-    where: { id: spaceId },
-    select: { name: true },
-  });
-  return space?.name ?? "Unnamed";
-}
-
-/**
  * Invalidate all caches for a space. Call on member add/remove.
  */
 export function invalidateSpace(spaceId: string): void {
@@ -114,9 +103,3 @@ export function invalidateSpace(spaceId: string): void {
   entitySpacesCache.clear();
 }
 
-/**
- * Invalidate caches for a specific entity.
- */
-export function invalidateEntity(entityId: string): void {
-  entitySpacesCache.delete(entityId);
-}
