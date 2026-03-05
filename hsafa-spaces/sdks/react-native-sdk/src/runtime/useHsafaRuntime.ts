@@ -37,15 +37,6 @@ export interface AppendMessage {
   parentId?: string | null;
 }
 
-// ─── Streaming state ─────────────────────────────────────────────────────────
-
-interface StreamingMessage {
-  streamId: string;
-  entityId: string;
-  text: string;
-  done: boolean;
-}
-
 interface ToolCallEntry {
   toolCallId: string;
   toolName: string;
@@ -169,12 +160,10 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
   const { smartSpaceId, entityId } = options;
 
   const [rawMessages, setRawMessages] = useState<SmartSpaceMessage[]>([]);
-  const [streaming, setStreaming] = useState<StreamingMessage[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([]);
   const [membersById, setMembersById] = useState<Record<string, Entity>>({});
   const [loaded, setLoaded] = useState(false);
   const streamRef = useRef<HsafaStream | null>(null);
-  const persistedRef = useRef(new Set<string>());
   const activeRunsRef = useRef(new Map<string, { entityId: string; entityName?: string }>());
   const [activeAgents, setActiveAgents] = useState<ActiveAgent[]>([]);
 
@@ -242,45 +231,6 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       });
     }).catch(() => {});
 
-    // space.message.streaming → live text delta from send_message
-    stream.on('space.message.streaming', (e: StreamEvent) => {
-      const streamId = e.data?.streamId as string;
-      const phase = e.data?.phase as string;
-      const delta = (e.data?.delta as string) || '';
-      if (!streamId) return;
-
-      if (phase === 'start') {
-        setStreaming(prev =>
-          prev.some(s => s.streamId === streamId)
-            ? prev
-            : [...prev, { streamId, entityId: e.agentEntityId || '', text: '', done: false }]
-        );
-      } else if (phase === 'delta' && delta) {
-        const fullText = (e.data?.text as string) || '';
-        setStreaming(prev => {
-          const exists = prev.some(s => s.streamId === streamId);
-          if (exists) {
-            return prev.map(s =>
-              s.streamId === streamId
-                ? { ...s, text: fullText || (s.text + delta) }
-                : s
-            );
-          }
-          return [...prev, { streamId, entityId: (e.data?.agentEntityId as string) || e.agentEntityId || '', text: fullText || delta, done: false }];
-        });
-      } else if (phase === 'done') {
-        setStreaming(prev => prev.map(s =>
-          s.streamId === streamId ? { ...s, done: true } : s
-        ));
-      }
-    });
-
-    // space.message.failed → remove streaming entry
-    stream.on('space.message.failed', (e: StreamEvent) => {
-      const streamId = e.data?.streamId as string;
-      if (streamId) setStreaming(prev => prev.filter(s => s.streamId !== streamId));
-    });
-
     // tool.started → create tool call entry (running)
     stream.on('tool.started', (e: StreamEvent) => {
       const toolCallId = e.data?.streamId as string;
@@ -292,30 +242,6 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
           ? prev
           : [...prev, { toolCallId, toolName, entityId: e.agentEntityId || '', runId, status: 'running' as const }]
       );
-    });
-
-    // tool.streaming → progressively update partial args
-    stream.on('tool.streaming', (e: StreamEvent) => {
-      const toolCallId = e.data?.streamId as string;
-      const partialArgs = e.data?.partialArgs as Record<string, unknown> | undefined;
-      const toolName = e.data?.toolName as string;
-      if (!toolCallId || !partialArgs) return;
-      setToolCalls(prev => {
-        const exists = prev.some(tc => tc.toolCallId === toolCallId);
-        if (exists) {
-          return prev.map(tc =>
-            tc.toolCallId === toolCallId ? { ...tc, args: partialArgs } : tc
-          );
-        }
-        return [...prev, {
-          toolCallId,
-          toolName: toolName || 'unknown',
-          entityId: e.agentEntityId || '',
-          runId: e.runId as string | undefined,
-          args: partialArgs,
-          status: 'running' as const,
-        }];
-      });
     });
 
     // tool.done → mark complete with result
@@ -416,10 +342,6 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         if (!hasToolCallParts && !isFlatToolCall) return;
       }
 
-      // Dedup: mark streamId persisted BEFORE setState
-      const streamId = e.data?.streamId as string | undefined;
-      if (streamId) persistedRef.current.add(streamId);
-
       setRawMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === msg.id);
         if (idx >= 0) {
@@ -429,26 +351,19 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         }
         return [...prev, msg];
       });
-      if (streamId) {
-        setStreaming((prev) => prev.filter((s) => s.streamId !== streamId));
-        setToolCalls((prev) => prev.filter((tc) => tc.toolCallId !== streamId));
-      }
     });
 
     return () => {
       stream.close();
       streamRef.current = null;
-      setStreaming([]);
       setToolCalls([]);
-      persistedRef.current.clear();
       activeRunsRef.current.clear();
       setActiveAgents([]);
     };
   }, [client, smartSpaceId, loaded]);
 
   // ── Build message list ──
-  const isRunning = streaming.some((s) => !s.done && s.text.length > 0)
-    || toolCalls.some((tc) => tc.status === 'running');
+  const isRunning = activeAgents.length > 0;
 
   const messages = useMemo<ThreadMessageLike[]>(() => {
     const activeToolCallIds = new Set(toolCalls.map((tc) => tc.toolCallId));
@@ -489,19 +404,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       metadata: { custom: { entityId: tc.entityId, runId: tc.runId } },
     }));
 
-    // Live streaming messages
-    const streamingMessages = streaming
-      .filter((s) => s.text && !persistedRef.current.has(s.streamId))
-      .map((s): ThreadMessageLike => ({
-        id: s.streamId,
-        role: 'assistant',
-        content: [{ type: 'text', text: s.text }],
-        createdAt: new Date(),
-        metadata: { custom: { entityId: s.entityId } },
-      }));
-
-    return [...persisted, ...tcMessages, ...streamingMessages];
-  }, [rawMessages, streaming, toolCalls, entityId]);
+    return [...persisted, ...tcMessages];
+  }, [rawMessages, toolCalls, entityId]);
 
   // ── Send message (AppendMessage style) ──
   const onNew = useCallback(
