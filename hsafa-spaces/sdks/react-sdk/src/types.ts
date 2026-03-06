@@ -149,6 +149,9 @@ export type EventType =
   // Agent status
   | 'agent.active'
   | 'agent.inactive'
+  // User presence
+  | 'user.online'
+  | 'user.offline'
   // Tool call events
   | 'tool.started'
   | 'tool.done'

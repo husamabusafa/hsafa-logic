@@ -7,7 +7,7 @@ import {
   LogOutIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { HsafaChatProvider, useCurrentSpace, useActiveAgents, useMembers } from "@hsafa/ui";
+import { HsafaChatProvider, useCurrentSpace, useActiveAgents, useOnlineUsers, useMembers } from "@hsafa/ui";
 
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
@@ -23,29 +23,46 @@ const PUBLIC_KEY = process.env.NEXT_PUBLIC_HSAFA_PUBLIC_KEY || "";
 function SpaceHeader() {
   const { spaceName } = useCurrentSpace();
   const activeAgents = useActiveAgents();
-  const { membersById } = useMembers();
+  const onlineUsers = useOnlineUsers();
+  const { membersById, currentEntityId } = useMembers();
 
-  // Filter to agents in current space
-  const visibleAgents = activeAgents.filter(
-    (a: { entityId: string; entityName?: string }) => membersById[a.entityId] && membersById[a.entityId].type === "agent"
+  // Running haseefs (agents with active runs)
+  const runningAgents = activeAgents.filter(
+    (a) => membersById[a.entityId]?.type === "agent"
   );
 
-  const agentLabel =
-    visibleAgents.length === 1
-      ? `${visibleAgents[0].entityName || membersById[visibleAgents[0].entityId]?.displayName || "AI Agent"} is active`
-      : visibleAgents.length > 1
-        ? `${visibleAgents.length} agents active`
-        : null;
+  // Online humans (excluding self)
+  const onlineHumans = onlineUsers.filter(
+    (u) => membersById[u.entityId]?.type === "human" && u.entityId !== currentEntityId
+  );
+
+  // Build status indicators
+  const indicators: { label: string; pulse: boolean }[] = [];
+
+  for (const agent of runningAgents) {
+    const name = agent.entityName || membersById[agent.entityId]?.displayName || "AI Agent";
+    indicators.push({ label: `${name} is thinking…`, pulse: true });
+  }
+  for (const user of onlineHumans) {
+    const name = membersById[user.entityId]?.displayName || "User";
+    indicators.push({ label: `${name} is online`, pulse: false });
+  }
 
   return (
     <div className="flex flex-1 flex-col justify-center min-w-0">
       <span className="text-sm font-medium text-foreground truncate">
         {spaceName || "AI Assistant"}
       </span>
-      {agentLabel && (
-        <div className="flex items-center gap-1.5">
-          <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-[11px] text-muted-foreground/80">{agentLabel}</span>
+      {indicators.length > 0 && (
+        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+          {indicators.map((ind, i) => (
+            <div key={i} className="flex items-center gap-1">
+              <span
+                className={`size-1.5 rounded-full bg-emerald-500 ${ind.pulse ? "animate-pulse" : ""}`}
+              />
+              <span className="text-[11px] text-muted-foreground/80">{ind.label}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>

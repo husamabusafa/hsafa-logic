@@ -63,6 +63,10 @@ export interface ActiveAgent {
   entityName?: string;
 }
 
+export interface OnlineUser {
+  entityId: string;
+}
+
 // ─── Options & Return ────────────────────────────────────────────────────────
 
 export interface UseHsafaRuntimeOptions {
@@ -77,6 +81,7 @@ export interface UseHsafaRuntimeReturn {
   messages: ThreadMessageLike[];
   isRunning: boolean;
   activeAgents: ActiveAgent[];
+  onlineUsers: OnlineUser[];
   onNew: (message: AppendMessage) => Promise<void>;
   threadListAdapter?: ThreadListAdapter;
   membersById: Record<string, Entity>;
@@ -149,6 +154,9 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
   // Active agents: Map<runId, { entityId, entityName }> for reference counting
   const activeRunsRef = useRef(new Map<string, { entityId: string; entityName?: string }>());
   const [activeAgents, setActiveAgents] = useState<ActiveAgent[]>([]);
+  // Online users: Set<entityId> for reference counting (multiple tabs)
+  const onlineCountRef = useRef(new Map<string, number>());
+  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
 
   // ── Load messages ──
   useEffect(() => {
@@ -181,7 +189,7 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
     const stream = client.spaces.subscribe(smartSpaceId);
     streamRef.current = stream;
 
-    // Restore active agents + pending tool calls from SSE connected event (survives page refresh)
+    // Restore state from SSE connected event (survives page refresh)
     stream.on('connected', (e: StreamEvent) => {
       const agents = e.data?.activeAgents as Array<{ runId: string; agentEntityId: string; agentName?: string }> | undefined;
       if (Array.isArray(agents) && agents.length > 0) {
@@ -189,6 +197,15 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
           activeRunsRef.current.set(a.runId, { entityId: a.agentEntityId, entityName: a.agentName });
         }
         setActiveAgents(deriveActiveAgents(activeRunsRef.current));
+      }
+
+      // Restore online users from connected event
+      const users = e.data?.onlineUsers as string[] | undefined;
+      if (Array.isArray(users)) {
+        const countMap = new Map<string, number>();
+        for (const eid of users) countMap.set(eid, 1);
+        onlineCountRef.current = countMap;
+        setOnlineUsers(users.map((eid) => ({ entityId: eid })));
       }
 
       // Restore pending tool calls for waiting_tool runs (e.g. confirmAction buttons)
@@ -303,6 +320,33 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       setToolCalls(prev => prev.filter(tc => tc.runId !== rid));
     });
 
+    // user.online / user.offline — track which human users are online
+    stream.on('user.online', (e: StreamEvent) => {
+      const eid = e.entityId || (e.data?.entityId as string);
+      if (!eid) return;
+      const prev = onlineCountRef.current.get(eid) || 0;
+      onlineCountRef.current.set(eid, prev + 1);
+      if (prev === 0) {
+        setOnlineUsers((current) => {
+          if ((current || []).some((u) => u.entityId === eid)) return current;
+          return [...(current || []), { entityId: eid }];
+        });
+      }
+    });
+
+    stream.on('user.offline', (e: StreamEvent) => {
+      const eid = e.entityId || (e.data?.entityId as string);
+      if (!eid) return;
+      const prev = onlineCountRef.current.get(eid) || 0;
+      const next = Math.max(0, prev - 1);
+      if (next === 0) {
+        onlineCountRef.current.delete(eid);
+        setOnlineUsers((current) => (current || []).filter((u) => u.entityId !== eid));
+      } else {
+        onlineCountRef.current.set(eid, next);
+      }
+    });
+
     // space.message → persisted message arrived (from human send or agent send_message)
     stream.on('space.message', (e: StreamEvent) => {
       const raw = e.data?.message as Record<string, unknown> | undefined;
@@ -354,6 +398,8 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       setToolCalls([]);
       activeRunsRef.current.clear();
       setActiveAgents([]);
+      onlineCountRef.current.clear();
+      setOnlineUsers([]);
     };
   }, [client, smartSpaceId, loaded]);
 
@@ -397,5 +443,5 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       }
     : undefined;
 
-  return { messages, isRunning, activeAgents, onNew, threadListAdapter, membersById };
+  return { messages, isRunning, activeAgents, onlineUsers: onlineUsers || [], onNew, threadListAdapter, membersById };
 }

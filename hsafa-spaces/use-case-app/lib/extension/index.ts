@@ -12,9 +12,11 @@
 // Replaces ext-spaces entirely. No SpacesClient, no SpacesListener.
 // =============================================================================
 
+import Redis from "ioredis";
 import { prisma } from "../db";
 import { postSpaceMessage } from "../space-service";
 import { getMembersOfSpace, getSpacesForEntity } from "../membership-service";
+import { emitSmartSpaceEvent } from "../smartspace-events";
 import { loadExtensionConfig, type ExtensionConfig } from "./config";
 import { CoreClient } from "./core-client";
 import { MANIFEST } from "./manifest";
@@ -32,6 +34,7 @@ interface ActiveConnection {
   haseefName: string;
   agentEntityId: string;
   spaceIds: string[];
+  subscriber: InstanceType<typeof Redis> | null;
 }
 
 interface ExtensionState {
@@ -146,12 +149,55 @@ export async function handleLifecycle(
       );
     }
 
-    state.connections.set(haseefId, {
+    const newConn: ActiveConnection = {
       haseefId,
       haseefName,
       agentEntityId,
       spaceIds,
+      subscriber: null,
+    };
+    state.connections.set(haseefId, newConn);
+
+    // Start stream bridge: subscribe to Core's haseef run events and
+    // bridge run.start → agent.active and run.finish → agent.inactive
+    const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
+    const runSubscriber = new Redis(REDIS_URL, { maxRetriesPerRequest: null });
+    await runSubscriber.subscribe(`haseef:${haseefId}:stream`);
+    runSubscriber.on("message", async (_ch: string, message: string) => {
+      try {
+        const event = JSON.parse(message) as { type: string; runId?: string };
+        const conn = state.connections.get(haseefId);
+        if (!conn) return;
+
+        if (event.type === "run.start") {
+          for (const spaceId of conn.spaceIds) {
+            await emitSmartSpaceEvent(spaceId, {
+              type: "agent.active",
+              agentEntityId: conn.agentEntityId,
+              runId: event.runId,
+              data: {
+                agentEntityId: conn.agentEntityId,
+                agentName: conn.haseefName,
+                runId: event.runId,
+              },
+            });
+          }
+        } else if (event.type === "run.finish") {
+          for (const spaceId of conn.spaceIds) {
+            await emitSmartSpaceEvent(spaceId, {
+              type: "agent.inactive",
+              agentEntityId: conn.agentEntityId,
+              runId: event.runId,
+              data: {
+                agentEntityId: conn.agentEntityId,
+                runId: event.runId,
+              },
+            });
+          }
+        }
+      } catch {}
     });
+    newConn.subscriber = runSubscriber;
 
     console.log(
       `[extension] Connected ${haseefName} (${spaceIds.length} spaces)`,
@@ -159,6 +205,7 @@ export async function handleLifecycle(
   } else if (type === "haseef.disconnected") {
     const existing = state.connections.get(haseefId);
     if (existing) {
+      existing.subscriber?.quit().catch(() => {});
       state.connections.delete(haseefId);
       console.log(`[extension] Disconnected ${haseefName}`);
     }

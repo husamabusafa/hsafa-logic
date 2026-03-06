@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, type ReactNode } from "react";
-import type { Entity, ActiveAgent } from "@hsafa/react";
+import type { Entity, ActiveAgent, OnlineUser } from "@hsafa/react";
 
 // Members Context
 interface MembersContextValue {
@@ -84,4 +84,25 @@ export function CurrentSpaceProvider({
 
 export function useCurrentSpace(): CurrentSpaceValue {
   return useContext(CurrentSpaceContext);
+}
+
+// Online Users Context
+const OnlineUsersContext = createContext<OnlineUser[]>([]);
+
+export function OnlineUsersProvider({
+  children,
+  onlineUsers,
+}: {
+  children: ReactNode;
+  onlineUsers: OnlineUser[];
+}) {
+  return (
+    <OnlineUsersContext.Provider value={onlineUsers}>
+      {children}
+    </OnlineUsersContext.Provider>
+  );
+}
+
+export function useOnlineUsers(): OnlineUser[] {
+  return useContext(OnlineUsersContext);
 }

@@ -38,6 +38,9 @@ export {
 // Current space
 export { CurrentSpaceProvider, useCurrentSpace } from "./contexts";
 
+// Online users
+export { OnlineUsersProvider, useOnlineUsers } from "./contexts";
+
 // Re-export commonly used types from react-sdk for convenience
 export type {
   HsafaClient,
