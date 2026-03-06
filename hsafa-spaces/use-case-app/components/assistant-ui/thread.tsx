@@ -6,7 +6,7 @@ import {
   ThreadPrimitive,
   useMessage,
 } from "@assistant-ui/react";
-import { useMembers, ReasoningPart, ToolCallPart, ImageToolUI } from "@hsafa/ui";
+import { useMembers, ReasoningPart, ToolCallPart, ImageToolUI } from "@/lib/hsafa-ui";
 import { ProductCard } from "./product-card";
 import { ConfirmationUI } from "./confirmation-ui";
 import { ChartDisplay } from "./chart-display";

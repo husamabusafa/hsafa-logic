@@ -4,11 +4,7 @@ packages:
   - hsafa-core/sdks/extension-node
   # spaces-app merged into use-case-app
   # - hsafa-spaces/spaces-app
-  - hsafa-spaces/sdks/node-sdk
-  - hsafa-spaces/sdks/react-sdk
   - hsafa-spaces/sdks/react-native-sdk
-  - hsafa-spaces/sdks/ui-sdk
-  - hsafa-spaces/sdks/python-sdk
   - hsafa-spaces/rn-app
   - hsafa-spaces/use-case-app
   # External docs (reference only, broken workspace deps)

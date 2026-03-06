@@ -3,7 +3,7 @@ const require = createRequire(import.meta.url);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ["@assistant-ui/react", "@hsafa/react", "@hsafa/ui"],
+  transpilePackages: ["@assistant-ui/react"],
   output: "standalone",
   webpack: (config) => {
     // Force all workspace packages to share a single @assistant-ui/react instance.

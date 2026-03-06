@@ -7,7 +7,7 @@ import {
   LogOutIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { HsafaChatProvider, useCurrentSpace, useActiveAgents, useOnlineUsers, useMembers } from "@hsafa/ui";
+import { HsafaChatProvider, useCurrentSpace, useActiveAgents, useOnlineUsers, useMembers } from "@/lib/hsafa-ui";
 
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";

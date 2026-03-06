@@ -2,7 +2,7 @@
 
 import { useState, type FC } from "react";
 import { useMessage } from "@assistant-ui/react";
-import { useToolResult } from "@hsafa/react";
+import { useToolResult } from "@/lib/hsafa-react";
 import { CheckCircle2, XCircle, AlertTriangle, Loader2 } from "lucide-react";
 
 export interface ConfirmationUIProps {

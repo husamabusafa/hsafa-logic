@@ -1,0 +1,50 @@
+// Provider
+export { HsafaChatProvider, type HsafaChatProviderProps } from "./HsafaProvider";
+
+// Prebuilt components
+export { HsafaChat, type HsafaChatProps } from "./components/HsafaChat";
+export { HsafaThread, type HsafaThreadProps } from "./components/HsafaThread";
+export { HsafaModal, type HsafaModalProps } from "./components/HsafaModal";
+export {
+  ReasoningPart,
+  type ReasoningPartProps,
+} from "./components/HsafaReasoning";
+export {
+  ToolCallPart,
+  type ToolCallPartProps,
+} from "./components/HsafaToolCall";
+export {
+  ImageToolUI,
+  type ImageToolProps,
+} from "./components/HsafaImageTool";
+
+// Runtime bridge
+export {
+  useHsafaChatRuntime,
+  type UseHsafaChatRuntimeOptions,
+  type UseHsafaChatRuntimeReturn,
+} from "./useHsafaRuntime";
+
+// Members context
+export { MembersProvider, useMembers } from "./contexts";
+
+// Active agents
+export { ActiveAgentsProvider, useActiveAgents } from "./contexts";
+export {
+  ActiveAgentsBar,
+  type ActiveAgentsBarProps,
+} from "./components/HsafaActiveAgents";
+
+// Current space
+export { CurrentSpaceProvider, useCurrentSpace } from "./contexts";
+
+// Online users
+export { OnlineUsersProvider, useOnlineUsers } from "./contexts";
+
+// Re-export commonly used types from react-sdk for convenience
+export type {
+  HsafaClient,
+  Entity,
+  SmartSpace,
+  SmartSpaceMessage,
+} from "../hsafa-react";
