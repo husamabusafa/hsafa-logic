@@ -397,15 +397,13 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
     senderType,
   } = params;
 
-  // Only push non-assistant messages (avoid loops)
-  if (role === "assistant") return;
-
   // Find connected haseefs for this space
   const conns = getConnectionsForSpace(spaceId);
   if (conns.length === 0) return;
 
+  // Skip messages from THIS haseef's own entity (avoid loops)
+  // Do NOT filter by role — other haseefs' messages should be forwarded
   for (const conn of conns) {
-    // Skip if the sender IS the agent (shouldn't happen for non-assistant, but safety)
     if (entityId === conn.agentEntityId) continue;
 
     const senseEvent = {
@@ -429,6 +427,6 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
       `[extension] → sense: ${senderName} in "${spaceName}": "${content.slice(0, 50)}"`,
     );
 
-    await state.coreClient.pushSenseEvent(conn.haseefId, senseEvent);
+    await state.coreClient!.pushSenseEvent(conn.haseefId, senseEvent);
   }
 }

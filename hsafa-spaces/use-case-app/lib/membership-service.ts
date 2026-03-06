@@ -34,6 +34,12 @@ const entitySpacesCache = new Map<string, CacheEntry<SpaceMembershipInfo[]>>();
 /** spaceId → members in that space */
 const spaceMembersCache = new Map<string, CacheEntry<SpaceMember[]>>();
 
+/** entityId → { displayName, type } */
+const entityInfoCache = new Map<string, CacheEntry<{ displayName: string; type: string }>>();
+
+/** spaceId → spaceName */
+const spaceNameCache = new Map<string, CacheEntry<string>>();
+
 function isExpired<T>(entry: CacheEntry<T> | undefined): boolean {
   return !entry || Date.now() > entry.expiresAt;
 }
@@ -96,10 +102,60 @@ export async function getMembersOfSpace(
 }
 
 /**
+ * Get entity display name and type (cached).
+ */
+export async function getEntityInfo(
+  entityId: string,
+): Promise<{ displayName: string; type: string }> {
+  const cached = entityInfoCache.get(entityId);
+  if (!isExpired(cached)) return cached!.data;
+
+  const entity = await prisma.entity.findUnique({
+    where: { id: entityId },
+    select: { displayName: true, type: true },
+  });
+
+  const data = {
+    displayName: entity?.displayName ?? "Unknown",
+    type: entity?.type ?? "human",
+  };
+
+  entityInfoCache.set(entityId, {
+    data,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+  });
+  return data;
+}
+
+/**
+ * Get space name (cached).
+ */
+export async function getSpaceName(
+  spaceId: string,
+): Promise<string> {
+  const cached = spaceNameCache.get(spaceId);
+  if (!isExpired(cached)) return cached!.data;
+
+  const space = await prisma.smartSpace.findUnique({
+    where: { id: spaceId },
+    select: { name: true },
+  });
+
+  const name = space?.name ?? spaceId;
+
+  spaceNameCache.set(spaceId, {
+    data: name,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+  });
+  return name;
+}
+
+/**
  * Invalidate all caches for a space. Call on member add/remove.
  */
 export function invalidateSpace(spaceId: string): void {
   spaceMembersCache.delete(spaceId);
+  spaceNameCache.delete(spaceId);
   entitySpacesCache.clear();
 }
 

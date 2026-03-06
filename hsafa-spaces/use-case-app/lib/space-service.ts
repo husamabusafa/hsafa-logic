@@ -1,7 +1,7 @@
 import { createSmartSpaceMessage } from "./smartspace-db";
 import { emitSmartSpaceEvent } from "./smartspace-events";
 import { notifyNewMessage } from "./extension/inbox";
-import { prisma } from "./db";
+import { getEntityInfo, getSpaceName } from "./membership-service";
 
 // =============================================================================
 // Space Service
@@ -62,34 +62,24 @@ export async function postSpaceMessage(
   });
 
   // 3. Notify extension inbox (replaces SpacesListener)
-  // Non-blocking — errors are caught internally
-  if (role !== "assistant") {
-    const [entity, space] = await Promise.all([
-      prisma.entity
-        .findUnique({
-          where: { id: entityId },
-          select: { displayName: true, type: true },
-        })
-        .catch(() => null),
-      prisma.smartSpace
-        .findUnique({
-          where: { id: spaceId },
-          select: { name: true },
-        })
-        .catch(() => null),
-    ]);
+  // Always notify — the extension filters by entityId to avoid self-loops.
+  // This ensures Haseef-to-Haseef messages are forwarded correctly.
+  // Uses cached lookups — no DB hit on repeat messages from same entity/space.
+  const [entityInfo, spaceName] = await Promise.all([
+    getEntityInfo(entityId).catch(() => ({ displayName: "Unknown", type: "human" })),
+    getSpaceName(spaceId).catch(() => spaceId),
+  ]);
 
-    notifyNewMessage({
-      spaceId,
-      spaceName: space?.name ?? spaceId,
-      entityId,
-      senderName: entity?.displayName ?? "Unknown",
-      senderType: entity?.type ?? "human",
-      messageId: message.id,
-      content: content ?? "",
-      role,
-    }).catch(() => {});
-  }
+  notifyNewMessage({
+    spaceId,
+    spaceName,
+    entityId,
+    senderName: entityInfo.displayName,
+    senderType: entityInfo.type,
+    messageId: message.id,
+    content: content ?? "",
+    role,
+  }).catch(() => {});
 
   return {
     messageId: message.id,

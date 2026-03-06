@@ -172,9 +172,7 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
     console.log(`[haseef-process] ${haseefName} recovered ${recovered} stuck inbox events`);
   }
 
-  // Ship #17: Graceful degradation — track consecutive failures for adaptive behavior
   let consecutiveFailures = 0;
-  const originalModel = built.model;
 
   // Create the ToolLoopAgent — encapsulates model, tools, loop control, prepareStep
   const cycleState = { start: 0 };
@@ -325,13 +323,8 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
         status: 'completed',
       });
 
-      // Success — reset failure counter and restore original model if degraded
+      // Success — reset failure counter
       consecutiveFailures = 0;
-      if (built.model !== originalModel) {
-        console.log(`[haseef-process] ${haseefName} restored to original model after recovery`);
-        built.model = originalModel;
-        currentInstance = createHaseefInstance(built, context, haseefConfig, cycleState);
-      }
 
       console.log(
         `[haseef-process] ${haseefName} cycle ${cycleCount} complete ` +
@@ -397,23 +390,10 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
         await sleep(300_000);
         consecutiveFailures = 0;
       } else if (consecutiveFailures >= 5) {
-        // Long rest, then retry with original model
+        // Many failures — long rest, then retry with same model
         console.warn(`[haseef-process] ${haseefName} resting for 5 minutes after ${consecutiveFailures} consecutive failures`);
         await sleep(300_000);
         consecutiveFailures = 0;
-        built.model = originalModel;
-        currentInstance = createHaseefInstance(built, context, haseefConfig, cycleState);
-      } else if (consecutiveFailures >= 3) {
-        // Try a simpler/cheaper model
-        try {
-          const { registry } = await import('./model-registry.js');
-          built.model = registry.languageModel('openai:gpt-4o-mini' as any);
-          currentInstance = createHaseefInstance(built, context, haseefConfig, cycleState);
-          console.log(`[haseef-process] ${haseefName} switching to fallback model after ${consecutiveFailures} failures`);
-        } catch {
-          // If registry fails, just use longer backoff
-        }
-        await sleep(jitter(10_000));
       } else if (errorClass === 'rate_limit') {
         // Rate limits: longer backoff with jitter to avoid thundering herd
         const base = errorClass === 'rate_limit' ? 15_000 : 5_000;
