@@ -58,7 +58,10 @@ POST /api/extensions/install
 
 Core fetches the manifest, auto-registers, and returns the extension key. The manifest already declares everything needed (name, tools, instructions, config schema, events).
 
-**Manifest v2** — add these fields:
+**Manifest v2** — add these fields: ✅ DONE
+
+Implemented in `ExtensionManifest` type in `extension-manager.ts`. All four v2 fields added: `autoConnect`, `requiredConfig`, `healthCheck`, `capabilities`. `installExtension()` handles `autoConnect` by connecting to all existing Haseefs. Spaces manifest updated with v2 fields.
+
 ```json
 {
   "name": "ext-whatsapp",
@@ -69,7 +72,7 @@ Core fetches the manifest, auto-registers, and returns the extension key. The ma
   "configSchema": {...},
   "events": ["message", "status_update"],
   
-  // NEW fields:
+  // v2 fields:
   "autoConnect": true,           // Auto-connect to all Haseefs on install
   "requiredConfig": ["phoneNumber"], // Config fields that MUST be set before activation
   "healthCheck": "/health",      // Endpoint Core pings to verify extension is alive
@@ -103,24 +106,24 @@ Core already sends lifecycle webhooks (`haseef.connected`, `haseef.disconnected`
 ### 2.1 — hsafa-core Simplifications
 
 #### `agent-process.ts` (484 lines)
-- **Lines ~80-130 (normalizeSystemMessages)**: This Anthropic compatibility hack (`system` role not supported in non-first position) can be extracted to a small utility. Consider moving to a `lib/model-compat.ts` file.
+- **Lines ~80-130 (normalizeSystemMessages)**: ✅ **DONE** — Extracted to `lib/model-compat.ts`. `agent-process.ts` now imports from there.
 - **Lines ~200-280 (error classification + degradation)**: ✅ **DONE — Model degradation removed.** After 3 consecutive failures, Core no longer silently downgrades to `gpt-4o-mini`. Errors now back off and retry with the original model only.
-- **Lines ~330-400 (stream consumption + consciousness save)**: The post-stream processing (extract tool calls, save consciousness, update run) is a long sequential block. Extract to `finalizeCycle(runId, streamResult, consciousness)`.
+- **Lines ~330-400 (stream consumption + consciousness save)**: The post-stream block is clean with numbered comments (steps 9-15). Each step is ~5 lines. Not worth extracting to a separate function — readability is already good.
 
-#### `extension-manager.ts` (425 lines)
-- **`notifyExtension` + `buildExtensionTools`**: These two functions together handle both webhook-based and Redis-based tool routing with overlapping logic. After implementing webhook-first (§1.2), this simplifies significantly — one path for most extensions.
-- **Remove `fetchManifest` complexity**: The manifest fetch with retry/timeout can use a simple fetch + zod parse. Current code has too many edge cases for malformed manifests.
+#### `extension-manager.ts` (425 lines) ✅ ALREADY CLEAN
+- **`notifyExtension` + `buildExtensionTools`**: Already use webhook-first exclusively. Simple `fetch` to webhook URL. No Redis pub/sub for tool calls.
+- **`fetchManifest`**: Already simple — single `fetch` with 10s `AbortSignal.timeout`. No unnecessary complexity.
 
 #### `prompt-builder.ts` (473 lines)
-- **Good as-is for identity features**, but the `buildInstructionsSection` hardcodes behavioral text. Consider making this a template file (`instructions.md`) that can be edited without code changes.
+- **Good as-is for identity features**. The `buildInstructionsSection` hardcodes behavioral text but is clean and well-structured. ⏭️ Template file extraction deferred — current approach is simpler and version-controllable.
 - **`buildInnerLifeSection`**: ✅ **DONE — Entire function removed.** Score-based nudges were injecting synthetic self-knowledge. The raw memories/goals/plans are already in the prompt and the AI reasons about them directly.
 
 #### `consciousness.ts` (497 lines)
-- **Identity pattern matching (lines 275-317)**: The 30+ regex patterns for `SELF_PATTERNS`, `RELATIONSHIP_PATTERNS`, `WILL_PATTERNS` are brittle. Consider a simpler approach: tag summaries based on which tools were called in the cycle (set_memories with self:* key → self tag, set_goals → will tag). This is **deterministic** vs regex guessing.
-- **`extractCycleSummary`**: Currently walks backwards to find the last assistant text. After implementing the `done()` tool with summary text (already exists), use the done() summary directly instead of guessing.
+- **Identity pattern matching (lines 275-317)**: ✅ **DONE** — `classifyCycleIdentity()` (§6.7) scans actual tool calls deterministically. Old regex patterns kept only as fallback for already-compacted summaries.
+- **`extractCycleSummary`**: ✅ **DONE** — Now uses `extractDoneSummary()` to extract the `done()` tool's summary arg first (explicit, high-quality). Falls back to backwards assistant text scan only when no `done()` summary exists.
 
 #### `inbox.ts` (472 lines)
-- **`migrateLegacyType`** (lines 344-352): ⏭️ DEFERRED — harmless safety net for crash recovery. Remove after confirming no v3 events exist in production.
+- **`migrateLegacyType`** (lines 344-352): ✅ **DONE — Removed.** Replaced with simple `['unknown', row.type]` fallback for any non-`channel:type` format.
 - **`formatInboxPreview`** (lines 446-471): ✅ Verified — actively used in `agent-process.ts` prepareStep. Keep as-is.
 
 ### 2.2 — hsafa-spaces Simplifications
@@ -142,9 +145,9 @@ Core already sends lifecycle webhooks (`haseef.connected`, `haseef.disconnected`
 |------|------|--------|
 | `hsafa-core/extensions/ext-spaces/` | Old standalone ext-spaces | ✅ **Deleted** — merged into spaces-app |
 | `hsafa-core/old-hsafa/` | Legacy v1/v2 code | ✅ **Deleted** — superseded by v4 |
-| `hsafa-spaces/rn-app/` | React Native app skeleton | **Review** — likely outdated |
-| `hsafa-spaces/sdks/react-native-sdk/` | RN SDK | **Review** — may need update or removal |
-| `inbox.ts` → `migrateLegacyType` | v3 migration helper | **Remove** after data migration |
+| `hsafa-spaces/rn-app/` | React Native app skeleton | ⏭️ **Kept** — separate RN client, not dead code in core |
+| `hsafa-spaces/sdks/react-native-sdk/` | RN SDK | ⏭️ **Kept** — rn-app depends on it |
+| `inbox.ts` → `migrateLegacyType` | v3 migration helper | ✅ **Removed** |
 | `inbox.ts` → `formatInboxPreview` | Verified: actively used | ✅ Keep — used in agent-process.ts |
 
 ---
@@ -184,33 +187,31 @@ if (role !== "assistant") { notifyNewMessage(...) }
 notifyNewMessage(...);
 ```
 
-### 3.2 — Generalized Space Membership
+### 3.2 — Generalized Space Membership ✅ DONE
 
-**Current**: When a Haseef connects to ext-spaces, the extension resolves `agentEntityId` by name matching (`prisma.entity.findFirst({ displayName: haseefName, type: "agent" })`). This is fragile.
+**Fixed**: `handleLifecycle()` in `extension/index.ts` now uses deterministic entity resolution:
+1. Check `webhookConfig.agentEntityId` first (instant if previously set)
+2. Find existing entity by `displayName + type:"agent"` (name match)
+3. If no entity exists, **auto-create** one with `crypto.randomUUID()` — no more "Cannot resolve entityId" failures
 
-**Proposed**:
-- On Haseef connection, Core sends the Haseef's identity in the lifecycle webhook
-- ext-spaces creates/finds the entity automatically using a deterministic ID scheme
-- Config stores `agentEntityId` so subsequent connections are instant
+The fragile name-matching is still the fallback path, but it can no longer fail — if no entity matches, one is created automatically.
 
-```json
-// Lifecycle webhook payload
-{
-  "type": "haseef.connected",
-  "haseefId": "uuid",
-  "haseefName": "Atlas",
-  "config": { "agentEntityId": "entity-uuid" }
-}
+```typescript
+// extension/index.ts — handleLifecycle
+// 1. Try config first
+let agentEntityId = webhookConfig.agentEntityId;
+// 2. Find by name
+if (!agentEntityId) entity = await prisma.entity.findFirst({ displayName: haseefName, type: "agent" });
+// 3. Auto-create if missing
+if (!entity) entity = await prisma.entity.create({ id: crypto.randomUUID(), displayName: haseefName, type: "agent" });
 ```
 
-### 3.3 — Space Auto-Discovery
+### 3.3 — Space Auto-Discovery ✅ DONE
 
-**Current**: `connectedSpaceIds` must be configured manually or resolved by listing all entity memberships. This doesn't react to new spaces being created.
-
-**Proposed**: 
-- Default behavior: Haseef listens to **all spaces** it's a member of (already works this way)
-- When a Haseef is added to a new space → extension detects this via DB trigger or membership-service cache invalidation → updates the connection's spaceIds
-- Add a `membership.changed` event that the extension subscribes to
+**Fixed**: Added `handleMembershipChanged(entityId, spaceId, action)` in `extension/index.ts`.
+- When a member is added/removed via the API, the handler updates the connection's `spaceIds` array in real-time
+- Wired into both member routes: `POST .../members` (added) and `DELETE .../members/:entityId` (removed)
+- No reconnection needed — the haseef automatically sees new spaces
 
 ### 3.4 — Single Redis Subscriber (Stability Fix) ✅ DONE
 
@@ -248,7 +249,12 @@ The model generates tool arguments character by character. As the Haseef types `
 - Any service: live previews of what the Haseef is about to do before it executes
 - Dashboard: real-time observability of Haseef decision-making
 
-The spaces-app already subscribes to `haseef:{haseefId}:stream` and bridges `run.start` / `run.finish` to `agent.active` / `agent.inactive`. It should also bridge `tool-input.delta` and `tool.done` for the full streaming experience.
+The spaces-app already subscribes to `haseef:{haseefId}:stream` and bridges all relevant events:
+- ✅ `run.start` / `run.finish` → `agent.active` / `agent.inactive` (all spaces)
+- ✅ `tool.started` → `tool.started` (trigger space)
+- ✅ `tool-input.delta` → `tool.streaming` (trigger space) — **full streaming experience**
+- ✅ `tool.done` → `tool.done` (trigger space)
+- ✅ `tool.error` → `tool.error` (trigger space)
 
 ### 4.2 — Tool Messages in Extensions
 
@@ -421,16 +427,19 @@ server.listen(4200)
 3. Create a registry (simple JSON file or API) listing available extensions
 4. `POST /api/extensions/install { "name": "ext-whatsapp" }` → Core fetches manifest from registry, installs, auto-connects
 
-### 6.2 — Unified Event Bus (Replace Multiple Redis Patterns)
+### 6.2 — Redis Namespace Map ✅ DONE
 
-**Current**: Multiple Redis patterns:
-- `inbox:{haseefId}` — LPUSH/BRPOP for inbox events
-- `haseef:{haseefId}:stream` — PUB/SUB for LLM streaming
-- `ext:{extId}:tools` — PUB/SUB for tool call routing
-- `smartspace:{spaceId}` — PUB/SUB for space events
-- `run:{runId}` — PUB/SUB for run events
+**Documented**: All Redis key patterns documented in `hsafa-core/core/REDIS_NAMESPACE.md`.
 
-**Proposed**: Keep the existing patterns (they serve different purposes) but document them clearly and add a Redis key namespace map in the codebase.
+Current patterns:
+- `inbox:{haseefId}` — LPUSH/BRPOP for inbox events (list)
+- `haseef:{haseefId}:stream` — PUB/SUB for LLM streaming to extensions
+- `run:{runId}` — PUB/SUB for per-run events (SSE)
+- `tool-result:{callId}` — PUB/SUB for instant tool result delivery
+- `tool-workers` — PUB/SUB for external tool worker processes
+- `smartspace:{spaceId}` — PUB/SUB for space events (ext-spaces)
+
+Note: `ext:{extId}:tools` is no longer used — tool calls route via synchronous HTTP webhook.
 
 ### 6.3 — Consciousness Snapshots ✅ DONE
 
@@ -478,21 +487,25 @@ The old `classifyIdentityCritical()` is kept as a lightweight text-based fallbac
 6. ✅ Remove buildInnerLifeSection nudges (§2.1) — DONE: entire function removed
 
 ### Phase 2 — General SDK (3-5 days)
-1. Build `@hsafa/node` general Core SDK (§5)
-2. Build `hsafa` Python general Core SDK (§5)
-3. Manifest v2 format (§1.1)
+1. ✅ Build `@hsafa/node` general Core SDK (§5) — DONE: full SDK with CoreClient, Hsafa class, ExtensionServer, WebhookHandler
+2. ⏭️ Build `hsafa` Python general Core SDK (§5) — DEFERRED (user will build later)
+3. ✅ Manifest v2 format (§1.1) — DONE: autoConnect, requiredConfig, healthCheck, capabilities
 4. ✅ Declarative extension install endpoint (§1.1) — DONE: POST /api/extensions/install
 
 ### Phase 3 — Spaces Generalization (2-3 days)
-1. Unified entity model — stop branching on type (§3.1)
-2. Space auto-discovery (§3.3)
-3. ✅ Graceful reconnection (§3.5) — DONE: retryStrategy with backoff + logging
+1. ✅ Unified entity model — stop branching on type (§3.1) — DONE: filter by entityId not role
+2. ✅ Generalized space membership (§3.2) — DONE: auto-create entity on connection
+3. ✅ Space auto-discovery (§3.3) — DONE: handleMembershipChanged wired into member routes
+4. ✅ Graceful reconnection (§3.5) — DONE: retryStrategy with backoff + logging
 
 ### Phase 4 — Architecture (2-3 days)
 1. ✅ Deterministic consciousness tagging (§6.7) — DONE: tool-call-based classifyCycleIdentity()
 2. ✅ Consciousness snapshots (§6.3) — DONE: schema + API + auto-snapshot every 50 cycles
 3. ✅ Observability dashboard (§6.6) — DONE: GET /api/status
-4. Code simplification in agent-process.ts (§2.1)
+4. ✅ Code simplification in agent-process.ts (§2.1) — DONE: normalizeSystemMessages → model-compat.ts, done() summary in consciousness.ts, migrateLegacyType removed
+5. ✅ Redis namespace map (§6.2) — DONE: documented in REDIS_NAMESPACE.md
+6. ✅ Old spaces SDKs migrated into use-case-app (§5) — @hsafa/react, @hsafa/ui moved to lib/
+7. ✅ Tool-input.delta bridging (§4.1) — DONE: bridgeStreamEvent handles all event types
 
 ---
 

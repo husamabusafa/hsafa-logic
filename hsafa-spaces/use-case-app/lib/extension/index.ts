@@ -126,26 +126,35 @@ export async function handleLifecycle(
       state.connections.delete(haseefId);
     }
 
-    // Resolve agentEntityId
+    // §3.2: Deterministic entity resolution — find or create by haseefId
     let agentEntityId = webhookConfig.agentEntityId as string | undefined;
     if (!agentEntityId) {
-      const entity = await prisma.entity.findFirst({
+      // Try to find existing entity by name first
+      let entity = await prisma.entity.findFirst({
         where: { displayName: haseefName, type: "agent" },
         select: { id: true },
       });
-      if (entity) {
-        agentEntityId = entity.id;
+
+      // If no entity exists, auto-create one
+      if (!entity) {
+        entity = await prisma.entity.create({
+          data: {
+            id: crypto.randomUUID(),
+            displayName: haseefName,
+            type: "agent",
+          },
+          select: { id: true },
+        });
         console.log(
-          `[extension] Resolved ${haseefName} → entityId ${agentEntityId}`,
+          `[extension] Created entity for ${haseefName} → ${entity.id}`,
+        );
+      } else {
+        console.log(
+          `[extension] Resolved ${haseefName} → entityId ${entity.id}`,
         );
       }
-    }
 
-    if (!agentEntityId) {
-      console.warn(
-        `[extension] Cannot resolve entityId for ${haseefName} — no bridge started`,
-      );
-      return;
+      agentEntityId = entity.id;
     }
 
     // Resolve spaceIds
@@ -319,6 +328,35 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
       if (runId) conn.runSpaces.delete(runId);
     }
   } catch {}
+}
+
+// =============================================================================
+// §3.3: Space Auto-Discovery — membership.changed
+//
+// When an entity is added to or removed from a space, update the connection's
+// spaceIds so the haseef automatically sees new spaces without reconnecting.
+// =============================================================================
+
+export function handleMembershipChanged(
+  entityId: string,
+  spaceId: string,
+  action: "added" | "removed",
+): void {
+  for (const conn of state.connections.values()) {
+    if (conn.agentEntityId !== entityId) continue;
+
+    if (action === "added" && !conn.spaceIds.includes(spaceId)) {
+      conn.spaceIds.push(spaceId);
+      console.log(
+        `[extension] ${conn.haseefName} auto-discovered space ${spaceId}`,
+      );
+    } else if (action === "removed") {
+      conn.spaceIds = conn.spaceIds.filter((id) => id !== spaceId);
+      console.log(
+        `[extension] ${conn.haseefName} removed from space ${spaceId}`,
+      );
+    }
+  }
 }
 
 // =============================================================================

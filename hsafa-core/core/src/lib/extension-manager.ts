@@ -35,6 +35,14 @@ export interface ExtensionManifest {
   instructions?: string;
   configSchema?: Record<string, unknown>;
   events?: string[];
+  /** v2: Auto-connect to all Haseefs on install */
+  autoConnect?: boolean;
+  /** v2: Config fields that MUST be set before activation */
+  requiredConfig?: string[];
+  /** v2: Endpoint Core pings to verify extension is alive (e.g. "/health") */
+  healthCheck?: string;
+  /** v2: What this extension provides — "sense" (pushes events) and/or "act" (provides tools) */
+  capabilities?: Array<'sense' | 'act'>;
 }
 
 // =============================================================================
@@ -132,6 +140,19 @@ export async function installExtension(
     extensionId: extension.id,
     extensionKey,
   }).catch((err) => console.warn(`[ext-manager] extension.installed webhook failed:`, err));
+
+  // §1.1 Manifest v2: Auto-connect to all existing Haseefs if requested
+  if (manifest.autoConnect) {
+    const haseefs = await prisma.haseef.findMany({ select: { id: true } });
+    for (const h of haseefs) {
+      await connectExtension(h.id, extension.id).catch((err) =>
+        console.warn(`[ext-manager] autoConnect to ${h.id} failed:`, err),
+      );
+    }
+    if (haseefs.length > 0) {
+      console.log(`[ext-manager] Auto-connected "${manifest.name}" to ${haseefs.length} haseef(s)`);
+    }
+  }
 
   return { extension, extensionKey, manifest };
 }

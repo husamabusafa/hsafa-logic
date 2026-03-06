@@ -210,18 +210,22 @@ function extractCycles(messages: ModelMessage[]): Cycle[] {
 
 /**
  * Extract the agent's self-summary from a cycle.
- * The agent's final text output (assistant message with string content)
- * serves as a natural summary of what it did.
+ * Prefers the done() tool's summary arg (explicit, high-quality) over
+ * the old backwards-scan for the last assistant text (implicit, lossy).
  * Also extracts the cycle timestamp from the inbox header for temporal context.
  */
 function extractCycleSummary(cycle: Cycle): string | null {
-  // Walk backwards to find the last assistant text message
-  let summary: string | null = null;
-  for (let i = cycle.messages.length - 1; i >= 0; i--) {
-    const msg = cycle.messages[i];
-    if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content.trim()) {
-      summary = msg.content.trim();
-      break;
+  // Primary: look for done() tool call with a summary arg
+  let summary = extractDoneSummary(cycle);
+
+  // Fallback: walk backwards to find the last assistant text message
+  if (!summary) {
+    for (let i = cycle.messages.length - 1; i >= 0; i--) {
+      const msg = cycle.messages[i];
+      if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content.trim()) {
+        summary = msg.content.trim();
+        break;
+      }
     }
   }
   if (!summary) return null;
@@ -232,6 +236,26 @@ function extractCycleSummary(cycle: Cycle): string | null {
     return `[${cycleTimestamp}] ${summary}`;
   }
   return summary;
+}
+
+/**
+ * Extract the summary from a done() tool call in the cycle.
+ * The done tool accepts { summary?: string } — when present, this is the
+ * highest-quality summary because the agent explicitly wrote it.
+ */
+function extractDoneSummary(cycle: Cycle): string | null {
+  for (const msg of cycle.messages) {
+    if (msg.role !== 'assistant' || typeof msg.content === 'string') continue;
+    for (const part of msg.content) {
+      if (part.type === 'tool-call' && part.toolName === 'done' && part.args) {
+        const summary = (part.args as Record<string, unknown>).summary;
+        if (typeof summary === 'string' && summary.trim()) {
+          return summary.trim();
+        }
+      }
+    }
+  }
+  return null;
 }
 
 /**

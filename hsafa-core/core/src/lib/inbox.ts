@@ -305,8 +305,7 @@ export async function recoverStuckEvents(haseefId: string): Promise<number> {
   for (const row of stuck) {
     // Reconstruct SenseEvent from DB row.
     // DB 'type' column stores "channel:type" (e.g. "ext-email:message", "core:plan").
-    // For legacy rows that used flat types, migrate on read.
-    const [channel, ...rest] = row.type.includes(':') ? row.type.split(':') : migrateLegacyType(row.type);
+    const [channel, ...rest] = row.type.includes(':') ? row.type.split(':') : ['unknown', row.type];
     const event: InboxEvent = {
       eventId: row.eventId,
       channel,
@@ -334,21 +333,6 @@ export async function recoverStuckEvents(haseefId: string): Promise<number> {
   }
 
   return stuck.length;
-}
-
-// =============================================================================
-// Legacy migration helper
-// =============================================================================
-
-/** Convert v3 flat event type to [channel, type] tuple for crash-recovered events */
-function migrateLegacyType(legacyType: string): [string, string] {
-  switch (legacyType) {
-    case 'space_message': return ['legacy', SENSE_TYPE.MESSAGE];
-    case 'plan':          return [CHANNEL.CORE, SENSE_TYPE.PLAN];
-    case 'service':       return [CHANNEL.CORE, SENSE_TYPE.SERVICE];
-    case 'tool_result':   return [CHANNEL.CORE, SENSE_TYPE.TOOL_RESULT];
-    default:              return ['unknown', legacyType];
-  }
 }
 
 // =============================================================================

@@ -94,4 +94,8 @@ When you receive a message from a space in your sense events:
     },
   },
   events: ["message"],
+  autoConnect: false,
+  requiredConfig: [],
+  healthCheck: "/api/health",
+  capabilities: ["sense", "act"],
 };

@@ -4,6 +4,7 @@ import {
   requireAuthWithMembership,
 } from "@/lib/spaces-auth";
 import { invalidateSpace } from "@/lib/membership-service";
+import { handleMembershipChanged } from "@/lib/extension";
 
 type Params = { params: Promise<{ smartSpaceId: string }> };
 
@@ -23,6 +24,7 @@ export async function POST(request: Request, { params }: Params) {
       },
     });
     invalidateSpace(smartSpaceId);
+    handleMembershipChanged(entityId, smartSpaceId, "added");
     return Response.json({ membership }, { status: 201 });
   } catch (error) {
     console.error("Add member error:", error);

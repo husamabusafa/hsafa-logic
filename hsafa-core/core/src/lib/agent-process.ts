@@ -26,6 +26,7 @@ import { processStream } from './stream-processor.js';
 import { emitRunEvent } from './run-events.js';
 import { buildHaseef } from '../agent-builder/builder.js';
 import { buildSystemPrompt } from '../agent-builder/prompt-builder.js';
+import { normalizeSystemMessages } from './model-compat.js';
 import type { HaseefProcessContext, BuiltHaseef, InboxEvent, ServiceEventData } from '../agent-builder/types.js';
 import { SENSE_TYPE } from '../agent-builder/types.js';
 
@@ -38,26 +39,6 @@ import { SENSE_TYPE } from '../agent-builder/types.js';
 
 /** Safety net only — should never trigger. The Haseef uses the `done` tool to signal completion. */
 const SAFETY_MAX_STEPS = 50;
-
-/**
- * Normalize system messages for Anthropic compatibility.
- * Anthropic doesn't support multiple system messages separated by user/assistant
- * messages. This converts any non-first system messages to user messages.
- * Safe for all providers — user messages are universally supported.
- */
-function normalizeSystemMessages(messages: ModelMessage[]): ModelMessage[] {
-  let seenFirst = false;
-  return messages.map((msg) => {
-    if (msg.role === 'system') {
-      if (!seenFirst) {
-        seenFirst = true;
-        return msg;
-      }
-      return { role: 'user' as const, content: msg.content };
-    }
-    return msg;
-  });
-}
 
 /**
  * Create a ToolLoopAgent instance with our configuration.

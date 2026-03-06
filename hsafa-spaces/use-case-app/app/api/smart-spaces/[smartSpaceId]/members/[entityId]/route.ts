@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { requireSecretKeyAuth } from "@/lib/spaces-auth";
 import { invalidateSpace } from "@/lib/membership-service";
+import { handleMembershipChanged } from "@/lib/extension";
 
 type Params = {
   params: Promise<{ smartSpaceId: string; entityId: string }>;
@@ -19,6 +20,7 @@ export async function DELETE(request: Request, { params }: Params) {
       },
     });
     invalidateSpace(smartSpaceId);
+    handleMembershipChanged(entityId, smartSpaceId, "removed");
     return Response.json({ success: true });
   } catch (error) {
     console.error("Remove member error:", error);
