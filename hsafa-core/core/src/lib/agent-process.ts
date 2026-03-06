@@ -231,10 +231,14 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
       cycleState.start = Date.now();
 
       // 4. EMIT run.start for extensions (e.g. ext-spaces emits agent.active to spaces)
+      // triggerSource = spaceId for space-triggered runs — lets extensions route
+      // tool streaming events to the correct space without a DB lookup
       await emitRunEvent(run.id, {
         type: 'run.start',
         runId: run.id,
         haseefId,
+        triggerType: run.triggerType ?? undefined,
+        triggerSource: run.triggerSource ?? undefined,
       });
 
       // 5. REFRESH system prompt (v4: includes extension instructions)

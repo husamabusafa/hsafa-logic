@@ -35,6 +35,8 @@ interface ActiveConnection {
   agentEntityId: string;
   spaceIds: string[];
   subscriber: InstanceType<typeof Redis> | null;
+  /** runId → triggerSpaceId — routes tool streaming events to the correct space */
+  runSpaces: Map<string, string>;
 }
 
 interface ExtensionState {
@@ -155,31 +157,100 @@ export async function handleLifecycle(
       agentEntityId,
       spaceIds,
       subscriber: null,
+      runSpaces: new Map(),
     };
     state.connections.set(haseefId, newConn);
 
-    // Start stream bridge: subscribe to Core's haseef run events and
-    // bridge run.start → agent.active and run.finish → agent.inactive
+    // Start stream bridge: subscribe to Core's haseef run events and forward
+    // all relevant events to the correct space SSE channel.
+    //
+    // run.start / run.finish  → agent.active / agent.inactive (all spaces)
+    // tool.started            → tool.started  (trigger space only)
+    // tool-input.delta        → tool.streaming (trigger space only, fire-and-forget)
+    // tool.done               → tool.done      (trigger space only)
+    // tool.error              → tool.error     (trigger space only)
     const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
     const runSubscriber = new Redis(REDIS_URL, { maxRetriesPerRequest: null });
     await runSubscriber.subscribe(`haseef:${haseefId}:stream`);
     runSubscriber.on("message", async (_ch: string, message: string) => {
       try {
-        const event = JSON.parse(message) as { type: string; runId?: string };
+        const event = JSON.parse(message) as {
+          type: string;
+          runId?: string;
+          triggerType?: string;
+          triggerSource?: string;
+          streamId?: string;
+          toolName?: string;
+          delta?: string;
+          args?: unknown;
+          result?: unknown;
+          error?: string;
+        };
         const conn = state.connections.get(haseefId);
         if (!conn) return;
 
+        const runId = event.runId;
+
         if (event.type === "run.start") {
+          // Cache which space triggered this run so tool events go to the right space
+          // triggerSource = spaceId when triggerType starts with "ext-spaces:"
+          if (runId && event.triggerType?.startsWith("ext-spaces:") && event.triggerSource) {
+            conn.runSpaces.set(runId, event.triggerSource);
+          }
           for (const spaceId of conn.spaceIds) {
             await emitSmartSpaceEvent(spaceId, {
               type: "agent.active",
               agentEntityId: conn.agentEntityId,
-              runId: event.runId,
-              data: {
-                agentEntityId: conn.agentEntityId,
-                agentName: conn.haseefName,
-                runId: event.runId,
-              },
+              runId,
+              data: { agentEntityId: conn.agentEntityId, agentName: conn.haseefName, runId },
+            });
+          }
+        } else if (event.type === "tool.started") {
+          const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
+          if (spaceId) {
+            void emitSmartSpaceEvent(spaceId, {
+              type: "tool.started",
+              streamId: event.streamId,
+              toolName: event.toolName,
+              agentEntityId: conn.agentEntityId,
+              runId,
+            });
+          }
+        } else if (event.type === "tool-input.delta") {
+          const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
+          if (spaceId) {
+            // Fire-and-forget: real-time delta from AI, never await Redis publish
+            void emitSmartSpaceEvent(spaceId, {
+              type: "tool.streaming",
+              streamId: event.streamId,
+              toolName: event.toolName,
+              delta: event.delta,
+              agentEntityId: conn.agentEntityId,
+              runId,
+            });
+          }
+        } else if (event.type === "tool.done") {
+          const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
+          if (spaceId) {
+            void emitSmartSpaceEvent(spaceId, {
+              type: "tool.done",
+              streamId: event.streamId,
+              toolName: event.toolName,
+              result: event.result,
+              agentEntityId: conn.agentEntityId,
+              runId,
+            });
+          }
+        } else if (event.type === "tool.error") {
+          const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
+          if (spaceId) {
+            void emitSmartSpaceEvent(spaceId, {
+              type: "tool.error",
+              streamId: event.streamId,
+              toolName: event.toolName,
+              error: event.error,
+              agentEntityId: conn.agentEntityId,
+              runId,
             });
           }
         } else if (event.type === "run.finish") {
@@ -187,13 +258,11 @@ export async function handleLifecycle(
             await emitSmartSpaceEvent(spaceId, {
               type: "agent.inactive",
               agentEntityId: conn.agentEntityId,
-              runId: event.runId,
-              data: {
-                agentEntityId: conn.agentEntityId,
-                runId: event.runId,
-              },
+              runId,
+              data: { agentEntityId: conn.agentEntityId, runId },
             });
           }
+          if (runId) conn.runSpaces.delete(runId);
         }
       } catch {}
     });

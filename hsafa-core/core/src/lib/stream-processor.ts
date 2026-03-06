@@ -85,7 +85,8 @@ export async function processStream(
         const delta = (part.text as string) ?? '';
         internalText += delta;
         if (delta) {
-          await toRun({
+          // Fire-and-forget: never block the AI stream for per-token events
+          void toRun({
             type: 'text.delta',
             runId,
             haseefId,
@@ -125,7 +126,8 @@ export async function processStream(
         const argsDelta = (part.argsTextDelta ?? part.inputTextDelta ?? '') as string;
         const timing = activeTiming.get(toolCallId);
         if (argsDelta && timing) {
-          await toRun({
+          // Fire-and-forget: real-time from AI — never block stream for Redis publish
+          void toRun({
             type: 'tool-input.delta',
             streamId: toolCallId,
             runId,
