@@ -1,4 +1,5 @@
 packages:
+  - sdks/node
   - hsafa-core/core
   - hsafa-core/sdks/extension-node
   # spaces-app merged into use-case-app

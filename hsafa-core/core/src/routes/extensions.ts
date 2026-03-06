@@ -3,6 +3,7 @@ import { prisma } from '../lib/db.js';
 import { requireSecretKey, requireExtensionKey } from '../middleware/auth.js';
 import {
   registerExtension,
+  installExtension,
   updateExtension,
   refreshManifest,
 } from '../lib/extension-manager.js';
@@ -13,7 +14,8 @@ import {
 // Admin routes for managing extensions + self-discovery for extensions.
 //
 // GET    /api/extensions/me                     — Self-discovery (extension key)
-// POST   /api/extensions                        — Install extension via URL (secret key)
+// POST   /api/extensions/install                — One-step install from URL (secret key)
+// POST   /api/extensions                        — Register extension manually (secret key)
 // GET    /api/extensions                        — List all extensions (secret key)
 // GET    /api/extensions/:extId                 — Get extension details (secret key)
 // PATCH  /api/extensions/:extId                 — Update extension metadata (secret key)
@@ -78,7 +80,33 @@ extensionsRouter.get('/me', requireExtensionKey(), async (req: Request, res: Res
   }
 });
 
-// POST /api/extensions — Install a new extension
+// POST /api/extensions/install — One-step install from URL (§1.1)
+// Only needs { url }. Fetches manifest, derives name/description/tools, registers.
+extensionsRouter.post('/install', requireSecretKey(), async (req: Request, res: Response) => {
+  try {
+    const { url } = req.body;
+
+    if (!url || typeof url !== 'string') {
+      res.status(400).json({ error: 'url is required' });
+      return;
+    }
+
+    const result = await installExtension(url);
+
+    res.status(201).json({
+      extension: result.extension,
+      extensionKey: result.extensionKey,
+      manifest: result.manifest,
+    });
+  } catch (error) {
+    console.error('Install extension error:', error);
+    const msg = error instanceof Error ? error.message : 'Failed to install extension';
+    const status = msg.includes('already exists') ? 409 : 500;
+    res.status(status).json({ error: msg });
+  }
+});
+
+// POST /api/extensions — Register extension manually
 // Accepts { name, url?, description?, instructions? }
 // If url is provided, fetches manifest from GET {url}/manifest
 extensionsRouter.post('/', requireSecretKey(), async (req: Request, res: Response) => {

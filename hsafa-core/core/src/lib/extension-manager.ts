@@ -94,6 +94,49 @@ export async function notifyExtension(
 // =============================================================================
 
 /**
+ * Install an extension from its URL in one step (§1.1).
+ * Fetches the manifest, derives name/description/instructions from it,
+ * registers the extension, and sends an extension.installed webhook.
+ */
+export async function installExtension(
+  url: string,
+): Promise<{ extension: any; extensionKey: string; manifest: ExtensionManifest }> {
+  const manifest = await fetchManifest(url);
+
+  if (!manifest.name) {
+    throw new Error('Manifest must include a "name" field');
+  }
+
+  // Check for duplicate name
+  const existing = await prisma.extension.findUnique({ where: { name: manifest.name } });
+  if (existing) {
+    throw new Error(`Extension "${manifest.name}" already exists`);
+  }
+
+  const extensionKey = `ek_${crypto.randomUUID().replace(/-/g, '')}`;
+
+  const extension = await prisma.extension.create({
+    data: {
+      name: manifest.name,
+      description: manifest.description ?? null,
+      url,
+      instructions: manifest.instructions ?? null,
+      extensionKey,
+      manifest: manifest as any,
+    },
+  });
+
+  // §1.3: Send extension.installed lifecycle webhook
+  notifyExtension(url, {
+    type: 'extension.installed',
+    extensionId: extension.id,
+    extensionKey,
+  }).catch((err) => console.warn(`[ext-manager] extension.installed webhook failed:`, err));
+
+  return { extension, extensionKey, manifest };
+}
+
+/**
  * Register a new extension. Generates a unique extensionKey for auth.
  * If a URL is provided, fetches the manifest and caches it.
  */

@@ -41,9 +41,9 @@ Installing and wiring an extension is still too manual:
 
 ### Proposed Changes
 
-#### 1.1 — Declarative Extension Registration (Install-and-Use) ⏭️ DEFERRED
+#### 1.1 — Declarative Extension Registration (Install-and-Use) ✅ DONE
 
-> **Status**: Good idea but not urgent. Current manual flow works. Defer to Phase 2 with SDK work.
+> **Status**: Implemented `POST /api/extensions/install` — one-step install from URL. Core fetches manifest, derives name/description/instructions, registers, returns extension key. Also sends `extension.installed` lifecycle webhook.
 
 **Problem**: Installing an extension is a multi-step manual process.
 
@@ -81,11 +81,11 @@ Core fetches the manifest, auto-registers, and returns the extension key. The ma
 
 `extension-manager.ts` already uses webhook-first routing. Tool calls go via synchronous `POST {url}/webhook` with HTTP response. No Redis pub/sub, no PendingToolCall for extension tools. Nothing to change here.
 
-#### 1.3 — Extension Lifecycle Webhooks (Already Exists, Formalize) ⏭️ DEFERRED
+#### 1.3 — Extension Lifecycle Webhooks (Already Exists, Formalize) ✅ DONE
 
-Core already sends lifecycle webhooks (`haseef.connected`, `haseef.disconnected`, `haseef.config_updated`). Formalize and document these. Add:
-- `extension.installed` — sent once after registration
-- `extension.health_check` — periodic ping
+Core already sends lifecycle webhooks (`haseef.connected`, `haseef.disconnected`, `haseef.config_updated`). Now also sends:
+- `extension.installed` — sent once after registration via `installExtension()` in extension-manager.ts
+- `extension.health_check` — ⏭️ deferred (periodic ping not yet implemented)
 
 #### 1.4 — Per-Haseef Connection Config (Core-Side Storage)
 
@@ -121,7 +121,7 @@ Core already sends lifecycle webhooks (`haseef.connected`, `haseef.disconnected`
 
 #### `inbox.ts` (472 lines)
 - **`migrateLegacyType`** (lines 344-352): ⏭️ DEFERRED — harmless safety net for crash recovery. Remove after confirming no v3 events exist in production.
-- **`formatInboxPreview`** (lines 446-471): ⚠️ **NOT dead code** — actively used in `agent-process.ts` prepareStep. Keep as-is.
+- **`formatInboxPreview`** (lines 446-471): ✅ Verified — actively used in `agent-process.ts` prepareStep. Keep as-is.
 
 ### 2.2 — hsafa-spaces Simplifications
 
@@ -145,7 +145,7 @@ Core already sends lifecycle webhooks (`haseef.connected`, `haseef.disconnected`
 | `hsafa-spaces/rn-app/` | React Native app skeleton | **Review** — likely outdated |
 | `hsafa-spaces/sdks/react-native-sdk/` | RN SDK | **Review** — may need update or removal |
 | `inbox.ts` → `migrateLegacyType` | v3 migration helper | **Remove** after data migration |
-| `inbox.ts` → `formatInboxPreview` | Possibly unused | **Verify** and remove if dead |
+| `inbox.ts` → `formatInboxPreview` | Verified: actively used | ✅ Keep — used in agent-process.ts |
 
 ---
 
@@ -212,31 +212,13 @@ notifyNewMessage(...);
 - When a Haseef is added to a new space → extension detects this via DB trigger or membership-service cache invalidation → updates the connection's spaceIds
 - Add a `membership.changed` event that the extension subscribes to
 
-### 3.4 — Single Redis Subscriber (Stability Fix) ⏭️ DEFERRED
+### 3.4 — Single Redis Subscriber (Stability Fix) ✅ DONE
 
-**Current**: Each Haseef connection creates its own Redis subscriber (line 164 in `extension/index.ts`). With 10 Haseefs, that's 10 Redis connections just for the stream bridge.
+**Fixed**: Replaced per-haseef Redis subscribers with a single shared `psubscribe('haseef:*:stream')` subscriber in `extension/index.ts`. One Redis connection for all haseef stream bridges. The `ActiveConnection` no longer holds a subscriber reference — the shared subscriber routes events by extracting the haseefId from the channel name. Event bridging extracted into a standalone `bridgeStreamEvent()` function.
 
-**Proposed**: One shared Redis subscriber using pattern subscription:
-```typescript
-// Single subscriber for all haseefs
-const subscriber = new Redis(REDIS_URL);
-await subscriber.psubscribe('haseef:*:stream');
-subscriber.on('pmessage', (_pattern, channel, message) => {
-  const haseefId = channel.split(':')[1];
-  const conn = state.connections.get(haseefId);
-  if (!conn) return;
-  // Bridge the event...
-});
-```
+### 3.5 — Graceful Reconnection ✅ DONE
 
-### 3.5 — Graceful Reconnection ⏭️ DEFERRED
-
-**Current**: If the Core → spaces-app connection drops, there's no reconnection logic for the stream bridge subscribers. The `catch(() => {})` swallows errors silently.
-
-**Proposed**:
-- Wrap Redis subscribers with reconnection + exponential backoff
-- Log connection state transitions
-- Add a health endpoint: `GET /api/extension/health` → `{ connected: true, haseefs: 3, uptime: "2h" }`
+**Fixed**: The shared Redis subscriber (§3.4) now uses `retryStrategy` with exponential backoff (500ms → 30s cap). Connection state transitions are logged via `error` and `connect` event handlers. No more silent error swallowing.
 
 ---
 
@@ -450,81 +432,38 @@ server.listen(4200)
 
 **Proposed**: Keep the existing patterns (they serve different purposes) but document them clearly and add a Redis key namespace map in the codebase.
 
-### 6.3 — Consciousness Snapshots ⏭️ DEFERRED
+### 6.3 — Consciousness Snapshots ✅ DONE
 
-**Problem**: If consciousness gets corrupted or the Haseef's personality drifts, there's no way to revert.
-
-**Solution**: Periodic snapshots of consciousness stored in Postgres:
-```sql
-CREATE TABLE consciousness_snapshot (
-  id UUID PRIMARY KEY,
-  haseefId UUID REFERENCES haseef(id),
-  cycleCount INT,
-  messages JSONB,
-  tokenEstimate INT,
-  createdAt TIMESTAMP DEFAULT NOW()
-);
-```
-- Auto-snapshot every N cycles (configurable, default 50)
-- Manual snapshot via API: `POST /api/haseefs/:id/snapshot`
-- Restore: `POST /api/haseefs/:id/restore { snapshotId }`
-
-### 6.4 — Tool Composition (Compound Tools) ⚠️ OVER-ENGINEERING
-
-**Use case**: Some workflows are always multi-step. Define them as a single named tool so the Haseef can invoke them by intent, with the steps handled automatically.
-
-```json
-{
-  "name": "reply_in_space",
-  "compound": true,
-  "steps": [
-    { "tool": "enter_space", "args": { "spaceId": "$input.spaceId" } },
-    { "tool": "send_space_message", "args": { "spaceId": "$input.spaceId", "text": "$input.text" } }
-  ]
-}
-```
-
-The Haseef calls `reply_in_space({ spaceId, text })` and both steps run atomically. This gives the AI more expressive power — one intent, one tool call, reliable execution.
+**Implemented**: Full snapshot system in Prisma schema + consciousness.ts + haseefs.ts routes.
+- `ConsciousnessSnapshot` model in schema.prisma (haseefId, cycleCount, messages, tokenEstimate, reason)
+- Auto-snapshot every 50 cycles via `maybeAutoSnapshot()` called from agent-process.ts
+- Manual snapshot: `POST /api/haseefs/:id/snapshot`
+- List snapshots: `GET /api/haseefs/:id/snapshots`
+- Restore: `POST /api/haseefs/:id/restore { snapshotId }` — saves pre-restore backup automatically
 
 ### 6.5 — Extension Hot-Reload ✔️ ALREADY DONE
 
 `POST /api/extensions/:extId/refresh-manifest` already exists — it re-fetches the manifest from the extension URL and updates tools/instructions in DB. `buildExtensionTools` re-reads from DB on every cycle, so connected Haseefs automatically pick up changes on their next think cycle. Nothing to change here.
 
-### 6.6 — Observability Dashboard ⏭️ DEFERRED
+### 6.6 — Observability Dashboard ✅ DONE
 
-Add a simple admin API that exposes:
-- All running Haseef processes and their status
-- Last cycle time, cycle count, error count
-- Connected extensions per Haseef
-- Inbox queue depth
-- Token usage per cycle
+**Implemented**: `GET /api/status` (secret key required) returns per-haseef stats:
+- Running processes (from process-manager)
+- Cycle count + token estimate (from consciousness)
+- Last run duration + token usage (from runs)
+- Failed run count in last 24h
+- Inbox depth (pending events)
+- Connected extensions
+- Server uptime
 
-This helps debug issues without reading logs.
+### 6.7 — Deterministic Consciousness Tagging (Replace Regex) ✅ DONE
 
-### 6.7 — Deterministic Consciousness Tagging (Replace Regex) ⏭️ DEFERRED
+**Fixed**: Replaced 30+ regex patterns with deterministic `classifyCycleIdentity()` that scans actual tool calls in the cycle's messages:
+- `set_memories` with `self:*` keys → `self` tag
+- `set_memories` with `person-model:*` or `about:*` keys → `relationship` tag
+- `set_goals`, `delete_goals`, `set_plans`, `delete_plans` → `will` tag
 
-**Current** (consciousness.ts): Identity-critical detection uses 30+ regex patterns to guess if a cycle summary is about self-development, relationships, or will. Regex on summaries is fragile — it misses things and has false positives.
-
-**Proposed**: Tag cycles **deterministically** based on actual tool calls made in the cycle:
-- Cycle called `set_memories` with key `self:*` → tag as `self`
-- Cycle called `set_memories` with key `person-model:*` → tag as `relationship`
-- Cycle called `set_goals` or `set_plans` → tag as `will`
-
-This is 100% accurate, always captures identity development correctly, and never loses critical cycles due to a missed regex match. The Haseef's identity development is too important to rely on pattern guessing.
-
-### 6.8 — Simplify Model Resolution ⚠️ LIMITS USERS
-
-**Current** (`builder.ts`): Model resolution supports openai, anthropic, google, openrouter, xai with provider-specific configuration. Each provider needs different initialization.
-
-**Proposed**: Use OpenRouter as the universal provider. Any model can be accessed through a single API with a single API key. This eliminates all provider-specific code and configuration.
-
-For users who want to use their own API keys directly, keep provider-specific support but behind a clean abstraction:
-```typescript
-function resolveModel(config: ModelConfig): LanguageModel {
-  if (config.provider === 'openrouter') return createOpenRouter(config);
-  // ... other providers
-}
-```
+The old `classifyIdentityCritical()` is kept as a lightweight text-based fallback for already-compacted summaries that no longer have tool call data. Compaction now uses `classifyCycleIdentity` as primary, falling back to text-based only when needed.
 
 ---
 
@@ -532,7 +471,7 @@ function resolveModel(config: ModelConfig): LanguageModel {
 
 ### Phase 1 — Quick Wins (1-2 days each)
 1. ✅ Fix the `role === "assistant"` bug in spaces (§3.1) — **critical bug** — FIXED: filter by entityId not role
-2. ⏭️ Single Redis subscriber for stream bridge (§3.4) — deferred (works, just doesn't scale past ~10 haseefs)
+2. ✅ Single Redis subscriber for stream bridge (§3.4) — DONE: shared psubscribe('haseef:*:stream') with reconnection
 3. ✅ Cache entity/space lookups in space-service.ts (§2.2) — DONE: uses cached getEntityInfo/getSpaceName
 4. ✅ Delete dead code: ext-spaces, old-hsafa (§2.3) — DONE: both directories deleted
 5. ✅ Remove model degradation chain (§2.1) — DONE: no more silent downgrade to gpt-4o-mini
@@ -542,17 +481,17 @@ function resolveModel(config: ModelConfig): LanguageModel {
 1. Build `@hsafa/node` general Core SDK (§5)
 2. Build `hsafa` Python general Core SDK (§5)
 3. Manifest v2 format (§1.1)
-4. Declarative extension install endpoint (§1.1)
+4. ✅ Declarative extension install endpoint (§1.1) — DONE: POST /api/extensions/install
 
 ### Phase 3 — Spaces Generalization (2-3 days)
 1. Unified entity model — stop branching on type (§3.1)
 2. Space auto-discovery (§3.3)
-3. Graceful reconnection (§3.5)
+3. ✅ Graceful reconnection (§3.5) — DONE: retryStrategy with backoff + logging
 
 ### Phase 4 — Architecture (2-3 days)
-1. Deterministic consciousness tagging (§6.7)
-2. Consciousness snapshots (§6.3)
-3. Observability dashboard (§6.6)
+1. ✅ Deterministic consciousness tagging (§6.7) — DONE: tool-call-based classifyCycleIdentity()
+2. ✅ Consciousness snapshots (§6.3) — DONE: schema + API + auto-snapshot every 50 cycles
+3. ✅ Observability dashboard (§6.6) — DONE: GET /api/status
 4. Code simplification in agent-process.ts (§2.1)
 
 ---

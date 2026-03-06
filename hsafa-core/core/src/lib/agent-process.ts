@@ -19,6 +19,7 @@ import {
   compactConsciousness,
   estimateTokens,
   refreshSystemPrompt,
+  maybeAutoSnapshot,
   type ModelMessage,
 } from './consciousness.js';
 import { processStream } from './stream-processor.js';
@@ -295,6 +296,9 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
 
       // 13. SAVE consciousness
       await saveConsciousness(haseefId, consciousness, cycleCount, {});
+
+      // 13b. AUTO-SNAPSHOT (§6.3) — every 50 cycles
+      await maybeAutoSnapshot(haseefId, cycleCount);
 
       // 14. UPDATE audit record
       const usage = await result.totalUsage;

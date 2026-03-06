@@ -1,0 +1,30 @@
+{
+  "name": "@hsafa/node",
+  "version": "1.0.0",
+  "description": "General Node.js SDK for Hsafa Core — build extensions, manage haseefs, push senses",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5",
+    "@types/node": "^22",
+    "typescript": "^5"
+  }
+}

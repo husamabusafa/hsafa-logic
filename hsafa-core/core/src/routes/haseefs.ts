@@ -12,6 +12,7 @@ import {
   type ExtensionManifest,
 } from '../lib/extension-manager.js';
 import type { SenseEvent } from '../agent-builder/types.js';
+import { createSnapshot, listSnapshots, restoreSnapshot } from '../lib/consciousness.js';
 
 // =============================================================================
 // Haseef Routes (v4 — Manifest + Webhook)
@@ -22,6 +23,9 @@ import type { SenseEvent } from '../agent-builder/types.js';
 //
 // POST   /haseefs/:id/senses                        (extension key) — push sense events
 // GET    /haseefs/:id/stream                        (secret key) — SSE haseef stream
+// POST   /haseefs/:id/snapshot                      (secret key) — create consciousness snapshot
+// GET    /haseefs/:id/snapshots                     (secret key) — list snapshots
+// POST   /haseefs/:id/restore                       (secret key) — restore from snapshot
 // POST   /haseefs/:id/extensions/:extId/connect     (secret key) — connect extension
 // DELETE /haseefs/:id/extensions/:extId/disconnect   (secret key) — disconnect extension
 // PATCH  /haseefs/:id/extensions/:extId             (secret key) — update extension config
@@ -187,6 +191,74 @@ haseefsRouter.get('/', requireSecretKey(), async (_req: Request, res: Response) 
   } catch (error) {
     console.error('List haseefs error:', error);
     res.status(500).json({ error: 'Failed to list haseefs' });
+  }
+});
+
+// =============================================================================
+// Consciousness Snapshots (§6.3)
+// =============================================================================
+
+// POST /haseefs/:id/snapshot — Create a consciousness snapshot
+haseefsRouter.post('/:id/snapshot', requireSecretKey(), async (req: Request, res: Response) => {
+  try {
+    const haseefId = req.params.id;
+    const exists = await verifyHaseefExists(haseefId);
+    if (!exists) {
+      res.status(404).json({ error: 'Haseef not found' });
+      return;
+    }
+
+    const snapshot = await createSnapshot(haseefId, 'manual');
+    res.status(201).json({ snapshot });
+  } catch (error) {
+    console.error('Create snapshot error:', error);
+    const msg = error instanceof Error ? error.message : 'Failed to create snapshot';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// GET /haseefs/:id/snapshots — List consciousness snapshots
+haseefsRouter.get('/:id/snapshots', requireSecretKey(), async (req: Request, res: Response) => {
+  try {
+    const haseefId = req.params.id;
+    const exists = await verifyHaseefExists(haseefId);
+    if (!exists) {
+      res.status(404).json({ error: 'Haseef not found' });
+      return;
+    }
+
+    const limit = parseInt(req.query.limit as string) || 20;
+    const snapshots = await listSnapshots(haseefId, Math.min(limit, 100));
+    res.json({ snapshots });
+  } catch (error) {
+    console.error('List snapshots error:', error);
+    res.status(500).json({ error: 'Failed to list snapshots' });
+  }
+});
+
+// POST /haseefs/:id/restore — Restore consciousness from a snapshot
+haseefsRouter.post('/:id/restore', requireSecretKey(), async (req: Request, res: Response) => {
+  try {
+    const haseefId = req.params.id;
+    const { snapshotId } = req.body;
+
+    if (!snapshotId) {
+      res.status(400).json({ error: 'snapshotId is required' });
+      return;
+    }
+
+    const exists = await verifyHaseefExists(haseefId);
+    if (!exists) {
+      res.status(404).json({ error: 'Haseef not found' });
+      return;
+    }
+
+    const result = await restoreSnapshot(haseefId, snapshotId);
+    res.json({ success: true, restored: result });
+  } catch (error) {
+    console.error('Restore snapshot error:', error);
+    const msg = error instanceof Error ? error.message : 'Failed to restore snapshot';
+    res.status(500).json({ error: msg });
   }
 });
 

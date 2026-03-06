@@ -17,8 +17,8 @@ import { prisma } from "../db";
 import { postSpaceMessage } from "../space-service";
 import { getMembersOfSpace, getSpacesForEntity } from "../membership-service";
 import { emitSmartSpaceEvent } from "../smartspace-events";
+import { Hsafa } from "@hsafa/node";
 import { loadExtensionConfig, type ExtensionConfig } from "./config";
-import { CoreClient } from "./core-client";
 import { MANIFEST } from "./manifest";
 import { setInboxHandler, type InboxMessageParams } from "./inbox";
 
@@ -34,20 +34,21 @@ interface ActiveConnection {
   haseefName: string;
   agentEntityId: string;
   spaceIds: string[];
-  subscriber: InstanceType<typeof Redis> | null;
   /** runId → triggerSpaceId — routes tool streaming events to the correct space */
   runSpaces: Map<string, string>;
 }
 
 interface ExtensionState {
   config: ExtensionConfig | null;
-  coreClient: CoreClient | null;
+  hsafa: Hsafa | null;
   connections: Map<string, ActiveConnection>;
+  /** Single shared Redis subscriber for all haseef stream bridges */
+  sharedSubscriber: InstanceType<typeof Redis> | null;
 }
 
 const g = globalThis as unknown as { __extState: ExtensionState };
 if (!g.__extState) {
-  g.__extState = { config: null, coreClient: null, connections: new Map() };
+  g.__extState = { config: null, hsafa: null, connections: new Map(), sharedSubscriber: null };
 }
 const state = g.__extState;
 
@@ -71,14 +72,20 @@ export async function bootstrapExtension(): Promise<void> {
     return;
   }
 
-  state.coreClient = new CoreClient(state.config);
+  state.hsafa = new Hsafa({
+    coreUrl: state.config.coreUrl,
+    extensionKey: state.config.extensionKey,
+  });
 
   // Register inbox handler (replaces SpacesListener)
   setInboxHandler(handleInboxMessage);
 
+  // Start the single shared Redis subscriber for all stream bridges (§3.4)
+  await startSharedSubscriber();
+
   // Self-discover existing connections
   try {
-    const me = await state.coreClient!.getMe();
+    const me = await state.hsafa.me();
     console.log(`[extension] Extension: ${me.name} (${me.id})`);
     console.log(`[extension] ${me.connections.length} existing connection(s)`);
 
@@ -156,117 +163,9 @@ export async function handleLifecycle(
       haseefName,
       agentEntityId,
       spaceIds,
-      subscriber: null,
       runSpaces: new Map(),
     };
     state.connections.set(haseefId, newConn);
-
-    // Start stream bridge: subscribe to Core's haseef run events and forward
-    // all relevant events to the correct space SSE channel.
-    //
-    // run.start / run.finish  → agent.active / agent.inactive (all spaces)
-    // tool.started            → tool.started  (trigger space only)
-    // tool-input.delta        → tool.streaming (trigger space only, fire-and-forget)
-    // tool.done               → tool.done      (trigger space only)
-    // tool.error              → tool.error     (trigger space only)
-    const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
-    const runSubscriber = new Redis(REDIS_URL, { maxRetriesPerRequest: null });
-    await runSubscriber.subscribe(`haseef:${haseefId}:stream`);
-    runSubscriber.on("message", async (_ch: string, message: string) => {
-      try {
-        const event = JSON.parse(message) as {
-          type: string;
-          runId?: string;
-          triggerType?: string;
-          triggerSource?: string;
-          streamId?: string;
-          toolName?: string;
-          delta?: string;
-          args?: unknown;
-          result?: unknown;
-          error?: string;
-        };
-        const conn = state.connections.get(haseefId);
-        if (!conn) return;
-
-        const runId = event.runId;
-
-        if (event.type === "run.start") {
-          // Cache which space triggered this run so tool events go to the right space
-          // triggerSource = spaceId when triggerType starts with "ext-spaces:"
-          if (runId && event.triggerType?.startsWith("ext-spaces:") && event.triggerSource) {
-            conn.runSpaces.set(runId, event.triggerSource);
-          }
-          for (const spaceId of conn.spaceIds) {
-            await emitSmartSpaceEvent(spaceId, {
-              type: "agent.active",
-              agentEntityId: conn.agentEntityId,
-              runId,
-              data: { agentEntityId: conn.agentEntityId, agentName: conn.haseefName, runId },
-            });
-          }
-        } else if (event.type === "tool.started") {
-          const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
-          if (spaceId) {
-            void emitSmartSpaceEvent(spaceId, {
-              type: "tool.started",
-              streamId: event.streamId,
-              toolName: event.toolName,
-              agentEntityId: conn.agentEntityId,
-              runId,
-            });
-          }
-        } else if (event.type === "tool-input.delta") {
-          const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
-          if (spaceId) {
-            // Fire-and-forget: real-time delta from AI, never await Redis publish
-            void emitSmartSpaceEvent(spaceId, {
-              type: "tool.streaming",
-              streamId: event.streamId,
-              toolName: event.toolName,
-              delta: event.delta,
-              agentEntityId: conn.agentEntityId,
-              runId,
-            });
-          }
-        } else if (event.type === "tool.done") {
-          const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
-          if (spaceId) {
-            void emitSmartSpaceEvent(spaceId, {
-              type: "tool.done",
-              streamId: event.streamId,
-              toolName: event.toolName,
-              result: event.result,
-              agentEntityId: conn.agentEntityId,
-              runId,
-            });
-          }
-        } else if (event.type === "tool.error") {
-          const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
-          if (spaceId) {
-            void emitSmartSpaceEvent(spaceId, {
-              type: "tool.error",
-              streamId: event.streamId,
-              toolName: event.toolName,
-              error: event.error,
-              agentEntityId: conn.agentEntityId,
-              runId,
-            });
-          }
-        } else if (event.type === "run.finish") {
-          for (const spaceId of conn.spaceIds) {
-            await emitSmartSpaceEvent(spaceId, {
-              type: "agent.inactive",
-              agentEntityId: conn.agentEntityId,
-              runId,
-              data: { agentEntityId: conn.agentEntityId, runId },
-            });
-          }
-          if (runId) conn.runSpaces.delete(runId);
-        }
-      } catch {}
-    });
-    newConn.subscriber = runSubscriber;
 
     console.log(
       `[extension] Connected ${haseefName} (${spaceIds.length} spaces)`,
@@ -274,11 +173,152 @@ export async function handleLifecycle(
   } else if (type === "haseef.disconnected") {
     const existing = state.connections.get(haseefId);
     if (existing) {
-      existing.subscriber?.quit().catch(() => {});
       state.connections.delete(haseefId);
       console.log(`[extension] Disconnected ${haseefName}`);
     }
   }
+}
+
+// =============================================================================
+// Shared Redis Subscriber (§3.4 — single connection for all haseef streams)
+//
+// Uses psubscribe('haseef:*:stream') to receive events for ALL connected
+// haseefs through one Redis connection, instead of one per haseef.
+// Includes reconnection handling (§3.5).
+// =============================================================================
+
+async function startSharedSubscriber(): Promise<void> {
+  if (state.sharedSubscriber) return; // Already running
+
+  const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
+  const sub = new Redis(REDIS_URL, {
+    maxRetriesPerRequest: null,
+    retryStrategy(times) {
+      const delay = Math.min(times * 500, 30_000);
+      console.log(`[extension] Redis stream subscriber reconnecting in ${delay}ms (attempt ${times})`);
+      return delay;
+    },
+  });
+
+  sub.on("error", (err) => {
+    console.error(`[extension] Redis stream subscriber error:`, err.message);
+  });
+
+  sub.on("connect", () => {
+    console.log(`[extension] Redis stream subscriber connected`);
+  });
+
+  await sub.psubscribe("haseef:*:stream");
+  state.sharedSubscriber = sub;
+
+  // Route events by extracting haseefId from channel name
+  // Channel format: haseef:{haseefId}:stream
+  sub.on("pmessage", (_pattern: string, channel: string, message: string) => {
+    const haseefId = channel.split(":")[1];
+    const conn = state.connections.get(haseefId);
+    if (!conn) return;
+    bridgeStreamEvent(conn, message);
+  });
+}
+
+// =============================================================================
+// Stream Bridge — forwards Core run events to space SSE channels
+//
+// run.start / run.finish  → agent.active / agent.inactive (all spaces)
+// tool.started            → tool.started  (trigger space only)
+// tool-input.delta        → tool.streaming (trigger space only, fire-and-forget)
+// tool.done               → tool.done      (trigger space only)
+// tool.error              → tool.error     (trigger space only)
+// =============================================================================
+
+function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
+  try {
+    const event = JSON.parse(message) as {
+      type: string;
+      runId?: string;
+      triggerType?: string;
+      triggerSource?: string;
+      streamId?: string;
+      toolName?: string;
+      delta?: string;
+      args?: unknown;
+      result?: unknown;
+      error?: string;
+    };
+
+    const runId = event.runId;
+
+    if (event.type === "run.start") {
+      if (runId && event.triggerType?.startsWith("ext-spaces:") && event.triggerSource) {
+        conn.runSpaces.set(runId, event.triggerSource);
+      }
+      for (const spaceId of conn.spaceIds) {
+        void emitSmartSpaceEvent(spaceId, {
+          type: "agent.active",
+          agentEntityId: conn.agentEntityId,
+          runId,
+          data: { agentEntityId: conn.agentEntityId, agentName: conn.haseefName, runId },
+        });
+      }
+    } else if (event.type === "tool.started") {
+      const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      if (spaceId) {
+        void emitSmartSpaceEvent(spaceId, {
+          type: "tool.started",
+          streamId: event.streamId,
+          toolName: event.toolName,
+          agentEntityId: conn.agentEntityId,
+          runId,
+        });
+      }
+    } else if (event.type === "tool-input.delta") {
+      const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      if (spaceId) {
+        void emitSmartSpaceEvent(spaceId, {
+          type: "tool.streaming",
+          streamId: event.streamId,
+          toolName: event.toolName,
+          delta: event.delta,
+          agentEntityId: conn.agentEntityId,
+          runId,
+        });
+      }
+    } else if (event.type === "tool.done") {
+      const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      if (spaceId) {
+        void emitSmartSpaceEvent(spaceId, {
+          type: "tool.done",
+          streamId: event.streamId,
+          toolName: event.toolName,
+          result: event.result,
+          agentEntityId: conn.agentEntityId,
+          runId,
+        });
+      }
+    } else if (event.type === "tool.error") {
+      const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      if (spaceId) {
+        void emitSmartSpaceEvent(spaceId, {
+          type: "tool.error",
+          streamId: event.streamId,
+          toolName: event.toolName,
+          error: event.error,
+          agentEntityId: conn.agentEntityId,
+          runId,
+        });
+      }
+    } else if (event.type === "run.finish") {
+      for (const spaceId of conn.spaceIds) {
+        void emitSmartSpaceEvent(spaceId, {
+          type: "agent.inactive",
+          agentEntityId: conn.agentEntityId,
+          runId,
+          data: { agentEntityId: conn.agentEntityId, runId },
+        });
+      }
+      if (runId) conn.runSpaces.delete(runId);
+    }
+  } catch {}
 }
 
 // =============================================================================
@@ -384,7 +424,7 @@ export async function handleToolCall(
 // =============================================================================
 
 async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
-  if (!state.coreClient) return;
+  if (!state.hsafa) return;
 
   const {
     spaceId,
@@ -427,6 +467,6 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
       `[extension] → sense: ${senderName} in "${spaceName}": "${content.slice(0, 50)}"`,
     );
 
-    await state.coreClient!.pushSenseEvent(conn.haseefId, senseEvent);
+    await state.hsafa!.pushSense(conn.haseefId, senseEvent);
   }
 }

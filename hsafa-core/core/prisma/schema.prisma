@@ -43,6 +43,7 @@ model Haseef {
   plans            Plan[]
   goals            Goal[]
   consciousness    HaseefConsciousness?
+  snapshots        ConsciousnessSnapshot[]
   inboxEvents      InboxEvent[]
   pendingToolCalls PendingToolCall[]
   connections      HaseefExtension[]
@@ -210,6 +211,21 @@ model HaseefExtension {
   @@index([haseefId])
   @@index([extensionId])
   @@map("haseef_extensions")
+}
+
+model ConsciousnessSnapshot {
+  id            String   @id @default(uuid()) @db.Uuid
+  haseefId      String   @map("haseef_id") @db.Uuid
+  cycleCount    Int      @map("cycle_count")
+  messages      Json     @db.JsonB
+  tokenEstimate Int      @default(0) @map("token_estimate")
+  reason        String?  // "auto", "manual", "pre-compaction"
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
+
+  @@index([haseefId, createdAt])
+  @@map("consciousness_snapshots")
 }
 
 model PendingToolCall {

@@ -253,85 +253,103 @@ function extractCycleTimestamp(cycle: Cycle): string | null {
 }
 
 // =============================================================================
-// Identity-critical detection (v4 — Phase 5)
+// Identity-critical detection (§6.7 — Deterministic, tool-call-based)
 //
 // The compaction system preserves three categories of critical content:
 //
-//   1. SELF-DEVELOPMENT — cycles where the Haseef discovered/updated
-//      something about itself (self:*, identity, values, capabilities)
+//   1. SELF-DEVELOPMENT — cycles where the Haseef called set_memories
+//      with self:* keys (identity, values, capabilities, etc.)
 //
-//   2. RELATIONSHIP MILESTONES — cycles where the Haseef deepened its
-//      understanding of a person (person-model:*, first interactions,
-//      emotional moments, trust-building exchanges)
+//   2. RELATIONSHIP MILESTONES — cycles where the Haseef called
+//      set_memories with person-model:* or about:* keys
 //
-//   3. WILL DEVELOPMENT — cycles where the Haseef set goals, made
-//      autonomous decisions, or acted proactively from its own values
+//   3. WILL DEVELOPMENT — cycles where the Haseef called set_goals,
+//      delete_goals, set_plans, or delete_plans
+//
+// Detection is 100% deterministic: scan the cycle's actual tool calls
+// instead of guessing from summary text with regex. Identity development
+// is too important to rely on pattern matching.
 //
 // These are ALWAYS preserved during compaction. A Haseef that forgets
 // how it came to know itself or others loses the foundation of identity.
 // =============================================================================
 
-// Self-development patterns
-const SELF_PATTERNS = [
-  /self[:\-_]model/i,
-  /self:(identity|values|capabilities|personality|limitations|purpose|growth)/i,
-  /who I am/i,
-  /my identity/i,
-  /my values/i,
-  /my purpose/i,
-  /learned about (myself|me)/i,
-  /discovered.*about myself/i,
-  /realized.*about (me|myself)/i,
-  /I (am|feel|believe|care about|value)/i,
-  /set_memories.*self:/i,
-];
-
-// Relationship milestone patterns
-const RELATIONSHIP_PATTERNS = [
-  /person[:\-_]model/i,
-  /about:/i,
-  /updated.*person.*model/i,
-  /built.*model.*of/i,
-  /first (time|interaction|conversation) with/i,
-  /learned about \w+/i,
-  /noticed.*about \w+/i,
-  /\w+ (trusts|confided|opened up|shared)/i,
-  /relationship with/i,
-  /set_memories.*person-model:/i,
-];
-
-// Will development patterns
-const WILL_PATTERNS = [
-  /set_goals/i,
-  /set a goal/i,
-  /my goal/i,
-  /decided to/i,
-  /I want to/i,
-  /I chose to/i,
-  /proactively/i,
-  /on my own initiative/i,
-  /followed up/i,
-  /anticipated/i,
-  /scheduled.*plan/i,
-  /set_plans/i,
-];
-
 export type IdentityTag = 'self' | 'relationship' | 'will';
 
+/** Tool names that indicate will development */
+const WILL_TOOLS = new Set(['set_goals', 'delete_goals', 'set_plans', 'delete_plans']);
+
 /**
- * Check if a summary contains identity-critical content.
- * Returns the matching tags (may match multiple categories).
+ * Classify a cycle's identity significance by scanning its actual tool calls.
+ * Deterministic: checks toolName and args, not summary text.
  */
-export function classifyIdentityCritical(summary: string): IdentityTag[] {
-  const tags: IdentityTag[] = [];
-  if (SELF_PATTERNS.some((p) => p.test(summary))) tags.push('self');
-  if (RELATIONSHIP_PATTERNS.some((p) => p.test(summary))) tags.push('relationship');
-  if (WILL_PATTERNS.some((p) => p.test(summary))) tags.push('will');
-  return tags;
+export function classifyCycleIdentity(cycle: Cycle): IdentityTag[] {
+  const tags = new Set<IdentityTag>();
+
+  for (const msg of cycle.messages) {
+    if (msg.role !== 'assistant' || typeof msg.content === 'string') continue;
+
+    // Assistant message with tool-call parts
+    for (const part of msg.content) {
+      if (part.type !== 'tool-call' || !part.toolName) continue;
+
+      // Will development: set_goals, set_plans, etc.
+      if (WILL_TOOLS.has(part.toolName)) {
+        tags.add('will');
+        continue;
+      }
+
+      // Self / relationship: check set_memories args for key prefixes
+      if (part.toolName === 'set_memories' && part.args) {
+        const memories = extractMemoryKeys(part.args);
+        for (const key of memories) {
+          if (key.startsWith('self:')) tags.add('self');
+          if (key.startsWith('person-model:') || key.startsWith('about:')) tags.add('relationship');
+        }
+      }
+    }
+  }
+
+  return [...tags];
 }
 
-function isIdentityCritical(summary: string): boolean {
-  return classifyIdentityCritical(summary).length > 0;
+/**
+ * Extract memory keys from set_memories tool args.
+ * Args can be { memories: [{ key, value }] } or { memories: { key: value } }.
+ */
+function extractMemoryKeys(args: unknown): string[] {
+  if (!args || typeof args !== 'object') return [];
+  const a = args as Record<string, unknown>;
+
+  const memories = a.memories;
+  if (Array.isArray(memories)) {
+    // [{ key: "self:identity", value: "..." }]
+    return memories
+      .filter((m: unknown) => m && typeof m === 'object' && 'key' in (m as Record<string, unknown>))
+      .map((m: unknown) => String((m as Record<string, unknown>).key));
+  }
+  if (memories && typeof memories === 'object' && !Array.isArray(memories)) {
+    // { "self:identity": "..." }
+    return Object.keys(memories as Record<string, unknown>);
+  }
+  return [];
+}
+
+/** Backwards-compatible wrapper: classify by summary text as fallback */
+export function classifyIdentityCritical(summary: string): IdentityTag[] {
+  // Fallback for compacted summaries that no longer have tool call data.
+  // Checks for tool-name mentions in the summary text.
+  const tags: IdentityTag[] = [];
+  if (/set_memories.*self:/i.test(summary) || /self:(identity|values|capabilities|personality|limitations|purpose|growth)/i.test(summary)) {
+    tags.push('self');
+  }
+  if (/set_memories.*(person-model:|about:)/i.test(summary) || /person-model:/i.test(summary)) {
+    tags.push('relationship');
+  }
+  if (/set_goals|set_plans|delete_goals|delete_plans/i.test(summary)) {
+    tags.push('will');
+  }
+  return tags;
 }
 
 /**
@@ -399,14 +417,17 @@ export function compactConsciousness(
     const summary = extractCycleSummary(cycle);
     if (!summary) continue;
 
-    const tags = classifyIdentityCritical(summary);
-    if (tags.length === 0) {
+    // §6.7: Deterministic tagging from actual tool calls (primary),
+    // with text-based fallback for already-compacted summaries
+    const tags = classifyCycleIdentity(cycle);
+    const effectiveTags = tags.length > 0 ? tags : classifyIdentityCritical(summary);
+
+    if (effectiveTags.length === 0) {
       regularSummaries.push(summary);
     } else {
-      // A summary can belong to multiple categories — add to each
-      if (tags.includes('self')) selfDevelopment.push(summary);
-      if (tags.includes('relationship')) relationshipMilestones.push(summary);
-      if (tags.includes('will')) willDevelopment.push(summary);
+      if (effectiveTags.includes('self')) selfDevelopment.push(summary);
+      if (effectiveTags.includes('relationship')) relationshipMilestones.push(summary);
+      if (effectiveTags.includes('will')) willDevelopment.push(summary);
     }
   }
 
@@ -467,6 +488,115 @@ export function compactConsciousness(
   }
 
   return compacted;
+}
+
+// =============================================================================
+// Consciousness Snapshots (§6.3)
+//
+// Periodic backups of consciousness stored in Postgres.
+// Supports manual snapshots via API and auto-snapshots before compaction.
+// =============================================================================
+
+const AUTO_SNAPSHOT_INTERVAL = 50; // Auto-snapshot every N cycles
+
+/**
+ * Create a consciousness snapshot.
+ */
+export async function createSnapshot(
+  haseefId: string,
+  reason: 'auto' | 'manual' | 'pre-compaction' = 'manual',
+): Promise<{ id: string; cycleCount: number; tokenEstimate: number }> {
+  const consciousness = await loadConsciousness(haseefId);
+
+  if (consciousness.messages.length === 0) {
+    throw new Error('No consciousness to snapshot');
+  }
+
+  const tokenEst = estimateTokens(consciousness.messages);
+
+  const snapshot = await prisma.consciousnessSnapshot.create({
+    data: {
+      haseefId,
+      cycleCount: consciousness.cycleCount,
+      messages: consciousness.messages as any,
+      tokenEstimate: tokenEst,
+      reason,
+    },
+  });
+
+  return {
+    id: snapshot.id,
+    cycleCount: snapshot.cycleCount,
+    tokenEstimate: snapshot.tokenEstimate,
+  };
+}
+
+/**
+ * List snapshots for a Haseef (most recent first).
+ */
+export async function listSnapshots(
+  haseefId: string,
+  limit: number = 20,
+): Promise<Array<{ id: string; cycleCount: number; tokenEstimate: number; reason: string | null; createdAt: Date }>> {
+  return prisma.consciousnessSnapshot.findMany({
+    where: { haseefId },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+    select: {
+      id: true,
+      cycleCount: true,
+      tokenEstimate: true,
+      reason: true,
+      createdAt: true,
+    },
+  });
+}
+
+/**
+ * Restore consciousness from a snapshot.
+ * Overwrites current consciousness with snapshot data.
+ */
+export async function restoreSnapshot(
+  haseefId: string,
+  snapshotId: string,
+): Promise<{ cycleCount: number; tokenEstimate: number }> {
+  const snapshot = await prisma.consciousnessSnapshot.findUnique({
+    where: { id: snapshotId },
+  });
+
+  if (!snapshot || snapshot.haseefId !== haseefId) {
+    throw new Error('Snapshot not found');
+  }
+
+  const messages = snapshot.messages as unknown as ModelMessage[];
+
+  // Save a pre-restore snapshot of current state
+  await createSnapshot(haseefId, 'pre-compaction').catch(() => {});
+
+  await saveConsciousness(haseefId, messages, snapshot.cycleCount);
+
+  return {
+    cycleCount: snapshot.cycleCount,
+    tokenEstimate: snapshot.tokenEstimate,
+  };
+}
+
+/**
+ * Check if an auto-snapshot is due and create one if so.
+ * Called after saving consciousness each cycle.
+ */
+export async function maybeAutoSnapshot(
+  haseefId: string,
+  cycleCount: number,
+): Promise<void> {
+  if (cycleCount <= 0 || cycleCount % AUTO_SNAPSHOT_INTERVAL !== 0) return;
+
+  try {
+    await createSnapshot(haseefId, 'auto');
+    console.log(`[consciousness] Auto-snapshot at cycle ${cycleCount} for ${haseefId}`);
+  } catch (err) {
+    console.warn(`[consciousness] Auto-snapshot failed:`, err);
+  }
 }
 
 // =============================================================================
