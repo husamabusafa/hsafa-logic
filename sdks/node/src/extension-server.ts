@@ -4,20 +4,28 @@
 // Express server that handles the extension contract with Core:
 //   - GET  /manifest  — serves auto-generated manifest
 //   - POST /webhook   — receives tool calls + lifecycle events
+//   - POST /context   — dynamic per-haseef instructions (optional)
 //   - GET  /health    — health check
 //
 // Usage:
 //   const hsafa = new Hsafa({ coreUrl, extensionKey });
-//   const server = new ExtensionServer(hsafa, { port: 4200 });
+//   const server = new ExtensionServer(hsafa, {
+//     name: 'ext-calendar',
+//     description: 'Calendar integration',
+//     capabilities: ['sense', 'act'],
+//   });
 //
-//   server.tool('get_weather', {
-//     description: 'Get current weather',
-//     inputSchema: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
+//   server.tool('create_event', {
+//     description: 'Create a calendar event',
+//     inputSchema: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] },
 //   }, async (args, ctx) => {
-//     return { temperature: 72, city: args.city };
+//     return { eventId: '123', title: args.title };
 //   });
 //
 //   server.onLifecycle('haseef.connected', (event) => { ... });
+//   server.onContext(async ({ haseefId, config }) => {
+//     return `You are connected to calendar account: ${config.email}`;
+//   });
 //
 //   await server.listen();
 // =============================================================================
@@ -31,13 +39,15 @@ import type {
   ToolCallWebhook,
   LifecycleWebhook,
   LifecycleHandler,
+  ContextHandler,
+  ContextRequest,
   ExtensionManifest,
 } from './types.js';
 
 export interface ExtensionServerOptions {
   /** Port to listen on (default: 4200) */
   port?: number;
-  /** Extension name (used in manifest if not discovered) */
+  /** Extension name (used in manifest) */
   name?: string;
   /** Extension description */
   description?: string;
@@ -45,6 +55,22 @@ export interface ExtensionServerOptions {
   version?: string;
   /** Instructions injected into Haseef's system prompt */
   instructions?: string;
+  /** JSON Schema for per-haseef config */
+  configSchema?: Record<string, unknown>;
+  /** Event types this extension emits (e.g. ['message', 'alert']) */
+  events?: string[];
+  /** Auto-connect to all Haseefs on install */
+  autoConnect?: boolean;
+  /** Config fields that MUST be set before activation */
+  requiredConfig?: string[];
+  /** What this extension provides */
+  capabilities?: Array<'sense' | 'act'>;
+  /**
+   * Relative path for the context endpoint (e.g. "/context").
+   * If set AND a contextHandler is registered, Core will POST { haseefId, config }
+   * here at the start of each think cycle and inject the returned instructions.
+   */
+  contextUrl?: string;
 }
 
 interface RegisteredTool {
@@ -57,6 +83,7 @@ export class ExtensionServer {
   private options: ExtensionServerOptions;
   private tools = new Map<string, RegisteredTool>();
   private lifecycleHandlers = new Map<string, LifecycleHandler[]>();
+  private contextHandler: ContextHandler | null = null;
   private app = express();
   private server: ReturnType<typeof express.prototype.listen> | null = null;
 
@@ -99,18 +126,45 @@ export class ExtensionServer {
     return this;
   }
 
+  /**
+   * Register a dynamic context handler.
+   * Core calls this at the start of each think cycle with { haseefId, config }.
+   * Return a string of instructions to inject into the haseef's system prompt.
+   *
+   * You must also set `contextUrl` in the server options (e.g. "/context")
+   * so Core knows where to POST.
+   */
+  onContext(handler: ContextHandler): this {
+    this.contextHandler = handler;
+    return this;
+  }
+
   // ---------------------------------------------------------------------------
   // Manifest Generation
   // ---------------------------------------------------------------------------
 
   private buildManifest(): ExtensionManifest {
-    return {
+    const manifest: ExtensionManifest = {
       name: this.options.name ?? 'unnamed-extension',
       description: this.options.description,
       version: this.options.version ?? '1.0.0',
       tools: Array.from(this.tools.values()).map((t) => t.definition),
       instructions: this.options.instructions,
     };
+
+    if (this.options.configSchema) manifest.configSchema = this.options.configSchema;
+    if (this.options.events) manifest.events = this.options.events;
+    if (this.options.autoConnect !== undefined) manifest.autoConnect = this.options.autoConnect;
+    if (this.options.requiredConfig) manifest.requiredConfig = this.options.requiredConfig;
+    if (this.options.capabilities) manifest.capabilities = this.options.capabilities;
+
+    manifest.healthCheck = '/health';
+
+    if (this.options.contextUrl && this.contextHandler) {
+      manifest.contextUrl = this.options.contextUrl;
+    }
+
+    return manifest;
   }
 
   // ---------------------------------------------------------------------------
@@ -118,7 +172,7 @@ export class ExtensionServer {
   // ---------------------------------------------------------------------------
 
   private setupRoutes(): void {
-    // GET /manifest — auto-generated from registered tools
+    // GET /manifest — auto-generated from registered tools + options
     this.app.get('/manifest', (_req: Request, res: Response) => {
       res.json(this.buildManifest());
     });
@@ -133,15 +187,21 @@ export class ExtensionServer {
           return;
         }
 
-        // Tool call
         if (event.type === 'tool_call') {
           await this.handleToolCall(event as unknown as ToolCallWebhook, res);
           return;
         }
 
-        // Lifecycle event
-        await this.handleLifecycle(event as unknown as LifecycleWebhook);
-        res.json({ ok: true });
+        // Lifecycle events — handle async, respond immediately
+        if (event.type.startsWith('haseef.') || event.type === 'extension.installed') {
+          this.handleLifecycle(event as unknown as LifecycleWebhook).catch((err) => {
+            console.error(`[extension-server] Lifecycle handler error for ${event.type}:`, err);
+          });
+          res.json({ ok: true });
+          return;
+        }
+
+        res.status(400).json({ error: `Unknown webhook type: ${event.type}` });
       } catch (error) {
         console.error('[extension-server] Webhook error:', error);
         res.status(500).json({
@@ -150,10 +210,26 @@ export class ExtensionServer {
       }
     });
 
+    // POST /context (or custom path) — dynamic per-haseef instructions
+    const contextPath = this.options.contextUrl ?? '/context';
+    if (this.contextHandler) {
+      this.app.post(contextPath, async (req: Request, res: Response) => {
+        try {
+          const body = req.body as ContextRequest;
+          const instructions = await this.contextHandler!(body);
+          res.json({ instructions: instructions || '' });
+        } catch (error) {
+          console.error('[extension-server] Context handler error:', error);
+          res.json({ instructions: '' });
+        }
+      });
+    }
+
     // GET /health
     this.app.get('/health', (_req: Request, res: Response) => {
       res.json({
         status: 'ok',
+        name: this.options.name ?? 'unnamed-extension',
         tools: Array.from(this.tools.keys()),
         uptime: process.uptime(),
       });
@@ -167,20 +243,23 @@ export class ExtensionServer {
       return;
     }
 
+    const hsafa = this.hsafa;
     const context: ToolCallContext = {
       toolCallId: event.toolCallId,
       haseefId: event.haseefId,
       haseefName: event.haseefName,
       runId: event.runId,
+      config: event.config ?? null,
+      pushSense: (senseEvent) => hsafa.pushSense(event.haseefId, senseEvent),
     };
 
     try {
       const result = await registered.handler(event.args, context);
-      res.json({ result });
+      res.json(result);
     } catch (error) {
       console.error(`[extension-server] Tool ${event.toolName} error:`, error);
       res.json({
-        result: { error: error instanceof Error ? error.message : 'Tool execution failed' },
+        error: error instanceof Error ? error.message : 'Tool execution failed',
       });
     }
   }
@@ -205,8 +284,12 @@ export class ExtensionServer {
     const p = port ?? this.options.port ?? 4200;
     return new Promise((resolve) => {
       this.server = this.app.listen(p, () => {
-        console.log(`[extension-server] Listening on http://localhost:${p}`);
-        console.log(`[extension-server] Tools: ${Array.from(this.tools.keys()).join(', ') || '(none)'}`);
+        const name = this.options.name ?? 'extension';
+        console.log(`[${name}] Listening on http://localhost:${p}`);
+        console.log(`[${name}] Tools: ${Array.from(this.tools.keys()).join(', ') || '(none)'}`);
+        if (this.contextHandler) {
+          console.log(`[${name}] Context: ${this.options.contextUrl ?? '/context'}`);
+        }
         resolve();
       });
     });

@@ -57,7 +57,7 @@ export async function buildHaseef(
     tools,
     model,
     mcpClients: mcp.clients,
-    extensionInstructions: extensions.instructions,
+    extensionInstructions: extensions.staticInstructions,
   };
 }
 

@@ -98,4 +98,5 @@ When you receive a message from a space in your sense events:
   requiredConfig: [],
   healthCheck: "/api/health",
   capabilities: ["sense", "act"],
+  contextUrl: "/context",
 };

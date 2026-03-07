@@ -5,10 +5,15 @@
 //   Extension mode: new Hsafa({ coreUrl, extensionKey })
 //   Admin mode:     new Hsafa({ coreUrl, secretKey })
 //
-// Build extensions:
+// Build standalone extensions:
 //   const server = new ExtensionServer(hsafa, { name: 'my-ext' });
 //   server.tool('do_thing', { description: '...', inputSchema: {...} }, handler);
 //   await server.listen();
+//
+// Build embedded extensions (Next.js, serverless):
+//   const handler = new WebhookHandler({ name: 'my-ext', hsafa });
+//   handler.onTool('do_thing', { ... }, handler);
+//   // Use in your route handlers
 // =============================================================================
 
 // Main client
@@ -41,9 +46,12 @@ export type {
   WebhookEvent,
   ToolCallWebhook,
   LifecycleWebhook,
+  ContextRequest,
+  ContextResponse,
   ToolHandler,
   ToolCallContext,
   LifecycleHandler,
+  ContextHandler,
   SystemStatus,
   HaseefStatus,
 } from './types.js';

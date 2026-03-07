@@ -61,6 +61,11 @@ export function getConnectionsForSpace(
   );
 }
 
+/** Get the live connection state for a specific haseef (used by context route) */
+export function getConnectionForHaseef(haseefId: string): ActiveConnection | undefined {
+  return state.connections.get(haseefId);
+}
+
 // =============================================================================
 // Bootstrap
 // =============================================================================

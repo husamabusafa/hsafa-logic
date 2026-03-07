@@ -43,6 +43,13 @@ export interface ExtensionManifest {
   healthCheck?: string;
   /** v2: What this extension provides — "sense" (pushes events) and/or "act" (provides tools) */
   capabilities?: Array<'sense' | 'act'>;
+  /**
+   * v2: Dynamic context URL. Core POSTs { haseefId, config } here at the start of each run
+   * and injects the returned { instructions } string into the haseef's system prompt.
+   * Use this to inject per-haseef dynamic data (e.g. current space IDs, user name, etc.)
+   * that cannot be known at registration time.
+   */
+  contextUrl?: string;
 }
 
 // =============================================================================
@@ -377,13 +384,18 @@ export async function getConnectedExtensions(haseefId: string): Promise<any[]> {
 
 interface ExtensionToolsResult {
   tools: Record<string, unknown>;
-  instructions: string[];
+  /** Static instructions from extension manifests (cached at build time) */
+  staticInstructions: string[];
 }
 
 /**
  * Build AI SDK–compatible tools from all extensions connected to a Haseef.
  * Each extension tool executes via synchronous HTTP POST to the extension's
  * webhook endpoint. No PendingToolCall, no Redis pub/sub.
+ *
+ * Static instructions (from extension manifest) are returned here.
+ * Dynamic instructions (from contextUrl) should be fetched per-cycle
+ * using fetchDynamicExtensionContext().
  */
 export async function buildExtensionTools(
   haseefId: string,
@@ -397,15 +409,16 @@ export async function buildExtensionTools(
   });
 
   const tools: Record<string, unknown> = {};
-  const instructions: string[] = [];
+  const staticInstructions: string[] = [];
 
   for (const conn of connections) {
     const ext = conn.extension;
     const manifest = ext.manifest as ExtensionManifest | null;
+    const extensionConfig = conn.config as Record<string, unknown> | null;
 
-    // Collect extension instructions
+    // Collect static instructions from manifest (cached — doesn't change per cycle)
     if (ext.instructions) {
-      instructions.push(ext.instructions);
+      staticInstructions.push(ext.instructions);
     }
 
     // Get tools from manifest
@@ -417,7 +430,6 @@ export async function buildExtensionTools(
     }
 
     const extensionUrl = ext.url;
-    const extensionConfig = conn.config as Record<string, unknown> | null;
 
     // Build a tool for each manifest tool
     for (const mt of manifestTools) {
@@ -465,7 +477,65 @@ export async function buildExtensionTools(
     }
   }
 
-  return { tools, instructions };
+  return { tools, staticInstructions };
+}
+
+/**
+ * Fetch dynamic context instructions from all connected extensions.
+ * Called per think cycle to get up-to-date per-haseef data
+ * (e.g. current space memberships, user preferences, etc.).
+ *
+ * Extensions that provide a contextUrl in their manifest will be
+ * POSTed with { haseefId, config } and are expected to return
+ * { instructions: string }.
+ */
+export async function fetchDynamicExtensionContext(
+  haseefId: string,
+): Promise<string[]> {
+  const connections = await prisma.haseefExtension.findMany({
+    where: { haseefId, enabled: true },
+    include: {
+      extension: {
+        select: { name: true, url: true, manifest: true },
+      },
+    },
+  });
+
+  const dynamicInstructions: string[] = [];
+
+  const fetches = connections.map(async (conn) => {
+    const ext = conn.extension;
+    const manifest = ext.manifest as ExtensionManifest | null;
+    const extensionConfig = conn.config as Record<string, unknown> | null;
+    const contextUrl = manifest?.contextUrl;
+
+    if (!contextUrl || !ext.url) return;
+
+    try {
+      const ctxEndpoint = `${ext.url.replace(/\/$/, '')}${contextUrl.startsWith('/') ? '' : '/'}${contextUrl}`;
+      const res = await fetch(ctxEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          haseefId,
+          config: extensionConfig ?? {},
+        }),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (res.ok) {
+        const data = await res.json() as { instructions?: string };
+        if (data.instructions) {
+          dynamicInstructions.push(data.instructions);
+        }
+      }
+    } catch (err) {
+      console.warn(`[ext-manager] contextUrl fetch failed for "${ext.name}": ${err instanceof Error ? err.message : err}`);
+    }
+  });
+
+  await Promise.all(fetches);
+
+  return dynamicInstructions;
 }
 
 // =============================================================================

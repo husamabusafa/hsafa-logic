@@ -1,88 +1,98 @@
+import crypto from "crypto";
 import { PrismaClient } from "./generated/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 import bcrypt from "bcryptjs";
 
-// Gateway Prisma client (separate DB)
-import { PrismaClient as GatewayPrismaClient } from "../../hsafa-gateway/prisma/generated/client/index.js";
-
-const prisma = new PrismaClient();
-
-const GATEWAY_DATABASE_URL = process.env.GATEWAY_DATABASE_URL
-  || "postgres://postgres:pfkR1UPFB1wUs3JKfmsY94LNcWPdLHrwyIXN8tiLDjWDq1LDcS0NREnwmoGQNmNP@157.90.128.248:5454/postgres?schema=public";
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter } as any);
 
 const PASSWORD = "password123";
 
-// IDs from the gateway seed-users.ts run
-const GATEWAY_IDS = {
-  managerEntityId: "16cec4a4-5325-43fe-b42f-2a7c37afa9c7",
-  employeeEntityId: "59bafc68-0bb9-4214-a4c4-51a3c9c36eb7",
-  agentEntityId: "9e2bfe5d-96e9-4150-a9e9-26f3253ff9e9",
-  managerSpaceId: "94eb4dd4-059e-433e-bbb8-01aa1a631cd0",
-  employeeSpaceId: "b644d9a9-ee9b-4524-8008-59969ee33a08",
-  teamSpaceId: "f6d2659d-5dd2-46f1-8ad7-0bc8b4bf2195",
-};
+interface SeedUser {
+  name: string;
+  email: string;
+}
+
+const SEED_USERS: SeedUser[] = [
+  { name: "Husam Abusafa", email: "husam@hsafa.com" },
+  { name: "Demo User",    email: "demo@hsafa.com"  },
+];
+
+async function seedUser(name: string, email: string, passwordHash: string) {
+  // Idempotent: skip if already exists
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    console.log(`  ⏭  ${name} (${email}) — already exists, skipping`);
+    return existing;
+  }
+
+  // Find the first agent entity (created when spaces-app bootstraps Atlas)
+  const agentEntity = await prisma.entity.findFirst({
+    where: { type: "agent" },
+  });
+  if (!agentEntity) {
+    throw new Error(
+      "No agent entity found in use_case_db. Start the spaces-app first so ext-spaces bootstraps Atlas."
+    );
+  }
+
+  // 1. Create user
+  const user = await prisma.user.create({
+    data: { email, name, passwordHash },
+  });
+
+  // 2. Create human entity (externalId = user.id so JWT sub matches)
+  const human = await prisma.entity.create({
+    data: {
+      id: crypto.randomUUID(),
+      type: "human",
+      externalId: user.id,
+      displayName: name,
+      metadata: { email },
+    },
+  });
+
+  // 3. Create a private SmartSpace for this user + agent
+  const smartSpace = await prisma.smartSpace.create({
+    data: { name: `${name}'s Chat` },
+  });
+
+  // 4. Add human + agent as members
+  await prisma.smartSpaceMembership.createMany({
+    data: [
+      { smartSpaceId: smartSpace.id, entityId: human.id,          role: "admin"  },
+      { smartSpaceId: smartSpace.id, entityId: agentEntity.id,    role: "member" },
+    ],
+  });
+
+  // 5. Link references back to user
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { hsafaEntityId: human.id, hsafaSpaceId: smartSpace.id, agentEntityId: agentEntity.id },
+  });
+
+  console.log(`  ✅ ${name} (${email})`);
+  console.log(`     entityId:   ${human.id}`);
+  console.log(`     spaceId:    ${smartSpace.id}`);
+  return user;
+}
 
 async function main() {
-  console.log("🌱 Seeding use-case-app users...");
+  console.log("🌱 Seeding use-case-app users...\n");
 
   const passwordHash = await bcrypt.hash(PASSWORD, 12);
 
-  // --- Create Manager user ---
-  const manager = await prisma.user.upsert({
-    where: { email: "sarah@hsafa.com" },
-    update: {},
-    create: {
-      email: "sarah@hsafa.com",
-      name: "Sarah Mitchell",
-      passwordHash,
-      hsafaEntityId: GATEWAY_IDS.managerEntityId,
-      hsafaSpaceId: GATEWAY_IDS.managerSpaceId,
-      agentEntityId: GATEWAY_IDS.agentEntityId,
-    },
-  });
-  console.log("✅ Manager created:", manager.name, `(${manager.email})`);
-
-  // --- Create Employee user ---
-  const employee = await prisma.user.upsert({
-    where: { email: "ahmed@hsafa.com" },
-    update: {},
-    create: {
-      email: "ahmed@hsafa.com",
-      name: "Ahmed Hassan",
-      passwordHash,
-      hsafaEntityId: GATEWAY_IDS.employeeEntityId,
-      hsafaSpaceId: GATEWAY_IDS.employeeSpaceId,
-      agentEntityId: GATEWAY_IDS.agentEntityId,
-    },
-  });
-  console.log("✅ Employee created:", employee.name, `(${employee.email})`);
-
-  // --- Update gateway entities' externalId to match use-case-app user IDs ---
-  // This is required so JWT sub claim (user.id) matches entity.externalId
-  // Prisma v7: URL comes from environment, not constructor
-  process.env.DATABASE_URL = GATEWAY_DATABASE_URL;
-  const gatewayPrisma = new GatewayPrismaClient();
-
-  await gatewayPrisma.entity.update({
-    where: { id: GATEWAY_IDS.managerEntityId },
-    data: { externalId: manager.id },
-  });
-  console.log("✅ Gateway manager entity externalId →", manager.id);
-
-  await gatewayPrisma.entity.update({
-    where: { id: GATEWAY_IDS.employeeEntityId },
-    data: { externalId: employee.id },
-  });
-  console.log("✅ Gateway employee entity externalId →", employee.id);
-
-  await gatewayPrisma.$disconnect();
+  for (const u of SEED_USERS) {
+    await seedUser(u.name, u.email, passwordHash);
+  }
 
   console.log("\n🎉 Seed complete!");
-  console.log("\nLogin credentials:");
-  console.log("  Manager: sarah@hsafa.com / password123");
-  console.log("  Employee: ahmed@hsafa.com / password123");
-  console.log("\nUser IDs:");
-  console.log(`  Manager: ${manager.id}`);
-  console.log(`  Employee: ${employee.id}`);
+  console.log(`\nLogin credentials (password: ${PASSWORD}):`);
+  for (const u of SEED_USERS) {
+    console.log(`  ${u.email}`);
+  }
 }
 
 main()
@@ -92,4 +102,5 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
+    await pool.end();
   });

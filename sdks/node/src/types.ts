@@ -73,6 +73,20 @@ export interface ExtensionManifest {
   instructions?: string;
   configSchema?: Record<string, unknown>;
   events?: string[];
+  /** Auto-connect to all Haseefs on install */
+  autoConnect?: boolean;
+  /** Config fields that MUST be set before activation */
+  requiredConfig?: string[];
+  /** Endpoint Core pings to verify extension is alive (e.g. "/health") */
+  healthCheck?: string;
+  /** What this extension provides — "sense" (pushes events) and/or "act" (provides tools) */
+  capabilities?: Array<'sense' | 'act'>;
+  /**
+   * Relative path for dynamic context. Core POSTs { haseefId, config } here at the
+   * start of each run and injects the returned { instructions } into the system prompt.
+   * Use this to inject per-haseef dynamic data (e.g. current space IDs, user name).
+   */
+  contextUrl?: string;
 }
 
 export interface ToolDefinition {
@@ -92,7 +106,7 @@ export interface Run {
   completionTokens?: number;
   durationMs?: number;
   triggerType?: string | null;
-  triggerSpaceId?: string | null;
+  triggerSource?: string | null;
   triggerEntityId?: string | null;
   triggerPayload?: unknown;
   errorMessage?: string | null;
@@ -158,6 +172,8 @@ export interface ToolCallWebhook extends WebhookEvent {
   haseefId: string;
   haseefName: string;
   runId: string;
+  /** Per-haseef extension config (from the haseef<>extension connection) */
+  config?: Record<string, unknown> | null;
 }
 
 export interface LifecycleWebhook extends WebhookEvent {
@@ -169,8 +185,19 @@ export interface LifecycleWebhook extends WebhookEvent {
   extensionKey?: string;
 }
 
+/** Payload Core sends to the contextUrl endpoint */
+export interface ContextRequest {
+  haseefId: string;
+  config: Record<string, unknown>;
+}
+
+/** Response expected by Core from the contextUrl endpoint */
+export interface ContextResponse {
+  instructions: string;
+}
+
 // =============================================================================
-// Extension Server Types
+// Extension Server / Webhook Handler Types
 // =============================================================================
 
 /** Handler for a tool call. Receives args and context, returns result. */
@@ -184,10 +211,21 @@ export interface ToolCallContext {
   haseefId: string;
   haseefName: string;
   runId: string;
+  /** Per-haseef extension config (from the haseef<>extension connection) */
+  config: Record<string, unknown> | null;
+  /** Push a sense event back to this haseef (convenience shortcut) */
+  pushSense: (event: SenseEvent) => Promise<void>;
 }
 
 /** Handler for lifecycle events */
 export type LifecycleHandler = (event: LifecycleWebhook) => void | Promise<void>;
+
+/**
+ * Handler for dynamic context requests.
+ * Called by Core at the start of each think cycle.
+ * Return instructions to inject into the haseef's system prompt.
+ */
+export type ContextHandler = (request: ContextRequest) => string | Promise<string>;
 
 // =============================================================================
 // Status / Observability

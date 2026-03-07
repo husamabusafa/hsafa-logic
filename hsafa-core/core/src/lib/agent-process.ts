@@ -26,6 +26,7 @@ import { processStream } from './stream-processor.js';
 import { emitRunEvent } from './run-events.js';
 import { buildHaseef } from '../agent-builder/builder.js';
 import { buildSystemPrompt } from '../agent-builder/prompt-builder.js';
+import { fetchDynamicExtensionContext } from './extension-manager.js';
 import { normalizeSystemMessages } from './model-compat.js';
 import type { HaseefProcessContext, BuiltHaseef, InboxEvent, ServiceEventData } from '../agent-builder/types.js';
 import { SENSE_TYPE } from '../agent-builder/types.js';
@@ -222,7 +223,11 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
       });
 
       // 5. REFRESH system prompt (v4: includes extension instructions)
-      const systemPrompt = await buildSystemPrompt(haseefId, haseefName, built.extensionInstructions);
+      // Static instructions are cached from startup; dynamic context is fetched per cycle
+      // so it always reflects current state (e.g. new space memberships).
+      const dynamicContext = await fetchDynamicExtensionContext(haseefId);
+      const allExtensionInstructions = [...built.extensionInstructions, ...dynamicContext];
+      const systemPrompt = await buildSystemPrompt(haseefId, haseefName, allExtensionInstructions);
       consciousness = refreshSystemPrompt(consciousness, systemPrompt);
 
       // 6. INJECT inbox events as user message
