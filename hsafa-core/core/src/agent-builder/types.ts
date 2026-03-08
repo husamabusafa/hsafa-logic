@@ -203,6 +203,8 @@ export interface HaseefProcessContext {
   cycleCount: number;
   /** The run ID for the current think cycle (audit record) */
   currentRunId: string | null;
+  /** For space-triggered runs: the spaceId to respond in. Set before each stream() call. */
+  triggerSource?: string | null;
 }
 
 /**

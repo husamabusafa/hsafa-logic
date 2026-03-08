@@ -212,6 +212,23 @@ export async function processStream(
             : String(part.error ?? 'Stream error');
         console.error(`[stream-processor] runId=${runId} stream ERROR:`, errMsg, part.error);
 
+        // For quota / billing errors, throw so agent-process error recovery
+        // kicks in (5-minute rest + proper backoff). These won't fix themselves
+        // within a normal cycle retry.
+        const errObj = part.error as any;
+        const nested = errObj?.error ?? errObj;
+        const errCode = nested?.code ?? nested?.type ?? errObj?.code ?? errObj?.type ?? '';
+        const errMsgLower = errMsg.toLowerCase();
+        if (
+          errCode === 'insufficient_quota' ||
+          errCode === 'billing_hard_limit_reached' ||
+          errMsgLower.includes('insufficient_quota') ||
+          errMsgLower.includes('exceeded your current quota') ||
+          errMsgLower.includes('billing')
+        ) {
+          throw new Error(`LLM quota/billing error: ${errMsg}`);
+        }
+
         finishReason = 'error';
 
         // Clean up any timing entries and emit run-stream errors

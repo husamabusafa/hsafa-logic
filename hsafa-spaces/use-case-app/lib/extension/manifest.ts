@@ -64,6 +64,76 @@ export const MANIFEST = {
         required: ["spaceId"],
       },
     },
+    {
+      name: "confirmAction",
+      description:
+        "Show a confirmation card in the space with title, message, and Confirm/Cancel buttons. The user's choice is returned when they click. Use for approvals, confirmations, or yes/no decisions. MUST call enter_space first.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          spaceId: {
+            type: "string",
+            description: "The space ID to show the confirmation in. MUST be provided.",
+          },
+          title: {
+            type: "string",
+            description: "Short title for the confirmation card.",
+          },
+          message: {
+            type: "string",
+            description: "The message or question to display.",
+          },
+          confirmLabel: {
+            type: "string",
+            description: "Label for the confirm button (default: Confirm).",
+          },
+          rejectLabel: {
+            type: "string",
+            description: "Label for the cancel/reject button (default: Cancel).",
+          },
+        },
+        required: ["spaceId", "title", "message"],
+      },
+    },
+    {
+      name: "displayChart",
+      description:
+        "Display a chart (bar, line, or pie) in the space. Use to visualize data. MUST call enter_space first.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          spaceId: {
+            type: "string",
+            description: "The space ID to show the chart in. MUST be provided.",
+          },
+          type: {
+            type: "string",
+            enum: ["bar", "line", "pie"],
+            description: "Chart type: bar, line, or pie.",
+          },
+          title: {
+            type: "string",
+            description: "Chart title.",
+          },
+          data: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string" },
+                value: { type: "number" },
+                color: { type: "string", description: "Optional hex color" },
+              },
+              required: ["label", "value"],
+            },
+            description: "Data points: [{ label, value, color? }, ...]",
+          },
+          xLabel: { type: "string", description: "Optional X-axis label." },
+          yLabel: { type: "string", description: "Optional Y-axis label." },
+        },
+        required: ["spaceId", "type", "title", "data"],
+      },
+    },
   ],
   instructions: `[Extension: Spaces]
 You are connected to the Spaces communication platform.
@@ -76,7 +146,9 @@ When you receive a message from a space in your sense events:
 - Messages are delivered reliably — do NOT retry on success.
 - Use read_space_messages(spaceId) if you need to refresh history mid-conversation.
 - When someone messages you in a space, respond in that same space.
-- Your text output is INTERNAL reasoning — only tool calls are visible to others.`,
+- Your text output is INTERNAL reasoning — only tool calls are visible to others.
+- Use confirmAction(spaceId, title, message, ...) when you need user approval before an action. The user's choice (confirmed/rejected) is returned.
+- Use displayChart(spaceId, type, title, data, ...) to show bar/line/pie charts in the space.`,
   configSchema: {
     type: "object",
     properties: {

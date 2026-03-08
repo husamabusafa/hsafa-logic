@@ -16,7 +16,11 @@ import Redis from "ioredis";
 import { prisma } from "../db";
 import { postSpaceMessage } from "../space-service";
 import { getMembersOfSpace, getSpacesForEntity } from "../membership-service";
-import { emitSmartSpaceEvent } from "../smartspace-events";
+import {
+  clearSpaceRunActive,
+  emitSmartSpaceEvent,
+  markSpaceRunActive,
+} from "../smartspace-events";
 import { Hsafa } from "@hsafa/node";
 import { loadExtensionConfig, type ExtensionConfig } from "./config";
 import { MANIFEST } from "./manifest";
@@ -207,6 +211,7 @@ async function startSharedSubscriber(): Promise<void> {
   const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
   const sub = new Redis(REDIS_URL, {
     maxRetriesPerRequest: null,
+    enableReadyCheck: false,
     retryStrategy(times) {
       const delay = Math.min(times * 500, 30_000);
       console.log(`[extension] Redis stream subscriber reconnecting in ${delay}ms (attempt ${times})`);
@@ -267,6 +272,13 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
         conn.runSpaces.set(runId, event.triggerSource);
       }
       for (const spaceId of conn.spaceIds) {
+        if (runId) {
+          void markSpaceRunActive(spaceId, {
+            runId,
+            agentEntityId: conn.agentEntityId,
+            agentName: conn.haseefName,
+          });
+        }
         void emitSmartSpaceEvent(spaceId, {
           type: "agent.active",
           agentEntityId: conn.agentEntityId,
@@ -323,6 +335,9 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
       }
     } else if (event.type === "run.finish") {
       for (const spaceId of conn.spaceIds) {
+        if (runId) {
+          void clearSpaceRunActive(spaceId, runId);
+        }
         void emitSmartSpaceEvent(spaceId, {
           type: "agent.inactive",
           agentEntityId: conn.agentEntityId,
@@ -452,6 +467,28 @@ export async function handleToolCall(
       });
 
       return { messages: messages.reverse() };
+    }
+
+    case "confirmAction": {
+      // Async tool: return pending so Core creates PendingToolCall and waits.
+      // UI shows ConfirmationUI from streamed tool args; user submits via tool-results API.
+      const spaceId = args.spaceId as string;
+      if (!spaceId) return { error: "spaceId is required" };
+      if (!args.title || !args.message) return { error: "title and message are required" };
+      return {
+        status: "pending",
+        waitingForUser: true,
+        message: "Waiting for user to confirm or reject",
+      };
+    }
+
+    case "displayChart": {
+      // Display-only tool: UI renders ChartDisplay from streamed args.
+      const spaceId = args.spaceId as string;
+      if (!spaceId) return { error: "spaceId is required" };
+      if (!args.type || !args.title || !Array.isArray(args.data))
+        return { error: "type, title, and data are required" };
+      return { success: true };
     }
 
     default:

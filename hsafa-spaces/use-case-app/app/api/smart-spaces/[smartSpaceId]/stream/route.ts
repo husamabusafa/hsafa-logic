@@ -1,7 +1,10 @@
 import Redis from "ioredis";
 import { requireAuthWithMembership } from "@/lib/spaces-auth";
 import { redis } from "@/lib/redis";
-import { emitSmartSpaceEvent } from "@/lib/smartspace-events";
+import {
+  emitSmartSpaceEvent,
+  listSpaceActiveRuns,
+} from "@/lib/smartspace-events";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,6 +27,7 @@ export async function GET(request: Request, { params }: Params) {
     async start(controller) {
       const subscriber = new Redis(REDIS_URL, {
         maxRetriesPerRequest: null,
+        enableReadyCheck: false,
       });
       const channel = `smartspace:${smartSpaceId}`;
 
@@ -39,35 +43,44 @@ export async function GET(request: Request, { params }: Params) {
         }
       }
 
-      // Include current online users in connected event
-      const onlineUsers = await redis.hkeys(onlineKey);
+      // Include current online users and active agents in connected event so
+      // reconnecting clients can restore header indicators immediately.
+      const [onlineUsers, activeAgents] = await Promise.all([
+        redis.hkeys(onlineKey),
+        listSpaceActiveRuns(smartSpaceId),
+      ]);
 
-      // Send connected event
+      subscriber.on("message", (_ch: string, message: string) => {
+        try {
+          // Parse the event type from the payload for named SSE events
+          const parsed = JSON.parse(message);
+          const eventType = parsed.type || "message";
+          controller.enqueue(
+            encoder.encode(`event: ${eventType}\ndata: ${message}\n\n`)
+          );
+        } catch {
+          // Stream closed or parse error
+        }
+      });
+
+      try {
+        await subscriber.subscribe(channel);
+      } catch (err) {
+        console.error("SSE subscribe error:", err);
+      }
+
+      // Send connected event only after Redis subscription is attached, so
+      // fast follow-up events like user.online are not missed.
       controller.enqueue(
         encoder.encode(
-          `data: ${JSON.stringify({ type: "connected", smartSpaceId, onlineUsers })}\n\n`
+          `data: ${JSON.stringify({
+            type: "connected",
+            smartSpaceId,
+            onlineUsers,
+            activeAgents,
+          })}\n\n`
         )
       );
-
-      subscriber
-        .subscribe(channel)
-        .then(() => {
-          subscriber.on("message", (_ch: string, message: string) => {
-            try {
-              // Parse the event type from the payload for named SSE events
-              const parsed = JSON.parse(message);
-              const eventType = parsed.type || "message";
-              controller.enqueue(
-                encoder.encode(`event: ${eventType}\ndata: ${message}\n\n`)
-              );
-            } catch {
-              // Stream closed or parse error
-            }
-          });
-        })
-        .catch((err: Error) => {
-          console.error("SSE subscribe error:", err);
-        });
 
       // Keepalive ping every 30s
       const pingInterval = setInterval(() => {

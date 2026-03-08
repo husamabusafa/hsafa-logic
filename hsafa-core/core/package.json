@@ -13,7 +13,8 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "reset:all": "tsx --env-file=.env scripts/reset-all.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.15",

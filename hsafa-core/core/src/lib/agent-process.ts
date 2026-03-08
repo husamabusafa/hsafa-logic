@@ -67,7 +67,23 @@ function createHaseefInstance(
       anthropic: { thinking: { type: 'enabled', budgetTokens: 16000 } },
     },
     prepareStep: async ({ stepNumber, messages }) => {
-      if (stepNumber === 0) return {};
+      // Step 0: inject trigger space hint so agent knows which space to enter first
+      if (stepNumber === 0) {
+        const spaceId = context.triggerSource;
+        if (spaceId && /^[0-9a-f-]{36}$/i.test(spaceId)) {
+          // Use 'user' not 'system' — Anthropic rejects multiple system messages
+          return {
+            messages: [
+              ...messages,
+              {
+                role: 'user' as const,
+                content: `[IMPORTANT] This message was sent in space ${spaceId}. You MUST call enter_space("${spaceId}") first, then send_space_message("${spaceId}", "your response").`,
+              },
+            ],
+          };
+        }
+        return {};
+      }
       const parts: string[] = [];
       const elapsed = Date.now() - cycleState.start;
       parts.push(`Current time: ${new Date().toISOString()} (cycle running ${Math.round(elapsed / 1000)}s)`);
@@ -81,10 +97,11 @@ function createHaseefInstance(
         // Non-critical — skip if Redis hiccups
       }
       if (parts.length === 0) return {};
+      // Use 'user' role — Anthropic rejects multiple system messages separated by user/assistant
       return {
         messages: [
           ...messages,
-          { role: 'system' as const, content: parts.join('\n') },
+          { role: 'user' as const, content: `[Context] ${parts.join('\n')}` },
         ],
       };
     },
@@ -202,6 +219,7 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
         },
       });
       context.currentRunId = run.id;
+      context.triggerSource = run.triggerSource ?? null;
 
       // Track eventIds for Postgres lifecycle
       const eventIds = allEvents.map((e) => e.eventId);
@@ -250,8 +268,12 @@ export async function startHaseefProcess(options: HaseefProcessOptions): Promise
       // by user/assistant messages. Convert any non-first system messages to
       // user messages. This is safe for all providers.
       const normalizedMessages = normalizeSystemMessages(consciousness);
+      // Timeout prevents "Atlas is thinking..." from sticking forever if LLM hangs
+      const THINK_TIMEOUT_MS = 120_000;
       const result = await currentInstance.stream({
         messages: normalizedMessages as any,
+        abortSignal: signal,
+        timeout: THINK_TIMEOUT_MS,
       });
 
       // 8. PROCESS STREAM — collect tool calls, track durations, emit run events
@@ -432,6 +454,9 @@ function classifyError(error: unknown): ErrorClass {
 
   if (status === 429 || msg.includes('rate limit') || msg.includes('too many requests')) {
     return 'rate_limit';
+  }
+  if (status === 402 || msg.includes('insufficient_quota') || msg.includes('insufficient quota') || msg.includes('billing') || msg.includes('exceeded your current quota')) {
+    return 'auth'; // billing exhaustion — won't fix itself, treat like auth (long rest)
   }
   if (status === 401 || status === 403 || msg.includes('unauthorized') || msg.includes('invalid api key') || msg.includes('permission denied')) {
     return 'auth';

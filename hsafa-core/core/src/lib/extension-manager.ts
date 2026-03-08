@@ -1,6 +1,7 @@
 import { prisma } from './db.js';
 import { tool, jsonSchema, type ToolExecutionOptions } from 'ai';
 import type { HaseefProcessContext } from '../agent-builder/types.js';
+import { waitForToolResult } from './tool-result-wait.js';
 
 // =============================================================================
 // Extension Manager (v4 — Manifest + Webhook)
@@ -8,16 +9,16 @@ import type { HaseefProcessContext } from '../agent-builder/types.js';
 // Extensions are generic, stateless HTTP servers. Core manages their lifecycle:
 //   - Install: POST url → Core fetches GET {url}/manifest, caches it
 //   - Tool calls: Core POSTs to {url}/webhook with { type: 'tool_call', ... }
-//                 Extension returns result synchronously in the HTTP response
+//                 Extension returns result synchronously in the HTTP response.
+//                 If extension returns { status: 'pending' }, Core creates
+//                 PendingToolCall and waits for user to submit via tool-results API.
 //   - Lifecycle: Core notifies extension of haseef.connected / disconnected /
 //                config_updated via POST {url}/webhook
 //   - Sense events: Extension pushes to Core via POST /api/haseefs/:id/senses
-//
-// No Redis pub/sub for tool calls, no PendingToolCall for extension tools,
-// no polling endpoints. Simple request/response.
 // =============================================================================
 
 const EXTENSION_TOOL_TIMEOUT = 60_000; // 60s HTTP timeout for webhook calls
+const ASYNC_TOOL_WAIT_MS = 300_000; // 5 min for user to confirm/reject (e.g. confirmAction)
 
 // =============================================================================
 // Manifest Types
@@ -238,8 +239,8 @@ export async function refreshManifest(extensionId: string): Promise<ExtensionMan
     where: { id: extensionId },
     data: {
       manifest: manifest as any,
-      // Update instructions from manifest if extension has no custom instructions
-      ...(!ext.instructions && manifest.instructions ? { instructions: manifest.instructions } : {}),
+      // Always sync instructions from manifest so they stay in sync with tools
+      ...(manifest.instructions ? { instructions: manifest.instructions } : {}),
     },
   });
 
@@ -424,6 +425,13 @@ export async function buildExtensionTools(
     // Get tools from manifest
     const manifestTools = manifest?.tools ?? [];
 
+    // Per-connection tool filter: if config.enabledTools is set, only include those tools.
+    // This lets Atlas have confirmAction/displayChart while a simple bot gets only enter_space, send_space_message, read_space_messages.
+    const enabledTools = extensionConfig?.enabledTools as string[] | undefined;
+    const toolsToBuild = enabledTools
+      ? manifestTools.filter((t) => enabledTools.includes(t.name))
+      : manifestTools;
+
     if (!ext.url) {
       console.warn(`[ext-manager] Extension "${ext.name}" has no URL — skipping tool registration`);
       continue;
@@ -431,8 +439,8 @@ export async function buildExtensionTools(
 
     const extensionUrl = ext.url;
 
-    // Build a tool for each manifest tool
-    for (const mt of manifestTools) {
+    // Build a tool for each manifest tool (filtered by enabledTools if set)
+    for (const mt of toolsToBuild) {
       const schema = mt.inputSchema as Record<string, unknown>;
       const inputSchema = jsonSchema<Record<string, unknown>>(
         Object.keys(schema).length > 0
@@ -462,6 +470,28 @@ export async function buildExtensionTools(
               },
               EXTENSION_TOOL_TIMEOUT,
             );
+
+            // Async tool: extension returned { status: 'pending' } — create PendingToolCall and wait
+            const res = result as Record<string, unknown>;
+            if (res?.status === 'pending' && toolCallId && context.currentRunId) {
+              const runId = context.currentRunId;
+              await prisma.pendingToolCall.upsert({
+                where: { toolCallId },
+                create: {
+                  id: crypto.randomUUID(),
+                  haseefId: context.haseefId,
+                  runId,
+                  toolCallId,
+                  toolName: mt.name,
+                  args: args as object,
+                  status: 'waiting',
+                },
+                update: { status: 'waiting' },
+              });
+              const resolved = await waitForToolResult(toolCallId, ASYNC_TOOL_WAIT_MS);
+              if (resolved !== null) return resolved;
+              return { error: 'Confirmation timed out — user did not respond in time' };
+            }
 
             return result;
           } catch (err) {
