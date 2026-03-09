@@ -1,16 +1,11 @@
 packages:
   - sdks/node
   - hsafa-core/core
-  - hsafa-core/sdks/extension-node
-  # spaces-app merged into use-case-app
-  # - hsafa-spaces/spaces-app
+  - hsafa-core/sdks/service-node
+  - hsafa-core/services/test-service
   - hsafa-spaces/sdks/react-native-sdk
   - hsafa-spaces/rn-app
   - hsafa-spaces/use-case-app
-  # External docs (reference only, broken workspace deps)
-  # - hsafa-core/external-docs/with-ai-sdk-v6
-  # - hsafa-core/external-docs/assistant-ui-docs
-  # - hsafa-core/external-docs/vercel-ai-sdk-docs
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver

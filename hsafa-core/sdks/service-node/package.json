@@ -1,7 +1,7 @@
 {
-  "name": "@hsafa/extension",
+  "name": "@hsafa/service",
   "version": "0.1.0",
-  "description": "Node.js SDK for building Hsafa extensions",
+  "description": "Node.js SDK for building services that connect to Hsafa Core",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

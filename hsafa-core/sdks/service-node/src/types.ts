@@ -1,23 +1,19 @@
 // =============================================================================
-// @hsafa/extension — Type Definitions
+// @hsafa/service — Type Definitions
 // =============================================================================
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
-export interface HsafaExtensionConfig {
+export interface HsafaServiceConfig {
   /** Core API base URL (e.g. http://localhost:3100) */
   coreUrl: string;
-  /** Extension key for runtime operations (ek_...) */
-  extensionKey: string;
-  /** Secret key for bootstrap operations (sk_...) */
-  secretKey: string;
-  /** Redis URL for real-time tool call listening. If omitted, falls back to HTTP polling. */
+  /** API key for authentication */
+  apiKey: string;
+  /** Redis URL for real-time action listening via Streams. If omitted, uses SSE. */
   redisUrl?: string;
-  /** Polling interval in ms when using HTTP polling fallback (default: 2000) */
-  pollIntervalMs?: number;
-  /** Log prefix for console output (default: extension name) */
+  /** Log prefix for console output (default: scope name) */
   logPrefix?: string;
 }
 
@@ -26,12 +22,16 @@ export interface HsafaExtensionConfig {
 // ---------------------------------------------------------------------------
 
 export interface ToolDefinition {
-  /** Tool name (must be unique within the extension) */
+  /** Tool name (must be unique within the scope) */
   name: string;
   /** Human-readable description shown to the Haseef */
   description: string;
   /** JSON Schema for the tool's input parameters */
   inputSchema: Record<string, unknown>;
+  /** Execution mode: sync (waits for result), fire_and_forget (returns immediately), async (result as future event) */
+  mode?: 'sync' | 'fire_and_forget' | 'async';
+  /** Timeout in milliseconds for sync mode (default: 60000) */
+  timeout?: number;
   /** Handler function called when the Haseef invokes this tool */
   execute: (args: Record<string, unknown>, context: ToolCallContext) => Promise<unknown>;
 }
@@ -43,10 +43,6 @@ export interface ToolDefinition {
 export interface ToolCallContext {
   /** The Haseef ID that triggered this tool call */
   haseefId: string;
-  /** The Haseef's entity ID */
-  haseefEntityId: string;
-  /** The run ID this tool call belongs to */
-  runId: string;
   /** The unique tool call ID */
   toolCallId: string;
   /** Push a sense event to this Haseef */
@@ -60,10 +56,8 @@ export interface ToolCallContext {
 export interface SenseEventInput {
   /** Unique event ID (use crypto.randomUUID() or similar) */
   eventId: string;
-  /** Channel identifier (e.g. 'my-extension') */
-  channel: string;
-  /** Source identifier (e.g. a room ID, webhook ID) */
-  source?: string;
+  /** Scope identifier (e.g. 'spaces', 'whatsapp') */
+  scope: string;
   /** Event type (e.g. 'message', 'alert', 'update') */
   type: string;
   /** Event payload */
@@ -76,37 +70,11 @@ export interface SenseEventInput {
 // Core API Response Types
 // ---------------------------------------------------------------------------
 
-export interface HaseefConnectionInfo {
-  haseefId: string;
-  haseefName: string;
-  haseefEntityId: string;
-  config: Record<string, unknown> | null;
-}
-
-export interface ExtensionSelfInfo {
-  id: string;
-  name: string;
-  connections: Array<{
-    connectionId: string;
-    haseefId: string;
-    haseefName: string;
-    haseefEntityId: string;
-    haseefDisplayName: string;
-    config: Record<string, unknown> | null;
-  }>;
-}
-
-// ---------------------------------------------------------------------------
-// Internal: Tool Call Event (from Redis / polling)
-// ---------------------------------------------------------------------------
-
-export interface ToolCallEvent {
-  type: 'tool.call';
-  toolCallId: string;
+export interface ActionEvent {
+  type: 'action';
+  actionId: string;
   toolName: string;
   args: Record<string, unknown>;
-  runId: string;
-  haseefEntityId: string;
-  extensionId: string;
+  haseefId: string;
   ts: string;
 }

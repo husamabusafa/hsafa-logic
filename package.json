@@ -5,12 +5,10 @@
   "description": "Hsafa AI Agent Platform - Distributed agent runtime with React SDK",
   "scripts": {
     "dev:core": "pnpm --filter @hsafa/core dev",
-    "dev:sdk": "pnpm --filter @hsafa/react dev",
-    "dev:test": "pnpm --filter @hsafa/vite-test-app dev",
-    "dev": "pnpm run dev:core & pnpm run dev:test",
+    "dev:app": "pnpm --filter use-case-app dev",
+    "dev": "pnpm run dev:core & pnpm run dev:app",
     "build:core": "pnpm --filter @hsafa/core build",
-    "build:sdk": "pnpm --filter @hsafa/react build",
-    "build:test": "pnpm --filter @hsafa/vite-test-app build",
+    "build:sdk": "pnpm --filter @hsafa/node build",
     "build": "pnpm -r build",
     "clean": "pnpm -r exec rm -rf node_modules dist .next"
   },
