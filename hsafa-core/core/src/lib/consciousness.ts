@@ -384,29 +384,3 @@ export async function maybeAutoSnapshot(
   }
 }
 
-// =============================================================================
-// System Prompt Refresh
-// =============================================================================
-
-/**
- * Refresh the system prompt at the start of each cycle.
- * In v5, the system prompt is NOT stored in consciousness — it's passed
- * via the `instructions` parameter. This function is kept for compatibility
- * but consciousness messages should NOT contain system messages.
- */
-export function refreshSystemPrompt(
-  consciousness: ModelMessage[],
-  newSystemPrompt: string,
-): ModelMessage[] {
-  const systemMsg: ModelMessage = { role: 'system', content: newSystemPrompt };
-
-  if (consciousness.length === 0) {
-    return [systemMsg];
-  }
-
-  if (consciousness[0].role === 'system') {
-    return [systemMsg, ...consciousness.slice(1)];
-  }
-
-  return [systemMsg, ...consciousness];
-}

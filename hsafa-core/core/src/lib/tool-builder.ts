@@ -1,8 +1,6 @@
 import { tool, jsonSchema } from 'ai';
-import { prisma } from './db.js';
 import { dispatchAction } from './action-dispatch.js';
 import { randomUUID } from 'crypto';
-import type { HaseefProcessContext } from '../agent-builder/types.js';
 
 // =============================================================================
 // Tool Builder (v5)
@@ -17,18 +15,14 @@ import type { HaseefProcessContext } from '../agent-builder/types.js';
 // =============================================================================
 
 /**
- * Build AI SDK tools from all HaseefTool rows for a given Haseef.
- * Fetched from DB each cycle (fresh tools, zero stale risk).
+ * Build AI SDK tools from pre-fetched HaseefTool DB rows.
+ * Caller is responsible for fetching from DB (avoids double queries).
  */
-export async function buildScopedTools(
+export function buildScopedTools(
   haseefId: string,
-  _context: HaseefProcessContext,
+  dbTools: Array<{ name: string; description: string; inputSchema: unknown; scope: string; mode: string; timeout: number | null }>,
   defaultTimeout?: number,
-): Promise<Record<string, unknown>> {
-  const dbTools = await prisma.haseefTool.findMany({
-    where: { haseefId },
-  });
-
+): Record<string, unknown> {
   const tools: Record<string, unknown> = {};
 
   for (const dbTool of dbTools) {

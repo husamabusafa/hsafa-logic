@@ -16,8 +16,6 @@ import {
   markEventsProcessed,
   recoverStuckEvents,
   formatInboxEvents,
-  peekInbox,
-  formatInboxPreview,
 } from './inbox.js';
 import {
   buildSystemPrompt,
@@ -25,7 +23,7 @@ import {
   searchArchive,
 } from '../agent-builder/prompt-builder.js';
 import { processStream } from './stream-processor.js';
-import { HaseefConfigSchema, type HaseefConfig } from '../agent-builder/types.js';
+import { HaseefConfigSchema } from '../agent-builder/types.js';
 
 // =============================================================================
 // Agent Process (v5)
@@ -135,7 +133,7 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
         cycleCount: newCycleCount,
         currentRunId: run.id,
       };
-      const built = await buildHaseef(haseef.configJson, context);
+      const built = buildHaseef(haseef.configJson, context, dbTools);
 
       // 7. BUILD SYSTEM PROMPT
       const toolsByScope = new Map<string, Array<{ name: string; description: string; inputSchema: unknown }>>();

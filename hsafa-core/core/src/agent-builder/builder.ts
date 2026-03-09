@@ -17,13 +17,14 @@ import { buildScopedTools } from '../lib/tool-builder.js';
 // =============================================================================
 
 /**
- * Build a Haseef from its config JSON and process context.
+ * Build a Haseef from its config JSON, process context, and pre-fetched DB tools.
  * Returns the model and tools needed for streamText().
  */
-export async function buildHaseef(
+export function buildHaseef(
   rawConfig: unknown,
   context: HaseefProcessContext,
-): Promise<BuiltHaseef> {
+  dbTools: Array<{ name: string; description: string; inputSchema: unknown; scope: string; mode: string; timeout: number | null }>,
+): BuiltHaseef {
   const config = HaseefConfigSchema.parse(rawConfig);
 
   const model = resolveModel(config.model, {
@@ -34,10 +35,10 @@ export async function buildHaseef(
   // Build prebuilt tools (done, set_memories, delete_memories, recall_memories, peek_inbox)
   const prebuilt = buildPrebuiltTools(context);
 
-  // Build scoped tools from HaseefTool DB rows (fetched per cycle)
-  const scoped = await buildScopedTools(
+  // Build scoped tools from pre-fetched HaseefTool DB rows
+  const scoped = buildScopedTools(
     context.haseefId,
-    context,
+    dbTools,
     config.actionTimeout,
   );
 

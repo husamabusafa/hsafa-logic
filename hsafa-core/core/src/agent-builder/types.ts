@@ -112,14 +112,6 @@ export interface HaseefProcessContext {
   currentRunId: string | null;
 }
 
-/**
- * Extract HaseefProcessContext from a tool's experimental_context.
- * Tools read context from execute's second arg instead of closure.
- */
-export function getCtx(options: { experimental_context?: unknown }): HaseefProcessContext {
-  return options.experimental_context as HaseefProcessContext;
-}
-
 // =============================================================================
 // Build result returned from builder.ts
 // =============================================================================

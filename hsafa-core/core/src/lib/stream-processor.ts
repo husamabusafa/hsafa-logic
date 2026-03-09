@@ -75,7 +75,7 @@ export async function processStream(
   for await (const part of fullStream) {
     switch (part.type as string) {
 
-      // ── Agent text — published for extensions that want streaming ────────
+      // ── Agent text — published for services that want streaming ────────
       case 'text-delta': {
         const delta = (part.text as string) ?? '';
         internalText += delta;
@@ -115,7 +115,7 @@ export async function processStream(
         break;
       }
 
-      // ── Partial args — published for streaming-capable extensions ────────
+      // ── Partial args — published for streaming-capable consumers ────────
       case 'tool-input-delta': {
         const toolCallId = (part.id ?? part.toolCallId) as string;
         const argsDelta = (part.argsTextDelta ?? part.inputTextDelta ?? '') as string;
