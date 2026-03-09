@@ -50,7 +50,7 @@ for information when it needs it, just like a human looks things up.
 
 | Component | Why |
 |-----------|-----|
-| **Postgres** | Durable state: consciousness, profile, memories, config, tools, inbox |
+| **Postgres + pgvector** | Durable state + semantic search: consciousness, profile, memories, config, tools, inbox, archive |
 | **Redis** | Inbox (BRPOP wakeup), action dispatch (Streams), action results (Pub/Sub) |
 | **Vercel AI SDK** (`ai`) | Tool loop, streaming, `pruneMessages`, `instructions` param |
 | **Prisma** | DB access |
@@ -71,7 +71,7 @@ zod
 
 ## Data Model
 
-Five tables. No context table — services communicate through tools and events only.
+Seven tables. No context table — services communicate through tools and events only.
 
 ```prisma
 model Haseef {
@@ -144,6 +144,7 @@ model InboxEvent {
   scope       String                          // which service sent this
   type        String                          // "message", "sensor_update", etc.
   data        Json
+  attachments Json?    @db.JsonB             // Attachment[] — images, audio, files
   status      String   @default("pending")
   processedAt DateTime?
   createdAt   DateTime @default(now())
@@ -262,8 +263,9 @@ SELECT * FROM "Memory"
 ### Embedding generation
 
 When `set_memories` is called, the core generates an embedding for each memory
-value using a small/fast model (e.g., `text-embedding-3-small`). Stored in the
-`embedding` column for similarity search.
+value using the configured `embeddingModel` (via AI SDK `embed()` function).
+Stored in the `embedding` column for similarity search. The same embedding model
+is used for archiving consciousness cycles.
 
 ### Decay
 
@@ -346,11 +348,20 @@ Scoped naturally — `PUT .../scopes/whatsapp/tools` only touches tools in the "
 
 ```typescript
 interface SenseEvent {
-  eventId: string;      // dedup key
-  scope: string;        // "spaces", "whatsapp", "postgres", ...
-  type: string;         // "message", "row_inserted", "sensor_update", ...
-  data: object;         // any shape — Core passes to LLM as-is
+  eventId: string;          // dedup key
+  scope: string;            // "spaces", "whatsapp", "postgres", ...
+  type: string;             // "message", "row_inserted", "sensor_update", ...
+  data: object;             // structured data (JSON) — text, metadata, etc.
+  attachments?: Attachment[];// binary data — images, audio, files
   timestamp?: string;
+}
+
+interface Attachment {
+  type: "image" | "audio" | "file";
+  mimeType: string;         // "image/png", "audio/ogg", "application/pdf"
+  url?: string;             // URL to the data (preferred — no bloat)
+  base64?: string;          // inline base64 (for small data)
+  name?: string;            // optional filename
 }
 ```
 
@@ -361,6 +372,34 @@ unprocessed events from Postgres on restart.
 Any service can push events. A Postgres adapter pushes `row_inserted` events.
 A WhatsApp service pushes `message` events. A cron job pushes `reminder` events.
 The Haseef perceives them all the same way — as incoming signals.
+
+### Multimodal events
+
+Events can carry binary data (images, audio, files) via `attachments`. The core
+converts them to AI SDK content parts when injecting into consciousness:
+
+```typescript
+// formatEvents converts attachments to AI SDK multimodal content parts
+function formatEventContent(event: SenseEvent): ContentPart[] {
+  const parts: ContentPart[] = [
+    { type: 'text', text: `[${event.scope}:${event.type}] ${JSON.stringify(event.data)}` }
+  ];
+  for (const att of event.attachments ?? []) {
+    if (att.type === 'image') {
+      parts.push({ type: 'image', image: new URL(att.url ?? `data:${att.mimeType};base64,${att.base64}`) });
+    } else if (att.type === 'file') {
+      parts.push({ type: 'file', data: new URL(att.url ?? `data:${att.mimeType};base64,${att.base64}`), mimeType: att.mimeType });
+    }
+    // audio: convert to file part with audio mimeType (provider-dependent support)
+  }
+  return parts;
+}
+```
+
+**Examples:**
+- Robot camera → `{ type: "camera_frame", data: { location: "living-room" }, attachments: [{ type: "image", mimeType: "image/jpeg", url: "https://..." }] }`
+- WhatsApp voice → `{ type: "voice_message", data: { from: "Husam" }, attachments: [{ type: "audio", mimeType: "audio/ogg", url: "https://..." }] }`
+- Email with PDF → `{ type: "email_received", data: { subject: "Report" }, attachments: [{ type: "file", mimeType: "application/pdf", url: "https://..." }] }`
 
 ---
 
@@ -496,6 +535,7 @@ INSTRUCTIONS:
 // configJson — admin-managed behavior settings
 {
   "model": { "provider": "anthropic", "model": "claude-sonnet-4-20250514", "temperature": 0.7 },
+  "embeddingModel": { "provider": "google", "model": "text-embedding-004" },
   "instructions": "You are Atlas, a thoughtful entity.",
   "consciousness": { "maxTokens": 200000 },
   "actionTimeout": 60000
@@ -626,7 +666,7 @@ Any service connects the same way — register tools, push events, handle action
 |---------|-------|---------------|------------------|
 | Spaces App | `spaces` | `message`, `member_joined` | `enter_space`, `send_space_message`, `get_spaces` |
 | WhatsApp | `whatsapp` | `message` | `send_message`, `get_contacts` |
-| Email | `email` | `email_received` | `send_email`, `get_inbox`, `get_my_address` |
+| Email | `email` | `email_received` | `send_email`, `get_inbox` |
 | Robot | `robot` | `sensor_update` | `speak`, `move`, `capture_image` |
 | Postgres | `db` | `row_inserted`, `status_changed` | *(none, or `run_query`)* |
 | IoT | `iot` | `device_status` | `control_device`, `get_devices` |
