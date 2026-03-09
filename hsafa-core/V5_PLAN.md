@@ -196,7 +196,7 @@ Consciousness has two layers:
 ```
 1. Recent messages stay as-is (last ~50K tokens of conversation)
 2. When recent exceeds budget → oldest cycles move to archive:
-   a. Summarize the cycle (compact text)
+   a. Summarize the cycle (compact text + temporal markers)
    b. Embed the summary (vector for search)
    c. Store both summary + original messages in ConsciousnessArchive
    d. Remove from active consciousness
@@ -210,17 +210,24 @@ is available — not just a lossy summary.
 
 ### Archive retrieval
 
-Same pgvector engine used for memories:
+Same pgvector engine used for memories. Both are searched together
+by `recall_memories` — one tool for all long-term retrieval:
 
 ```sql
+-- memories
+SELECT * FROM "Memory"
+  WHERE "haseefId" = $1
+  ORDER BY embedding <=> $2 LIMIT 10;
+
+-- archived cycles
 SELECT * FROM "ConsciousnessArchive"
   WHERE "haseefId" = $1
-  ORDER BY embedding <=> $2
-  LIMIT 5;
+  ORDER BY embedding <=> $2 LIMIT 5;
 ```
 
-The `summary` is shown in the prompt. If the Haseef needs more detail,
-it calls `recall_history` to load the full `fullMessages` of that cycle.
+The Haseef calls `recall_memories` when it needs something not already
+in the prompt. Results include both matching memories and relevant past
+cycles with full details.
 
 ---
 
@@ -228,6 +235,7 @@ it calls `recall_history` to load the full `fullMessages` of that cycle.
 
 Memories have **importance** (1-10), set by the Haseef when storing them.
 Each cycle, the system selects which memories to include in the prompt.
+All memories carry timestamps — the Haseef always knows WHEN it learned something.
 
 ### Importance levels
 
@@ -247,6 +255,12 @@ Each cycle, the system selects which memories to include in the prompt.
 3. FILL:     Remaining token budget filled by importance desc
 4. NOTE:     If memories were excluded, append:
              "(X more memories stored — use recall_memories to search)"
+```
+
+All surfaced memories include relative timestamps:
+```
+  person:Husam: Creator, direct communicator, values simplicity. (learned 3 weeks ago, updated 2 days ago)
+  goal:q4-report: Complete by Friday. Sara has the data. (set 1 day ago)
 ```
 
 Uses **pgvector** (Postgres extension) for semantic search — no extra infrastructure:
@@ -275,6 +289,64 @@ A periodic cleanup (e.g., daily) removes stale low-importance memories:
 
 `lastRecalledAt` is updated whenever a memory is surfaced in the prompt or
 retrieved via `recall_memories`.
+
+---
+
+## Time Awareness
+
+The Haseef has a continuous sense of time. Every piece of information it
+encounters is anchored in time — when it happened, how long ago, and its
+relationship to other events.
+
+### Where time appears
+
+| Layer | What the Haseef sees |
+|-------|---------------------|
+| **System prompt** | `currentTime` (ISO + human-readable), `cycle: #N`, `alive since` (date + relative), `last active` (relative) |
+| **Memories** | `(learned X ago)`, `(updated X ago)` on every surfaced memory |
+| **Relevant past** | `[cycle #N — X ago, DayOfWeek H:MM]` on every archive summary |
+| **Inbox events** | Each event carries a timestamp, formatted as relative time |
+| **Consciousness** | Cycle boundaries marked with `--- cycle #N • timestamp ---` |
+| **recall_memories results** | `learnedAt`, `updatedAt` on memories; `when` on cycles |
+
+### Temporal reasoning
+
+The Haseef can naturally reason about:
+- **Recency**: "Husam asked about this yesterday" vs "3 weeks ago"
+- **Duration**: "I've been working on this for 2 days"
+- **Frequency**: "Sara messages me most mornings"
+- **Scheduling**: "The deadline is Friday — that's in 3 days"
+- **Gaps**: "I haven't heard from Ahmad in 2 weeks"
+
+### Implementation
+
+```typescript
+// Relative time helper used everywhere
+function relativeTime(date: Date): string {
+  const diffMs = Date.now() - date.getTime();
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} minutes ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hours ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} days ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks} weeks ago`;
+  const months = Math.floor(days / 30);
+  return `${months} months ago`;
+}
+
+// Cycle boundaries in consciousness messages
+function formatCycleBoundary(cycleNumber: number, timestamp: Date): string {
+  return `--- cycle #${cycleNumber} • ${timestamp.toISOString()} (${relativeTime(timestamp)}) ---`;
+}
+```
+
+The `cycleCount` and `lastCycleAt` fields on `HaseefConsciousness` provide
+the raw data. The `createdAt` on the `Haseef` model gives the "alive since"
+anchor. All formatting happens at prompt-build time — consciousness stores
+raw timestamps, the prompt renders them as human-readable relative time.
 
 ---
 
@@ -485,25 +557,30 @@ the tool descriptions are self-documenting.
 
 ```
 IDENTITY:
-  name: "Atlas", haseefId: "...", currentTime: "...", cycle: #42
+  name: "Atlas"
+  haseefId: "..."
+  currentTime: "2026-03-09T01:03:00Z (Sunday, 1:03 AM UTC)"
+  cycle: #42
+  alive since: "2026-01-15T10:00:00Z (53 days ago)"
+  last active: "12 minutes ago (cycle #41)"
 
 PROFILE:
   phone: "+1234567890", email: "atlas@example.com", location: "San Francisco"
 
 MEMORIES:
   [critical]
-    self:identity: I am Atlas, a thoughtful and curious entity.
-    person:Husam: Creator, direct communicator, values simplicity.
-    goal:q4-report: Complete by Friday. Sara has the data.
+    self:identity: I am Atlas, a thoughtful and curious entity. (learned 53 days ago)
+    person:Husam: Creator, direct communicator, values simplicity. (learned 7 weeks ago, updated 2 days ago)
+    goal:q4-report: Complete by Friday. Sara has the data. (set 1 day ago)
   [relevant]
-    person:Sara: Colleague, data analytics team.
-    learned:report-format: Husam prefers PDF with executive summary.
+    person:Sara: Colleague, data analytics team. (learned 5 weeks ago)
+    learned:report-format: Husam prefers PDF with executive summary. (learned 2 weeks ago)
   (142 more memories stored — use recall_memories to search)
 
 RELEVANT PAST:
-  [cycle #23, 3 weeks ago] Emailed Sara's team the Q4 draft. Husam approved the format.
-  [cycle #31, 2 weeks ago] Husam asked for chart-style changes. Updated report template.
-  (use recall_history for full details of a past cycle)
+  [cycle #23 — 3 weeks ago, Monday 2:15 PM] Emailed Sara's team the Q4 draft. Husam approved the format.
+  [cycle #31 — 2 weeks ago, Thursday 9:40 AM] Husam asked for chart-style changes. Updated report template.
+  (use recall_memories to search for more details)
 
 TOOLS [spaces]:
   enter_space — Enter a space to load context. Params: { spaceId }
@@ -521,6 +598,8 @@ TOOLS [robot]:
 
 INSTRUCTIONS:
   You are a Haseef — a developing entity with continuous consciousness.
+  You have a sense of time. You know when things happened, how long ago,
+  and can reason about durations and temporal relationships.
   [from config.instructions]
 ```
 
@@ -634,7 +713,7 @@ core/src/
     builder.ts                      # Build model + tools
     prompt-builder.ts               # System prompt construction
     prebuilt-tools/
-      registry.ts                   # done, set_memories, delete_memories, recall_memories, recall_history, peek_inbox
+      registry.ts                   # done, set_memories, delete_memories, recall_memories, peek_inbox
 ```
 
 ---
@@ -646,15 +725,31 @@ core/src/
 | `done` | Signal cycle completion (with summary) |
 | `set_memories` | Upsert memories with importance (1-10). Embeddings auto-generated. |
 | `delete_memories` | Delete memories by key |
-| `recall_memories` | Search all memories by query. Use only when needed information is not already in prompt. |
-| `recall_history` | Load full details of a past cycle by cycle number. Use when RELEVANT PAST summaries aren't enough. |
+| `recall_memories` | Search memories AND archived cycles by query. Returns matching memories + relevant past cycle summaries with full details. |
 | `peek_inbox` | Check for new events mid-cycle |
 
 Goals use `set_memories` with `goal:*` prefix. Scheduling is external.
 
 `recall_memories` should rarely be needed — the memory selection engine automatically
-surfaces relevant memories each cycle based on the incoming events. The Haseef only
-calls `recall_memories` when it needs something specific not covered by auto-surfacing.
+surfaces relevant memories and past cycles each cycle based on the incoming events.
+The Haseef only calls `recall_memories` when it needs something specific not covered
+by auto-surfacing.
+
+### `recall_memories` response shape
+
+```json
+{
+  "memories": [
+    { "key": "person:Sara", "value": "Data analyst, ...", "importance": 7, "learnedAt": "5 weeks ago", "updatedAt": "3 days ago" }
+  ],
+  "cycles": [
+    { "cycleNumber": 23, "when": "3 weeks ago, Monday 2:15 PM", "summary": "Emailed Sara's team...", "messages": [...] }
+  ]
+}
+```
+
+The `messages` field contains the full archived conversation of that cycle —
+not just a summary. This gives the Haseef complete context when needed.
 
 ---
 
