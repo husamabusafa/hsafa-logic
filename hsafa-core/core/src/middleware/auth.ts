@@ -1,221 +1,39 @@
 import { Request, Response, NextFunction } from 'express';
-import { jwtVerify, createRemoteJWKSet, JWTPayload } from 'jose';
-import { prisma } from '../lib/db.js';
 
 // =============================================================================
-// Types
+// Auth Middleware (v5) — Single API Key
+//
+// All routes protected by x-api-key header. Scoped keys later.
 // =============================================================================
-
-export interface AuthContext {
-  method: 'secret_key' | 'public_key_jwt' | 'extension_key';
-  haseefId?: string;
-  externalId?: string;
-  /** Set when method === 'extension_key' */
-  extensionId?: string;
-}
 
 declare global {
   namespace Express {
     interface Request {
-      auth?: AuthContext;
+      auth?: { method: 'api_key' };
     }
   }
 }
 
-// =============================================================================
-// JWT Configuration
-// =============================================================================
+const API_KEY = process.env.HSAFA_API_KEY;
 
-const HSAFA_SECRET_KEY = process.env.HSAFA_SECRET_KEY;
-const HSAFA_PUBLIC_KEY = process.env.HSAFA_PUBLIC_KEY;
-const JWT_SECRET = process.env.JWT_SECRET;
-const JWKS_URL = process.env.JWKS_URL;
-const JWT_ENTITY_CLAIM = process.env.JWT_ENTITY_CLAIM || 'sub';
+/**
+ * Require a valid x-api-key header.
+ */
+export function requireApiKey() {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const key = req.headers['x-api-key'] as string | undefined;
 
-let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
-
-function getJWKS() {
-  if (!jwks && JWKS_URL) {
-    jwks = createRemoteJWKSet(new URL(JWKS_URL));
-  }
-  return jwks;
-}
-
-async function verifyJWT(token: string): Promise<JWTPayload> {
-  if (JWT_SECRET) {
-    const secret = new TextEncoder().encode(JWT_SECRET);
-    const { payload } = await jwtVerify(token, secret);
-    return payload;
-  }
-
-  const jwksSet = getJWKS();
-  if (jwksSet) {
-    const { payload } = await jwtVerify(token, jwksSet);
-    return payload;
-  }
-
-  throw new Error('No JWT_SECRET or JWKS_URL configured');
-}
-
-function extractExternalId(payload: JWTPayload): string | null {
-  const value = payload[JWT_ENTITY_CLAIM];
-  if (typeof value === 'string') return value;
-  return null;
-}
-
-// =============================================================================
-// Middleware: Secret Key (Full Access)
-// =============================================================================
-
-export function requireSecretKey() {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const secretKey = req.headers['x-secret-key'] as string | undefined;
-
-      if (!secretKey) {
-        res.status(401).json({ error: 'Missing x-secret-key header' });
-        return;
-      }
-
-      if (!HSAFA_SECRET_KEY || secretKey !== HSAFA_SECRET_KEY) {
-        res.status(401).json({ error: 'Invalid secret key' });
-        return;
-      }
-
-      // Optionally resolve entity from JWT if provided
-      let haseefId: string | undefined;
-      let externalId: string | undefined;
-      const authHeader = req.headers['authorization'] as string | undefined;
-
-      if (authHeader?.startsWith('Bearer ')) {
-        try {
-          const payload = await verifyJWT(authHeader.slice(7));
-          externalId = extractExternalId(payload) ?? undefined;
-          // haseefId from JWT sub claim
-          haseefId = (payload.sub as string) ?? undefined;
-        } catch {
-          // JWT is optional with secret key
-        }
-      }
-
-      req.auth = { method: 'secret_key', haseefId, externalId };
-      next();
-    } catch (error) {
-      console.error('Secret key auth error:', error);
-      res.status(500).json({ error: 'Authentication failed' });
+    if (!key) {
+      res.status(401).json({ error: 'Missing x-api-key header' });
+      return;
     }
+
+    if (!API_KEY || key !== API_KEY) {
+      res.status(401).json({ error: 'Invalid API key' });
+      return;
+    }
+
+    req.auth = { method: 'api_key' };
+    next();
   };
 }
-
-// =============================================================================
-// Middleware: Public Key + JWT (Limited Access)
-// =============================================================================
-
-export function requirePublicKeyJWT() {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const publicKey = req.headers['x-public-key'] as string | undefined;
-      const authHeader = req.headers['authorization'] as string | undefined;
-
-      if (!publicKey) {
-        res.status(401).json({ error: 'Missing x-public-key header' });
-        return;
-      }
-
-      if (!HSAFA_PUBLIC_KEY || publicKey !== HSAFA_PUBLIC_KEY) {
-        res.status(401).json({ error: 'Invalid public key' });
-        return;
-      }
-
-      if (!authHeader?.startsWith('Bearer ')) {
-        res.status(401).json({ error: 'Missing or invalid Authorization header' });
-        return;
-      }
-
-      let payload: JWTPayload;
-      try {
-        payload = await verifyJWT(authHeader.slice(7));
-      } catch {
-        res.status(401).json({ error: 'Invalid or expired JWT' });
-        return;
-      }
-
-      const externalId = extractExternalId(payload);
-      if (!externalId) {
-        res.status(401).json({ error: `JWT missing claim: ${JWT_ENTITY_CLAIM}` });
-        return;
-      }
-
-      // haseefId comes from JWT sub claim directly
-      const haseefId = payload.sub as string;
-
-      if (!haseefId) {
-        res.status(403).json({ error: 'No haseefId found in JWT' });
-        return;
-      }
-
-      req.auth = { method: 'public_key_jwt', haseefId, externalId };
-      next();
-    } catch (error) {
-      console.error('Public key + JWT auth error:', error);
-      res.status(500).json({ error: 'Authentication failed' });
-    }
-  };
-}
-
-// =============================================================================
-// Middleware: Either Secret Key OR Public Key + JWT
-// =============================================================================
-
-export function requireAuth() {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    const secretKey = req.headers['x-secret-key'] as string | undefined;
-    const publicKey = req.headers['x-public-key'] as string | undefined;
-
-    if (secretKey) {
-      return requireSecretKey()(req, res, next);
-    }
-
-    if (publicKey) {
-      return requirePublicKeyJWT()(req, res, next);
-    }
-
-    res.status(401).json({
-      error: 'Authentication required. Provide x-secret-key, or x-public-key + Authorization header.',
-    });
-  };
-}
-
-// =============================================================================
-// Middleware: Extension Key (Extension-to-Core Access)
-// =============================================================================
-
-export function requireExtensionKey() {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const extensionKey = req.headers['x-extension-key'] as string | undefined;
-
-      if (!extensionKey) {
-        res.status(401).json({ error: 'Missing x-extension-key header' });
-        return;
-      }
-
-      const extension = await prisma.extension.findUnique({
-        where: { extensionKey },
-        select: { id: true },
-      });
-
-      if (!extension) {
-        res.status(401).json({ error: 'Invalid extension key' });
-        return;
-      }
-
-      req.auth = { method: 'extension_key', extensionId: extension.id };
-      next();
-    } catch (error) {
-      console.error('Extension key auth error:', error);
-      res.status(500).json({ error: 'Authentication failed' });
-    }
-  };
-}
-

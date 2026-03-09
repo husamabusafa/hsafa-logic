@@ -1,26 +1,16 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/db.js';
-import { redis } from '../lib/redis.js';
-import { requireSecretKey, requireAuth } from '../middleware/auth.js';
-import { pushToolResultEvent } from '../lib/inbox.js';
-import Redis from 'ioredis';
+
+// =============================================================================
+// Runs Routes (v5)
+//
+// Read-only run history. Runs are created/updated by agent-process.
+// =============================================================================
 
 export const runsRouter = Router();
 
-// =============================================================================
-// Run access check — verify caller has access to this run
-// =============================================================================
-
-async function verifyRunAccess(req: Request, res: Response): Promise<boolean> {
-  if (!req.auth) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return false;
-  }
-  return true;
-}
-
-// GET /api/runs — List runs (admin)
-runsRouter.get('/', requireSecretKey(), async (req: Request, res: Response) => {
+// GET /api/runs — List runs
+runsRouter.get('/', async (req: Request, res: Response) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
     const status = req.query.status as string | undefined;
@@ -38,16 +28,14 @@ runsRouter.get('/', requireSecretKey(), async (req: Request, res: Response) => {
 
     res.json({ runs });
   } catch (error) {
-    console.error('List runs error:', error);
+    console.error('[runs] list error:', error);
     res.status(500).json({ error: 'Failed to list runs' });
   }
 });
 
 // GET /api/runs/:runId — Get run
-runsRouter.get('/:runId', requireAuth(), async (req: Request, res: Response) => {
+runsRouter.get('/:runId', async (req: Request, res: Response) => {
   try {
-    if (!(await verifyRunAccess(req, res))) return;
-
     const run = await prisma.run.findUnique({
       where: { id: req.params.runId },
     });
@@ -59,133 +47,8 @@ runsRouter.get('/:runId', requireAuth(), async (req: Request, res: Response) => 
 
     res.json({ run });
   } catch (error) {
-    console.error('Get run error:', error);
+    console.error('[runs] get error:', error);
     res.status(500).json({ error: 'Failed to get run' });
   }
 });
 
-// GET /api/runs/:runId/events — Get run events
-runsRouter.get('/:runId/events', requireAuth(), async (req: Request, res: Response) => {
-  try {
-    if (!(await verifyRunAccess(req, res))) return;
-
-    // v4: Run events are streamed via Redis Pub/Sub, not stored in DB.
-    // Use GET /api/runs/:runId/stream for real-time SSE events.
-    // This endpoint returns inbox events associated with the run.
-    const events = await prisma.inboxEvent.findMany({
-      where: { runId: req.params.runId },
-      orderBy: { createdAt: 'asc' },
-      take: 100,
-    });
-
-    res.json({ events });
-  } catch (error) {
-    console.error('Get run events error:', error);
-    res.status(500).json({ error: 'Failed to get events' });
-  }
-});
-
-// GET /api/runs/:runId/stream — SSE stream for run events
-runsRouter.get('/:runId/stream', requireAuth(), async (req: Request, res: Response) => {
-  try {
-    if (!(await verifyRunAccess(req, res))) return;
-
-    const { runId } = req.params;
-
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-
-    res.write(`data: ${JSON.stringify({ type: 'connected', runId })}\n\n`);
-
-    const subscriber = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
-    const channel = `run:${runId}`;
-    await subscriber.subscribe(channel);
-
-    subscriber.on('message', (_ch: string, message: string) => {
-      res.write(`data: ${message}\n\n`);
-    });
-
-    const pingInterval = setInterval(() => {
-      res.write(': ping\n\n');
-    }, 30_000);
-
-    req.on('close', () => {
-      clearInterval(pingInterval);
-      subscriber.unsubscribe(channel).catch(() => {});
-      subscriber.disconnect();
-    });
-  } catch (error) {
-    console.error('Run SSE error:', error);
-    res.status(500).json({ error: 'Failed to start stream' });
-  }
-});
-
-// POST /api/runs/:runId/tool-results — Submit async tool result (v3: pushes to inbox)
-runsRouter.post('/:runId/tool-results', requireAuth(), async (req: Request, res: Response) => {
-  try {
-    if (!(await verifyRunAccess(req, res))) return;
-
-    const { runId } = req.params;
-    const { callId, result } = req.body;
-
-    if (!callId) {
-      res.status(400).json({ error: 'callId is required' });
-      return;
-    }
-
-    // Look up the pending tool call
-    const pending = await prisma.pendingToolCall.findUnique({
-      where: { toolCallId: callId },
-    });
-
-    if (!pending) {
-      res.status(404).json({ error: 'Pending tool call not found' });
-      return;
-    }
-
-    if (pending.runId !== runId) {
-      res.status(403).json({ error: 'Tool call does not belong to this run' });
-      return;
-    }
-
-    if (pending.status !== 'pending' && pending.status !== 'waiting') {
-      res.status(409).json({ error: `Tool call already ${pending.status}` });
-      return;
-    }
-
-    const wasWaiting = pending.status === 'waiting';
-
-    // 1. Resolve the pending tool call
-    await prisma.pendingToolCall.update({
-      where: { toolCallId: callId },
-      data: {
-        status: 'resolved',
-        result: result as any,
-        resolvedAt: new Date(),
-      },
-    });
-
-    // 2. Notify waiting tool or push to inbox
-    if (wasWaiting) {
-      // Tool is actively waiting via Redis pub/sub — publish result to unblock it instantly
-      await redis.publish(`tool-result:${callId}`, JSON.stringify(result));
-    } else {
-      // Tool was async (pending) — push inbox event so agent wakes in next cycle
-      await pushToolResultEvent(pending.haseefId, {
-        toolCallId: callId,
-        toolName: pending.toolName,
-        originRunId: runId,
-        result,
-      });
-    }
-
-    res.json({ success: true, haseefId: pending.haseefId });
-  } catch (error) {
-    console.error('Tool result error:', error);
-    res.status(500).json({ error: 'Failed to submit tool result' });
-  }
-});

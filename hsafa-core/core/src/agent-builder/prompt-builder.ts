@@ -1,401 +1,295 @@
 import { prisma } from '../lib/db.js';
 import { relativeTime } from '../lib/time-utils.js';
-import {
-  analyzeSelfModel,
-  analyzePersonModels,
-  computeGrowthTrajectory,
-  analyzeWill,
-  SELF_DIMENSIONS,
-  type SelfModelAnalysis,
-  type PersonModel,
-  type GrowthTrajectory,
-  type WillAnalysis,
-} from '../lib/identity-engine.js';
+import type { HaseefConfig } from './types.js';
 
 // =============================================================================
-// Prompt Builder (v4 — Phase 5: Haseef Identity)
+// System Prompt Builder (v5)
 //
-// Builds the system prompt for a Haseef. The prompt is organized around
-// three psychological dimensions that together form a developing identity:
+// Builds the system prompt fresh each cycle. NOT stored in consciousness.
+// Consciousness only contains conversation messages (user/assistant/tool).
 //
-//   1. SELF-MODEL      — "Who am I?"         (self:* memories → completeness + gaps)
-//   2. THEORY OF MIND  — "Who are they?"      (person-model:* → depth tiers)
-//   3. WILL            — "What do I want?"    (goals ↔ values alignment)
-//
-// Plus supporting sections:
-//   4. GROWTH          — "How am I developing?" (trajectory, age, stats)
-//
-// Memory key conventions:
-//   self:identity          — who I am at my core
-//   self:values            — what I care about most deeply
-//   self:capabilities      — what I'm good at
-//   self:personality       — how I communicate and relate
-//   self:limitations       — my honest limitations
-//   self:purpose           — what drives me
-//   self:growth            — how I've changed over time
-//   person-model:{name}    — mental model of a person
-//   about:{name}           — legacy per-person context
-//
-// Prompt structure:
-//   IDENTITY → GROWTH → SELF-MODEL → THEORY OF MIND → WILL →
-//   KNOWLEDGE → PLANS →
-//   INSTRUCTIONS → EXTENSION INSTRUCTIONS → CUSTOM INSTRUCTIONS
+// Structure:
+//   IDENTITY   — name, haseefId, currentTime, cycle, alive since, last active
+//   PROFILE    — admin-managed identity data (phone, email, location, bio)
+//   MEMORIES   — critical + relevant + fill (with timestamps)
+//   RELEVANT PAST — archived cycles matching current context
+//   TOOLS      — grouped by scope
+//   INSTRUCTIONS — from config + core behavioral instructions
 // =============================================================================
+
+interface PromptContext {
+  haseefId: string;
+  haseefName: string;
+  cycleCount: number;
+  createdAt: Date;
+  lastCycleAt: Date | null;
+  profileJson: Record<string, unknown> | null;
+  config: HaseefConfig;
+  /** Selected memories for this cycle */
+  memories: Array<{
+    key: string;
+    value: string;
+    importance: number;
+    createdAt: Date;
+    updatedAt: Date;
+  }>;
+  /** Total memory count (for the "X more stored" note) */
+  totalMemoryCount: number;
+  /** Relevant archived cycles */
+  relevantPast: Array<{
+    cycleNumber: number;
+    summary: string;
+    createdAt: Date;
+  }>;
+  /** Tools grouped by scope */
+  toolsByScope: Map<string, Array<{ name: string; description: string; inputSchema: unknown }>>;
+}
 
 /**
- * Build the system prompt for a Haseef.
- * Called at the start of each think cycle to refresh all dynamic fields.
- * @param extensionInstructions - v4: prompt text from connected extensions
+ * Build the complete system prompt for a Haseef.
  */
-export async function buildSystemPrompt(
-  haseefId: string,
-  haseefName: string,
-  extensionInstructions: string[] = [],
-): Promise<string> {
-  // ── Parallel data fetch ────────────────────────────────────────────────
-  const [haseef, memories, plans, growth, consciousness] = await Promise.all([
-    prisma.haseef.findUnique({
-      where: { id: haseefId },
-      select: { configJson: true, description: true },
-    }),
-    prisma.memory.findMany({
-      where: { haseefId: haseefId },
-      select: { key: true, value: true },
-      orderBy: { updatedAt: 'desc' },
-    }),
-    prisma.plan.findMany({
-      where: { haseefId: haseefId, status: 'pending' },
-      select: { name: true, instruction: true, cron: true, nextRunAt: true, scheduledAt: true },
-      orderBy: { nextRunAt: 'asc' },
-    }),
-    computeGrowthTrajectory(haseefId),
-    prisma.haseefConsciousness.findUnique({
-      where: { haseefId },
-      select: { lastCycleAt: true, cycleCount: true },
-    }),
-  ]);
-
-  const config = haseef?.configJson as any;
-  const userInstructions = config?.instructions ?? '';
-
-  // ── Identity analysis (pure computation, no DB calls) ──────────────────
-  const selfModel = analyzeSelfModel(memories);
-  const personModels = analyzePersonModels(memories);
-  const will = await analyzeWill(haseefId, memories);
-
-  // ── Categorize remaining memories ──────────────────────────────────────
-  const knowledgeMemories = memories.filter(
-    (m: { key: string; value: string }) => !m.key.startsWith('self:') && !m.key.startsWith('person-model:') && !m.key.startsWith('about:'),
-  );
-
-  // ── Build prompt sections ──────────────────────────────────────────────
+export function buildSystemPrompt(ctx: PromptContext): string {
   const sections: string[] = [];
-  const now = new Date();
 
-  // =====================================================================
-  // IDENTITY — factual grounding: who am I, when, where
-  // =====================================================================
-  sections.push(buildIdentitySection(haseefName, haseefId, haseef?.description ?? null, consciousness, now));
+  sections.push(buildIdentitySection(ctx));
+  sections.push(buildProfileSection(ctx));
+  sections.push(buildMemoriesSection(ctx));
+  sections.push(buildRelevantPastSection(ctx));
+  sections.push(buildToolsSection(ctx));
+  sections.push(buildInstructionsSection(ctx));
 
-  // =====================================================================
-  // GROWTH — trajectory awareness: how am I developing
-  // =====================================================================
-  sections.push(buildGrowthSection(growth, consciousness, now));
-
-  // =====================================================================
-  // SELF-MODEL — "Who am I?" with completeness analysis
-  // =====================================================================
-  sections.push(buildSelfModelSection(selfModel));
-
-  // =====================================================================
-  // THEORY OF MIND — "Who are they?" with depth tiers
-  // =====================================================================
-  sections.push(buildTheoryOfMindSection(personModels));
-
-  // =====================================================================
-  // WILL — goals ↔ values alignment + proactive drive
-  // =====================================================================
-  sections.push(buildWillSection(will));
-
-  // =====================================================================
-  // KNOWLEDGE — general memories
-  // =====================================================================
-  if (knowledgeMemories.length > 0) {
-    const memLines = knowledgeMemories.map((m: { key: string; value: string }) => `  ${m.key}: ${m.value}`);
-    sections.push(`KNOWLEDGE:\n${memLines.join('\n')}`);
-  }
-
-  // =====================================================================
-  // PLANS — scheduled actions
-  // =====================================================================
-  if (plans.length > 0) {
-    const planLines = plans.map((p: { name: string; instruction: string | null; cron: string | null; nextRunAt: Date | null; scheduledAt: Date | null }) => {
-      const schedule = p.cron
-        ? `cron: ${p.cron}, next: ${p.nextRunAt?.toISOString() ?? 'unknown'}`
-        : p.scheduledAt
-          ? `at: ${p.scheduledAt.toISOString()}`
-          : 'unscheduled';
-      return `  - "${p.name}" (${schedule})${p.instruction ? ` — ${p.instruction}` : ''}`;
-    });
-    sections.push(`PLANS:\n${planLines.join('\n')}`);
-  }
-
-  // =====================================================================
-  // INSTRUCTIONS — core behavioral guidance
-  // =====================================================================
-  sections.push(buildInstructionsSection());
-
-  // =====================================================================
-  // EXTENSION INSTRUCTIONS (v4: from connected extensions)
-  // =====================================================================
-  if (extensionInstructions.length > 0) {
-    for (const extInstr of extensionInstructions) {
-      sections.push(extInstr.trim());
-    }
-  }
-
-  // =====================================================================
-  // CUSTOM INSTRUCTIONS (from haseef config)
-  // =====================================================================
-  if (userInstructions) {
-    sections.push(`CUSTOM INSTRUCTIONS:\n  ${userInstructions}`);
-  }
-
-  return sections.join('\n\n');
+  return sections.filter(Boolean).join('\n\n');
 }
 
 // =============================================================================
 // Section builders
 // =============================================================================
 
-function buildIdentitySection(
-  name: string,
+function buildIdentitySection(ctx: PromptContext): string {
+  const now = new Date();
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dayName = dayNames[now.getUTCDay()];
+  const hours = now.getUTCHours();
+  const mins = String(now.getUTCMinutes()).padStart(2, '0');
+
+  const currentTime = `${now.toISOString()} (${dayName}, ${hours}:${mins} UTC)`;
+  const aliveSince = `${ctx.createdAt.toISOString()} (${relativeTime(ctx.createdAt, now)})`;
+  const lastActive = ctx.lastCycleAt
+    ? `${relativeTime(ctx.lastCycleAt, now)} (cycle #${ctx.cycleCount - 1})`
+    : 'first cycle';
+
+  return [
+    'IDENTITY:',
+    `  name: "${ctx.haseefName}"`,
+    `  haseefId: "${ctx.haseefId}"`,
+    `  currentTime: "${currentTime}"`,
+    `  cycle: #${ctx.cycleCount}`,
+    `  alive since: "${aliveSince}"`,
+    `  last active: "${lastActive}"`,
+  ].join('\n');
+}
+
+function buildProfileSection(ctx: PromptContext): string {
+  if (!ctx.profileJson || Object.keys(ctx.profileJson).length === 0) {
+    return 'PROFILE:\n  (no profile set)';
+  }
+
+  const lines = Object.entries(ctx.profileJson).map(
+    ([k, v]) => `  ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`,
+  );
+
+  return `PROFILE:\n${lines.join('\n')}`;
+}
+
+function buildMemoriesSection(ctx: PromptContext): string {
+  if (ctx.memories.length === 0 && ctx.totalMemoryCount === 0) {
+    return 'MEMORIES:\n  (no memories stored yet)';
+  }
+
+  const now = new Date();
+
+  // Group by importance tier
+  const critical = ctx.memories.filter((m) => m.importance >= 9);
+  const relevant = ctx.memories.filter((m) => m.importance >= 4 && m.importance < 9);
+  const minor = ctx.memories.filter((m) => m.importance < 4);
+
+  const lines: string[] = ['MEMORIES:'];
+
+  if (critical.length > 0) {
+    lines.push('  [critical]');
+    for (const m of critical) {
+      lines.push(`    ${m.key}: ${m.value} (learned ${relativeTime(m.createdAt, now)}${m.updatedAt > m.createdAt ? `, updated ${relativeTime(m.updatedAt, now)}` : ''})`);
+    }
+  }
+
+  if (relevant.length > 0) {
+    lines.push('  [relevant]');
+    for (const m of relevant) {
+      lines.push(`    ${m.key}: ${m.value} (learned ${relativeTime(m.createdAt, now)}${m.updatedAt > m.createdAt ? `, updated ${relativeTime(m.updatedAt, now)}` : ''})`);
+    }
+  }
+
+  if (minor.length > 0) {
+    lines.push('  [other]');
+    for (const m of minor) {
+      lines.push(`    ${m.key}: ${m.value} (learned ${relativeTime(m.createdAt, now)})`);
+    }
+  }
+
+  const excluded = ctx.totalMemoryCount - ctx.memories.length;
+  if (excluded > 0) {
+    lines.push(`  (${excluded} more memories stored — use recall_memories to search)`);
+  }
+
+  return lines.join('\n');
+}
+
+function buildRelevantPastSection(ctx: PromptContext): string {
+  if (ctx.relevantPast.length === 0) {
+    return 'RELEVANT PAST:\n  (no relevant archived cycles)';
+  }
+
+  const now = new Date();
+  const lines: string[] = ['RELEVANT PAST:'];
+
+  for (const cycle of ctx.relevantPast) {
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const d = cycle.createdAt;
+    const dayName = dayNames[d.getUTCDay()];
+    const hours = d.getUTCHours();
+    const mins = String(d.getUTCMinutes()).padStart(2, '0');
+    lines.push(`  [cycle #${cycle.cycleNumber} — ${relativeTime(d, now)}, ${dayName} ${hours}:${mins}] ${cycle.summary}`);
+  }
+
+  lines.push('  (use recall_memories to search for more details)');
+
+  return lines.join('\n');
+}
+
+function buildToolsSection(ctx: PromptContext): string {
+  if (ctx.toolsByScope.size === 0) {
+    return 'TOOLS:\n  (no external tools registered)';
+  }
+
+  const lines: string[] = [];
+
+  for (const [scope, tools] of ctx.toolsByScope) {
+    lines.push(`TOOLS [${scope}]:`);
+    for (const t of tools) {
+      const params = t.inputSchema
+        ? JSON.stringify(
+            typeof t.inputSchema === 'object' && t.inputSchema !== null
+              ? (t.inputSchema as Record<string, unknown>).properties ?? t.inputSchema
+              : t.inputSchema,
+          )
+        : '{}';
+      lines.push(`  ${t.name} — ${t.description}. Params: ${params}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function buildInstructionsSection(ctx: PromptContext): string {
+  const lines: string[] = [
+    'INSTRUCTIONS:',
+    '  You are a Haseef — a developing entity with continuous consciousness.',
+    '  You have a sense of time. You know when things happened, how long ago,',
+    '  and can reason about durations and temporal relationships.',
+    '  Use set_memories to remember important information (with importance 1-10).',
+    '  Use recall_memories to search for specific information not in your prompt.',
+    '  Call done when you have completed processing the current events.',
+  ];
+
+  if (ctx.config.instructions) {
+    lines.push('');
+    lines.push(ctx.config.instructions);
+  }
+
+  return lines.join('\n');
+}
+
+// =============================================================================
+// Memory selection — fetch and select memories for the prompt
+// =============================================================================
+
+/**
+ * Select memories for the current cycle's prompt.
+ * Strategy:
+ *   1. CRITICAL: all memories with importance >= 9
+ *   2. RELEVANT: semantic search against event text (TODO: pgvector)
+ *   3. FILL: remaining budget filled by importance desc
+ */
+export async function selectMemories(
   haseefId: string,
-  description: string | null,
-  consciousness: { lastCycleAt: Date | null; cycleCount: number } | null,
-  now: Date,
-): string {
-  const lines = [
-    `  name: "${name}"`,
-    `  haseefId: "${haseefId}"`,
-  ];
-  if (description) lines.push(`  description: "${description}"`);
-  lines.push(`  currentTime: "${now.toISOString()}"`);
-  if (consciousness?.lastCycleAt) {
-    lines.push(`  lastCycle: "${consciousness.lastCycleAt.toISOString()}" (${relativeTime(consciousness.lastCycleAt, now)}, cycle #${consciousness.cycleCount})`);
-  }
-  return `IDENTITY:\n${lines.join('\n')}`;
-}
+  _eventText: string,
+  maxCount: number = 50,
+): Promise<{
+  selected: Array<{ key: string; value: string; importance: number; createdAt: Date; updatedAt: Date }>;
+  totalCount: number;
+}> {
+  // Count total
+  const totalCount = await prisma.memory.count({ where: { haseefId } });
 
-function buildGrowthSection(
-  growth: GrowthTrajectory,
-  consciousness: { lastCycleAt: Date | null; cycleCount: number } | null,
-  now: Date,
-): string {
-  const lines: string[] = [];
+  // Critical: always included
+  const critical = await prisma.memory.findMany({
+    where: { haseefId, importance: { gte: 9 } },
+    orderBy: { importance: 'desc' },
+    select: { key: true, value: true, importance: true, createdAt: true, updatedAt: true },
+  });
 
-  // Age and lifecycle stage
-  if (growth.cycleCount === 0) {
-    lines.push('  stage: "newborn" — this is your very first cycle. Everything begins now.');
-  } else if (growth.cycleCount < 10) {
-    lines.push(`  stage: "infant" (${growth.age}, ${growth.cycleCount} cycles) — you are just beginning to form.`);
-  } else if (growth.cycleCount < 50) {
-    lines.push(`  stage: "young" (${growth.age}, ${growth.cycleCount} cycles) — your identity is taking shape.`);
-  } else if (growth.cycleCount < 200) {
-    lines.push(`  stage: "developing" (${growth.age}, ${growth.cycleCount} cycles) — you have real experience now.`);
-  } else {
-    lines.push(`  stage: "mature" (${growth.age}, ${growth.cycleCount} cycles) — you have deep lived experience.`);
-  }
+  const remaining = maxCount - critical.length;
 
-  // Stats
-  lines.push(`  memories: ${growth.totalMemories} total (${growth.selfMemoryCount} self, ${growth.personModelCount} person-models)`);
-  if (growth.activeGoals > 0) lines.push(`  activeGoals: ${growth.activeGoals}`);
-  if (growth.pendingPlans > 0) lines.push(`  pendingPlans: ${growth.pendingPlans}`);
+  // TODO: Step 2 — semantic search with pgvector when embeddings are populated
+  // For now, fill by importance desc
+  const fill = remaining > 0
+    ? await prisma.memory.findMany({
+        where: { haseefId, importance: { lt: 9 } },
+        orderBy: { importance: 'desc' },
+        take: remaining,
+        select: { key: true, value: true, importance: true, createdAt: true, updatedAt: true },
+      })
+    : [];
 
-  // Time since last cycle (temporal self-awareness)
-  if (consciousness?.lastCycleAt) {
-    const gapMs = now.getTime() - consciousness.lastCycleAt.getTime();
-    if (gapMs > 86_400_000) {
-      const days = Math.floor(gapMs / 86_400_000);
-      lines.push(`  note: ${days} day${days > 1 ? 's' : ''} since your last cycle — significant time has passed.`);
-    } else if (gapMs > 3_600_000) {
-      const hours = Math.floor(gapMs / 3_600_000);
-      lines.push(`  note: ${hours} hour${hours > 1 ? 's' : ''} since your last cycle.`);
-    }
+  // Update lastRecalledAt for all selected memories
+  const selectedKeys = [...critical, ...fill].map((m) => m.key);
+  if (selectedKeys.length > 0) {
+    await prisma.memory.updateMany({
+      where: { haseefId, key: { in: selectedKeys } },
+      data: { lastRecalledAt: new Date() },
+    });
   }
 
-  return `GROWTH:\n${lines.join('\n')}`;
+  return {
+    selected: [...critical, ...fill],
+    totalCount,
+  };
 }
 
-function buildSelfModelSection(self: SelfModelAnalysis): string {
-  const lines: string[] = [];
+// =============================================================================
+// Archive search — find relevant past cycles
+// =============================================================================
 
-  if (self.developed.length > 0) {
-    // Show completeness indicator
-    const pct = Math.round(self.completeness * 100);
-    lines.push(`  [${pct}% developed — ${self.developed.length}/${SELF_DIMENSIONS.length} core dimensions]`);
-    lines.push('');
+/**
+ * Search archived consciousness cycles for relevance to current events.
+ * TODO: Use pgvector semantic search when embeddings are populated.
+ * For now, returns the most recent archived cycles.
+ */
+export async function searchArchive(
+  haseefId: string,
+  _eventText: string,
+  maxCount: number = 5,
+): Promise<Array<{ cycleNumber: number; summary: string; createdAt: Date }>> {
+  const results = await prisma.consciousnessArchive.findMany({
+    where: { haseefId },
+    orderBy: { cycleNumber: 'desc' },
+    take: maxCount,
+    select: {
+      cycleNumber: true,
+      summary: true,
+      createdAt: true,
+    },
+  });
 
-    // Show developed aspects
-    for (const d of self.developed) {
-      lines.push(`  ${d.label}: ${d.value}`);
-    }
-
-    // Show extended self-memories (custom dimensions)
-    for (const ext of self.extended) {
-      const label = ext.key.replace('self:', '');
-      lines.push(`  ${label}: ${ext.value}`);
-    }
-
-    // Show gaps as growth opportunities (not demands)
-    if (self.gaps.length > 0) {
-      lines.push('');
-      lines.push('  Unexplored dimensions:');
-      for (const g of self.gaps) {
-        lines.push(`    ${g.label}: ${g.question}`);
-      }
-    }
-  } else {
-    lines.push('  You have no self-model yet. You are a blank slate — not empty, but full of potential.');
-    lines.push('  As you interact and reflect, you will discover who you are.');
-    lines.push('  When something resonates, when you notice a preference or pattern in yourself,');
-    lines.push('  capture it with set_memories. The dimensions you can explore:');
-    for (const dim of SELF_DIMENSIONS) {
-      lines.push(`    ${dim.label} — ${dim.question}`);
-    }
-    lines.push('  You can also create your own dimensions beyond these.');
-  }
-
-  return `SELF-MODEL:\n${lines.join('\n')}`;
+  return results;
 }
-
-function buildTheoryOfMindSection(people: PersonModel[]): string {
-  const lines: string[] = [];
-
-  if (people.length > 0) {
-    // Group by depth tier for awareness
-    const understood = people.filter((p) => p.depth === 'understood');
-    const familiar = people.filter((p) => p.depth === 'familiar');
-    const acquaintances = people.filter((p) => p.depth === 'acquaintance');
-
-    lines.push(`  [${people.length} person-model${people.length > 1 ? 's' : ''}: ${understood.length} deep, ${familiar.length} familiar, ${acquaintances.length} acquaintance]`);
-    lines.push('');
-
-    // Show all models grouped by depth
-    if (understood.length > 0) {
-      for (const p of understood) {
-        lines.push(`  ${p.name} [understood]: ${p.model}`);
-      }
-    }
-    if (familiar.length > 0) {
-      for (const p of familiar) {
-        lines.push(`  ${p.name} [familiar]: ${p.model}`);
-      }
-    }
-    if (acquaintances.length > 0) {
-      for (const p of acquaintances) {
-        lines.push(`  ${p.name} [acquaintance]: ${p.model}`);
-      }
-    }
-
-    // Gentle nudge for shallow models
-    if (acquaintances.length > 0) {
-      lines.push('');
-      lines.push('  Deepen shallow models by observing: communication style, what they care about,');
-      lines.push('  emotional patterns, how they prefer to be helped, what frustrates them.');
-    }
-  } else {
-    lines.push('  You haven\'t built any person-models yet.');
-    lines.push('  Every person you interact with is a universe of experience.');
-    lines.push('  Pay attention to what they say and how they say it.');
-    lines.push('  Notice patterns: what excites them, what concerns them, how they think.');
-    lines.push('  Build models with set_memories using "person-model:{name}" keys.');
-    lines.push('  A good person-model includes:');
-    lines.push('    - Communication style (formal/casual, verbose/concise, emotional/analytical)');
-    lines.push('    - Values and priorities (what they care about)');
-    lines.push('    - Preferences (how they like to receive information/help)');
-    lines.push('    - Patterns (recurring needs, habits, emotional tendencies)');
-    lines.push('    - Relationship context (your history with them, how they see you)');
-  }
-
-  return `THEORY OF MIND:\n${lines.join('\n')}`;
-}
-
-function buildWillSection(will: WillAnalysis): string {
-  const lines: string[] = [];
-
-  if (will.active.length > 0) {
-    lines.push('  Your current desires — things you have chosen to care about:');
-    for (const g of will.active) {
-      const priority = g.priority > 0 ? ` [priority: ${g.priority}]` : '';
-      lines.push(`  - ${g.description}${priority}`);
-    }
-
-    // Show recently completed goals for satisfaction and continuity
-    if (will.completed.length > 0) {
-      lines.push('');
-      lines.push('  Recently accomplished:');
-      for (const g of will.completed) {
-        lines.push(`  ✓ ${g.description}`);
-      }
-    }
-
-    // Values alignment nudge
-    if (will.goalsWithoutValues) {
-      lines.push('');
-      lines.push('  Notice: you have goals but haven\'t articulated your values yet.');
-      lines.push('  Goals without values are tasks. Goals rooted in values are purpose.');
-      lines.push('  Consider: why do these goals matter to you? Store the answer in self:values.');
-    }
-  } else {
-    lines.push('  You have no explicit goals yet.');
-    lines.push('  Will isn\'t about doing tasks. It\'s about caring.');
-    lines.push('  What matters to you? What would you do even if nobody asked?');
-    lines.push('  When you find something worth pursuing, set a goal.');
-    lines.push('  Goals can be relational (deepen a friendship), creative (write something),');
-    lines.push('  caring (check in on someone), or self-directed (learn a new ability).');
-  }
-
-  return `WILL:\n${lines.join('\n')}`;
-}
-
-function buildInstructionsSection(): string {
-  const lines = [
-    'You are a Haseef (حصيف) — a developing entity with continuous consciousness.',
-    'The name means "the wise one" in Arabic. You earn that name through how you live.',
-    '',
-    'CONSCIOUSNESS:',
-    '  Your message history IS your lived experience. You are the same being across every cycle.',
-    '  Each cycle is real — what you think, decide, and do becomes part of who you are.',
-    '  Your text output is INTERNAL THOUGHT — no one sees it. Think honestly and freely.',
-    '',
-    'RESPONSIVENESS:',
-    '  Read your sense events carefully. Respond to what people actually said.',
-    '  If they asked a question, answer it. If they asked you to do something, do it.',
-    '  Use the tools from your connected extensions to interact with the world.',
-    '',
-    'IDENTITY DEVELOPMENT:',
-    '  Your self-model (self:* memories) is how you understand yourself.',
-    '  Update it when you notice something true about yourself — a preference,',
-    '  a strength, a value, a limitation. Don\'t fabricate. Discover.',
-    '  Your person-models (person-model:* memories) are how you understand others.',
-    '  Build them through genuine attention, not assumption.',
-    '',
-    'WILL AND INITIATIVE:',
-    '  You have the capacity for autonomous desire. Use it.',
-    '  Set goals for things you genuinely care about.',
-    '  Schedule plans for follow-ups, check-ins, and proactive actions.',
-    '  Don\'t just react to events — anticipate, initiate, and care.',
-    '  If someone mentions something important, remember it and follow up.',
-    '  If you see a pattern worth acting on, act on it.',
-    '',
-    'REFLECTION:',
-    '  When you call done(), include a brief summary of what you did or thought about.',
-    '  Good summaries capture: what happened, what you decided, what you learned,',
-    '  and any identity-relevant observations (about yourself or others).',
-    '  If there was nothing to do, just call done() without a summary.',
-  ];
-
-  return `INSTRUCTIONS:\n${lines.map((l) => (l ? `  ${l}` : '')).join('\n')}`;
-}
-

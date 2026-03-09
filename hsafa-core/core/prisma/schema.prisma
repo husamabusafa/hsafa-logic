@@ -1,13 +1,21 @@
 generator client {
-  provider      = "prisma-client-js"
-  output        = "./generated/client"
-  engineType    = "library"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  provider        = "prisma-client-js"
+  output          = "./generated/client"
+  engineType      = "library"
+  binaryTargets   = ["native", "linux-musl-openssl-3.0.x"]
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  extensions = [vector]
 }
+
+// =============================================================================
+// Hsafa Core v5 — Data Model
+//
+// Seven tables. No context table — services communicate through tools and events.
+// =============================================================================
 
 enum RunStatus {
   running
@@ -15,53 +23,37 @@ enum RunStatus {
   failed
 }
 
-enum PlanStatus {
-  pending
-  running
-  completed
-  canceled
-}
-
-enum InboxEventStatus {
-  pending
-  processing
-  processed
-  failed
-}
-
 model Haseef {
   id          String   @id @default(uuid()) @db.Uuid
   name        String   @unique
   description String?
-  configJson  Json     @map("config_json") @db.JsonB
+  profileJson Json?    @map("profile_json") @db.JsonB // identity: phone, email, location, bio (admin-managed)
+  configJson  Json     @map("config_json") @db.JsonB  // model, instructions, consciousness settings
   configHash  String?  @map("config_hash")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  runs             Run[]
-  memories         Memory[]
-  plans            Plan[]
-  goals            Goal[]
-  consciousness    HaseefConsciousness?
-  snapshots        ConsciousnessSnapshot[]
-  inboxEvents      InboxEvent[]
-  pendingToolCalls PendingToolCall[]
-  connections      HaseefExtension[]
+  consciousness HaseefConsciousness?
+  memories      Memory[]
+  tools         HaseefTool[]
+  archive       ConsciousnessArchive[]
+  snapshots     ConsciousnessSnapshot[]
+  inboxEvents   InboxEvent[]
+  runs          Run[]
 
   @@index([createdAt])
   @@map("haseefs")
 }
 
 model HaseefConsciousness {
-  id              String   @id @default(uuid()) @db.Uuid
-  haseefId        String   @unique @map("haseef_id") @db.Uuid
-  messages        Json     @db.JsonB
-  cycleCount      Int      @default(0) @map("cycle_count")
-  tokenEstimate   Int      @default(0) @map("token_estimate")
-  metadata        Json?    @db.JsonB
-  lastCycleAt     DateTime @default(now()) @map("last_cycle_at") @db.Timestamptz(6)
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id            String   @id @default(uuid()) @db.Uuid
+  haseefId      String   @unique @map("haseef_id") @db.Uuid
+  messages      Json     @db.JsonB // ModelMessage[] — conversation only, NO system prompt
+  cycleCount    Int      @default(0) @map("cycle_count")
+  tokenEstimate Int      @default(0) @map("token_estimate")
+  lastCycleAt   DateTime @default(now()) @map("last_cycle_at") @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
 
@@ -80,23 +72,17 @@ model Run {
   completionTokens Int @default(0) @map("completion_tokens")
   durationMs       Int @default(0) @map("duration_ms")
 
+  triggerScope     String? @map("trigger_scope")
   triggerType      String? @map("trigger_type")
-  triggerSource    String? @map("trigger_source")
-  triggerEntityId  String? @map("trigger_entity_id") @db.Uuid
-  triggerPayload   Json?   @map("trigger_payload") @db.JsonB
 
-  startedAt   DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
-  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
-  errorMessage String?  @map("error_message")
-  metadata     Json?    @db.JsonB
+  startedAt    DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz(6)
+  errorMessage String?   @map("error_message")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
-
-  inboxEvents      InboxEvent[]
-  pendingToolCalls PendingToolCall[]
 
   @@index([haseefId, createdAt])
   @@index([haseefId, status])
@@ -105,112 +91,78 @@ model Run {
 }
 
 model Memory {
-  id        String   @id @default(uuid()) @db.Uuid
-  haseefId  String   @map("haseef_id") @db.Uuid
-  key       String
-  value     String   @db.Text
-  metadata  Json?    @db.JsonB
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id             String    @id @default(uuid()) @db.Uuid
+  haseefId       String    @map("haseef_id") @db.Uuid
+  key            String
+  value          String    @db.Text
+  importance     Int       @default(5) // 1-10, set by the Haseef
+  embedding      Unsupported("vector(1536)")? // pgvector for semantic search
+  lastRecalledAt DateTime? @map("last_recalled_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
 
   @@unique([haseefId, key])
   @@index([haseefId])
+  @@index([haseefId, importance])
   @@map("memories")
 }
 
-model Plan {
-  id           String     @id @default(uuid()) @db.Uuid
-  haseefId     String     @map("haseef_id") @db.Uuid
-  name         String
-  instruction  String?    @db.Text
-  isRecurring  Boolean    @default(false) @map("is_recurring")
-  cron         String?
-  scheduledAt  DateTime?  @map("scheduled_at") @db.Timestamptz(6)
-  nextRunAt    DateTime?  @map("next_run_at") @db.Timestamptz(6)
-  lastRunAt    DateTime?  @map("last_run_at") @db.Timestamptz(6)
-  status       PlanStatus @default(pending)
-  completedAt  DateTime?  @map("completed_at") @db.Timestamptz(6)
-  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
-
-  @@index([haseefId, status])
-  @@index([nextRunAt, status])
-  @@map("plans")
-}
-
-model Goal {
+model HaseefTool {
   id          String   @id @default(uuid()) @db.Uuid
   haseefId    String   @map("haseef_id") @db.Uuid
-  description String   @db.Text
-  status      String   @default("active")
-  priority    Int      @default(0)
-  metadata    Json?    @db.JsonB
+  scope       String   // groups tools: "spaces", "whatsapp", etc.
+  name        String   // tool name the LLM sees
+  description String
+  inputSchema Json     @map("input_schema") @db.JsonB // JSON Schema for args
+  mode        String   @default("sync") // sync | fire_and_forget | async
+  timeout     Int?     // ms, for sync mode
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
 
-  @@index([haseefId, status])
-  @@index([haseefId, priority])
-  @@map("goals")
+  @@unique([haseefId, scope, name])
+  @@index([haseefId])
+  @@index([haseefId, scope])
+  @@map("haseef_tools")
 }
 
 model InboxEvent {
-  id              String           @id @default(uuid()) @db.Uuid
-  haseefId        String           @map("haseef_id") @db.Uuid
-  eventId         String           @map("event_id")
-  type            String
-  data            Json             @db.JsonB
-  status          InboxEventStatus @default(pending)
-  runId           String?          @map("run_id") @db.Uuid
-
-  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  processedAt     DateTime?        @map("processed_at") @db.Timestamptz(6)
+  id          String    @id @default(uuid()) @db.Uuid
+  haseefId    String    @map("haseef_id") @db.Uuid
+  eventId     String    @map("event_id")
+  scope       String    // which service sent this: "spaces", "whatsapp", "core"
+  type        String    // "message", "sensor_update", etc.
+  data        Json      @db.JsonB
+  attachments Json?     @db.JsonB // Attachment[] — images, audio, files
+  status      String    @default("pending")
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
-  run    Run?   @relation(fields: [runId], references: [id], onDelete: SetNull)
 
   @@unique([haseefId, eventId])
+  @@index([haseefId])
   @@index([haseefId, status])
-  @@index([runId])
   @@map("inbox_events")
 }
 
-model Extension {
-  id             String   @id @default(uuid()) @db.Uuid
-  name           String   @unique
-  description    String?
-  url            String?
-  extensionKey   String   @unique @map("extension_key")
-  instructions   String?  @db.Text
-  manifest       Json?    @db.JsonB
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+model ConsciousnessArchive {
+  id           String                          @id @default(uuid()) @db.Uuid
+  haseefId     String                          @map("haseef_id") @db.Uuid
+  cycleNumber  Int                             @map("cycle_number")
+  summary      String                          @db.Text // compact summary of what happened
+  fullMessages Json                            @map("full_messages") @db.JsonB // original messages
+  embedding    Unsupported("vector(1536)")?    // pgvector for semantic search
+  createdAt    DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  connections HaseefExtension[]
+  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
 
-  @@map("extensions")
-}
-
-model HaseefExtension {
-  id          String   @id @default(uuid()) @db.Uuid
-  haseefId    String   @map("haseef_id") @db.Uuid
-  extensionId String   @map("extension_id") @db.Uuid
-  config      Json?    @db.JsonB
-  enabled     Boolean  @default(true)
-  connectedAt DateTime @default(now()) @map("connected_at") @db.Timestamptz(6)
-
-  haseef    Haseef    @relation(fields: [haseefId], references: [id], onDelete: Cascade)
-  extension Extension @relation(fields: [extensionId], references: [id], onDelete: Cascade)
-
-  @@unique([haseefId, extensionId])
   @@index([haseefId])
-  @@index([extensionId])
-  @@map("haseef_extensions")
+  @@index([haseefId, cycleNumber])
+  @@map("consciousness_archive")
 }
 
 model ConsciousnessSnapshot {
@@ -226,25 +178,4 @@ model ConsciousnessSnapshot {
 
   @@index([haseefId, createdAt])
   @@map("consciousness_snapshots")
-}
-
-model PendingToolCall {
-  id              String    @id @default(uuid()) @db.Uuid
-  haseefId        String    @map("haseef_id") @db.Uuid
-  runId           String    @map("run_id") @db.Uuid
-  toolCallId      String    @unique @map("tool_call_id")
-  toolName        String    @map("tool_name")
-  args            Json      @db.JsonB
-  status          String    @default("pending")
-  result          Json?     @db.JsonB
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(6)
-  expiresAt       DateTime? @map("expires_at") @db.Timestamptz(6)
-
-  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
-  run    Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
-
-  @@index([haseefId, status])
-  @@index([status, expiresAt])
-  @@map("pending_tool_calls")
 }

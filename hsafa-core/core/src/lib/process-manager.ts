@@ -2,7 +2,7 @@ import { prisma } from './db.js';
 import { startHaseefProcess } from './agent-process.js';
 
 // =============================================================================
-// Process Manager (v4)
+// Process Manager (v5)
 //
 // Manages all Haseef processes. One process per Haseef.
 // Spawns processes at startup, handles dynamic creation/deletion.
@@ -41,7 +41,7 @@ export async function startProcess(
     haseefId,
     haseefName,
     signal: abortController.signal,
-  }).catch((err) => {
+  }).catch((err: unknown) => {
     console.error(`[process-manager] ${haseefName} process crashed:`, err);
     processes.delete(haseefId);
   });

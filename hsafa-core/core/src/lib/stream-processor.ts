@@ -1,20 +1,14 @@
-import { emitRunEvent } from './run-events.js';
+import { redis } from './redis.js';
 
 // =============================================================================
-// Stream Processor (v4)
+// Stream Processor (v5)
 //
-// v4: Domain-specific streaming is handled by extensions, not core.
-// This module handles:
-//   1. Tool call collection (for the process loop return value)
-//   2. Duration tracking (tool-input-start → tool-result)
-//   3. Run-stream events (text.delta, tool-input.delta, tool.started,
-//      tool.ready, tool.done, tool.error, step.finish, run.finish)
-//   4. Internal text collection (debug)
-//   5. Finish / error handling
-//
-// Extensions that want real-time streaming (e.g. ext-spaces) subscribe
-// to run:{runId} and forward relevant events. Extensions that don't
-// support streaming (e.g. ext-whatsapp) simply ignore these events.
+// Consumes AI SDK fullStream and:
+//   1. Collects tool calls for the process loop
+//   2. Tracks tool durations
+//   3. Publishes real-time events to haseef:{haseefId}:stream (Redis Pub/Sub)
+//   4. Collects internal text (debug)
+//   5. Handles errors
 // =============================================================================
 
 // =============================================================================
@@ -71,8 +65,9 @@ export async function processStream(
 
   // ── Run-stream emit helper ──────────────────────────────────────────────
 
-  const toRun = async (payload: Record<string, unknown>) => {
-    await emitRunEvent(runId, payload as { type: string } & Record<string, unknown>);
+  const emit = async (payload: Record<string, unknown>) => {
+    const channel = `haseef:${haseefId}:stream`;
+    await redis.publish(channel, JSON.stringify(payload)).catch(() => {});
   };
 
   // ── Stream loop ───────────────────────────────────────────────────────────
@@ -86,7 +81,7 @@ export async function processStream(
         internalText += delta;
         if (delta) {
           // Fire-and-forget: never block the AI stream for per-token events
-          void toRun({
+          void emit({
             type: 'text.delta',
             runId,
             haseefId,
@@ -110,7 +105,7 @@ export async function processStream(
 
         activeTiming.set(toolCallId, { toolName, startedAt: Date.now() });
 
-        await toRun({
+        await emit({
           type: 'tool.started',
           streamId: toolCallId,
           runId,
@@ -127,7 +122,7 @@ export async function processStream(
         const timing = activeTiming.get(toolCallId);
         if (argsDelta && timing) {
           // Fire-and-forget: real-time from AI — never block stream for Redis publish
-          void toRun({
+          void emit({
             type: 'tool-input.delta',
             streamId: toolCallId,
             runId,
@@ -147,7 +142,7 @@ export async function processStream(
 
         toolCalls.push({ toolCallId, toolName, args, durationMs: undefined });
 
-        await toRun({
+        await emit({
           type: 'tool.ready',
           streamId: toolCallId,
           runId,
@@ -173,7 +168,7 @@ export async function processStream(
           activeTiming.delete(toolCallId);
         }
 
-        await toRun({
+        await emit({
           type: 'tool.done',
           streamId: toolCallId,
           runId,
@@ -188,7 +183,7 @@ export async function processStream(
       case 'step-finish':
       case 'finish-step':
         if (part.finishReason) finishReason = part.finishReason as string;
-        await toRun({
+        await emit({
           type: 'step.finish',
           runId,
           haseefId,
@@ -233,7 +228,7 @@ export async function processStream(
 
         // Clean up any timing entries and emit run-stream errors
         for (const [toolCallId, timing] of activeTiming) {
-          await toRun({
+          await emit({
             type: 'tool.error',
             streamId: toolCallId,
             runId,
