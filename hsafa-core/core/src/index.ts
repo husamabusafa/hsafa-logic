@@ -15,7 +15,7 @@ import { startAllProcesses, stopAllProcesses, getProcessCount, getProcessStatuse
 // =============================================================================
 // Hsafa Core (v5)
 //
-// No extensions. No MCP. No plan scheduler.
+// No extensions. No plan scheduler.
 // Services connect via:
 //   POST /api/haseefs/:id/events      — push events
 //   PUT  /api/haseefs/:id/scopes/...  — register tools

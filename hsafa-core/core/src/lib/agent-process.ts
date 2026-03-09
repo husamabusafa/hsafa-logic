@@ -30,8 +30,6 @@ import { HaseefConfigSchema } from '../agent-builder/types.js';
 //
 // The think loop — one long-running process per Haseef.
 // Cycle: SLEEP → DRAIN → FETCH → BUILD → THINK → SAVE → repeat
-//
-// No extensions. No dynamic context injection. No MCP.
 // =============================================================================
 
 const MAX_STEPS = 20;
@@ -79,7 +77,13 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
       if (signal.aborted || !wakeEvent) break;
 
       // 2. DRAIN — pull all pending events
-      const events = await drainInbox(haseefId);
+      // BRPOP already consumed one event (wakeEvent), so drain the rest
+      // then prepend the wake event. Deduplicate by eventId.
+      const moreEvents = await drainInbox(haseefId);
+      const seen = new Set(moreEvents.map((e) => e.eventId));
+      const events = seen.has(wakeEvent.eventId)
+        ? moreEvents
+        : [wakeEvent, ...moreEvents];
       if (events.length === 0) continue;
 
       const cycleStart = Date.now();
@@ -133,7 +137,7 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
         cycleCount: newCycleCount,
         currentRunId: run.id,
       };
-      const built = buildHaseef(haseef.configJson, context, dbTools);
+      const built = await buildHaseef(haseef.configJson, context, dbTools);
 
       // 7. BUILD SYSTEM PROMPT
       const toolsByScope = new Map<string, Array<{ name: string; description: string; inputSchema: unknown }>>();
@@ -192,62 +196,71 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
       } as any);
 
       // 10. PROCESS stream
-      const streamResult = await processStream(result.fullStream, {
-        runId: run.id,
-        haseefId,
-      });
+      try {
+        const streamResult = await processStream(result.fullStream, {
+          runId: run.id,
+          haseefId,
+        });
 
-      // 11. APPEND result messages to consciousness
-      const responseMessages = await result.response;
-      if (responseMessages?.messages) {
-        for (const msg of responseMessages.messages) {
-          consciousness.messages.push(msg as unknown as ModelMessage);
+        // 11. APPEND result messages to consciousness
+        const responseMessages = await result.response;
+        if (responseMessages?.messages) {
+          for (const msg of responseMessages.messages) {
+            consciousness.messages.push(msg as unknown as ModelMessage);
+          }
+        }
+
+        // 12. PRUNE consciousness — archive old cycles if over budget
+        const maxTokens = config.consciousness?.maxTokens ?? DEFAULT_MAX_TOKENS;
+        consciousness.messages = await pruneConsciousness(
+          haseefId,
+          consciousness.messages,
+          newCycleCount,
+          maxTokens,
+        );
+
+        // 13. SAVE consciousness
+        consciousness.cycleCount = newCycleCount;
+        await saveConsciousness(haseefId, consciousness.messages, newCycleCount);
+
+        // Auto-snapshot check
+        await maybeAutoSnapshot(haseefId, newCycleCount);
+
+        // Mark events as processed
+        await markEventsProcessed(haseefId, eventIds);
+
+        // Update run record
+        const durationMs = Date.now() - cycleStart;
+        await prisma.run.update({
+          where: { id: run.id },
+          data: {
+            status: 'completed',
+            completedAt: new Date(),
+            stepCount: streamResult.toolCalls.length,
+            durationMs,
+          },
+        });
+
+        // Emit run.finished
+        await redis.publish(`haseef:${haseefId}:stream`, JSON.stringify({
+          type: 'run.finished',
+          runId: run.id,
+          haseefId,
+          cycleNumber: newCycleCount,
+          durationMs,
+          stepCount: streamResult.toolCalls.length,
+        }));
+
+        consecutiveErrors = 0;
+        console.log(`[process] ${haseefName} cycle #${newCycleCount} complete (${durationMs}ms, ${streamResult.toolCalls.length} tool calls)`);
+      } finally {
+        // Close MCP clients after cycle (regardless of success/failure)
+        for (const client of built.mcpClients) {
+          client.close().catch((err) => {
+            console.warn(`[process] ${haseefName} MCP client close error:`, err instanceof Error ? err.message : err);
+          });
         }
       }
-
-      // 12. PRUNE consciousness — archive old cycles if over budget
-      const maxTokens = config.consciousness?.maxTokens ?? DEFAULT_MAX_TOKENS;
-      consciousness.messages = await pruneConsciousness(
-        haseefId,
-        consciousness.messages,
-        newCycleCount,
-        maxTokens,
-      );
-
-      // 13. SAVE consciousness
-      consciousness.cycleCount = newCycleCount;
-      await saveConsciousness(haseefId, consciousness.messages, newCycleCount);
-
-      // Auto-snapshot check
-      await maybeAutoSnapshot(haseefId, newCycleCount);
-
-      // Mark events as processed
-      await markEventsProcessed(haseefId, eventIds);
-
-      // Update run record
-      const durationMs = Date.now() - cycleStart;
-      await prisma.run.update({
-        where: { id: run.id },
-        data: {
-          status: 'completed',
-          completedAt: new Date(),
-          stepCount: streamResult.toolCalls.length,
-          durationMs,
-        },
-      });
-
-      // Emit run.finished
-      await redis.publish(`haseef:${haseefId}:stream`, JSON.stringify({
-        type: 'run.finished',
-        runId: run.id,
-        haseefId,
-        cycleNumber: newCycleCount,
-        durationMs,
-        stepCount: streamResult.toolCalls.length,
-      }));
-
-      consecutiveErrors = 0;
-      console.log(`[process] ${haseefName} cycle #${newCycleCount} complete (${durationMs}ms, ${streamResult.toolCalls.length} tool calls)`);
 
     } catch (err) {
       consecutiveErrors++;

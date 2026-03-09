@@ -8,7 +8,7 @@ generator client {
 
 datasource db {
   provider   = "postgresql"
-  extensions = [vector]
+  // extensions = [vector] // temporarily disabled for db push without pgvector
 }
 
 // =============================================================================
@@ -96,7 +96,7 @@ model Memory {
   key            String
   value          String    @db.Text
   importance     Int       @default(5) // 1-10, set by the Haseef
-  embedding      Unsupported("vector(1536)")? // pgvector for semantic search
+  // embedding      Unsupported("vector(1536)")? // pgvector for semantic search — disabled without pgvector
   lastRecalledAt DateTime? @map("last_recalled_at") @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -155,7 +155,7 @@ model ConsciousnessArchive {
   cycleNumber  Int                             @map("cycle_number")
   summary      String                          @db.Text // compact summary of what happened
   fullMessages Json                            @map("full_messages") @db.JsonB // original messages
-  embedding    Unsupported("vector(1536)")?    // pgvector for semantic search
+  // embedding    Unsupported("vector(1536)")?    // pgvector for semantic search — disabled without pgvector
   createdAt    DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
 
   haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)

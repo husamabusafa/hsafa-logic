@@ -14,7 +14,9 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "reset:all": "tsx --env-file=.env scripts/reset-all.ts"
+    "reset:all": "tsx --env-file=.env scripts/reset-all.ts",
+    "test:api": "tsx --env-file=.env scripts/test-v5-api.ts",
+    "test:e2e": "tsx --env-file=.env scripts/test-e2e-run.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.15",

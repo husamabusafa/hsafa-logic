@@ -1,0 +1,16 @@
+{
+  "name": "@hsafa/test-service",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Test service that exercises hsafa-core v5 surface area",
+  "scripts": {
+    "start": "tsx --env-file=.env index.ts",
+    "dev": "tsx watch --env-file=.env index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.7.0",
+    "typescript": "^5"
+  }
+}

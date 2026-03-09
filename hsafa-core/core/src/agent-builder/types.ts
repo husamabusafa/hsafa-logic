@@ -38,6 +38,24 @@ export const EmbeddingModelConfigSchema = z.object({
 
 export type EmbeddingModelConfig = z.infer<typeof EmbeddingModelConfigSchema>;
 
+/** MCP server connection config */
+export const MCPServerConfigSchema = z.object({
+  /** Display name for logging */
+  name: z.string().optional(),
+  /** Transport type: 'http' (recommended), 'sse', or 'stdio' */
+  transport: z.enum(['http', 'sse', 'stdio']),
+  /** Server URL (required for http/sse) */
+  url: z.string().optional(),
+  /** Additional HTTP headers (optional, for http/sse) */
+  headers: z.record(z.string(), z.string()).optional(),
+  /** Command to run (required for stdio) */
+  command: z.string().optional(),
+  /** Arguments for stdio command */
+  args: z.array(z.string()).optional(),
+});
+
+export type MCPServerConfig = z.infer<typeof MCPServerConfigSchema>;
+
 /** Consciousness settings */
 export const ConsciousnessConfigSchema = z.object({
   /** Maximum tokens in consciousness before archival triggers */
@@ -58,6 +76,8 @@ export const HaseefConfigSchema = z.object({
   consciousness: ConsciousnessConfigSchema.optional(),
   /** Default timeout for sync action dispatch (ms) */
   actionTimeout: z.number().optional(),
+  /** MCP servers to connect to each cycle */
+  mcpServers: z.array(MCPServerConfigSchema).optional(),
 });
 
 export type HaseefConfig = z.infer<typeof HaseefConfigSchema>;
@@ -117,8 +137,10 @@ export interface HaseefProcessContext {
 // =============================================================================
 
 export interface BuiltHaseef {
-  /** AI SDK–compatible tools object (prebuilt + scoped) */
+  /** AI SDK–compatible tools object (prebuilt + scoped + MCP) */
   tools: Record<string, unknown>;
   /** The resolved LLM model instance */
   model: unknown;
+  /** Active MCP clients to close after cycle completes */
+  mcpClients: Array<{ close(): Promise<void> }>;
 }

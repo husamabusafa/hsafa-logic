@@ -61,6 +61,7 @@ for information when it needs it, just like a human looks things up.
 
 ```
 ai, @ai-sdk/anthropic, @ai-sdk/openai, @ai-sdk/google, @ai-sdk/xai, @openrouter/ai-sdk-provider
+@ai-sdk/mcp
 @prisma/client, @prisma/adapter-pg, pg
 ioredis
 express, cors
@@ -617,9 +618,19 @@ INSTRUCTIONS:
   "embeddingModel": { "provider": "google", "model": "text-embedding-004" },
   "instructions": "You are Atlas, a thoughtful entity.",
   "consciousness": { "maxTokens": 200000 },
-  "actionTimeout": 60000
+  "actionTimeout": 60000,
+  "mcpServers": [
+    { "name": "filesystem", "transport": "http", "url": "https://mcp.example.com/fs" },
+    { "name": "local-db", "transport": "stdio", "command": "node", "args": ["mcp-db-server.js"] }
+  ]
 }
 ```
+
+`mcpServers` is optional. When configured, the core connects to each MCP server
+at the start of every cycle, pulls their tools via `@ai-sdk/mcp`'s `createMCPClient`,
+merges them with prebuilt + scoped tools, and closes the clients after the cycle
+completes. MCP tools are just another tool source — they work identically to
+scoped tools from the LLM's perspective.
 
 `configHash` is computed server-side on write:
 `crypto.createHash('md5').update(JSON.stringify(configJson)).digest('hex')`
@@ -710,7 +721,7 @@ core/src/
     model-middleware.ts              # Logging, cost tracking
   agent-builder/
     types.ts                        # Shared types
-    builder.ts                      # Build model + tools
+    builder.ts                      # Build model + tools (prebuilt + scoped + MCP)
     prompt-builder.ts               # System prompt construction
     prebuilt-tools/
       registry.ts                   # done, set_memories, delete_memories, recall_memories, peek_inbox

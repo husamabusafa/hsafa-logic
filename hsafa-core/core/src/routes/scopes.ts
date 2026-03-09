@@ -22,6 +22,14 @@ scopesRouter.put('/:scope/tools', async (req, res) => {
       return;
     }
 
+    // Validate ALL tools BEFORE deleting (avoid data loss on validation error)
+    for (const t of tools) {
+      if (!t.name || !t.description || !t.inputSchema) {
+        res.status(400).json({ error: 'Each tool must have name, description, and inputSchema' });
+        return;
+      }
+    }
+
     // Delete all existing tools in this scope
     await prisma.haseefTool.deleteMany({
       where: { haseefId, scope },
@@ -30,10 +38,6 @@ scopesRouter.put('/:scope/tools', async (req, res) => {
     // Create new tools
     const created = [];
     for (const t of tools) {
-      if (!t.name || !t.description || !t.inputSchema) {
-        res.status(400).json({ error: 'Each tool must have name, description, and inputSchema' });
-        return;
-      }
       const tool = await prisma.haseefTool.create({
         data: {
           haseefId,
