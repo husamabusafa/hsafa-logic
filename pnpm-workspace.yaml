@@ -6,6 +6,7 @@ packages:
   - hsafa-spaces/sdks/react-native-sdk
   - hsafa-spaces/rn-app
   - hsafa-spaces/use-case-app
+  - hsafa-cases
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver
