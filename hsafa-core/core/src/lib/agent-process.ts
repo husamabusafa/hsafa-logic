@@ -185,14 +185,14 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
       }));
 
       // Use streamText from AI SDK
-      const { streamText } = await import('ai');
+      const { streamText, stepCountIs, hasToolCall } = await import('ai');
       const result = streamText({
         model: built.model as any,
         tools: built.tools as any,
         system: systemPrompt,
         messages: messagesForLLM as any,
-        maxSteps: MAX_STEPS,
-        experimental_toolCallStreaming: true,
+        stopWhen: [stepCountIs(MAX_STEPS), hasToolCall('done')],
+        toolCallStreaming: true,
       } as any);
 
       // 10. PROCESS stream
