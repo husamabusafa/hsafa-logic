@@ -292,7 +292,10 @@ export function formatInboxEvents(events: SenseEvent[]): string {
     const senderName = data.senderName as string | undefined;
     const content = data.content as string | undefined;
     if (content && senderName) {
-      return `[${e.scope}:${e.type}]${ts} ${senderName}: "${content}"`;
+      const spaceName = data.spaceName as string | undefined;
+      const spaceId = data.spaceId as string | undefined;
+      const spaceInfo = spaceName && spaceId ? ` in "${spaceName}" (spaceId:${spaceId})` : '';
+      return `[${e.scope}:${e.type}]${ts} ${senderName}${spaceInfo}: "${content}"`;
     }
 
     // Generic format

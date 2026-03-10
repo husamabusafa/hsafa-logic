@@ -1,15 +1,15 @@
 // =============================================================================
-// Extension Module — Bootstrap + Lifecycle + Tool Handlers
+// Spaces Service Module (V5)
 //
-// The spaces-app IS the extension. This module handles:
-//   1. Bootstrap: self-register with Core, discover existing connections
-//   2. Lifecycle: haseef.connected/disconnected → start/stop stream bridges
-//   3. Tool calls: enter_space, send_space_message, read_space_messages
-//      — all direct Prisma/service calls (no HTTP round-trips)
-//   4. Connection registry: tracks which haseefs are in which spaces
-//      — used by inbox handler to push sense events
+// The spaces-app acts as a V5 service. This module handles:
+//   1. Bootstrap: register tools with Core, resolve entities, start listeners
+//   2. Tool execution: send_message, get_messages, get_spaces, confirmAction,
+//      displayChart — all direct Prisma/service calls (no HTTP round-trips)
+//   3. Action listener: consumes Redis Streams for tool dispatch from Core
+//   4. Stream bridge: forwards Core run events to space SSE channels
+//   5. Sense events: pushes space messages to Core via V5 events API
 //
-// Replaces ext-spaces entirely. No SpacesClient, no SpacesListener.
+// V5 protocol: register tools → listen for actions → execute → submit results
 // =============================================================================
 
 import Redis from "ioredis";
@@ -21,9 +21,8 @@ import {
   emitSmartSpaceEvent,
   markSpaceRunActive,
 } from "../smartspace-events";
-import { Hsafa } from "@hsafa/node";
-import { loadExtensionConfig, type ExtensionConfig } from "./config";
-import { MANIFEST } from "./manifest";
+import { loadServiceConfig, type ServiceConfig } from "./config";
+import { SCOPE, TOOLS } from "./manifest";
 import { setInboxHandler, type InboxMessageParams } from "./inbox";
 
 // =============================================================================
@@ -42,19 +41,28 @@ interface ActiveConnection {
   runSpaces: Map<string, string>;
 }
 
-interface ExtensionState {
-  config: ExtensionConfig | null;
-  hsafa: Hsafa | null;
+interface ServiceState {
+  config: ServiceConfig | null;
   connections: Map<string, ActiveConnection>;
   /** Single shared Redis subscriber for all haseef stream bridges */
   sharedSubscriber: InstanceType<typeof Redis> | null;
+  /** Redis client for action stream consumption (XREADGROUP) */
+  actionConsumer: InstanceType<typeof Redis> | null;
+  /** Whether the action listener loop is running */
+  actionListenerRunning: boolean;
 }
 
-const g = globalThis as unknown as { __extState: ExtensionState };
-if (!g.__extState) {
-  g.__extState = { config: null, hsafa: null, connections: new Map(), sharedSubscriber: null };
+const g = globalThis as unknown as { __svcState: ServiceState };
+if (!g.__svcState) {
+  g.__svcState = {
+    config: null,
+    connections: new Map(),
+    sharedSubscriber: null,
+    actionConsumer: null,
+    actionListenerRunning: false,
+  };
 }
-const state = g.__extState;
+const state = g.__svcState;
 
 /** Find all connections interested in a given space */
 export function getConnectionsForSpace(
@@ -71,142 +79,426 @@ export function getConnectionForHaseef(haseefId: string): ActiveConnection | und
 }
 
 // =============================================================================
+// V5 Core API Helpers
+// =============================================================================
+
+function coreHeaders(): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "x-api-key": state.config!.apiKey,
+  };
+}
+
+/** PUT /api/haseefs/:id/scopes/:scope/tools — Sync all tools in scope */
+async function syncTools(haseefId: string): Promise<void> {
+  const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/scopes/${SCOPE}/tools`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: coreHeaders(),
+    body: JSON.stringify({ tools: TOOLS }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`syncTools failed for ${haseefId}: ${res.status} ${text}`);
+  }
+}
+
+/** POST /api/haseefs/:id/events — Push V5 sense events */
+async function pushSenseEvent(
+  haseefId: string,
+  event: {
+    eventId: string;
+    scope: string;
+    type: string;
+    data: Record<string, unknown>;
+    timestamp?: string;
+  },
+): Promise<void> {
+  const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/events`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: coreHeaders(),
+    body: JSON.stringify({
+      eventId: event.eventId,
+      scope: event.scope,
+      type: event.type,
+      data: event.data,
+      timestamp: event.timestamp ?? new Date().toISOString(),
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`pushSenseEvent failed: ${res.status} ${text}`);
+  }
+}
+
+/** POST /api/haseefs/:id/actions/:actionId/result — Submit action result */
+async function submitActionResult(
+  haseefId: string,
+  actionId: string,
+  result: unknown,
+): Promise<void> {
+  const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/actions/${actionId}/result`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: coreHeaders(),
+    body: JSON.stringify(result),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    console.error(`[spaces-service] submitActionResult failed: ${res.status} ${text}`);
+  }
+}
+
+// =============================================================================
 // Bootstrap
 // =============================================================================
 
 export async function bootstrapExtension(): Promise<void> {
-  state.config = loadExtensionConfig();
-  if (!state.config) {
-    console.warn("[extension] Extension features disabled (missing config)");
+  const config = loadServiceConfig();
+  if (!config) {
+    console.warn("[spaces-service] Service disabled (missing config)");
+    return;
+  }
+  state.config = config;
+
+  // Register inbox handler
+  setInboxHandler(handleInboxMessage);
+
+  // Start the shared Redis subscriber for stream bridges
+  await startSharedSubscriber();
+
+  // Auto-discover haseefs from Core
+  const haseefs = await discoverHaseefs();
+  if (haseefs.length === 0) {
+    console.warn("[spaces-service] No haseefs found in Core — nothing to connect to");
     return;
   }
 
-  state.hsafa = new Hsafa({
-    coreUrl: state.config.coreUrl,
-    extensionKey: state.config.extensionKey,
-  });
-
-  // Register inbox handler (replaces SpacesListener)
-  setInboxHandler(handleInboxMessage);
-
-  // Start the single shared Redis subscriber for all stream bridges (§3.4)
-  await startSharedSubscriber();
-
-  // Self-discover existing connections
-  try {
-    const me = await state.hsafa.me();
-    console.log(`[extension] Extension: ${me.name} (${me.id})`);
-    console.log(`[extension] ${me.connections.length} existing connection(s)`);
-
-    for (const conn of me.connections) {
-      await handleLifecycle({
-        type: "haseef.connected",
-        haseefId: conn.haseefId,
-        haseefName: conn.haseefName,
-        config: conn.config,
-      });
+  // For each discovered haseef: set up connection + sync tools
+  for (const h of haseefs) {
+    try {
+      await setupHaseefConnection(h);
+    } catch (err) {
+      console.error(`[spaces-service] Failed to set up haseef ${h.id}:`, err);
     }
-  } catch (err) {
-    console.warn(
-      "[extension] Bootstrap self-discovery failed (will rely on webhooks):",
-      err,
-    );
   }
 
-  console.log("[extension] Bootstrap complete");
+  // Start the action listener (Redis Streams)
+  if (config.redisUrl) {
+    startActionListener().catch((err) => {
+      console.error("[spaces-service] Action listener failed:", err);
+    });
+  } else {
+    console.warn("[spaces-service] No REDIS_URL — action listener disabled (use Redis for V5 action dispatch)");
+  }
+
+  console.log("[spaces-service] Bootstrap complete");
 }
 
-// =============================================================================
-// Lifecycle Handler
-// =============================================================================
-
-export async function handleLifecycle(
-  body: Record<string, unknown>,
-): Promise<void> {
-  const type = body.type as string;
-  const haseefId = body.haseefId as string;
-  const haseefName = (body.haseefName as string) ?? haseefId;
-  const webhookConfig = (body.config ?? {}) as Record<string, unknown>;
-
-  if (type === "haseef.connected" || type === "haseef.config_updated") {
-    // Stop existing connection if any
-    const existing = state.connections.get(haseefId);
-    if (existing) {
-      state.connections.delete(haseefId);
+/** Discover all haseefs from Core via GET /api/haseefs */
+async function discoverHaseefs(): Promise<
+  Array<{ id: string; name: string; profileJson?: Record<string, unknown> }>
+> {
+  try {
+    const url = `${state.config!.coreUrl}/api/haseefs`;
+    const res = await fetch(url, { headers: coreHeaders() });
+    if (!res.ok) {
+      console.error(`[spaces-service] Failed to list haseefs: ${res.status}`);
+      return [];
     }
+    const data = await res.json();
+    const haseefs = data.haseefs ?? [];
+    console.log(`[spaces-service] Discovered ${haseefs.length} haseef(s) from Core`);
+    return haseefs;
+  } catch (err) {
+    console.error("[spaces-service] Failed to discover haseefs:", err);
+    return [];
+  }
+}
 
-    // §3.2: Deterministic entity resolution — find or create by haseefId
-    let agentEntityId = webhookConfig.agentEntityId as string | undefined;
-    if (!agentEntityId) {
-      // Try to find existing entity by name first
-      let entity = await prisma.entity.findFirst({
-        where: { displayName: haseefName, type: "agent" },
+/** Set up a single haseef connection: read entityId from profile, resolve spaces, sync tools */
+async function setupHaseefConnection(haseef: {
+  id: string;
+  name: string;
+  profileJson?: Record<string, unknown>;
+}): Promise<void> {
+  const haseefId = haseef.id;
+  const haseefName = haseef.name;
+
+  // Read entityId from haseef profile — the canonical link between Core and Spaces
+  let agentEntityId = haseef.profileJson?.entityId as string | undefined;
+
+  if (!agentEntityId) {
+    // Fallback: find or create entity by haseef name
+    let entity = await prisma.entity.findFirst({
+      where: { displayName: haseefName, type: "agent" },
+      select: { id: true },
+    });
+
+    if (!entity) {
+      entity = await prisma.entity.create({
+        data: {
+          id: crypto.randomUUID(),
+          displayName: haseefName,
+          type: "agent",
+        },
         select: { id: true },
       });
+      console.log(`[spaces-service] Created entity for ${haseefName} → ${entity.id}`);
+    } else {
+      console.log(`[spaces-service] Resolved ${haseefName} → entityId ${entity.id}`);
+    }
 
-      // If no entity exists, auto-create one
-      if (!entity) {
-        entity = await prisma.entity.create({
-          data: {
-            id: crypto.randomUUID(),
-            displayName: haseefName,
-            type: "agent",
+    agentEntityId = entity.id;
+    console.warn(
+      `[spaces-service] Haseef "${haseefName}" has no entityId in profileJson — using fallback: ${agentEntityId}`,
+    );
+  } else {
+    console.log(`[spaces-service] ${haseefName} → entityId ${agentEntityId} (from profile)`);
+  }
+
+  // Resolve spaces this entity is a member of
+  const spaces = await getSpacesForEntity(agentEntityId);
+  const spaceIds = spaces.map((s) => s.spaceId);
+  console.log(`[spaces-service] ${haseefName} has ${spaceIds.length} space(s)`);
+
+  // Store connection
+  const conn: ActiveConnection = {
+    haseefId,
+    haseefName,
+    agentEntityId,
+    spaceIds,
+    runSpaces: new Map(),
+  };
+  state.connections.set(haseefId, conn);
+
+  // Sync tools to Core
+  await syncTools(haseefId);
+  console.log(`[spaces-service] Tools synced for ${haseefName} (scope: ${SCOPE})`);
+}
+
+// =============================================================================
+// Action Listener — Redis Streams (XREADGROUP)
+//
+// Listens for tool-call actions dispatched by Core for the "spaces" scope.
+// Each action contains: actionId, name (tool name), args, mode.
+// After execution, submits result back to Core.
+// =============================================================================
+
+async function startActionListener(): Promise<void> {
+  if (state.actionListenerRunning) return;
+  state.actionListenerRunning = true;
+
+  const redisUrl = state.config!.redisUrl!;
+  const consumer = new Redis(redisUrl, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+  });
+  state.actionConsumer = consumer;
+
+  const consumerGroup = `${SCOPE}-consumer`;
+  const consumerName = `spaces-service-${Date.now()}`;
+
+  // Create consumer groups for all connected haseef action streams
+  for (const haseefId of state.connections.keys()) {
+    const streamKey = `actions:${haseefId}:${SCOPE}`;
+    try {
+      await consumer.xgroup("CREATE", streamKey, consumerGroup, "0", "MKSTREAM");
+    } catch (err: any) {
+      if (!err.message?.includes("BUSYGROUP")) {
+        console.error(`[spaces-service] Failed to create consumer group for ${streamKey}:`, err.message);
+      }
+    }
+  }
+
+  console.log(`[spaces-service] Action listener started (consumer: ${consumerName})`);
+
+  // Poll loop
+  const poll = async () => {
+    while (state.actionListenerRunning) {
+      try {
+        const streamKeys = [...state.connections.keys()].map(
+          (id) => `actions:${id}:${SCOPE}`,
+        );
+
+        const results = await (consumer as any).xreadgroup(
+          "GROUP", consumerGroup, consumerName,
+          "BLOCK", 5000,
+          "STREAMS",
+          ...streamKeys,
+          ...Array(streamKeys.length).fill(">"),
+        );
+
+        if (!results) continue;
+
+        for (const [streamKey, messages] of results) {
+          // Extract haseefId from stream key: actions:{haseefId}:spaces
+          const haseefId = (streamKey as string).split(":")[1];
+
+          for (const [messageId, fields] of messages) {
+            const data: Record<string, string> = {};
+            for (let i = 0; i < fields.length; i += 2) {
+              data[fields[i]] = fields[i + 1];
+            }
+
+            const actionId = data.actionId;
+            const toolName = data.name;
+            const args = data.args ? JSON.parse(data.args) : {};
+
+            // Execute the tool
+            const result = await executeAction(haseefId, actionId, toolName, args);
+
+            // Submit result back to Core
+            await submitActionResult(haseefId, actionId, result);
+
+            // ACK the message
+            await (consumer as any).xack(streamKey, consumerGroup, messageId);
+          }
+        }
+      } catch (err: any) {
+        if (state.actionListenerRunning) {
+          console.error("[spaces-service] Action stream error:", err.message);
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
+    }
+  };
+
+  poll().catch((err) => {
+    console.error("[spaces-service] Action poll loop crashed:", err);
+    state.actionListenerRunning = false;
+  });
+}
+
+// =============================================================================
+// Action Execution — routes to the correct tool handler
+// =============================================================================
+
+async function executeAction(
+  haseefId: string,
+  actionId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  const conn = state.connections.get(haseefId);
+  const agentEntityId = conn?.agentEntityId;
+
+  console.log(`[spaces-service] [${haseefId.slice(0, 8)}] ${toolName} (${actionId.slice(0, 8)})`);
+
+  try {
+    switch (toolName) {
+      case "send_message": {
+        const spaceId = args.spaceId as string;
+        const text = args.text as string;
+        if (!spaceId || !text)
+          return { error: "spaceId and text are required" };
+        if (!agentEntityId)
+          return { error: "agentEntityId not resolved — is this haseef connected?" };
+
+        // Direct persist + emit (no HTTP call)
+        const result = await postSpaceMessage({
+          spaceId,
+          entityId: agentEntityId,
+          role: "assistant",
+          content: text,
+          metadata: {
+            type: "message_tool",
+            toolName,
+            actionId,
           },
-          select: { id: true },
         });
-        console.log(
-          `[extension] Created entity for ${haseefName} → ${entity.id}`,
-        );
-      } else {
-        console.log(
-          `[extension] Resolved ${haseefName} → entityId ${entity.id}`,
-        );
+
+        return { success: true, messageId: result.messageId };
       }
 
-      agentEntityId = entity.id;
-    }
+      case "get_messages": {
+        const spaceId = args.spaceId as string;
+        const limit = (args.limit as number) || 20;
+        if (!spaceId) return { error: "spaceId is required" };
 
-    // Resolve spaceIds
-    let spaceIds = (webhookConfig.connectedSpaceIds as string[]) ?? [];
-    if (spaceIds.length === 0) {
-      const spaces = await getSpacesForEntity(agentEntityId);
-      spaceIds = spaces.map((s) => s.spaceId);
-      console.log(
-        `[extension] Resolved ${haseefName} spaces: ${spaceIds.length} space(s)`,
-      );
-    }
+        const messages = await prisma.smartSpaceMessage.findMany({
+          where: { smartSpaceId: spaceId },
+          orderBy: { seq: "desc" },
+          take: Math.min(limit, 100),
+          include: {
+            entity: {
+              select: { id: true, displayName: true, type: true },
+            },
+          },
+        });
 
-    const newConn: ActiveConnection = {
-      haseefId,
-      haseefName,
-      agentEntityId,
-      spaceIds,
-      runSpaces: new Map(),
-    };
-    state.connections.set(haseefId, newConn);
+        return { messages: messages.reverse() };
+      }
 
-    console.log(
-      `[extension] Connected ${haseefName} (${spaceIds.length} spaces)`,
-    );
-  } else if (type === "haseef.disconnected") {
-    const existing = state.connections.get(haseefId);
-    if (existing) {
-      state.connections.delete(haseefId);
-      console.log(`[extension] Disconnected ${haseefName}`);
+      case "get_spaces": {
+        if (!agentEntityId)
+          return { error: "agentEntityId not resolved — is this haseef connected?" };
+
+        const memberships = await getSpacesForEntity(agentEntityId);
+        const spaceIds = memberships.map((m) => m.spaceId);
+
+        if (spaceIds.length === 0) return { spaces: [] };
+
+        const spaces = await prisma.smartSpace.findMany({
+          where: { id: { in: spaceIds } },
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            _count: { select: { memberships: true } },
+          },
+        });
+
+        return {
+          spaces: spaces.map((s) => ({
+            id: s.id,
+            name: s.name,
+            description: s.description,
+            memberCount: s._count.memberships,
+          })),
+        };
+      }
+
+      case "confirmAction": {
+        const spaceId = args.spaceId as string;
+        if (!spaceId) return { error: "spaceId is required" };
+        if (!args.title || !args.message)
+          return { error: "title and message are required" };
+        return {
+          status: "pending",
+          waitingForUser: true,
+          message: "Waiting for user to confirm or reject",
+        };
+      }
+
+      case "displayChart": {
+        const spaceId = args.spaceId as string;
+        if (!spaceId) return { error: "spaceId is required" };
+        if (!args.type || !args.title || !Array.isArray(args.data))
+          return { error: "type, title, and data are required" };
+        return { success: true };
+      }
+
+      default:
+        return { error: `Unknown tool: ${toolName}` };
     }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[spaces-service] Tool execution error (${toolName}):`, errMsg);
+    return { error: errMsg };
   }
 }
 
 // =============================================================================
-// Shared Redis Subscriber (§3.4 — single connection for all haseef streams)
+// Shared Redis Subscriber — forwards Core run events to space SSE channels
 //
 // Uses psubscribe('haseef:*:stream') to receive events for ALL connected
-// haseefs through one Redis connection, instead of one per haseef.
-// Includes reconnection handling (§3.5).
+// haseefs through one Redis connection.
 // =============================================================================
 
 async function startSharedSubscriber(): Promise<void> {
-  if (state.sharedSubscriber) return; // Already running
+  if (state.sharedSubscriber) return;
 
   const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
   const sub = new Redis(REDIS_URL, {
@@ -214,17 +506,17 @@ async function startSharedSubscriber(): Promise<void> {
     enableReadyCheck: false,
     retryStrategy(times) {
       const delay = Math.min(times * 500, 30_000);
-      console.log(`[extension] Redis stream subscriber reconnecting in ${delay}ms (attempt ${times})`);
+      console.log(`[spaces-service] Redis stream subscriber reconnecting in ${delay}ms (attempt ${times})`);
       return delay;
     },
   });
 
   sub.on("error", (err) => {
-    console.error(`[extension] Redis stream subscriber error:`, err.message);
+    console.error(`[spaces-service] Redis stream subscriber error:`, err.message);
   });
 
   sub.on("connect", () => {
-    console.log(`[extension] Redis stream subscriber connected`);
+    console.log(`[spaces-service] Redis stream subscriber connected`);
   });
 
   await sub.psubscribe("haseef:*:stream");
@@ -245,7 +537,7 @@ async function startSharedSubscriber(): Promise<void> {
 //
 // run.start / run.finish  → agent.active / agent.inactive (all spaces)
 // tool.started            → tool.started  (trigger space only)
-// tool-input.delta        → tool.streaming (trigger space only, fire-and-forget)
+// tool-input.delta        → tool.streaming (trigger space only)
 // tool.done               → tool.done      (trigger space only)
 // tool.error              → tool.error     (trigger space only)
 // =============================================================================
@@ -257,6 +549,7 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
       runId?: string;
       triggerType?: string;
       triggerSource?: string;
+      triggerScope?: string;
       streamId?: string;
       toolName?: string;
       delta?: string;
@@ -267,8 +560,13 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
 
     const runId = event.runId;
 
-    if (event.type === "run.start") {
-      if (runId && event.triggerType?.startsWith("ext-spaces:") && event.triggerSource) {
+    if (event.type === "run.started") {
+      // V5: triggerScope === "spaces" and triggerSource === spaceId
+      const isSpacesTrigger =
+        (event.triggerScope === SCOPE) ||
+        event.triggerType?.startsWith("ext-spaces:") ||
+        event.triggerType?.startsWith("spaces:");
+      if (runId && isSpacesTrigger && event.triggerSource) {
         conn.runSpaces.set(runId, event.triggerSource);
       }
       for (const spaceId of conn.spaceIds) {
@@ -333,7 +631,7 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           runId,
         });
       }
-    } else if (event.type === "run.finish") {
+    } else if (event.type === "run.finished") {
       for (const spaceId of conn.spaceIds) {
         if (runId) {
           void clearSpaceRunActive(spaceId, runId);
@@ -351,7 +649,7 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
 }
 
 // =============================================================================
-// §3.3: Space Auto-Discovery — membership.changed
+// Space Auto-Discovery — membership.changed
 //
 // When an entity is added to or removed from a space, update the connection's
 // spaceIds so the haseef automatically sees new spaces without reconnecting.
@@ -368,150 +666,32 @@ export function handleMembershipChanged(
     if (action === "added" && !conn.spaceIds.includes(spaceId)) {
       conn.spaceIds.push(spaceId);
       console.log(
-        `[extension] ${conn.haseefName} auto-discovered space ${spaceId}`,
+        `[spaces-service] ${conn.haseefName} auto-discovered space ${spaceId}`,
       );
     } else if (action === "removed") {
       conn.spaceIds = conn.spaceIds.filter((id) => id !== spaceId);
       console.log(
-        `[extension] ${conn.haseefName} removed from space ${spaceId}`,
+        `[spaces-service] ${conn.haseefName} removed from space ${spaceId}`,
       );
     }
   }
 }
 
 // =============================================================================
-// Tool Call Handler — Direct DB calls (no HTTP round-trips)
-// =============================================================================
-
-export async function handleToolCall(
-  body: Record<string, unknown>,
-): Promise<unknown> {
-  const toolName = body.toolName as string;
-  const args = body.args as Record<string, unknown>;
-  const haseefId = body.haseefId as string;
-  const toolCallId = body.toolCallId as string | undefined;
-
-  // Resolve agentEntityId from connection state
-  const conn = state.connections.get(haseefId);
-  const agentEntityId = conn?.agentEntityId;
-
-  switch (toolName) {
-    case "enter_space": {
-      const spaceId = args.spaceId as string;
-      if (!spaceId) return { error: "spaceId is required" };
-
-      const [space, members, messages] = await Promise.all([
-        prisma.smartSpace
-          .findUnique({ where: { id: spaceId } })
-          .catch(() => ({ id: spaceId, name: null })),
-        getMembersOfSpace(spaceId).catch(() => []),
-        prisma.smartSpaceMessage
-          .findMany({
-            where: { smartSpaceId: spaceId },
-            orderBy: { seq: "desc" },
-            take: 20,
-            include: {
-              entity: {
-                select: { id: true, displayName: true, type: true },
-              },
-            },
-          })
-          .then((msgs) => msgs.reverse())
-          .catch(() => []),
-      ]);
-
-      return { space, members, messages };
-    }
-
-    case "send_space_message": {
-      const spaceId = args.spaceId as string;
-      const text = args.text as string;
-      if (!spaceId || !text)
-        return { error: "spaceId and text are required" };
-      if (!agentEntityId)
-        return {
-          error:
-            "agentEntityId not resolved — is this haseef connected?",
-        };
-
-      // Direct persist + emit (no HTTP call)
-      const result = await postSpaceMessage({
-        spaceId,
-        entityId: agentEntityId,
-        role: "assistant",
-        content: text,
-        metadata: {
-          type: "message_tool",
-          toolName,
-          ...(toolCallId ? { toolCallId } : {}),
-        },
-      });
-
-      return { success: true, messageId: result.messageId };
-    }
-
-    case "read_space_messages": {
-      const spaceId = args.spaceId as string;
-      const limit = (args.limit as number) || 20;
-      if (!spaceId) return { error: "spaceId is required" };
-
-      const messages = await prisma.smartSpaceMessage.findMany({
-        where: { smartSpaceId: spaceId },
-        orderBy: { seq: "desc" },
-        take: Math.min(limit, 100),
-        include: {
-          entity: {
-            select: { id: true, displayName: true, type: true },
-          },
-        },
-      });
-
-      return { messages: messages.reverse() };
-    }
-
-    case "confirmAction": {
-      // Async tool: return pending so Core creates PendingToolCall and waits.
-      // UI shows ConfirmationUI from streamed tool args; user submits via tool-results API.
-      const spaceId = args.spaceId as string;
-      if (!spaceId) return { error: "spaceId is required" };
-      if (!args.title || !args.message) return { error: "title and message are required" };
-      return {
-        status: "pending",
-        waitingForUser: true,
-        message: "Waiting for user to confirm or reject",
-      };
-    }
-
-    case "displayChart": {
-      // Display-only tool: UI renders ChartDisplay from streamed args.
-      const spaceId = args.spaceId as string;
-      if (!spaceId) return { error: "spaceId is required" };
-      if (!args.type || !args.title || !Array.isArray(args.data))
-        return { error: "type, title, and data are required" };
-      return { success: true };
-    }
-
-    default:
-      return { error: `Unknown tool: ${toolName}` };
-  }
-}
-
-// =============================================================================
-// Inbox Handler (replaces SpacesListener)
+// Inbox Handler — V5 Sense Events
 //
 // Called by space-service.ts after persisting a message.
-// Pushes sense events to Core for connected haseefs.
+// Pushes V5 sense events to Core for connected haseefs.
 // =============================================================================
 
 async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
-  if (!state.hsafa) return;
+  if (!state.config) return;
 
   const {
     spaceId,
     entityId,
     messageId,
     content,
-    role,
     spaceName,
     senderName,
     senderType,
@@ -522,16 +702,17 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
   if (conns.length === 0) return;
 
   // Skip messages from THIS haseef's own entity (avoid loops)
-  // Do NOT filter by role — other haseefs' messages should be forwarded
   for (const conn of conns) {
     if (entityId === conn.agentEntityId) continue;
 
-    const senseEvent = {
+    console.log(
+      `[spaces-service] → sense: ${senderName} in "${spaceName}": "${content.slice(0, 50)}"`,
+    );
+
+    await pushSenseEvent(conn.haseefId, {
       eventId: messageId,
-      channel: "ext-spaces",
-      source: spaceId,
+      scope: SCOPE,
       type: "message",
-      timestamp: new Date().toISOString(),
       data: {
         messageId,
         spaceId,
@@ -541,12 +722,6 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
         senderType,
         content,
       },
-    };
-
-    console.log(
-      `[extension] → sense: ${senderName} in "${spaceName}": "${content.slice(0, 50)}"`,
-    );
-
-    await state.hsafa!.pushSense(conn.haseefId, senseEvent);
+    });
   }
 }

@@ -19,7 +19,6 @@
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "@hsafa/node": "workspace:*",
     "eventsource": "^3.0.2",
     "ioredis": "^5.9.2",
     "jose": "^6.1.3",

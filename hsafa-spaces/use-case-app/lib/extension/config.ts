@@ -1,25 +1,32 @@
 // =============================================================================
-// Extension Configuration
+// Spaces Service Configuration (V5)
 //
-// Reads extension-related env vars. The spaces-app doubles as an extension
-// server — these vars configure the connection to hsafa-core.
+// Reads env vars for the spaces service connection to hsafa-core.
+// The spaces-app acts as a V5 service: registers tools under the "spaces"
+// scope, listens for actions via Redis Streams, and pushes sense events.
 // =============================================================================
 
-export interface ExtensionConfig {
+export interface ServiceConfig {
+  /** Core API base URL (e.g. http://localhost:3001) */
   coreUrl: string;
-  extensionKey: string;
+  /** V5 API key for authenticating with Core (x-api-key header) */
+  apiKey: string;
+  /** Redis URL for action streams (falls back to SSE if omitted) */
+  redisUrl?: string;
 }
 
-export function loadExtensionConfig(): ExtensionConfig {
+export function loadServiceConfig(): ServiceConfig | null {
   const coreUrl = process.env.HSAFA_GATEWAY_URL || process.env.CORE_URL;
-  const extensionKey = process.env.EXTENSION_KEY;
+  const apiKey = process.env.CORE_API_KEY || process.env.EXTENSION_KEY;
 
-  if (!coreUrl || !extensionKey) {
+  if (!coreUrl || !apiKey) {
     console.warn(
-      "[extension] Missing env vars (HSAFA_GATEWAY_URL/CORE_URL, EXTENSION_KEY) — extension features disabled",
+      "[spaces-service] Missing env vars (HSAFA_GATEWAY_URL/CORE_URL, CORE_API_KEY) — service disabled",
     );
-    return null as any;
+    return null;
   }
 
-  return { coreUrl, extensionKey };
+  const redisUrl = process.env.REDIS_URL;
+
+  return { coreUrl, apiKey, redisUrl };
 }
