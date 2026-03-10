@@ -12,8 +12,8 @@ All Redis key patterns used by hsafa-core and extensions.
 
 | Pattern | Publisher | Subscriber | Purpose |
 |---------|-----------|------------|---------|
-| `run:{runId}` | `lib/run-events.ts` | `routes/runs.ts` (SSE) | Per-run event stream (run.start, tool.started, tool-input.delta, tool.done, tool.error, run.finish) |
-| `haseef:{haseefId}:stream` | `lib/run-events.ts` | Extensions (psubscribe `haseef:*:stream`) | Per-haseef event stream — same events as run channel, used by extensions for stream bridging |
+| `run:{runId}` | `lib/run-events.ts` | `routes/runs.ts` (SSE) | Per-run event stream (run.start, tool.started, tool.ready, tool.done, tool.error, run.finish) |
+| `haseef:{haseefId}:stream` | `lib/stream-processor.ts` | Services (subscribe `haseef:{id}:stream`) | Real-time text deltas + tool events (text.delta, tool.started, tool.ready, tool.done) |
 | `tool-result:{callId}` | `routes/runs.ts` | `lib/extension-manager.ts` | Instant delivery of tool results to actively-waiting extension tools |
 | `tool-workers` | `lib/tool-worker-events.ts` | `routes/tool-workers.ts` (SSE) | Broadcasts tool call events to external tool worker processes |
 

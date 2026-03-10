@@ -7,7 +7,7 @@ import { redis } from './redis.js';
 //   1. Collects tool calls for the process loop
 //   2. Tracks tool durations
 //   3. Publishes real-time events to haseef:{haseefId}:stream (Redis Pub/Sub)
-//   4. Collects internal text (debug)
+//   4. Streams text deltas (usable by services for TTS, display, etc.)
 //   5. Handles errors
 // =============================================================================
 
@@ -34,8 +34,8 @@ export interface StreamResult {
   toolCalls: CollectedToolCall[];
   /** LLM finish reason */
   finishReason: string;
-  /** Haseef's internal text output (never streamed — collected for debug) */
-  internalText: string;
+  /** Haseef's text output — also streamed as text.delta events for services */
+  text: string;
 }
 
 // =============================================================================
@@ -60,7 +60,7 @@ export async function processStream(
   const toolCalls: CollectedToolCall[] = [];
   /** Tracking: toolCallId → { toolName, startedAt } for duration */
   const activeTiming = new Map<string, { toolName: string; startedAt: number }>();
-  let internalText = '';
+  let text = '';
   let finishReason = 'unknown';
 
   // ── Run-stream emit helper ──────────────────────────────────────────────
@@ -75,10 +75,10 @@ export async function processStream(
   for await (const part of fullStream) {
     switch (part.type as string) {
 
-      // ── Agent text — published for services that want streaming ────────
+      // ── Text output — streamed to services (TTS, display, etc.) ────────
       case 'text-delta': {
         const delta = (part.text as string) ?? '';
-        internalText += delta;
+        text += delta;
         if (delta) {
           // Fire-and-forget: never block the AI stream for per-token events
           void emit({
@@ -112,25 +112,6 @@ export async function processStream(
           haseefId,
           toolName,
         });
-        break;
-      }
-
-      // ── Partial args — published for streaming-capable consumers ────────
-      case 'tool-input-delta': {
-        const toolCallId = (part.id ?? part.toolCallId) as string;
-        const argsDelta = (part.argsTextDelta ?? part.inputTextDelta ?? '') as string;
-        const timing = activeTiming.get(toolCallId);
-        if (argsDelta && timing) {
-          // Fire-and-forget: real-time from AI — never block stream for Redis publish
-          void emit({
-            type: 'tool-input.delta',
-            streamId: toolCallId,
-            runId,
-            haseefId,
-            toolName: timing.toolName,
-            delta: argsDelta,
-          });
-        }
         break;
       }
 
@@ -246,6 +227,6 @@ export async function processStream(
     }
   }
 
-  return { toolCalls, finishReason, internalText };
+  return { toolCalls, finishReason, text };
 }
 

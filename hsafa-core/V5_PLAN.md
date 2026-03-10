@@ -519,7 +519,7 @@ startHaseefProcess(haseefId):
     })
     result = agent.stream({ messages: consciousness })
 
-    // 10. PROCESS stream → emit tool-call events to pub/sub
+    // 10. PROCESS stream → emit text deltas + tool events to pub/sub
     // 11. APPEND result.messages to consciousness
     // 12. PRUNE consciousness
     //     If over budget → archive oldest cycles (summarize + embed + store)
@@ -548,6 +548,60 @@ return compactConsciousness(pruned, maxTokens);
 
 **`prepareStep`** — Runs between tool call steps. Injects current time and inbox
 preview so the Haseef can react to new events mid-cycle.
+
+---
+
+## Text Output
+
+**Tool calls are the primary output.** The Haseef communicates and acts through
+tools — sending messages, moving a robot, querying a database. Tools provide
+structured, routed actions.
+
+Text deltas are a **secondary output channel** for cases where streaming
+natural language directly is better than a tool call — primarily **speech**.
+
+### Why speech needs text deltas
+
+If speech were a tool (`speak({ text: "..." })`), TTS would have to wait
+for the entire tool call to finish before starting. No streaming. High latency.
+
+With text deltas, TTS starts on the **first token**:
+
+```
+Haseef generates text → text.delta streams → TTS feeds on each token → audio plays in real time
+```
+
+### How it works
+
+Text deltas are streamed as `text.delta` events on `haseef:{haseefId}:stream`
+(Redis Pub/Sub). Services that need them subscribe:
+
+```typescript
+// Robot service subscribes to haseef stream
+const sub = redis.duplicate();
+await sub.subscribe(`haseef:${haseefId}:stream`);
+
+sub.on('message', (channel, message) => {
+  const event = JSON.parse(message);
+  if (event.type === 'text.delta') {
+    tts.feed(event.text);
+  }
+});
+```
+
+The robot **speaks** via text deltas and **acts** via tool calls.
+Text is the voice. Tools are the hands.
+
+### Summary
+
+| Output | Channel | Role |
+|--------|---------|------|
+| **Tool calls** (primary) | Action dispatch (Redis Streams) | All actions: send message, move, query, capture |
+| **Text deltas** (secondary) | `text.delta` events | Speech, TTS, live display |
+
+Text deltas are **not reasoning** — reasoning is handled by the model's
+built-in reasoning tokens. The system prompt controls whether text output
+is used (e.g., *"Your text is spoken aloud"*) or ignored.
 
 ---
 
@@ -593,9 +647,9 @@ TOOLS [whatsapp]:
   get_contacts — Get your WhatsApp contacts. Params: {}
 
 TOOLS [robot]:
-  speak — Speak through robot TTS. Params: { text }
   move — Move robot. Params: { direction, distance }
   capture_image — Take a photo from robot camera. Params: {}
+  (speech is handled by text deltas → TTS, not a tool)
 
 INSTRUCTIONS:
   You are a Haseef — a developing entity with continuous consciousness.
@@ -691,7 +745,7 @@ Auth: single API key (`x-api-key`). Scoped keys later.
 | `inbox:{haseefId}` | List | LPUSH events, BRPOP to wake |
 | `actions:{haseefId}:{scope}` | Stream | Core XADDs, services XREADGROUP per scope |
 | `action_result:{actionId}` | Pub/Sub | Sync action results (with timeout) |
-| `haseef:{haseefId}:stream` | Pub/Sub | Real-time tool-call deltas |
+| `haseef:{haseefId}:stream` | Pub/Sub | Real-time text deltas + tool events (text.delta, tool.started, tool.ready, tool.done) |
 
 ---
 
@@ -713,7 +767,7 @@ core/src/
     consciousness.ts                # Load, save, prune, archive, snapshots
     process-manager.ts              # Start/stop one process per Haseef
     agent-process.ts                # The think loop (per-cycle fetch, prepareStep)
-    stream-processor.ts             # AI stream → tool-call deltas to pub/sub
+    stream-processor.ts             # AI stream → text deltas + tool events to pub/sub
     action-dispatch.ts              # XADD actions, ActionResultWaiter
     tool-builder.ts                 # HaseefTool rows → AI SDK tools
     memory-engine.ts                # Semantic retrieval: memories + archive (pgvector search)
@@ -773,7 +827,7 @@ Any service connects the same way — register tools, push events, handle action
 | Spaces App | `spaces` | `message`, `member_joined` | `enter_space`, `send_space_message`, `get_spaces` |
 | WhatsApp | `whatsapp` | `message` | `send_message`, `get_contacts` |
 | Email | `email` | `email_received` | `send_email`, `get_inbox` |
-| Robot | `robot` | `sensor_update` | `speak`, `move`, `capture_image` |
+| Robot | `robot` | `sensor_update` | `move`, `capture_image` *(speech via text deltas → TTS)* |
 | Postgres | `db` | `row_inserted`, `status_changed` | *(none, or `run_query`)* |
 | IoT | `iot` | `device_status` | `control_device`, `get_devices` |
 | Cron | `cron` | `reminder` | *(none)* |
