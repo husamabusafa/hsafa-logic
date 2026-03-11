@@ -65,6 +65,7 @@ async function syncDispatch(
   timeout: number,
 ): Promise<unknown> {
   const resultChannel = `action_result:${actionId}`;
+  const dispatchStart = Date.now();
 
   return new Promise<unknown>(async (resolve) => {
     // Create a dedicated subscriber for this action
@@ -81,6 +82,8 @@ async function syncDispatch(
 
     // Set timeout
     const timer = setTimeout(() => {
+      const elapsed = Date.now() - dispatchStart;
+      console.error(`[action-dispatch] TIMEOUT: ${toolName} (${actionId.slice(0, 8)}) after ${elapsed}ms — no result received`);
       cleanup();
       resolve({
         error: `Action "${toolName}" timed out after ${timeout}ms`,
@@ -90,8 +93,12 @@ async function syncDispatch(
 
     // Subscribe for result
     sub.on('message', (_ch: string, message: string) => {
+      const elapsed = Date.now() - dispatchStart;
       clearTimeout(timer);
       cleanup();
+      if (elapsed > 2000) {
+        console.warn(`[action-dispatch] SLOW: ${toolName} (${actionId.slice(0, 8)}) took ${elapsed}ms`);
+      }
       try {
         resolve(JSON.parse(message));
       } catch {

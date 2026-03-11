@@ -147,6 +147,9 @@ export async function processStream(
           const tc = toolCalls.find((t) => t.toolCallId === toolCallId);
           if (tc) tc.durationMs = durationMs;
           activeTiming.delete(toolCallId);
+          if (durationMs > 1000) {
+            console.log(`[stream] tool ${toolName} took ${durationMs}ms (runId=${runId.slice(0, 8)})`);
+          }
         }
 
         await emit({
@@ -162,7 +165,7 @@ export async function processStream(
 
       // ── Step finish (multi-step streaming) ──────────────────────────────
       case 'step-finish':
-      case 'finish-step':
+      case 'finish-step': {
         if (part.finishReason) finishReason = part.finishReason as string;
         await emit({
           type: 'step.finish',
@@ -171,6 +174,7 @@ export async function processStream(
           finishReason: part.finishReason as string,
         });
         break;
+      }
 
       // ── Final finish ────────────────────────────────────────────────────
       // Note: run.finish is NOT emitted here — agent-process emits it

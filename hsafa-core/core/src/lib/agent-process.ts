@@ -195,15 +195,31 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
         toolCallStreaming: true,
       } as any);
 
-      // 10. PROCESS stream
+      // 10. PROCESS stream — wrapped in try/finally to ALWAYS emit run.finished
+      let cycleToolCount = 0;
+      let cycleError: string | null = null;
       try {
+        const t0 = Date.now();
         const streamResult = await processStream(result.fullStream, {
           runId: run.id,
           haseefId,
         });
+        const streamMs = Date.now() - t0;
+        cycleToolCount = streamResult.toolCalls.length;
+
+        // Log tool call breakdown (only if slow)
+        if (streamMs > 3000) {
+          const toolNames = streamResult.toolCalls.map((tc) => tc.toolName);
+          console.log(`[process] ${haseefName} stream done (${streamMs}ms, tools: [${toolNames.join(', ')}])`);
+        }
 
         // 11. APPEND result messages to consciousness
+        const t1 = Date.now();
         const responseMessages = await result.response;
+        const responseMs = Date.now() - t1;
+        if (responseMs > 500) {
+          console.warn(`[process] ${haseefName} await result.response took ${responseMs}ms`);
+        }
         if (responseMessages?.messages) {
           for (const msg of responseMessages.messages) {
             consciousness.messages.push(msg as unknown as ModelMessage);
@@ -241,19 +257,38 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
           },
         });
 
-        // Emit run.finished
+        consecutiveErrors = 0;
+      } catch (innerErr) {
+        // Stream or post-stream error — update run as failed
+        cycleError = innerErr instanceof Error ? innerErr.message : String(innerErr);
+        console.error(`[process] ${haseefName} cycle #${newCycleCount} inner error:`, cycleError);
+
+        const durationMs = Date.now() - cycleStart;
+        await prisma.run.update({
+          where: { id: run.id },
+          data: {
+            status: 'failed',
+            completedAt: new Date(),
+            stepCount: cycleToolCount,
+            durationMs,
+          },
+        }).catch(() => {});
+
+        // Re-throw so the outer catch handles backoff/retry
+        throw innerErr;
+      } finally {
+        // ALWAYS emit run.finished — prevents permanent "thinking" indicator
+        const durationMs = Date.now() - cycleStart;
         await redis.publish(`haseef:${haseefId}:stream`, JSON.stringify({
           type: 'run.finished',
           runId: run.id,
           haseefId,
           cycleNumber: newCycleCount,
           durationMs,
-          stepCount: streamResult.toolCalls.length,
-        }));
+          stepCount: cycleToolCount,
+          ...(cycleError ? { error: cycleError } : {}),
+        })).catch(() => {});
 
-        consecutiveErrors = 0;
-        console.log(`[process] ${haseefName} cycle #${newCycleCount} complete (${durationMs}ms, ${streamResult.toolCalls.length} tool calls)`);
-      } finally {
         // Close MCP clients after cycle (regardless of success/failure)
         for (const client of built.mcpClients) {
           client.close().catch((err) => {
