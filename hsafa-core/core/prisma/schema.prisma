@@ -35,6 +35,7 @@ model Haseef {
 
   consciousness HaseefConsciousness?
   memories      Memory[]
+  scopes        HaseefScope[]
   tools         HaseefTool[]
   archive       ConsciousnessArchive[]
   snapshots     ConsciousnessSnapshot[]
@@ -109,11 +110,27 @@ model Memory {
   @@map("memories")
 }
 
+model HaseefScope {
+  id           String   @id @default(uuid()) @db.Uuid
+  haseefId     String   @map("haseef_id") @db.Uuid
+  scope        String   // "spaces", "whatsapp", etc.
+  instructions String?  @db.Text // scope-level instructions injected into the Haseef's prompt
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
+  tools  HaseefTool[]
+
+  @@unique([haseefId, scope])
+  @@index([haseefId])
+  @@map("haseef_scopes")
+}
+
 model HaseefTool {
   id          String   @id @default(uuid()) @db.Uuid
   haseefId    String   @map("haseef_id") @db.Uuid
-  scope       String   // groups tools: "spaces", "whatsapp", etc.
-  name        String   // tool name the LLM sees
+  scope       String   // references HaseefScope(haseefId, scope)
+  name        String   // original tool name from the extension (e.g. "send_message")
   description String
   inputSchema Json     @map("input_schema") @db.JsonB // JSON Schema for args
   mode        String   @default("sync") // sync | fire_and_forget | async
@@ -121,7 +138,8 @@ model HaseefTool {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
+  haseef      Haseef      @relation(fields: [haseefId], references: [id], onDelete: Cascade)
+  haseefScope HaseefScope @relation(fields: [haseefId, scope], references: [haseefId, scope], onDelete: Cascade)
 
   @@unique([haseefId, scope, name])
   @@index([haseefId])

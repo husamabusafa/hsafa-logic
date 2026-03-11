@@ -279,30 +279,59 @@ function eventPriority(e: SenseEvent): number {
  * Format drained inbox events into a single user-message string.
  * This becomes the injected user message in consciousness.
  * Events are sorted by priority before formatting.
+ *
+ * If a message event includes `recentMessages` (conversation context),
+ * it is rendered as a compact thread so the Haseef always knows what
+ * the conversation was about and what it already said.
  */
 export function formatInboxEvents(events: SenseEvent[]): string {
   const now = new Date();
   const sorted = prioritizeEvents(events);
 
-  const lines = sorted.map((e) => {
+  // Group events by spaceId so we render context once per space
+  const spaceContextRendered = new Set<string>();
+  const blocks: string[] = [];
+
+  for (const e of sorted) {
     const ts = e.timestamp ? ` (${relativeTime(e.timestamp, now)})` : '';
     const data = e.data as Record<string, unknown>;
 
-    // Message events with sender info
     const senderName = data.senderName as string | undefined;
     const content = data.content as string | undefined;
+    const spaceId = data.spaceId as string | undefined;
+    const spaceName = data.spaceName as string | undefined;
+
     if (content && senderName) {
-      const spaceName = data.spaceName as string | undefined;
-      const spaceId = data.spaceId as string | undefined;
       const spaceInfo = spaceName && spaceId ? ` in "${spaceName}" (spaceId:${spaceId})` : '';
-      return `[${e.scope}:${e.type}]${ts} ${senderName}${spaceInfo}: "${content}"`;
+
+      // Render conversation context once per space (if available)
+      // The sender field is pre-labeled by the service ("You" for this haseef's own messages)
+      const recentMessages = data.recentMessages as Array<{
+        sender: string;
+        content: string;
+        createdAt: string;
+      }> | undefined;
+
+      if (recentMessages && recentMessages.length > 0 && spaceId && !spaceContextRendered.has(spaceId)) {
+        spaceContextRendered.add(spaceId);
+        const contextLines = recentMessages.map((m) => {
+          const age = relativeTime(m.createdAt, now);
+          return `    ${m.sender} (${age}): "${m.content}"`;
+        });
+        blocks.push(
+          `[${e.scope}:${e.type}]${ts} ${senderName}${spaceInfo}: "${content}"\n` +
+          `  [recent conversation in "${spaceName}"]:\n${contextLines.join('\n')}`,
+        );
+      } else {
+        blocks.push(`[${e.scope}:${e.type}]${ts} ${senderName}${spaceInfo}: "${content}"`);
+      }
+    } else {
+      // Generic format
+      blocks.push(`[${e.scope}:${e.type}]${ts} ${JSON.stringify(e.data)}`);
     }
+  }
 
-    // Generic format
-    return `[${e.scope}:${e.type}]${ts} ${JSON.stringify(e.data)}`;
-  });
-
-  return `SENSE EVENTS (${events.length}, now=${now.toISOString()}):\n${lines.join('\n')}`;
+  return `SENSE EVENTS (${events.length}, now=${now.toISOString()}):\n${blocks.join('\n')}`;
 }
 
 /**

@@ -22,7 +22,7 @@ import {
   markSpaceRunActive,
 } from "../smartspace-events";
 import { loadServiceConfig, type ServiceConfig } from "./config";
-import { SCOPE, TOOLS } from "./manifest";
+import { SCOPE, SCOPE_INSTRUCTIONS, TOOLS } from "./manifest";
 import { setInboxHandler, type InboxMessageParams } from "./inbox";
 
 // =============================================================================
@@ -89,13 +89,13 @@ function coreHeaders(): Record<string, string> {
   };
 }
 
-/** PUT /api/haseefs/:id/scopes/:scope/tools — Sync all tools in scope */
+/** PUT /api/haseefs/:id/scopes/:scope/tools — Sync all tools + scope instructions */
 async function syncTools(haseefId: string): Promise<void> {
   const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/scopes/${SCOPE}/tools`;
   const res = await fetch(url, {
     method: "PUT",
     headers: coreHeaders(),
-    body: JSON.stringify({ tools: TOOLS }),
+    body: JSON.stringify({ tools: TOOLS, instructions: SCOPE_INSTRUCTIONS }),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -428,7 +428,17 @@ async function executeAction(
           },
         });
 
-        return { messages: messages.reverse() };
+        // Label the haseef's own messages as "You" so the LLM
+        // clearly sees what it already said vs what others said
+        return {
+          messages: messages.reverse().map((m) => ({
+            id: m.id,
+            sender: m.entityId === agentEntityId ? "You" : (m.entity?.displayName ?? "Unknown"),
+            senderType: m.entity?.type ?? "unknown",
+            content: m.content,
+            createdAt: m.createdAt.toISOString(),
+          })),
+        };
       }
 
       case "get_spaces": {
@@ -701,6 +711,38 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
   const conns = getConnectionsForSpace(spaceId);
   if (conns.length === 0) return;
 
+  // Fetch recent messages once (shared across connections, labeled per-haseef below)
+  let recentRaw: Array<{
+    entityId: string;
+    displayName: string;
+    type: string;
+    content: string;
+    createdAt: Date;
+  }> = [];
+  try {
+    const recent = await prisma.smartSpaceMessage.findMany({
+      where: {
+        smartSpaceId: spaceId,
+        id: { not: messageId }, // exclude the new message itself
+      },
+      orderBy: { seq: "desc" },
+      take: 10,
+      include: {
+        entity: { select: { id: true, displayName: true, type: true } },
+      },
+    });
+    recentRaw = recent.reverse().map((m) => ({
+      entityId: m.entityId,
+      displayName: m.entity?.displayName ?? "Unknown",
+      type: m.entity?.type ?? "unknown",
+      content: m.content ?? "",
+      createdAt: m.createdAt,
+    }));
+  } catch (err) {
+    // Non-fatal — send event without context
+    console.warn("[spaces-service] Failed to fetch conversation context:", err);
+  }
+
   // Skip messages from THIS haseef's own entity (avoid loops)
   for (const conn of conns) {
     if (entityId === conn.agentEntityId) continue;
@@ -708,6 +750,13 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
     console.log(
       `[spaces-service] → sense: ${senderName} in "${spaceName}": "${content.slice(0, 50)}"`,
     );
+
+    // Label per-haseef: "You" for this haseef's own messages, display name for everyone else
+    const recentMessages = recentRaw.map((m) => ({
+      sender: m.entityId === conn.agentEntityId ? "You" : m.displayName,
+      content: m.content,
+      createdAt: m.createdAt.toISOString(),
+    }));
 
     await pushSenseEvent(conn.haseefId, {
       eventId: messageId,
@@ -721,6 +770,9 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
         senderName,
         senderType,
         content,
+        // Conversation context: the last 10 messages in this space
+        // so the haseef knows what it already said and what the person is replying to
+        recentMessages,
       },
     });
   }

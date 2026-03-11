@@ -11,11 +11,13 @@ import { prisma } from '../lib/db.js';
 export const scopesRouter = Router({ mergeParams: true });
 
 // PUT /api/haseefs/:id/scopes/:scope/tools — Sync all tools in scope
+// Body: { tools: [...], instructions?: string }
+// instructions: optional scope-level instructions injected into the Haseef's prompt
 scopesRouter.put('/:scope/tools', async (req, res) => {
   try {
     const { id: haseefId } = req.params as Record<string, string>;
     const scope = req.params.scope;
-    const { tools } = req.body;
+    const { tools, instructions } = req.body;
 
     if (!Array.isArray(tools)) {
       res.status(400).json({ error: 'tools must be an array' });
@@ -30,12 +32,24 @@ scopesRouter.put('/:scope/tools', async (req, res) => {
       }
     }
 
-    // Delete all existing tools in this scope
+    // Ensure the scope row exists (tools FK to it)
+    await prisma.haseefScope.upsert({
+      where: { haseefId_scope: { haseefId, scope } },
+      create: {
+        haseefId,
+        scope,
+        instructions: typeof instructions === 'string' ? (instructions.trim() || null) : null,
+      },
+      update: {
+        ...(typeof instructions === 'string' ? { instructions: instructions.trim() || null } : {}),
+      },
+    });
+
+    // Replace all tools in this scope
     await prisma.haseefTool.deleteMany({
       where: { haseefId, scope },
     });
 
-    // Create new tools
     const created = [];
     for (const t of tools) {
       const tool = await prisma.haseefTool.create({
@@ -69,6 +83,13 @@ scopesRouter.put('/:scope/tools/:name', async (req, res) => {
       res.status(400).json({ error: 'description and inputSchema are required' });
       return;
     }
+
+    // Ensure the scope row exists (tools FK to it)
+    await prisma.haseefScope.upsert({
+      where: { haseefId_scope: { haseefId, scope } },
+      create: { haseefId, scope },
+      update: {},
+    });
 
     const tool = await prisma.haseefTool.upsert({
       where: {
@@ -137,12 +158,18 @@ scopesRouter.get('/:scope/tools', async (req, res) => {
   }
 });
 
-// DELETE /api/haseefs/:id/scopes/:scope — Remove entire scope
+// DELETE /api/haseefs/:id/scopes/:scope — Remove entire scope (tools + scope row)
 scopesRouter.delete('/:scope', async (req, res) => {
   try {
     const { id: haseefId, scope } = req.params as Record<string, string>;
 
+    // Tools are cascade-deleted by the HaseefScope FK, but deleteMany is explicit
     const result = await prisma.haseefTool.deleteMany({
+      where: { haseefId, scope },
+    });
+
+    // Also remove the scope row itself
+    await prisma.haseefScope.deleteMany({
       where: { haseefId, scope },
     });
 

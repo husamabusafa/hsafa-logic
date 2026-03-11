@@ -43,6 +43,8 @@ interface PromptContext {
   }>;
   /** Tools grouped by scope */
   toolsByScope: Map<string, Array<{ name: string; description: string; inputSchema: unknown }>>;
+  /** Scope-contributed instructions (from extensions via tool sync) */
+  scopeInstructions?: Map<string, string>;
 }
 
 /**
@@ -176,6 +178,7 @@ function buildToolsSection(ctx: PromptContext): string {
   for (const [scope, tools] of ctx.toolsByScope) {
     lines.push(`TOOLS [${scope}]:`);
     for (const t of tools) {
+      const prefixedName = `${scope}_${t.name}`;
       const params = t.inputSchema
         ? JSON.stringify(
             typeof t.inputSchema === 'object' && t.inputSchema !== null
@@ -183,7 +186,7 @@ function buildToolsSection(ctx: PromptContext): string {
               : t.inputSchema,
           )
         : '{}';
-      lines.push(`  ${t.name} — ${t.description}. Params: ${params}`);
+      lines.push(`  ${prefixedName} — ${t.description}. Params: ${params}`);
     }
   }
 
@@ -191,16 +194,39 @@ function buildToolsSection(ctx: PromptContext): string {
 }
 
 function buildInstructionsSection(ctx: PromptContext): string {
+  // Core instructions — generic Haseef behavior only.
+  // Domain-specific instructions (spaces, whatsapp, etc.) come from extensions
+  // via scopeInstructions.
   const lines: string[] = [
     'INSTRUCTIONS:',
     '  You are a Haseef — a developing entity with continuous consciousness.',
     '  You have a sense of time. You know when things happened, how long ago,',
     '  and can reason about durations and temporal relationships.',
+    '',
+    '  MEMORY:',
     '  Use set_memories to remember important information (with importance 1-10).',
     '  Use recall_memories to search for specific information not in your prompt.',
-    '  Call done when you have completed processing the current events.',
+    '',
+    '  BEHAVIOR:',
+    '  Each cycle you receive SENSE EVENTS. Read any conversation context carefully.',
+    '  Check what you already said — do NOT repeat yourself.',
+    '  Be natural and concise — talk like a real person, not an AI assistant.',
+    '  When you are finished processing all events, just stop — no need to call any special tool.',
   ];
 
+  // Scope instructions contributed by extensions
+  if (ctx.scopeInstructions && ctx.scopeInstructions.size > 0) {
+    for (const [scope, instructions] of ctx.scopeInstructions) {
+      lines.push('');
+      lines.push(`  [${scope}]`);
+      // Indent each line of the extension's instructions
+      for (const line of instructions.split('\n')) {
+        lines.push(`  ${line}`);
+      }
+    }
+  }
+
+  // Config-level instructions (admin-managed per haseef)
   if (ctx.config.instructions) {
     lines.push('');
     lines.push(ctx.config.instructions);

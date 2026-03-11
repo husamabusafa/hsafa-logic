@@ -16,6 +16,7 @@ import {
   markEventsProcessed,
   recoverStuckEvents,
   formatInboxEvents,
+  inboxSize,
 } from './inbox.js';
 import {
   buildSystemPrompt,
@@ -90,11 +91,18 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
       const newCycleCount = consciousness.cycleCount + 1;
 
       // 3. FETCH per-cycle data (parallel)
-      const [dbHaseef, dbTools] = await Promise.all([
+      const [dbHaseef, dbTools, dbScopes] = await Promise.all([
         prisma.haseef.findUniqueOrThrow({ where: { id: haseefId } }),
         prisma.haseefTool.findMany({ where: { haseefId } }),
+        prisma.haseefScope.findMany({ where: { haseefId }, select: { scope: true, instructions: true } }),
       ]);
       haseef = dbHaseef;
+
+      // Scope instructions from extensions (stored in HaseefScope table)
+      const scopeInstructions = new Map<string, string>();
+      for (const s of dbScopes) {
+        if (s.instructions) scopeInstructions.set(s.scope, s.instructions);
+      }
 
       // 4. CHECK CONFIG — rebuild model only if hash changed
       if (haseef.configHash !== cachedConfigHash) {
@@ -164,6 +172,7 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
         totalMemoryCount,
         relevantPast,
         toolsByScope,
+        scopeInstructions,
       });
 
       // 8. INJECT events into consciousness
@@ -176,23 +185,40 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
       // 9. THINK — stream with AI SDK
       const messagesForLLM = consciousness.messages.filter((m) => m.role !== 'system');
 
-      // Emit run.started
+      // Emit run.started (includes trigger info for stream bridge routing)
+      const triggerSpaceId = (firstEvent?.data as Record<string, unknown>)?.spaceId as string | undefined;
       await redis.publish(`haseef:${haseefId}:stream`, JSON.stringify({
         type: 'run.started',
         runId: run.id,
         haseefId,
         cycleNumber: newCycleCount,
+        triggerScope,
+        triggerType,
+        triggerSource: triggerSpaceId ?? null,
       }));
 
       // Use streamText from AI SDK
-      const { streamText, stepCountIs, hasToolCall } = await import('ai');
+      const { streamText } = await import('ai');
       const result = streamText({
         model: built.model as any,
         tools: built.tools as any,
         system: systemPrompt,
         messages: messagesForLLM as any,
-        stopWhen: [stepCountIs(MAX_STEPS), hasToolCall('done')],
+        maxSteps: MAX_STEPS,
         toolCallStreaming: true,
+        // Mid-cycle inbox awareness: check for new events between steps
+        prepareStep: async ({ stepNumber }: { stepNumber: number }) => {
+          if (stepNumber === 0) return {};
+          const pending = await inboxSize(haseefId).catch(() => 0);
+          if (pending > 0) {
+            return {
+              system: systemPrompt +
+                `\n\nNOTICE: ${pending} new event(s) arrived in your inbox while you were thinking. ` +
+                `Call peek_inbox to pull them into this cycle if they seem relevant.`,
+            };
+          }
+          return {};
+        },
       } as any);
 
       // 10. PROCESS stream — wrapped in try/finally to ALWAYS emit run.finished

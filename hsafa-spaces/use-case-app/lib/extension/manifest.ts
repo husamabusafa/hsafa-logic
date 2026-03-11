@@ -9,6 +9,22 @@
 export const SCOPE = "spaces";
 
 /**
+ * Scope-level instructions synced to core and injected into the Haseef's prompt.
+ * These are spaces-specific — core remains generic.
+ */
+export const SCOPE_INSTRUCTIONS = `You interact with people through spaces — each space is a separate conversation.
+Events may include [recent conversation] context showing the last messages in that space.
+ALWAYS read the conversation context carefully before responding:
+  - Check what YOU already said — do NOT repeat yourself.
+  - Understand what the person is replying to.
+  - If you already answered their question, acknowledge and move on.
+You may receive events from multiple spaces in one cycle — keep them distinct.
+Always use the correct spaceId when calling send_message.
+Do NOT mix up conversations across spaces.
+Do NOT send the same or similar message twice to the same space.
+If a tool call fails or times out, tell the person briefly and move on.`;
+
+/**
  * Tool definitions to register with Core.
  * Each tool has name, description, inputSchema, and optional mode/timeout.
  */
