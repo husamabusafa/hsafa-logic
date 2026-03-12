@@ -1,87 +1,213 @@
-import { useState, useEffect } from "react";
-import { AuthForm, type AuthSession } from "@/components/register-form";
-import { ChatPage } from "@/components/chat-page";
+import { useState, useCallback, useMemo } from "react";
+import { Routes, Route, Navigate, useParams, useNavigate, useLocation } from "react-router-dom";
 import { ThemeProvider } from "@/components/theme-provider";
+import { AppShell, type AppPage } from "@/components/app-shell";
+import { SpacesSidebar } from "@/components/spaces-sidebar";
+import { ChatView, ChatEmptyState } from "@/components/chat-view";
+import { SpaceDetails } from "@/components/space-details";
+import { SpaceSettings } from "@/components/space-settings";
+import { CreateSpaceDialog } from "@/components/create-space-dialog";
+import { InviteDialog } from "@/components/invite-dialog";
+import { InvitationsPage } from "@/components/invitations-page";
+import {
+  HaseefsSidebar,
+  HaseefDetail,
+  HaseefEmptyState,
+  CreateHaseefDialog,
+} from "@/components/haseefs-page";
+import { mockSpaces, mockHaseefs, mockInvitations } from "@/lib/mock-data";
+import { cn } from "@/lib/utils";
 
-const TOKEN_KEY = "hsafa-spaces-token";
-const SESSION_KEY = "hsafa-spaces-session";
+// ─── Route-aware page components ────────────────────────────────────────────
 
-function getStoredToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+function SpaceChatRoute() {
+  const { spaceId } = useParams<{ spaceId: string }>();
+  const navigate = useNavigate();
+  const [showDetails, setShowDetails] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
+
+  const space = mockSpaces.find((s) => s.id === spaceId) || null;
+  if (!space) return <ChatEmptyState />;
+
+  return (
+    <>
+      <div className="flex h-full">
+        <div className={cn(
+          "flex-1 min-w-0 transition-all",
+          showDetails && "hidden md:flex md:flex-col",
+        )}>
+          <ChatView
+            space={space}
+            onToggleDetails={() => setShowDetails((v) => !v)}
+            onBack={() => navigate("/spaces")}
+          />
+        </div>
+        {showDetails && (
+          <aside className="w-full md:w-[340px] border-l border-border bg-card shrink-0">
+            <SpaceDetails
+              space={space}
+              onClose={() => setShowDetails(false)}
+              onInvite={() => setShowInvite(true)}
+              onOpenSettings={() => navigate(`/spaces/${spaceId}/settings`)}
+            />
+          </aside>
+        )}
+      </div>
+      <InviteDialog
+        open={showInvite}
+        onClose={() => setShowInvite(false)}
+        space={space}
+      />
+    </>
+  );
 }
 
-function getStoredSession(): AuthSession | null {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as AuthSession;
-  } catch {
-    return null;
-  }
+function SpaceSettingsRoute() {
+  const { spaceId } = useParams<{ spaceId: string }>();
+  const navigate = useNavigate();
+  const [showInvite, setShowInvite] = useState(false);
+
+  const space = mockSpaces.find((s) => s.id === spaceId) || null;
+  if (!space) return <Navigate to="/spaces" replace />;
+
+  return (
+    <>
+      <SpaceSettings
+        space={space}
+        onBack={() => navigate(`/spaces/${spaceId}`)}
+        onOpenInvite={() => setShowInvite(true)}
+      />
+      <InviteDialog
+        open={showInvite}
+        onClose={() => setShowInvite(false)}
+        space={space}
+      />
+    </>
+  );
 }
 
-function storeSession(session: AuthSession) {
-  localStorage.setItem(TOKEN_KEY, session.token);
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+function HaseefDetailRoute() {
+  const { haseefId } = useParams<{ haseefId: string }>();
+  const navigate = useNavigate();
+  const haseef = mockHaseefs.find((h) => h.id === haseefId) || null;
+
+  if (!haseef) return <HaseefEmptyState onCreate={() => navigate("/haseefs/new")} />;
+  return <HaseefDetail haseef={haseef} />;
 }
 
-function clearSession() {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(SESSION_KEY);
-}
+// ─── Main App ───────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [session, setSession] = useState<AuthSession | null>(null);
-  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showCreateSpace, setShowCreateSpace] = useState(false);
+  const [showCreateHaseef, setShowCreateHaseef] = useState(false);
 
-  useEffect(() => {
-    const token = getStoredToken();
-    const cached = getStoredSession();
+  const pendingInvitations = mockInvitations.filter((i) => i.status === "pending").length;
 
-    if (!token || !cached) {
-      setLoading(false);
+  // Derive active page from URL
+  const activePage: AppPage = useMemo(() => {
+    if (location.pathname.startsWith("/haseefs")) return "haseefs";
+    if (location.pathname.startsWith("/invitations")) return "invitations";
+    return "spaces";
+  }, [location.pathname]);
+
+  // Derive selected IDs from URL
+  const selectedSpaceId = useMemo(() => {
+    const match = location.pathname.match(/^\/spaces\/([^/]+)/);
+    return match ? match[1] : null;
+  }, [location.pathname]);
+
+  const selectedHaseefId = useMemo(() => {
+    const match = location.pathname.match(/^\/haseefs\/([^/]+)/);
+    return match && match[1] !== "new" ? match[1] : null;
+  }, [location.pathname]);
+
+  const handlePageChange = useCallback((page: AppPage) => {
+    if (page === "invitations") {
+      navigate("/invitations");
+      setSidebarOpen(false);
       return;
     }
+    if (page === activePage) {
+      setSidebarOpen((v) => !v);
+    } else {
+      navigate(`/${page}`);
+      setSidebarOpen(true);
+    }
+  }, [activePage, navigate]);
 
-    fetch("/api/me", {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("Invalid token");
-        return res.json();
-      })
-      .then((data) => {
-        const refreshed: AuthSession = { token, user: data.user };
-        storeSession(refreshed);
-        setSession(refreshed);
-      })
-      .catch(() => {
-        clearSession();
-      })
-      .finally(() => setLoading(false));
+  const handleLogout = useCallback(() => {
+    alert("Logout clicked (mock)");
   }, []);
 
-  const handleAuth = (result: AuthSession) => {
-    storeSession(result);
-    setSession(result);
-  };
-
-  const handleLogout = () => {
-    clearSession();
-    setSession(null);
-  };
+  // ── Sidebar content based on active page ──
+  const sidebar =
+    activePage === "spaces" ? (
+      <SpacesSidebar
+        spaces={mockSpaces}
+        selectedSpaceId={selectedSpaceId}
+        onSelectSpace={(id) => navigate(`/spaces/${id}`)}
+        onCreateSpace={() => setShowCreateSpace(true)}
+      />
+    ) : activePage === "haseefs" ? (
+      <HaseefsSidebar
+        haseefs={mockHaseefs}
+        selectedId={selectedHaseefId}
+        onSelect={(id) => navigate(`/haseefs/${id}`)}
+        onCreate={() => setShowCreateHaseef(true)}
+      />
+    ) : null;
 
   return (
     <ThemeProvider>
-      {loading ? (
-        <div className="flex h-dvh w-full items-center justify-center bg-background">
-          <span className="text-muted-foreground text-sm">Loading...</span>
-        </div>
-      ) : !session ? (
-        <AuthForm onAuth={handleAuth} />
-      ) : (
-        <ChatPage session={session} onLogout={handleLogout} />
-      )}
+      <AppShell
+        activePage={activePage}
+        onPageChange={handlePageChange}
+        sidebarOpen={sidebarOpen}
+        sidebar={sidebar}
+        onLogout={handleLogout}
+        invitationCount={pendingInvitations}
+      >
+        <Routes>
+          <Route path="/" element={<Navigate to="/spaces" replace />} />
+
+          {/* Spaces */}
+          <Route path="/spaces" element={<ChatEmptyState />} />
+          <Route path="/spaces/:spaceId" element={<SpaceChatRoute />} />
+          <Route path="/spaces/:spaceId/settings" element={<SpaceSettingsRoute />} />
+
+          {/* Haseefs */}
+          <Route path="/haseefs" element={<HaseefEmptyState onCreate={() => setShowCreateHaseef(true)} />} />
+          <Route path="/haseefs/:haseefId" element={<HaseefDetailRoute />} />
+
+          {/* Invitations */}
+          <Route path="/invitations" element={<InvitationsPage />} />
+
+          {/* Catch-all */}
+          <Route path="*" element={<Navigate to="/spaces" replace />} />
+        </Routes>
+      </AppShell>
+
+      {/* Dialogs */}
+      <CreateSpaceDialog
+        open={showCreateSpace}
+        onClose={() => setShowCreateSpace(false)}
+        onCreate={(data) => {
+          console.log("Create space:", data);
+          setShowCreateSpace(false);
+        }}
+      />
+
+      <CreateHaseefDialog
+        open={showCreateHaseef}
+        onClose={() => setShowCreateHaseef(false)}
+        onCreate={(data) => {
+          console.log("Create haseef:", data);
+          setShowCreateHaseef(false);
+        }}
+      />
     </ThemeProvider>
   );
 }

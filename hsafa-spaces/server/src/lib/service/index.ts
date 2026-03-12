@@ -20,6 +20,7 @@ import {
   emitSmartSpaceEvent,
   setSpaceActiveRun,
   removeSpaceActiveRun,
+  broadcastSeen,
 } from "../smartspace-events.js";
 import { redis } from "../redis.js";
 import type { ReplyToMetadata } from "../message-types.js";
@@ -1334,6 +1335,33 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
       type: "message",
       data: eventData,
     });
+
+    // Auto-mark haseef as having "seen" this message (advance watermark)
+    markHaseefSeen(spaceId, conn.agentEntityId, messageId).catch(() => {});
+  }
+}
+
+/**
+ * Advance a haseef's lastSeenMessageId watermark and broadcast the seen event.
+ * Called after a sense event is successfully pushed for a message.
+ */
+async function markHaseefSeen(
+  spaceId: string,
+  agentEntityId: string,
+  messageId: string,
+): Promise<void> {
+  try {
+    await prisma.smartSpaceMembership.update({
+      where: { smartSpaceId_entityId: { smartSpaceId: spaceId, entityId: agentEntityId } },
+      data: { lastSeenMessageId: messageId },
+    });
+    const entity = await prisma.entity.findUnique({
+      where: { id: agentEntityId },
+      select: { displayName: true },
+    });
+    await broadcastSeen(spaceId, agentEntityId, entity?.displayName ?? "AI", messageId);
+  } catch {
+    // Non-fatal — seen status is best-effort for agents
   }
 }
 

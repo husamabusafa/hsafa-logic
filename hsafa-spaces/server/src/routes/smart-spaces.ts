@@ -11,7 +11,15 @@ import {
 import { postSpaceMessage } from "../lib/space-service.js";
 import { invalidateSpace } from "../lib/membership-service.js";
 import { handleMembershipChanged } from "../lib/service/index.js";
-import { listSpaceActiveRuns } from "../lib/smartspace-events.js";
+import {
+  listSpaceActiveRuns,
+  markOnline,
+  markOffline,
+  refreshPresence,
+  listOnlineEntities,
+  broadcastTyping,
+  broadcastSeen,
+} from "../lib/smartspace-events.js";
 import { verifyToken } from "../lib/auth.js";
 import { requireRole, isAtLeast, type SpaceRole } from "../lib/role-auth.js";
 import { generateSnippet, type MessageMetadata, type MessageType } from "../lib/message-types.js";
@@ -369,6 +377,9 @@ router.get(
 
 // =============================================================================
 // GET /api/smart-spaces/:smartSpaceId/stream — SSE event stream
+//
+// On connect: mark entity online, send initial state (online users, active runs,
+// seen watermarks). On disconnect: mark offline. Keepalive refreshes presence TTL.
 // =============================================================================
 router.get("/:smartSpaceId/stream", async (req: Request, res: Response) => {
   const smartSpaceId = req.params.smartSpaceId as string;
@@ -394,30 +405,47 @@ router.get("/:smartSpaceId/stream", async (req: Request, res: Response) => {
 
   await sub.subscribe(channel);
 
-  // Send initial online users + active runs
+  // ── Mark this entity as online ──
   if (entityId) {
-    // Emit online event
-    const onlineEvent = {
-      type: "user.online",
-      entityId,
-    };
-    res.write(`data: ${JSON.stringify(onlineEvent)}\n\n`);
+    await markOnline(smartSpaceId, entityId).catch(() => {});
   }
 
-  // Send active runs
+  // ── Send initial state: "connected" event with online users, active runs, seen watermarks ──
   try {
-    const activeRuns = await listSpaceActiveRuns(smartSpaceId);
-    for (const run of activeRuns) {
-      res.write(
-        `data: ${JSON.stringify({
-          type: "agent.active",
-          agentEntityId: run.entityId,
-          runId: run.runId,
-          data: { agentEntityId: run.entityId, agentName: run.entityName },
-        })}\n\n`
-      );
+    const [onlineEntityIds, activeRuns, memberships] = await Promise.all([
+      listOnlineEntities(smartSpaceId),
+      listSpaceActiveRuns(smartSpaceId),
+      prisma.smartSpaceMembership.findMany({
+        where: { smartSpaceId },
+        select: {
+          entityId: true,
+          lastSeenMessageId: true,
+          entity: { select: { displayName: true } },
+        },
+      }),
+    ]);
+
+    // Build seen watermarks: { entityId → lastSeenMessageId }
+    const seenWatermarks: Record<string, string> = {};
+    for (const m of memberships) {
+      if (m.lastSeenMessageId) seenWatermarks[m.entityId] = m.lastSeenMessageId;
     }
-  } catch {}
+
+    res.write(`data: ${JSON.stringify({
+      type: "connected",
+      data: {
+        onlineUsers: onlineEntityIds,
+        activeAgents: activeRuns.map((r) => ({
+          runId: r.runId,
+          agentEntityId: r.entityId,
+          agentName: r.entityName,
+        })),
+        seenWatermarks,
+      },
+    })}\n\n`);
+  } catch {
+    // Non-fatal — client will work without initial state
+  }
 
   // Forward Redis messages to SSE
   const messageHandler = (_ch: string, message: string) => {
@@ -427,26 +455,146 @@ router.get("/:smartSpaceId/stream", async (req: Request, res: Response) => {
   };
   sub.on("message", messageHandler);
 
-  // Keepalive
+  // Keepalive — also refreshes presence TTL
   const keepalive = setInterval(() => {
     try {
       res.write(`:keepalive\n\n`);
+      if (entityId) {
+        refreshPresence(smartSpaceId, entityId).catch(() => {});
+      }
     } catch {}
   }, 15_000);
 
-  // Cleanup on close
+  // Cleanup on close — mark offline
   const cleanup = () => {
     clearInterval(keepalive);
     sub.unsubscribe(channel).catch(() => {});
     sub.disconnect();
 
     if (entityId) {
-      // Could emit offline event here
+      markOffline(smartSpaceId, entityId).catch(() => {});
     }
   };
 
   req.on("close", cleanup);
   req.on("error", cleanup);
+});
+
+// =============================================================================
+// POST /api/smart-spaces/:smartSpaceId/typing — Typing indicator (ephemeral)
+// =============================================================================
+router.post("/:smartSpaceId/typing", async (req: Request, res: Response) => {
+  const smartSpaceId = req.params.smartSpaceId as string;
+  const auth = await requireAuthWithMembership(req, smartSpaceId);
+  if (isAuthError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  if (!auth.entityId) {
+    res.status(400).json({ error: "No entity resolved" });
+    return;
+  }
+
+  const typing = req.body.typing !== false; // default true
+
+  try {
+    // Look up entity name for the broadcast
+    const entity = await prisma.entity.findUnique({
+      where: { id: auth.entityId },
+      select: { displayName: true },
+    });
+
+    await broadcastTyping(
+      smartSpaceId,
+      auth.entityId,
+      entity?.displayName ?? "Unknown",
+      typing,
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Typing broadcast error:", error);
+    res.status(500).json({ error: "Failed to broadcast typing" });
+  }
+});
+
+// =============================================================================
+// POST /api/smart-spaces/:smartSpaceId/seen — Mark messages as seen (watermark)
+//
+// Updates the caller's lastSeenMessageId on their membership and broadcasts
+// a message.seen event so other clients can update read receipt indicators.
+// =============================================================================
+router.post("/:smartSpaceId/seen", async (req: Request, res: Response) => {
+  const smartSpaceId = req.params.smartSpaceId as string;
+  const auth = await requireAuthWithMembership(req, smartSpaceId);
+  if (isAuthError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  if (!auth.entityId) {
+    res.status(400).json({ error: "No entity resolved" });
+    return;
+  }
+
+  const { messageId } = req.body;
+  if (!messageId) {
+    res.status(400).json({ error: "messageId is required" });
+    return;
+  }
+
+  try {
+    // Verify message exists in this space
+    const msg = await prisma.smartSpaceMessage.findUnique({
+      where: { id: messageId },
+      select: { smartSpaceId: true, seq: true },
+    });
+    if (!msg || msg.smartSpaceId !== smartSpaceId) {
+      res.status(404).json({ error: "Message not found in this space" });
+      return;
+    }
+
+    // Only advance the watermark forward (never go backward)
+    const membership = await prisma.smartSpaceMembership.findUnique({
+      where: { smartSpaceId_entityId: { smartSpaceId, entityId: auth.entityId } },
+      select: { lastSeenMessageId: true },
+    });
+
+    if (membership?.lastSeenMessageId) {
+      const currentSeen = await prisma.smartSpaceMessage.findUnique({
+        where: { id: membership.lastSeenMessageId },
+        select: { seq: true },
+      });
+      // If current watermark is already ahead, skip
+      if (currentSeen && currentSeen.seq >= msg.seq) {
+        res.json({ success: true, lastSeenMessageId: membership.lastSeenMessageId });
+        return;
+      }
+    }
+
+    // Update the watermark
+    await prisma.smartSpaceMembership.update({
+      where: { smartSpaceId_entityId: { smartSpaceId, entityId: auth.entityId } },
+      data: { lastSeenMessageId: messageId },
+    });
+
+    // Broadcast seen event
+    const entity = await prisma.entity.findUnique({
+      where: { id: auth.entityId },
+      select: { displayName: true },
+    });
+    await broadcastSeen(
+      smartSpaceId,
+      auth.entityId,
+      entity?.displayName ?? "Unknown",
+      messageId,
+    );
+
+    res.json({ success: true, lastSeenMessageId: messageId });
+  } catch (error) {
+    console.error("Mark seen error:", error);
+    res.status(500).json({ error: "Failed to mark as seen" });
+  }
 });
 
 // =============================================================================

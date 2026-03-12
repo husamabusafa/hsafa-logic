@@ -41,6 +41,12 @@ export { CurrentSpaceProvider, useCurrentSpace } from "./contexts";
 // Online users
 export { OnlineUsersProvider, useOnlineUsers } from "./contexts";
 
+// Typing users
+export { TypingUsersProvider, useTypingUsers } from "./contexts";
+
+// Seen watermarks (read receipts)
+export { SeenWatermarksProvider, useSeenWatermarks } from "./contexts";
+
 // Re-export commonly used types from react-sdk for convenience
 export type {
   HsafaClient,

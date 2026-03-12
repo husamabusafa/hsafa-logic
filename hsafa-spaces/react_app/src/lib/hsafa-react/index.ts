@@ -45,6 +45,8 @@ export type {
   UseHsafaRuntimeReturn,
   ActiveAgent,
   OnlineUser,
+  TypingUser,
+  SeenWatermarks,
   ThreadMessageLike,
   AppendMessage,
   ThreadListAdapter,

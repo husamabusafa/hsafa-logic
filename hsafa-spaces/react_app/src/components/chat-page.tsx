@@ -5,7 +5,7 @@ import {
   LogOutIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { HsafaChatProvider, useCurrentSpace, useActiveAgents, useOnlineUsers, useMembers } from "@/lib/hsafa-ui";
+import { HsafaChatProvider, useCurrentSpace, useActiveAgents, useOnlineUsers, useTypingUsers, useMembers } from "@/lib/hsafa-ui";
 
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
@@ -21,6 +21,7 @@ function SpaceHeader() {
   const { spaceName } = useCurrentSpace();
   const activeAgents = useActiveAgents();
   const onlineUsers = useOnlineUsers();
+  const typingUsers = useTypingUsers();
   const { membersById, currentEntityId } = useMembers();
 
   // Running haseefs (agents with active runs)
@@ -34,13 +35,20 @@ function SpaceHeader() {
   );
 
   // Build status indicators
-  const indicators: { label: string; pulse: boolean }[] = [];
+  const indicators: { label: string; pulse: boolean; color?: string }[] = [];
 
+  // Typing users take priority in the indicator list
+  for (const user of typingUsers) {
+    const name = user.entityName || membersById[user.entityId]?.displayName || "Someone";
+    indicators.push({ label: `${name} is typing…`, pulse: true, color: "bg-blue-400" });
+  }
   for (const agent of runningAgents) {
     const name = agent.entityName || membersById[agent.entityId]?.displayName || "AI Agent";
     indicators.push({ label: `${name} is thinking…`, pulse: true });
   }
   for (const user of onlineHumans) {
+    // Skip if already shown as typing
+    if (typingUsers.some((t) => t.entityId === user.entityId)) continue;
     const name = membersById[user.entityId]?.displayName || "User";
     indicators.push({ label: `${name} is online`, pulse: false });
   }
@@ -55,7 +63,7 @@ function SpaceHeader() {
           {indicators.map((ind, i) => (
             <div key={i} className="flex items-center gap-1">
               <span
-                className={`size-1.5 rounded-full bg-emerald-500 ${ind.pulse ? "animate-pulse" : ""}`}
+                className={`size-1.5 rounded-full ${ind.color || "bg-emerald-500"} ${ind.pulse ? "animate-pulse" : ""}`}
               />
               <span className="text-[11px] text-muted-foreground/80">{ind.label}</span>
             </div>

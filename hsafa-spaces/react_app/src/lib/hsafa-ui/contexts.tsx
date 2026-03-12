@@ -1,6 +1,6 @@
 
 import { createContext, useContext, type ReactNode } from "react";
-import type { Entity, ActiveAgent, OnlineUser } from "../hsafa-react";
+import type { Entity, ActiveAgent, OnlineUser, TypingUser, SeenWatermarks } from "../hsafa-react";
 
 // Members Context
 interface MembersContextValue {
@@ -104,4 +104,46 @@ export function OnlineUsersProvider({
 
 export function useOnlineUsers(): OnlineUser[] {
   return useContext(OnlineUsersContext);
+}
+
+// Typing Users Context
+const TypingUsersContext = createContext<TypingUser[]>([]);
+
+export function TypingUsersProvider({
+  children,
+  typingUsers,
+}: {
+  children: ReactNode;
+  typingUsers: TypingUser[];
+}) {
+  return (
+    <TypingUsersContext.Provider value={typingUsers}>
+      {children}
+    </TypingUsersContext.Provider>
+  );
+}
+
+export function useTypingUsers(): TypingUser[] {
+  return useContext(TypingUsersContext);
+}
+
+// Seen Watermarks Context
+const SeenWatermarksContext = createContext<SeenWatermarks>({});
+
+export function SeenWatermarksProvider({
+  children,
+  seenWatermarks,
+}: {
+  children: ReactNode;
+  seenWatermarks: SeenWatermarks;
+}) {
+  return (
+    <SeenWatermarksContext.Provider value={seenWatermarks}>
+      {children}
+    </SeenWatermarksContext.Provider>
+  );
+}
+
+export function useSeenWatermarks(): SeenWatermarks {
+  return useContext(SeenWatermarksContext);
 }

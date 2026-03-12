@@ -66,6 +66,14 @@ export interface OnlineUser {
   entityId: string;
 }
 
+export interface TypingUser {
+  entityId: string;
+  entityName: string;
+}
+
+/** Map of entityId → lastSeenMessageId (watermark) */
+export type SeenWatermarks = Record<string, string>;
+
 // ─── Options & Return ────────────────────────────────────────────────────────
 
 export interface UseHsafaRuntimeOptions {
@@ -81,6 +89,8 @@ export interface UseHsafaRuntimeReturn {
   isRunning: boolean;
   activeAgents: ActiveAgent[];
   onlineUsers: OnlineUser[];
+  typingUsers: TypingUser[];
+  seenWatermarks: SeenWatermarks;
   onNew: (message: AppendMessage) => Promise<void>;
   threadListAdapter?: ThreadListAdapter;
   membersById: Record<string, Entity>;
@@ -156,6 +166,11 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
   // Online users: Set<entityId> for reference counting (multiple tabs)
   const onlineCountRef = useRef(new Map<string, number>());
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
+  // Typing users: Map<entityId, timeout> for auto-expiry
+  const typingTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
+  // Seen watermarks: entityId → lastSeenMessageId
+  const [seenWatermarks, setSeenWatermarks] = useState<SeenWatermarks>({});
 
   // ── Load messages ──
   useEffect(() => {
@@ -205,6 +220,12 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
         for (const eid of users) countMap.set(eid, 1);
         onlineCountRef.current = countMap;
         setOnlineUsers(users.map((eid) => ({ entityId: eid })));
+      }
+
+      // Restore seen watermarks from connected event
+      const watermarks = e.data?.seenWatermarks as Record<string, string> | undefined;
+      if (watermarks && typeof watermarks === 'object') {
+        setSeenWatermarks(watermarks);
       }
 
       // Restore pending tool calls for waiting_tool runs (e.g. confirmAction buttons)
@@ -319,6 +340,43 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       setToolCalls(prev => prev.filter(tc => tc.runId !== rid));
     });
 
+    // user.typing — ephemeral typing indicator (auto-expires after 3s)
+    stream.on('user.typing', (e: StreamEvent) => {
+      const eid = e.entityId || (e.data?.entityId as string);
+      const eName = (e.data?.entityName as string) || '';
+      const isTyping = e.data?.typing !== false;
+      if (!eid || eid === entityId) return; // ignore own typing events
+
+      if (isTyping) {
+        // Add to typing list (or refresh timer)
+        setTypingUsers((prev) => {
+          if (prev.some((u) => u.entityId === eid)) return prev;
+          return [...prev, { entityId: eid, entityName: eName }];
+        });
+        // Auto-expire after 3s
+        const existing = typingTimersRef.current.get(eid);
+        if (existing) clearTimeout(existing);
+        typingTimersRef.current.set(eid, setTimeout(() => {
+          setTypingUsers((prev) => prev.filter((u) => u.entityId !== eid));
+          typingTimersRef.current.delete(eid);
+        }, 3000));
+      } else {
+        // Stop typing
+        const existing = typingTimersRef.current.get(eid);
+        if (existing) clearTimeout(existing);
+        typingTimersRef.current.delete(eid);
+        setTypingUsers((prev) => prev.filter((u) => u.entityId !== eid));
+      }
+    });
+
+    // message.seen — read receipt watermark update
+    stream.on('message.seen', (e: StreamEvent) => {
+      const eid = e.entityId || (e.data?.entityId as string);
+      const msgId = (e.data?.lastSeenMessageId as string);
+      if (!eid || !msgId) return;
+      setSeenWatermarks((prev) => ({ ...prev, [eid]: msgId }));
+    });
+
     // user.online / user.offline — track which human users are online
     stream.on('user.online', (e: StreamEvent) => {
       const eid = e.entityId || (e.data?.entityId as string);
@@ -399,6 +457,11 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       setActiveAgents([]);
       onlineCountRef.current.clear();
       setOnlineUsers([]);
+      // Clear typing timers
+      for (const timer of typingTimersRef.current.values()) clearTimeout(timer);
+      typingTimersRef.current.clear();
+      setTypingUsers([]);
+      setSeenWatermarks({});
     };
   }, [client, smartSpaceId, loaded]);
 
@@ -442,5 +505,5 @@ export function useHsafaRuntime(options: UseHsafaRuntimeOptions): UseHsafaRuntim
       }
     : undefined;
 
-  return { messages, isRunning, activeAgents, onlineUsers: onlineUsers || [], onNew, threadListAdapter, membersById };
+  return { messages, isRunning, activeAgents, onlineUsers: onlineUsers || [], typingUsers, seenWatermarks, onNew, threadListAdapter, membersById };
 }

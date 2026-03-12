@@ -152,6 +152,14 @@ class SpacesResource {
     });
   }
 
+  async sendTyping(smartSpaceId: string, typing = true): Promise<void> {
+    await this.http.post(`/api/smart-spaces/${smartSpaceId}/typing`, { typing });
+  }
+
+  async markSeen(smartSpaceId: string, messageId: string): Promise<void> {
+    await this.http.post(`/api/smart-spaces/${smartSpaceId}/seen`, { messageId });
+  }
+
   subscribe(smartSpaceId: string, options?: SubscribeOptions): HsafaStream {
     const baseUrl = this.http.getBaseUrl();
     const headers = this.http.getAuthHeaders();

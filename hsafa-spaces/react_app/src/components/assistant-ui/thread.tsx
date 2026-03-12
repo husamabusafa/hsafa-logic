@@ -5,12 +5,13 @@ import {
   ThreadPrimitive,
   useMessage,
 } from "@assistant-ui/react";
-import { useMembers, ReasoningPart, ToolCallPart, ImageToolUI } from "@/lib/hsafa-ui";
+import { useMembers, useTypingUsers, useSeenWatermarks, useCurrentSpace, ReasoningPart, ToolCallPart, ImageToolUI } from "@/lib/hsafa-ui";
+import { useHsafaClient } from "@/lib/hsafa-react";
 import { ProductCard } from "./product-card";
 import { ConfirmationUI } from "./confirmation-ui";
 import { ChartDisplay } from "./chart-display";
-import { ArrowUpIcon } from "lucide-react";
-import { type ReactNode } from "react";
+import { ArrowUpIcon, CheckIcon, CheckCheckIcon } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useRef, useMemo } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -33,6 +34,9 @@ export function Thread() {
               AssistantMessage,
             }}
           />
+
+          <TypingIndicator />
+          <AutoMarkSeen />
         </div>
       </ThreadPrimitive.Viewport>
 
@@ -46,6 +50,35 @@ export function Thread() {
 }
 
 function Composer() {
+  const client = useHsafaClient();
+  const { spaceId } = useCurrentSpace();
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef = useRef(false);
+
+  const handleInput = useCallback(() => {
+    if (!spaceId) return;
+
+    // Send typing=true if not already typing
+    if (!isTypingRef.current) {
+      isTypingRef.current = true;
+      client.spaces.sendTyping(spaceId, true).catch(() => {});
+    }
+
+    // Reset the stop-typing timer
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      isTypingRef.current = false;
+      client.spaces.sendTyping(spaceId, false).catch(() => {});
+    }, 2000);
+  }, [client, spaceId]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    };
+  }, []);
+
   return (
     <ComposerPrimitive.Root className="bg-background py-2">
       <div className="rounded-xl border border-border bg-muted/50 focus-within:border-ring/50 focus-within:ring-1 focus-within:ring-ring/20">
@@ -54,6 +87,7 @@ function Composer() {
             placeholder="Ask a question..."
             className="max-h-32 w-full resize-none bg-transparent px-3 pt-2.5 pb-2 text-sm leading-5 placeholder:text-muted-foreground focus:outline-none"
             rows={1}
+            onInput={handleInput}
           />
         </ComposerPrimitive.Input>
         <div className="flex items-center justify-end px-1.5 pb-1.5">
@@ -115,6 +149,7 @@ function formatMessageTime(date: Date | undefined): string {
 function UserMessage() {
   const { membersById, currentEntityId } = useMembers();
   const entityId = useMessage((m) => (m.metadata as any)?.custom?.entityId as string | undefined);
+  const messageId = useMessage((m) => m.id);
   const createdAt = useMessage((m) => m.createdAt);
   const member = entityId ? membersById[entityId] : undefined;
   const displayName = member?.displayName || "You";
@@ -134,6 +169,9 @@ function UserMessage() {
       <div className="max-w-[85%] rounded-2xl bg-primary text-primary-foreground px-3 py-2 text-sm">
         <MessagePrimitive.Content />
       </div>
+      {entityId === currentEntityId && (
+        <SeenTicks messageId={messageId} />
+      )}
     </MessagePrimitive.Root>
   );
 }
@@ -183,5 +221,141 @@ function AssistantMessage() {
         />
       </div>
     </MessagePrimitive.Root>
+  );
+}
+
+// =============================================================================
+// Typing Indicator — shows "X is typing…" below messages
+// =============================================================================
+
+function TypingIndicator() {
+  const typingUsers = useTypingUsers();
+
+  if (typingUsers.length === 0) return null;
+
+  const names = typingUsers.map((u) => u.entityName || "Someone");
+  let label: string;
+  if (names.length === 1) {
+    label = `${names[0]} is typing`;
+  } else if (names.length === 2) {
+    label = `${names[0]} and ${names[1]} are typing`;
+  } else {
+    label = `${names[0]} and ${names.length - 1} others are typing`;
+  }
+
+  return (
+    <div className="flex items-center gap-2 py-2 pl-8">
+      <div className="flex gap-0.5">
+        <span className="size-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:0ms]" />
+        <span className="size-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:150ms]" />
+        <span className="size-1.5 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:300ms]" />
+      </div>
+      <span className="text-xs text-muted-foreground/70 italic">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+// =============================================================================
+// AutoMarkSeen — marks the latest message as seen when rendered
+// =============================================================================
+
+function AutoMarkSeen() {
+  const client = useHsafaClient();
+  const { spaceId } = useCurrentSpace();
+  const lastMarkedRef = useRef<string | null>(null);
+
+  // We need to get the last message ID from the thread. We use a ThreadPrimitive
+  // subscription isn't available here, so we'll observe the DOM for the last message.
+  // Instead, let's use the seenWatermarks + messages approach via the runtime.
+  // Actually, the simplest approach: use an effect that watches for the last
+  // user-visible message via an IntersectionObserver on the viewport.
+
+  // Simpler: mark seen whenever the component re-renders (which happens on new messages)
+  // by reading the last data-role message's ID from the DOM.
+  useEffect(() => {
+    if (!spaceId) return;
+
+    // Small delay to ensure messages are rendered
+    const timer = setTimeout(() => {
+      const viewport = document.querySelector('[class*="overflow-y-auto"]');
+      if (!viewport) return;
+
+      // Find the last message element
+      const msgs = viewport.querySelectorAll("[data-role]");
+      const lastMsg = msgs[msgs.length - 1];
+      if (!lastMsg) return;
+
+      // The message ID is on the wrapper; assistant-ui uses data-message-id
+      // Let's find the closest element with a message id attribute
+      const msgWrapper = lastMsg.closest("[data-message-id]");
+      const messageId = msgWrapper?.getAttribute("data-message-id");
+
+      if (messageId && messageId !== lastMarkedRef.current) {
+        lastMarkedRef.current = messageId;
+        client.spaces.markSeen(spaceId, messageId).catch(() => {});
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  });
+
+  return null;
+}
+
+// =============================================================================
+// SeenTicks — WhatsApp-style read receipt indicators on user messages
+//
+//   ✓  = sent (grey single check)
+//   ✓✓ = seen by at least one other member (blue double check)
+// =============================================================================
+
+function SeenTicks({ messageId }: { messageId: string }) {
+  const { membersById, currentEntityId } = useMembers();
+  const seenWatermarks = useSeenWatermarks();
+
+  // Count how many *other* members have seen this message (their watermark === this ID)
+  // With the watermark approach, entity X has seen message M if M's position <= watermark position.
+  // Since we only have IDs (not positions), we check if the watermark IS this message
+  // or a message that comes after it. For simplicity, we'll check all watermarks.
+  const seenByOthers = useMemo(() => {
+    const seenBy: string[] = [];
+    for (const [entityId, watermarkMsgId] of Object.entries(seenWatermarks)) {
+      if (entityId === currentEntityId) continue;
+      // The watermark is the LAST message seen. So if watermarkMsgId === messageId,
+      // they've seen up to this message. If watermarkMsgId is a later message,
+      // they've also seen this one. We can't easily compare order without seq,
+      // but the watermark only advances forward, so if it was ever set to this
+      // message or beyond, they've seen it.
+      // For now: mark as seen if watermarkMsgId === messageId
+      // TODO: For full accuracy, compare seq values
+      if (watermarkMsgId === messageId) {
+        seenBy.push(entityId);
+      }
+    }
+    return seenBy;
+  }, [seenWatermarks, messageId, currentEntityId]);
+
+  // Count total other members
+  const otherMemberCount = Object.keys(membersById).filter(
+    (id) => id !== currentEntityId
+  ).length;
+
+  const hasBeenSeen = seenByOthers.length > 0;
+
+  // Build tooltip text
+  const seenNames = seenByOthers
+    .map((id) => membersById[id]?.displayName || "Unknown")
+    .join(", ");
+
+  return (
+    <div className="flex items-center gap-0.5 mr-1 mt-0.5" title={hasBeenSeen ? `Seen by ${seenNames}` : "Sent"}>
+      {hasBeenSeen ? (
+        <CheckCheckIcon className="size-3.5 text-blue-500" />
+      ) : (
+        <CheckIcon className="size-3.5 text-muted-foreground/50" />
+      )}
+    </div>
   );
 }

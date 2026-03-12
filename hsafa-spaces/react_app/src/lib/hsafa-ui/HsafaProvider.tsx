@@ -7,7 +7,7 @@ import {
   type SmartSpace,
 } from "../hsafa-react";
 import { useHsafaChatRuntime } from "./useHsafaRuntime";
-import { MembersProvider, ActiveAgentsProvider, CurrentSpaceProvider, OnlineUsersProvider } from "./contexts";
+import { MembersProvider, ActiveAgentsProvider, CurrentSpaceProvider, OnlineUsersProvider, TypingUsersProvider, SeenWatermarksProvider } from "./contexts";
 
 export interface HsafaChatProviderProps {
   children: ReactNode;
@@ -115,7 +115,7 @@ function HsafaChatProviderInner({
   const onSwitchThread = controlledOnSwitch ?? (isAutoMode ? autoOnSwitch : undefined);
   const onNewThread = controlledOnNew ?? (isAutoMode ? autoOnNew : undefined);
 
-  const { runtime, membersById, activeAgents, onlineUsers } = useHsafaChatRuntime({
+  const { runtime, membersById, activeAgents, onlineUsers, typingUsers, seenWatermarks } = useHsafaChatRuntime({
     smartSpaceId,
     entityId,
     smartSpaces,
@@ -135,7 +135,11 @@ function HsafaChatProviderInner({
         <MembersProvider membersById={membersById} currentEntityId={entityId}>
           <ActiveAgentsProvider activeAgents={activeAgents}>
             <OnlineUsersProvider onlineUsers={onlineUsers}>
-              {children}
+              <TypingUsersProvider typingUsers={typingUsers}>
+                <SeenWatermarksProvider seenWatermarks={seenWatermarks}>
+                  {children}
+                </SeenWatermarksProvider>
+              </TypingUsersProvider>
             </OnlineUsersProvider>
           </ActiveAgentsProvider>
         </MembersProvider>

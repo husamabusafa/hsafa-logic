@@ -152,6 +152,9 @@ export type EventType =
   // User presence
   | 'user.online'
   | 'user.offline'
+  | 'user.typing'
+  // Read receipts
+  | 'message.seen'
   // Tool call events
   | 'tool.started'
   | 'tool.done'
