@@ -3,9 +3,9 @@ packages:
   - hsafa-core/core
   - hsafa-core/sdks/service-node
   - hsafa-core/services/test-service
-  - hsafa-spaces/sdks/react-native-sdk
-  - hsafa-spaces/rn-app
-  - hsafa-spaces/use-case-app
+  - hsafa-spaces/server
+  - hsafa-spaces/react_app
+  - hsafa-spaces/rn_app
   - hsafa-cases
 ignoredBuiltDependencies:
   - sharp
