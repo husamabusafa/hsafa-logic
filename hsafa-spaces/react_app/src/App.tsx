@@ -5,7 +5,6 @@ import { AppShell, type AppPage } from "@/components/app-shell";
 import { SpacesSidebar } from "@/components/spaces-sidebar";
 import { ChatView, ChatEmptyState } from "@/components/chat-view";
 import { SpaceDetails } from "@/components/space-details";
-import { SpaceSettings } from "@/components/space-settings";
 import { CreateSpaceDialog } from "@/components/create-space-dialog";
 import { InviteDialog } from "@/components/invite-dialog";
 import { InvitationsPage } from "@/components/invitations-page";
@@ -48,35 +47,10 @@ function SpaceChatRoute() {
               space={space}
               onClose={() => setShowDetails(false)}
               onInvite={() => setShowInvite(true)}
-              onOpenSettings={() => navigate(`/spaces/${spaceId}/settings`)}
             />
           </aside>
         )}
       </div>
-      <InviteDialog
-        open={showInvite}
-        onClose={() => setShowInvite(false)}
-        space={space}
-      />
-    </>
-  );
-}
-
-function SpaceSettingsRoute() {
-  const { spaceId } = useParams<{ spaceId: string }>();
-  const navigate = useNavigate();
-  const [showInvite, setShowInvite] = useState(false);
-
-  const space = mockSpaces.find((s) => s.id === spaceId) || null;
-  if (!space) return <Navigate to="/spaces" replace />;
-
-  return (
-    <>
-      <SpaceSettings
-        space={space}
-        onBack={() => navigate(`/spaces/${spaceId}`)}
-        onOpenInvite={() => setShowInvite(true)}
-      />
       <InviteDialog
         open={showInvite}
         onClose={() => setShowInvite(false)}
@@ -176,7 +150,6 @@ export default function App() {
           {/* Spaces */}
           <Route path="/spaces" element={<ChatEmptyState />} />
           <Route path="/spaces/:spaceId" element={<SpaceChatRoute />} />
-          <Route path="/spaces/:spaceId/settings" element={<SpaceSettingsRoute />} />
 
           {/* Haseefs */}
           <Route path="/haseefs" element={<HaseefEmptyState onCreate={() => setShowCreateHaseef(true)} />} />

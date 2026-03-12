@@ -21,6 +21,7 @@ interface MessageRendererProps {
   member?: MockMember;
   isOwn: boolean;
   showSender: boolean;
+  showSenderName?: boolean;  // Only show name on first message in group
   otherMemberCount: number;
   onReply: (messageId: string) => void;
   onScrollToMessage?: (messageId: string) => void;
@@ -31,6 +32,7 @@ export function MessageRenderer({
   member,
   isOwn,
   showSender,
+  showSenderName = false,
   otherMemberCount,
   onReply,
   onScrollToMessage,
@@ -58,14 +60,17 @@ export function MessageRenderer({
   // Own messages — right-aligned bubble
   if (isOwn) {
     return (
-      <div className={cn("flex flex-col items-end", showSender ? "mt-3" : "mt-0.5")}>
+      <div className={cn("flex flex-col items-end", showSenderName ? "mt-4" : "mt-1")}>
         {message.replyTo && (
           <div className="max-w-[75%] mb-0.5">
             <ReplyBanner replyTo={message.replyTo} onClick={() => onScrollToMessage?.(message.replyTo!.messageId)} />
           </div>
         )}
         <div className="max-w-[75%] group relative" onDoubleClick={() => onReply(message.id)}>
-          <div className="rounded-2xl rounded-br-md bg-primary text-primary-foreground px-3.5 py-2 overflow-hidden">
+          <div className={cn(
+            "px-3.5 py-2 overflow-hidden bg-primary text-primary-foreground",
+            showSender ? "rounded-2xl rounded-br-md" : "rounded-2xl"
+          )}>
             {content}
             <div className="flex items-center justify-end gap-1 mt-1">
               <span className="text-[10px] opacity-70">{time}</span>
@@ -79,14 +84,14 @@ export function MessageRenderer({
 
   // Others' messages — left-aligned bubble
   return (
-    <div className={cn("flex items-end gap-2", showSender ? "mt-3" : "mt-0.5")}>
+    <div className={cn("flex items-end gap-2", showSenderName ? "mt-4" : "mt-1")}>
       {showSender ? (
         <Avatar name={message.senderName} color={member?.avatarColor} size="sm" isOnline={member?.isOnline} />
       ) : (
         <div className="w-8" />
       )}
       <div className="max-w-[75%]">
-        {showSender && (
+        {showSenderName && (
           <div className="flex items-center gap-1.5 mb-0.5 ml-1">
             <span className="text-xs font-medium text-muted-foreground">{message.senderName}</span>
           </div>
@@ -97,7 +102,10 @@ export function MessageRenderer({
           </div>
         )}
         <div className="group relative" onDoubleClick={() => onReply(message.id)}>
-          <div className="rounded-2xl rounded-bl-md bg-muted px-3.5 py-2 overflow-hidden">
+          <div className={cn(
+            "px-3.5 py-2 overflow-hidden bg-muted",
+            showSender ? "rounded-2xl rounded-bl-md" : "rounded-2xl"
+          )}>
             {content}
             <div className="flex items-center justify-end mt-1">
               <span className="text-[10px] text-muted-foreground">{time}</span>

@@ -142,19 +142,27 @@ export function ChatView({ space, onToggleDetails, onBack }: ChatViewProps) {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
-        {messages.map((msg, idx) => (
-          <div key={msg.id} ref={(el) => { messageRefs.current[msg.id] = el; }} className="transition-all">
-            <MessageRenderer
-              message={msg}
-              member={space.members.find((m) => m.entityId === msg.entityId)}
-              isOwn={msg.entityId === currentUser.entityId}
-              showSender={idx === 0 || messages[idx - 1].entityId !== msg.entityId || messages[idx - 1].type === "system"}
-              otherMemberCount={space.members.length - 1}
-              onReply={handleReply}
-              onScrollToMessage={handleScrollToMessage}
-            />
-          </div>
-        ))}
+        {messages.map((msg, idx) => {
+          // Only show avatar on LAST message in a consecutive group
+          const isFirstInGroup = idx === 0 || messages[idx - 1].entityId !== msg.entityId || messages[idx - 1].type === "system";
+          const isLastInGroup = idx === messages.length - 1 || messages[idx + 1].entityId !== msg.entityId || messages[idx + 1].type === "system";
+          const showAvatar = isLastInGroup;           // Avatar only on last message
+          const showSenderName = isFirstInGroup;      // Name only on first message
+          return (
+            <div key={msg.id} ref={(el) => { messageRefs.current[msg.id] = el; }} className="transition-all">
+              <MessageRenderer
+                message={msg}
+                member={space.members.find((m) => m.entityId === msg.entityId)}
+                isOwn={msg.entityId === currentUser.entityId}
+                showSender={showAvatar}
+                showSenderName={showSenderName}
+                otherMemberCount={space.members.length - 1}
+                onReply={handleReply}
+                onScrollToMessage={handleScrollToMessage}
+              />
+            </div>
+          );
+        })}
 
         {/* Typing indicator — supports multiple entities */}
         {typingMembers.length > 0 && (
@@ -184,82 +192,91 @@ export function ChatView({ space, onToggleDetails, onBack }: ChatViewProps) {
         <div ref={bottomRef} />
       </div>
 
-      {/* AI Generation Panel */}
+      {/* AI Generation Popup - positioned above composer */}
       {aiGenType && (
-        <div className="shrink-0 border-t border-border bg-muted/30 px-4 py-3">
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <SparklesIcon className="size-4 text-primary" />
-                <span className="text-xs font-semibold text-primary">
-                  AI Generate: {COMPONENT_TYPES.find((c) => c.type === aiGenType)?.label}
-                </span>
-              </div>
-              <button
-                onClick={() => { setAiGenType(null); setAiPrompt(""); setAiGenerated(false); setAiGenerating(false); }}
-                className="p-0.5 rounded hover:bg-muted transition-colors"
-              >
-                <XIcon className="size-3.5 text-muted-foreground" />
-              </button>
-            </div>
-
-            {!aiGenerated ? (
-              <div className="flex gap-2">
-                <input
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  placeholder={`Describe the ${COMPONENT_TYPES.find((c) => c.type === aiGenType)?.label.toLowerCase()} you want to create...`}
-                  className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && aiPrompt.trim()) {
-                      setAiGenerating(true);
-                      setTimeout(() => { setAiGenerating(false); setAiGenerated(true); }, 1500);
-                    }
-                  }}
-                />
-                <Button
-                  size="sm"
-                  disabled={!aiPrompt.trim() || aiGenerating}
-                  onClick={() => {
-                    setAiGenerating(true);
-                    setTimeout(() => { setAiGenerating(false); setAiGenerated(true); }, 1500);
-                  }}
+        <div className="shrink-0 relative z-50">
+          <div className="absolute bottom-full left-0 right-0 mb-2 px-4">
+            <div className="max-w-3xl mx-auto bg-popover border border-border rounded-xl shadow-lg overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
+                <div className="flex items-center gap-2">
+                  <SparklesIcon className="size-4 text-primary" />
+                  <span className="text-sm font-semibold">
+                    Generate {COMPONENT_TYPES.find((c) => c.type === aiGenType)?.label}
+                  </span>
+                </div>
+                <button
+                  onClick={() => { setAiGenType(null); setAiPrompt(""); setAiGenerated(false); setAiGenerating(false); }}
+                  className="p-1 rounded hover:bg-muted transition-colors"
                 >
-                  {aiGenerating ? (
-                    <><LoaderIcon className="size-3.5 mr-1 animate-spin" /> Generating...</>
-                  ) : (
-                    <><SparklesIcon className="size-3.5 mr-1" /> Generate</>
-                  )}
-                </Button>
+                  <XIcon className="size-4 text-muted-foreground" />
+                </button>
               </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
-                  <span className="text-xs font-medium text-primary">Preview generated.</span>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    "{aiPrompt}" — ready to send as {COMPONENT_TYPES.find((c) => c.type === aiGenType)?.label}.
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => { setAiGenerated(false); }}
-                  >
-                    Regenerate
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      setAiGenType(null); setAiPrompt(""); setAiGenerated(false);
-                      console.log("Send AI-generated component:", aiGenType, aiPrompt);
-                    }}
-                  >
-                    Send
-                  </Button>
-                </div>
+
+              {/* Content */}
+              <div className="p-4 space-y-3">
+                {!aiGenerated ? (
+                  <>
+                    <input
+                      value={aiPrompt}
+                      onChange={(e) => setAiPrompt(e.target.value)}
+                      placeholder={`Describe the ${COMPONENT_TYPES.find((c) => c.type === aiGenType)?.label.toLowerCase()} you want to create...`}
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && aiPrompt.trim()) {
+                          setAiGenerating(true);
+                          setTimeout(() => { setAiGenerating(false); setAiGenerated(true); }, 1500);
+                        }
+                      }}
+                      autoFocus
+                    />
+                    <div className="flex justify-end">
+                      <Button
+                        size="sm"
+                        disabled={!aiPrompt.trim() || aiGenerating}
+                        onClick={() => {
+                          setAiGenerating(true);
+                          setTimeout(() => { setAiGenerating(false); setAiGenerated(true); }, 1500);
+                        }}
+                      >
+                        {aiGenerating ? (
+                          <><LoaderIcon className="size-3.5 mr-1.5 animate-spin" /> Generating...</>
+                        ) : (
+                          <><SparklesIcon className="size-3.5 mr-1.5" /> Generate</>
+                        )}
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Generated Component Preview */}
+                    <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                      <p className="text-xs font-medium text-primary mb-2">Generated Preview</p>
+                      <AiGeneratedPreview type={aiGenType} prompt={aiPrompt} />
+                    </div>
+
+                    <div className="flex gap-2 justify-end">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { setAiGenerated(false); }}
+                      >
+                        Regenerate
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setAiGenType(null); setAiPrompt(""); setAiGenerated(false);
+                          console.log("Send AI-generated component:", aiGenType, aiPrompt);
+                        }}
+                      >
+                        Send Component
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
-            )}
+            </div>
           </div>
         </div>
       )}
@@ -385,6 +402,162 @@ function formatTypingText(members: MockMember[]): string {
   if (members.length === 1) return `${members[0].name} is typing...`;
   if (members.length === 2) return `${members[0].name} and ${members[1].name} are typing...`;
   return `${members[0].name} and ${members.length - 1} others are typing...`;
+}
+
+// ─── AI Generated Component Preview ─────────────────────────────────────────
+
+function AiGeneratedPreview({ type, prompt }: { type: ComponentType; prompt: string }) {
+  switch (type) {
+    case "chart":
+      return <ChartPreview />;
+    case "vote":
+      return <VotePreview prompt={prompt} />;
+    case "confirmation":
+      return <ConfirmationPreview prompt={prompt} />;
+    case "choice":
+      return <ChoicePreview prompt={prompt} />;
+    case "form":
+      return <FormPreview prompt={prompt} />;
+    case "card":
+      return <CardPreview prompt={prompt} />;
+    case "file":
+      return <FilePreview prompt={prompt} />;
+    case "video":
+      return <VideoPreview prompt={prompt} />;
+    default:
+      return <div className="text-sm text-muted-foreground">Component preview for: {prompt.slice(0, 50)}...</div>;
+  }
+}
+
+function ChartPreview() {
+  const data = [
+    { label: "Jan", value: 45 },
+    { label: "Feb", value: 72 },
+    { label: "Mar", value: 58 },
+    { label: "Apr", value: 90 },
+    { label: "May", value: 65 },
+  ];
+  const max = Math.max(...data.map((d) => d.value));
+
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">Monthly Sales Report</p>
+      <div className="flex items-end gap-2 h-24">
+        {data.map((d) => (
+          <div key={d.label} className="flex-1 flex flex-col items-center gap-1">
+            <div
+              className="w-full bg-primary/70 rounded-t"
+              style={{ height: `${(d.value / max) * 80}px` }}
+            />
+            <span className="text-[10px] text-muted-foreground">{d.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VotePreview({ prompt }: { prompt: string }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">{prompt.slice(0, 60) || "Quick Poll"}</p>
+      <div className="space-y-1.5">
+        {["Option A", "Option B", "Option C"].map((opt, i) => (
+          <div key={opt} className="flex items-center gap-2">
+            <div className="flex-1 h-6 bg-muted rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary/60 flex items-center px-2"
+                style={{ width: `${[60, 30, 10][i]}%` }}
+              >
+                <span className="text-[10px] text-white font-medium">{[60, 30, 10][i]}%</span>
+              </div>
+            </div>
+            <span className="text-xs text-muted-foreground w-16">{opt}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ConfirmationPreview({ prompt }: { prompt: string }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm">{prompt.slice(0, 80) || "Please confirm this action"}</p>
+      <div className="flex gap-2">
+        <button className="flex-1 py-1.5 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium">
+          Confirm
+        </button>
+        <button className="flex-1 py-1.5 px-3 rounded-lg bg-muted text-foreground text-xs font-medium">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ChoicePreview({ prompt }: { prompt: string }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">{prompt.slice(0, 50) || "Select an option"}</p>
+      <div className="space-y-1">
+        {["Choice 1", "Choice 2", "Choice 3"].map((c) => (
+          <button key={c} className="w-full text-left px-3 py-2 rounded-lg bg-muted hover:bg-muted/80 text-sm transition-colors">
+            {c}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FormPreview({ prompt }: { prompt: string }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">{prompt.slice(0, 40) || "Form"}</p>
+      <div className="space-y-1.5">
+        <input placeholder="Name" className="w-full px-2 py-1.5 rounded border border-border bg-background text-xs" disabled />
+        <input placeholder="Email" className="w-full px-2 py-1.5 rounded border border-border bg-background text-xs" disabled />
+      </div>
+    </div>
+  );
+}
+
+function CardPreview({ prompt }: { prompt: string }) {
+  return (
+    <div className="rounded-lg overflow-hidden border border-border">
+      <div className="h-16 bg-gradient-to-r from-primary/30 to-primary/10" />
+      <div className="p-2">
+        <p className="text-sm font-medium">{prompt.slice(0, 40) || "Rich Card"}</p>
+        <p className="text-xs text-muted-foreground">Card description goes here...</p>
+      </div>
+    </div>
+  );
+}
+
+function FilePreview({ prompt }: { prompt: string }) {
+  return (
+    <div className="flex items-center gap-3 p-2 rounded-lg bg-muted">
+      <div className="size-8 rounded bg-primary/20 flex items-center justify-center">
+        <FileIcon className="size-4 text-primary" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate">{prompt.slice(0, 30) || "document.pdf"}</p>
+        <p className="text-xs text-muted-foreground">2.4 MB · PDF</p>
+      </div>
+    </div>
+  );
+}
+
+function VideoPreview({ prompt }: { prompt: string }) {
+  return (
+    <div className="rounded-lg overflow-hidden bg-muted aspect-video flex items-center justify-center">
+      <div className="text-center">
+        <VideoIcon className="size-8 text-muted-foreground mx-auto mb-1" />
+        <p className="text-xs text-muted-foreground">{prompt.slice(0, 30) || "Video preview"}</p>
+      </div>
+    </div>
+  );
 }
 
 // ─── Empty state ─────────────────────────────────────────────────────────────
