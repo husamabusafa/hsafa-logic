@@ -3,8 +3,8 @@
 //
 // The spaces-app acts as a V5 service. This module handles:
 //   1. Bootstrap: register tools with Core, resolve entities, start listeners
-//   2. Tool execution: send_message, get_messages, get_spaces, confirmAction,
-//      displayChart — all direct Prisma/service calls (no HTTP round-trips)
+//   2. Tool execution: send_message, get_messages, get_spaces, send_confirmation,
+//      send_choice, send_vote, send_form, respond_to_message, etc.
 //   3. Action listener: consumes Redis Streams for tool dispatch from Core
 //   4. Stream bridge: forwards Core run events to space SSE channels
 //   5. Sense events: pushes space messages to Core via V5 events API
@@ -21,9 +21,16 @@ import {
   setSpaceActiveRun,
   removeSpaceActiveRun,
 } from "../smartspace-events.js";
+import { redis } from "../redis.js";
+import type { ReplyToMetadata } from "../message-types.js";
 import { loadServiceConfig, type ServiceConfig } from "./config.js";
 import { SCOPE, SCOPE_INSTRUCTIONS, TOOLS } from "./manifest.js";
 import { setInboxHandler, type InboxMessageParams } from "./inbox.js";
+import {
+  respondToMessage,
+  closeInteractiveMessage,
+  ServiceError,
+} from "../response-service.js";
 
 // =============================================================================
 // Shared State (module-level singleton)
@@ -273,6 +280,44 @@ async function setupHaseefConnection(haseef: {
 }
 
 // =============================================================================
+// Dynamic Haseef Connection — called when a new haseef is created via the API
+// =============================================================================
+
+export async function connectNewHaseef(haseef: {
+  id: string;
+  name: string;
+  profileJson?: Record<string, unknown>;
+}): Promise<void> {
+  if (!state.config) {
+    console.warn("[spaces-service] Cannot connect haseef — service not bootstrapped");
+    return;
+  }
+
+  // Skip if already connected
+  if (state.connections.has(haseef.id)) {
+    console.log(`[spaces-service] Haseef ${haseef.name} already connected`);
+    return;
+  }
+
+  await setupHaseefConnection(haseef);
+
+  // Ensure the action consumer group exists for the new haseef's stream
+  if (state.actionConsumer) {
+    const streamKey = `actions:${haseef.id}:${SCOPE}`;
+    const consumerGroup = `${SCOPE}-consumer`;
+    try {
+      await state.actionConsumer.xgroup("CREATE", streamKey, consumerGroup, "0", "MKSTREAM");
+    } catch (err: any) {
+      if (!err.message?.includes("BUSYGROUP")) {
+        console.error(`[spaces-service] Failed to create consumer group for ${streamKey}:`, err.message);
+      }
+    }
+  }
+
+  console.log(`[spaces-service] Dynamically connected haseef: ${haseef.name}`);
+}
+
+// =============================================================================
 // Action Listener — Redis Streams (XREADGROUP)
 //
 // Listens for tool-call actions dispatched by Core for the "spaces" scope.
@@ -366,6 +411,28 @@ async function startActionListener(): Promise<void> {
 }
 
 // =============================================================================
+// Reply-To Resolution — resolves a message ID into ReplyToMetadata
+// =============================================================================
+
+async function resolveReplyTo(
+  messageId: string | undefined,
+): Promise<ReplyToMetadata | undefined> {
+  if (!messageId) return undefined;
+  const msg = await prisma.smartSpaceMessage.findUnique({
+    where: { id: messageId },
+    include: { entity: { select: { displayName: true } } },
+  });
+  if (!msg) return undefined;
+  const meta = (msg.metadata ?? {}) as Record<string, unknown>;
+  return {
+    messageId: msg.id,
+    snippet: (msg.content ?? "").slice(0, 100),
+    senderName: (msg as any).entity?.displayName ?? "Unknown",
+    messageType: (meta.type as string) || "text",
+  };
+}
+
+// =============================================================================
 // Action Execution — routes to the correct tool handler
 // =============================================================================
 
@@ -390,14 +457,17 @@ async function executeAction(
         if (!agentEntityId)
           return { error: "agentEntityId not resolved — is this haseef connected?" };
 
+        const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
+
         // Direct persist + emit (no HTTP call)
         const result = await postSpaceMessage({
           spaceId,
           entityId: agentEntityId,
           role: "assistant",
           content: text,
+          messageType: "text",
+          replyTo,
           metadata: {
-            type: "message_tool",
             toolName,
             actionId,
           },
@@ -425,13 +495,25 @@ async function executeAction(
         // Label the haseef's own messages as "You" so the LLM
         // clearly sees what it already said vs what others said
         return {
-          messages: messages.reverse().map((m: any) => ({
-            id: m.id,
-            sender: m.entityId === agentEntityId ? "You" : (m.entity?.displayName ?? "Unknown"),
-            senderType: m.entity?.type ?? "unknown",
-            content: m.content,
-            createdAt: m.createdAt.toISOString(),
-          })),
+          messages: messages.reverse().map((m: any) => {
+            const meta = m.metadata as Record<string, unknown> | null;
+            const msgType = (meta?.type as string) || "text";
+            const result: Record<string, unknown> = {
+              id: m.id,
+              sender: m.entityId === agentEntityId ? "You" : (m.entity?.displayName ?? "Unknown"),
+              senderType: m.entity?.type ?? "unknown",
+              content: m.content,
+              type: msgType,
+              createdAt: m.createdAt.toISOString(),
+            };
+            // Include interactive message fields if present
+            if (meta?.audience) result.audience = meta.audience;
+            if (meta?.status) result.status = meta.status;
+            if (meta?.responseSummary) result.responseSummary = meta.responseSummary;
+            if (meta?.replyTo) result.replyTo = meta.replyTo;
+            if (meta?.payload) result.payload = meta.payload;
+            return result;
+          }),
         };
       }
 
@@ -464,24 +546,359 @@ async function executeAction(
         };
       }
 
-      case "confirmAction": {
+      case "send_confirmation": {
         const spaceId = args.spaceId as string;
-        if (!spaceId) return { error: "spaceId is required" };
-        if (!args.title || !args.message)
-          return { error: "title and message are required" };
+        const title = args.title as string;
+        const message = args.message as string;
+        const targetEntityId = args.targetEntityId as string;
+        if (!spaceId || !title || !message || !targetEntityId)
+          return { error: "spaceId, title, message, and targetEntityId are required" };
+        if (!agentEntityId)
+          return { error: "agentEntityId not resolved" };
+
+        const confirmLabel = (args.confirmLabel as string) || "Confirm";
+        const rejectLabel = (args.rejectLabel as string) || "Cancel";
+        const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
+
+        const result = await postSpaceMessage({
+          spaceId,
+          entityId: agentEntityId,
+          role: "assistant",
+          content: `${title}: ${message}`,
+          messageType: "confirmation",
+          replyTo,
+          metadata: {
+            toolName,
+            actionId,
+            audience: "targeted",
+            targetEntityIds: [targetEntityId],
+            status: "open",
+            responseSchema: { type: "enum", values: ["confirmed", "rejected"] },
+            payload: { title, message, confirmLabel, rejectLabel },
+            responseSummary: { totalResponses: 0, responses: [], respondedEntityIds: [] },
+          },
+        });
+
+        // Push interactive_message sense event to all haseefs in space
+        await pushInteractiveMessageEvent(spaceId, result.messageId, "confirmation", title);
+
         return {
+          success: true,
+          messageId: result.messageId,
           status: "pending",
-          waitingForUser: true,
-          message: "Waiting for user to confirm or reject",
+          message: `Confirmation sent to target. You'll receive a message_resolved event when they respond.`,
         };
       }
 
-      case "displayChart": {
+      case "send_choice": {
+        const spaceId = args.spaceId as string;
+        const text = args.text as string;
+        const options = args.options as Array<{ label: string; value: string }>;
+        if (!spaceId || !text || !Array.isArray(options) || options.length === 0)
+          return { error: "spaceId, text, and options are required" };
+        if (!agentEntityId)
+          return { error: "agentEntityId not resolved" };
+
+        const targetEntityId = args.targetEntityId as string | undefined;
+        const isTargeted = !!targetEntityId;
+        const values = options.map((o) => o.value);
+        const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
+
+        const result = await postSpaceMessage({
+          spaceId,
+          entityId: agentEntityId,
+          role: "assistant",
+          content: text,
+          messageType: "choice",
+          replyTo,
+          metadata: {
+            toolName,
+            actionId,
+            audience: isTargeted ? "targeted" : "broadcast",
+            ...(isTargeted ? { targetEntityIds: [targetEntityId] } : {}),
+            status: "open",
+            responseSchema: { type: "enum", values },
+            payload: { text, options },
+            responseSummary: { totalResponses: 0, responses: [], ...(isTargeted ? { respondedEntityIds: [] } : {}) },
+          },
+        });
+
+        await pushInteractiveMessageEvent(spaceId, result.messageId, "choice", text);
+
+        return {
+          success: true,
+          messageId: result.messageId,
+          status: "pending",
+          message: isTargeted
+            ? `Choice sent to target. You'll receive a message_resolved event when they respond.`
+            : `Choice broadcast to all members. You'll receive message_response events as people respond.`,
+        };
+      }
+
+      case "send_vote": {
+        const spaceId = args.spaceId as string;
+        const title = args.title as string;
+        const options = args.options as string[];
+        if (!spaceId || !title || !Array.isArray(options) || options.length < 2)
+          return { error: "spaceId, title, and at least 2 options are required" };
+        if (!agentEntityId)
+          return { error: "agentEntityId not resolved" };
+
+        const allowMultiple = !!args.allowMultiple;
+        const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
+
+        // Initialize counts with 0 for each option
+        const counts: Record<string, number> = {};
+        for (const opt of options) counts[opt] = 0;
+
+        const result = await postSpaceMessage({
+          spaceId,
+          entityId: agentEntityId,
+          role: "assistant",
+          content: `📊 ${title}`,
+          messageType: "vote",
+          replyTo,
+          metadata: {
+            toolName,
+            actionId,
+            audience: "broadcast",
+            status: "open",
+            responseSchema: { type: "enum", values: options, multiple: allowMultiple },
+            payload: { title, options, allowMultiple },
+            responseSummary: { totalResponses: 0, counts, responses: [] },
+          },
+        });
+
+        await pushInteractiveMessageEvent(spaceId, result.messageId, "vote", title);
+
+        return {
+          success: true,
+          messageId: result.messageId,
+          status: "open",
+          message: `Vote created. You'll receive message_response events as people vote.`,
+        };
+      }
+
+      case "send_form": {
+        const spaceId = args.spaceId as string;
+        const title = args.title as string;
+        const fields = args.fields as Array<Record<string, unknown>>;
+        if (!spaceId || !title || !Array.isArray(fields) || fields.length === 0)
+          return { error: "spaceId, title, and at least 1 field are required" };
+        if (!agentEntityId)
+          return { error: "agentEntityId not resolved" };
+
+        const description = args.description as string | undefined;
+        const targetEntityIds = args.targetEntityIds as string[] | undefined;
+        const isTargeted = Array.isArray(targetEntityIds) && targetEntityIds.length > 0;
+
+        // Build a basic JSON schema from fields for validation
+        const jsonSchema: Record<string, unknown> = {
+          type: "object",
+          properties: {} as Record<string, unknown>,
+          required: [] as string[],
+        };
+        for (const field of fields) {
+          const name = field.name as string;
+          const fieldType = field.type as string;
+          const prop: Record<string, unknown> = {};
+          if (fieldType === "number") prop.type = "number";
+          else if (fieldType === "select" && Array.isArray(field.options)) {
+            prop.type = "string";
+            prop.enum = field.options;
+          } else prop.type = "string";
+          (jsonSchema.properties as Record<string, unknown>)[name] = prop;
+          if (field.required) (jsonSchema.required as string[]).push(name);
+        }
+
+        const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
+
+        const result = await postSpaceMessage({
+          spaceId,
+          entityId: agentEntityId,
+          role: "assistant",
+          content: `📝 ${title}`,
+          messageType: "form",
+          replyTo,
+          metadata: {
+            toolName,
+            actionId,
+            audience: isTargeted ? "targeted" : "broadcast",
+            ...(isTargeted ? { targetEntityIds } : {}),
+            status: "open",
+            responseSchema: { type: "json", schema: jsonSchema },
+            payload: { title, description, fields },
+            responseSummary: { totalResponses: 0, responses: [], ...(isTargeted ? { respondedEntityIds: [] } : {}) },
+          },
+        });
+
+        await pushInteractiveMessageEvent(spaceId, result.messageId, "form", title);
+
+        return {
+          success: true,
+          messageId: result.messageId,
+          status: "open",
+          message: isTargeted
+            ? `Form sent to target. You'll receive a message_resolved event when they submit.`
+            : `Form broadcast to all members. You'll receive message_response events as people submit.`,
+        };
+      }
+
+      case "respond_to_message": {
+        const spaceId = args.spaceId as string;
+        const messageId = args.messageId as string;
+        const value = args.value;
+        if (!spaceId || !messageId || value === undefined)
+          return { error: "spaceId, messageId, and value are required" };
+        if (!agentEntityId)
+          return { error: "agentEntityId not resolved" };
+
+        const result = await respondToMessage({
+          spaceId,
+          messageId,
+          entityId: agentEntityId,
+          value,
+        });
+
+        return {
+          success: true,
+          resolved: result.resolved,
+          responseSummary: result.responseSummary,
+        };
+      }
+
+      case "close_interactive_message": {
+        const spaceId = args.spaceId as string;
+        const messageId = args.messageId as string;
+        if (!spaceId || !messageId)
+          return { error: "spaceId and messageId are required" };
+        if (!agentEntityId)
+          return { error: "agentEntityId not resolved" };
+
+        return await closeInteractiveMessage({
+          spaceId,
+          messageId,
+          entityId: agentEntityId,
+        });
+      }
+
+      case "invite_to_space": {
+        const spaceId = args.spaceId as string;
+        const email = args.email as string;
+        if (!spaceId || !email)
+          return { error: "spaceId and email are required" };
+        if (!agentEntityId)
+          return { error: "agentEntityId not resolved" };
+
+        // Check admin+ role
+        const inviterMembership = await prisma.smartSpaceMembership.findFirst({
+          where: { smartSpaceId: spaceId, entityId: agentEntityId },
+        });
+        if (!inviterMembership)
+          return { error: "You are not a member of this space" };
+        if (!["owner", "admin"].includes(inviterMembership.role))
+          return { error: "You need admin or owner role to invite" };
+
+        const invRole = (args.role as string) || "member";
+        const invMessage = args.message as string | undefined;
+
+        // Check if invitee is already a member (by email → entity lookup)
+        const existingEntity = await prisma.entity.findUnique({
+          where: { externalId: email },
+          select: { id: true },
+        });
+        if (existingEntity) {
+          const existingMembership = await prisma.smartSpaceMembership.findUnique({
+            where: {
+              smartSpaceId_entityId: {
+                smartSpaceId: spaceId,
+                entityId: existingEntity.id,
+              },
+            },
+          });
+          if (existingMembership)
+            return { error: "This person is already a member of the space" };
+        }
+
+        // Upsert: if declined/expired/revoked, update back to pending (§17.9)
+        const existing = await prisma.invitation.findUnique({
+          where: { smartSpaceId_inviteeEmail: { smartSpaceId: spaceId, inviteeEmail: email } },
+        });
+
+        let invitation;
+        if (existing) {
+          if (existing.status === "pending")
+            return { error: "There is already a pending invitation for this email" };
+          if (existing.status === "accepted")
+            return { error: "Invitation already accepted" };
+          // Re-invite: update declined/expired/revoked → pending
+          invitation = await prisma.invitation.update({
+            where: { id: existing.id },
+            data: {
+              status: "pending",
+              role: invRole,
+              inviterId: agentEntityId,
+              message: invMessage || null,
+            },
+          });
+        } else {
+          invitation = await prisma.invitation.create({
+            data: {
+              smartSpaceId: spaceId,
+              inviterId: agentEntityId,
+              inviteeEmail: email,
+              inviteeId: existingEntity?.id || null,
+              role: invRole,
+              message: invMessage || null,
+              status: "pending",
+            },
+          });
+        }
+
+        // Notify invitee via entity channel (if they have an account)
+        if (existingEntity) {
+          const [space, inviter] = await Promise.all([
+            prisma.smartSpace.findUnique({ where: { id: spaceId }, select: { name: true } }),
+            prisma.entity.findUnique({ where: { id: agentEntityId }, select: { displayName: true } }),
+          ]);
+          emitEntityChannelEvent(existingEntity.id, {
+            type: "invitation.created",
+            invitationId: invitation.id,
+            smartSpaceId: spaceId,
+            spaceName: space?.name,
+            inviterName: inviter?.displayName,
+            role: invRole,
+            message: invMessage || null,
+          }).catch(() => {});
+        }
+
+        return {
+          success: true,
+          invitationId: invitation.id,
+          message: `Invitation sent to ${email}`,
+        };
+      }
+
+      case "get_space_members": {
         const spaceId = args.spaceId as string;
         if (!spaceId) return { error: "spaceId is required" };
-        if (!args.type || !args.title || !Array.isArray(args.data))
-          return { error: "type, title, and data are required" };
-        return { success: true };
+
+        const memberships = await prisma.smartSpaceMembership.findMany({
+          where: { smartSpaceId: spaceId },
+          include: {
+            entity: { select: { id: true, displayName: true, type: true } },
+          },
+        });
+
+        return {
+          members: memberships.map((m: any) => ({
+            entityId: m.entityId,
+            name: m.entity?.displayName ?? "Unknown",
+            type: m.entity?.type ?? "unknown",
+            role: m.role,
+            isYou: m.entityId === agentEntityId,
+          })),
+        };
       }
 
       default:
@@ -678,6 +1095,146 @@ export function handleMembershipChanged(
 }
 
 // =============================================================================
+// Interactive Message Sense Events
+//
+// Push sense events for interactive message lifecycle:
+//   - interactive_message → all haseefs in space (message created)
+//   - message_response → sending haseef only (someone responded)
+//   - message_resolved → all haseefs in space (targeted auto-resolved or closed)
+// =============================================================================
+
+async function pushInteractiveMessageEvent(
+  spaceId: string,
+  messageId: string,
+  messageType: string,
+  title: string,
+): Promise<void> {
+  if (!state.config) return;
+
+  const conns = getConnectionsForSpace(spaceId);
+  if (conns.length === 0) return;
+
+  // Load full message + sender info for a complete sense event (§7.8)
+  const [msg, space] = await Promise.all([
+    prisma.smartSpaceMessage.findUnique({
+      where: { id: messageId },
+      include: { entity: { select: { id: true, displayName: true, type: true } } },
+    }),
+    prisma.smartSpace.findUnique({ where: { id: spaceId }, select: { name: true } }),
+  ]);
+
+  const spaceName = space?.name ?? spaceId;
+  const meta = (msg?.metadata ?? {}) as Record<string, unknown>;
+  const audience = (meta.audience as string) ?? "broadcast";
+  const targetEntityIds = (meta.targetEntityIds as string[]) ?? [];
+  const isTargeted = audience === "targeted";
+
+  for (const conn of conns) {
+    await pushSenseEvent(conn.haseefId, {
+      eventId: `interactive-${messageId}`,
+      scope: SCOPE,
+      type: "interactive_message",
+      data: {
+        messageId,
+        spaceId,
+        spaceName,
+        senderId: msg?.entityId,
+        senderName: msg?.entity?.displayName ?? "Unknown",
+        senderType: msg?.entity?.type ?? "unknown",
+        messageType,
+        audience,
+        isTargeted,
+        youAreTargeted: isTargeted && targetEntityIds.includes(conn.agentEntityId),
+        title,
+        payload: meta.payload ?? {},
+        responseSchema: meta.responseSchema ?? null,
+      },
+    }).catch((err) => {
+      console.warn(`[spaces-service] Failed to push interactive_message event:`, err);
+    });
+  }
+}
+
+export async function pushMessageResponseEvent(
+  spaceId: string,
+  messageId: string,
+  senderEntityId: string,
+  responderName: string,
+  responderType: string,
+  value: unknown,
+  responseSummary: Record<string, unknown>,
+): Promise<void> {
+  if (!state.config) return;
+
+  // Find the connection whose agentEntityId matches the message sender
+  const conns = getConnectionsForSpace(spaceId);
+  const senderConn = conns.find((c) => c.agentEntityId === senderEntityId);
+  if (!senderConn) return;
+
+  const spaceName = await prisma.smartSpace
+    .findUnique({ where: { id: spaceId }, select: { name: true } })
+    .then((s) => s?.name ?? spaceId)
+    .catch(() => spaceId);
+
+  await pushSenseEvent(senderConn.haseefId, {
+    eventId: `response-${messageId}-${Date.now()}`,
+    scope: SCOPE,
+    type: "message_response",
+    data: {
+      messageId,
+      spaceId,
+      spaceName,
+      responderName,
+      responderType,
+      value,
+      responseSummary,
+    },
+  }).catch((err) => {
+    console.warn(`[spaces-service] Failed to push message_response event:`, err);
+  });
+}
+
+export async function pushMessageResolvedEvent(
+  spaceId: string,
+  messageId: string,
+  messageType: string,
+  title: string,
+  status: string,
+  resolution: Record<string, unknown>,
+  finalSummary: Record<string, unknown>,
+): Promise<void> {
+  if (!state.config) return;
+
+  const conns = getConnectionsForSpace(spaceId);
+  if (conns.length === 0) return;
+
+  const spaceName = await prisma.smartSpace
+    .findUnique({ where: { id: spaceId }, select: { name: true } })
+    .then((s) => s?.name ?? spaceId)
+    .catch(() => spaceId);
+
+  for (const conn of conns) {
+    await pushSenseEvent(conn.haseefId, {
+      eventId: `resolved-${messageId}`,
+      scope: SCOPE,
+      type: "message_resolved",
+      data: {
+        messageId,
+        spaceId,
+        spaceName,
+        messageType,
+        title,
+        status,
+        resolution,
+        finalSummary,
+      },
+    }).catch((err) => {
+      console.warn(`[spaces-service] Failed to push message_resolved event:`, err);
+    });
+  }
+}
+
+// =============================================================================
 // Inbox Handler — V5 Sense Events
 //
 // Called by space-service.ts after persisting a message.
@@ -695,6 +1252,8 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
     spaceName,
     senderName,
     senderType,
+    messageType,
+    metadata,
   } = params;
 
   // Find connected haseefs for this space
@@ -733,6 +1292,9 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
     console.warn("[spaces-service] Failed to fetch conversation context:", err);
   }
 
+  // Extract replyTo from metadata if present
+  const replyTo = metadata?.replyTo as Record<string, unknown> | undefined;
+
   // Skip messages from THIS haseef's own entity (avoid loops)
   for (const conn of conns) {
     if (entityId === conn.agentEntityId) continue;
@@ -748,22 +1310,41 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
       createdAt: m.createdAt.toISOString(),
     }));
 
+    const eventData: Record<string, unknown> = {
+      messageId,
+      spaceId,
+      spaceName,
+      senderId: entityId,
+      senderName,
+      senderType,
+      content,
+      recentMessages,
+    };
+    // Include message type info (§17.8)
+    if (messageType && messageType !== "text") {
+      eventData.messageType = messageType;
+    }
+    if (replyTo) {
+      eventData.replyTo = replyTo;
+    }
+
     await pushSenseEvent(conn.haseefId, {
       eventId: messageId,
       scope: SCOPE,
       type: "message",
-      data: {
-        messageId,
-        spaceId,
-        spaceName,
-        senderId: entityId,
-        senderName,
-        senderType,
-        content,
-        // Conversation context: the last 10 messages in this space
-        // so the haseef knows what it already said and what the person is replying to
-        recentMessages,
-      },
+      data: eventData,
     });
   }
+}
+
+// =============================================================================
+// Entity Channel Events — notify individual users via Redis pub/sub
+// =============================================================================
+
+async function emitEntityChannelEvent(
+  entityId: string,
+  event: Record<string, unknown>,
+): Promise<void> {
+  const channel = `entity:${entityId}`;
+  await redis.publish(channel, JSON.stringify(event));
 }

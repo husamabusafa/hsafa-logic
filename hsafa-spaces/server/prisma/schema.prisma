@@ -33,6 +33,8 @@ model User {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
+  haseefOwnerships HaseefOwnership[]
+
   @@map("users")
 }
 
@@ -52,6 +54,11 @@ model Entity {
   smartSpaceMemberships SmartSpaceMembership[]
   messages              SmartSpaceMessage[]
   clients               Client[]
+  sentInvitations       Invitation[]        @relation("inviter")
+  receivedInvitations   Invitation[]        @relation("invitee")
+  messageResponses      MessageResponse[]
+  mediaAssets           MediaAsset[]
+  haseefOwnerships      HaseefOwnership[]
 
   @@index([type])
   @@index([externalId])
@@ -70,8 +77,10 @@ model SmartSpace {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  memberships SmartSpaceMembership[]
-  messages    SmartSpaceMessage[]
+  memberships      SmartSpaceMembership[]
+  messages         SmartSpaceMessage[]
+  invitations      Invitation[]
+  messageResponses MessageResponse[]
 
   @@index([createdAt])
   @@map("smart_spaces")
@@ -85,7 +94,7 @@ model SmartSpaceMembership {
   id           String   @id @default(uuid()) @db.Uuid
   smartSpaceId String   @map("smart_space_id") @db.Uuid
   entityId     String   @map("entity_id") @db.Uuid
-  role         String?
+  role         String   @default("member") // "owner" | "admin" | "member"
   joinedAt     DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
 
   lastSeenMessageId String? @map("last_seen_message_id") @db.Uuid
@@ -112,8 +121,13 @@ model SmartSpaceMessage {
   seq          BigInt
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  smartSpace SmartSpace @relation(fields: [smartSpaceId], references: [id], onDelete: Cascade)
-  entity     Entity     @relation(fields: [entityId], references: [id])
+  editedAt     DateTime? @map("edited_at") @db.Timestamptz(6)
+  editHistory  Json?     @map("edit_history") @db.JsonB
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  smartSpace SmartSpace        @relation(fields: [smartSpaceId], references: [id], onDelete: Cascade)
+  entity     Entity            @relation(fields: [entityId], references: [id])
+  responses  MessageResponse[]
 
   @@unique([smartSpaceId, seq])
   @@index([smartSpaceId, createdAt])
@@ -140,4 +154,94 @@ model Client {
   @@index([entityId])
   @@index([clientType])
   @@map("clients")
+}
+
+// =============================================================================
+// INVITATION — Space invitation system
+// =============================================================================
+
+model Invitation {
+  id           String    @id @default(uuid()) @db.Uuid
+  smartSpaceId String    @map("smart_space_id") @db.Uuid
+  inviterId    String    @map("inviter_id") @db.Uuid
+  inviteeEmail String    @map("invitee_email")
+  inviteeId    String?   @map("invitee_id") @db.Uuid
+  role         String    @default("member") // "member" | "admin"
+  status       String    @default("pending") // "pending" | "accepted" | "declined" | "expired" | "revoked"
+  message      String?
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  smartSpace SmartSpace @relation(fields: [smartSpaceId], references: [id], onDelete: Cascade)
+  inviter    Entity     @relation("inviter", fields: [inviterId], references: [id])
+  invitee    Entity?    @relation("invitee", fields: [inviteeId], references: [id])
+
+  @@unique([smartSpaceId, inviteeEmail])
+  @@index([inviteeEmail, status])
+  @@index([inviteeId, status])
+  @@map("invitations")
+}
+
+// =============================================================================
+// MESSAGE RESPONSE — Responses to interactive messages (votes, confirmations, etc.)
+// =============================================================================
+
+model MessageResponse {
+  id           String   @id @default(uuid()) @db.Uuid
+  messageId    String   @map("message_id") @db.Uuid
+  smartSpaceId String   @map("smart_space_id") @db.Uuid
+  entityId     String   @map("entity_id") @db.Uuid
+  entityName   String   @map("entity_name")
+  entityType   String   @map("entity_type") // "human" | "agent"
+  value        Json     @db.JsonB
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  message    SmartSpaceMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  smartSpace SmartSpace        @relation(fields: [smartSpaceId], references: [id], onDelete: Cascade)
+  entity     Entity            @relation(fields: [entityId], references: [id])
+
+  @@unique([messageId, entityId])
+  @@index([messageId])
+  @@map("message_responses")
+}
+
+// =============================================================================
+// MEDIA ASSET — Uploaded files, images, audio, video
+// =============================================================================
+
+model MediaAsset {
+  id           String   @id @default(uuid()) @db.Uuid
+  entityId     String   @map("entity_id") @db.Uuid
+  mimeType     String   @map("mime_type")
+  size         Int      // bytes
+  url          String
+  thumbnailUrl String?  @map("thumbnail_url")
+  metadata     Json?    @db.JsonB // width, height, duration, transcription, etc.
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  entity Entity @relation(fields: [entityId], references: [id])
+
+  @@index([entityId])
+  @@map("media_assets")
+}
+
+// =============================================================================
+// HASEEF OWNERSHIP — Links Users to Haseefs (in Core) and Entities (in Spaces)
+// =============================================================================
+
+model HaseefOwnership {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id")
+  haseefId  String   @map("haseef_id") // Core haseef UUID
+  entityId  String   @map("entity_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entity Entity @relation(fields: [entityId], references: [id])
+
+  @@unique([userId, haseefId])
+  @@index([userId])
+  @@map("haseef_ownerships")
 }

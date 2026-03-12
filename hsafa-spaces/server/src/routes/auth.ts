@@ -44,13 +44,19 @@ router.post("/register", async (req, res) => {
       data: { name: `${name}'s Space` },
     });
 
-    // Add human as admin of the space
+    // Add human as owner of the space
     await prisma.smartSpaceMembership.create({
       data: {
         smartSpaceId: smartSpace.id,
         entityId: entity.id,
-        role: "admin",
+        role: "owner",
       },
+    });
+
+    // Resolve pending invitations for this email
+    await prisma.invitation.updateMany({
+      where: { inviteeEmail: email, status: "pending", inviteeId: null },
+      data: { inviteeId: entity.id },
     });
 
     // Create the user record

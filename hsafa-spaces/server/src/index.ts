@@ -6,6 +6,10 @@ import smartSpacesRoutes from "./routes/smart-spaces.js";
 import entitiesRoutes from "./routes/entities.js";
 import clientsRoutes from "./routes/clients.js";
 import extensionRoutes from "./routes/extension.js";
+import invitationsRoutes from "./routes/invitations.js";
+import haseefsRoutes from "./routes/haseefs.js";
+import responsesRoutes from "./routes/responses.js";
+import mediaRoutes, { mountStaticServing } from "./routes/media.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3005", 10);
@@ -20,6 +24,10 @@ app.use("/api/smart-spaces", smartSpacesRoutes);
 app.use("/api/entities", entitiesRoutes);
 app.use("/api/clients", clientsRoutes);
 app.use("/api/extension", extensionRoutes);
+app.use("/api", invitationsRoutes);
+app.use("/api/haseefs", haseefsRoutes);
+app.use("/api/smart-spaces", responsesRoutes);
+app.use("/api/media", mediaRoutes);
 
 // Health check
 app.get("/health", (_req, res) => {
@@ -29,6 +37,9 @@ app.get("/health", (_req, res) => {
 // Start
 app.listen(PORT, async () => {
   console.log(`[spaces-server] Listening on port ${PORT}`);
+
+  // Mount static file serving for uploads
+  await mountStaticServing(mediaRoutes);
 
   // Bootstrap the extension service (connect to Core, sync tools, etc.)
   try {

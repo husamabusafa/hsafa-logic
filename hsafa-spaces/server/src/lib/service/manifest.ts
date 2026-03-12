@@ -3,6 +3,10 @@
 //
 // Defines the tools registered under the "spaces" scope.
 // Tools are synced to Core via PUT /api/haseefs/:id/scopes/spaces/tools.
+//
+// Removed legacy stubs:
+//   - confirmAction (superseded by send_confirmation)
+//   - displayChart  (deferred to Ship 12)
 // =============================================================================
 
 /** V5 scope name for this service */
@@ -22,7 +26,22 @@ You may receive events from multiple spaces in one cycle — keep them distinct.
 Always use the correct spaceId when calling send_message.
 Do NOT mix up conversations across spaces.
 Do NOT send the same or similar message twice to the same space.
-If a tool call fails or times out, tell the person briefly and move on.`;
+If a tool call fails or times out, tell the person briefly and move on.
+
+INTERACTIVE MESSAGES:
+  - Use send_confirmation to ask someone to confirm/reject something. You'll get a message_resolved event with the outcome.
+  - Use send_choice to present options. Target a specific person or broadcast to everyone.
+  - Use send_vote to create polls. Stays open forever — you'll get message_response events as people vote.
+  - Use send_form to collect structured data from people.
+  - Use respond_to_message to respond to interactive messages others created (vote on polls, confirm requests, etc.).
+  - Use close_interactive_message only if you explicitly want to finalize a vote/form early (rare).
+  - When you receive a message_resolved event, read the outcome and act on it immediately.
+  - When you receive a message_response event, you can track progress (e.g. vote counts) but don't need to act unless relevant.
+  - Messages in get_messages include a "type" field (text, confirmation, vote, choice, form, etc.) and structured metadata.
+
+SPACE MANAGEMENT:
+  - Use get_space_members to see who is in a space (names, roles, entity IDs).
+  - Use invite_to_space to invite someone by email (requires admin+ role).`;
 
 /**
  * Tool definitions to register with Core.
@@ -43,6 +62,10 @@ export const TOOLS = [
         text: {
           type: "string",
           description: "The message text to send.",
+        },
+        replyTo: {
+          type: "string",
+          description: "Optional message ID to reply to.",
         },
       },
       required: ["spaceId", "text"],
@@ -80,15 +103,15 @@ export const TOOLS = [
     mode: "sync" as const,
   },
   {
-    name: "confirmAction",
+    name: "send_confirmation",
     description:
-      "Show a confirmation card in the space with title, message, and Confirm/Cancel buttons. The user's choice is returned when they click. Use for approvals, confirmations, or yes/no decisions.",
+      "Send a confirmation card to a specific person in a space. They will see Confirm/Cancel buttons. Returns immediately with {messageId, status:'pending'}. You will receive a message_resolved sense event when they respond.",
     inputSchema: {
       type: "object" as const,
       properties: {
         spaceId: {
           type: "string",
-          description: "The space ID to show the confirmation in.",
+          description: "The space ID to send the confirmation in.",
         },
         title: {
           type: "string",
@@ -98,56 +121,244 @@ export const TOOLS = [
           type: "string",
           description: "The message or question to display.",
         },
+        targetEntityId: {
+          type: "string",
+          description:
+            "The entity ID of the person who should confirm/reject.",
+        },
         confirmLabel: {
           type: "string",
           description: "Label for the confirm button (default: Confirm).",
         },
         rejectLabel: {
           type: "string",
-          description: "Label for the cancel/reject button (default: Cancel).",
+          description: "Label for the reject button (default: Cancel).",
+        },
+        replyTo: {
+          type: "string",
+          description: "Optional message ID to reply to.",
         },
       },
-      required: ["spaceId", "title", "message"],
+      required: ["spaceId", "title", "message", "targetEntityId"],
     },
     mode: "sync" as const,
   },
   {
-    name: "displayChart",
+    name: "send_choice",
     description:
-      "Display a chart (bar, line, or pie) in the space. Use to visualize data.",
+      "Send a choice card with custom buttons. Can target a specific person (auto-resolves on response) or broadcast to everyone (stays open). Returns immediately with {messageId, status:'pending'}.",
     inputSchema: {
       type: "object" as const,
       properties: {
         spaceId: {
           type: "string",
-          description: "The space ID to show the chart in.",
+          description: "The space ID to send the choice in.",
         },
-        type: {
+        text: {
           type: "string",
-          enum: ["bar", "line", "pie"],
-          description: "Chart type: bar, line, or pie.",
+          description: "The question or prompt text.",
         },
-        title: {
-          type: "string",
-          description: "Chart title.",
-        },
-        data: {
+        options: {
           type: "array",
           items: {
             type: "object",
             properties: {
-              label: { type: "string" },
-              value: { type: "number" },
-              color: { type: "string", description: "Optional hex color" },
+              label: { type: "string", description: "Button display text." },
+              value: { type: "string", description: "Value sent on click." },
             },
             required: ["label", "value"],
           },
-          description: "Data points: [{ label, value, color? }, ...]",
+          description: "The options to choose from: [{label, value}, ...]",
         },
-        xLabel: { type: "string", description: "Optional X-axis label." },
-        yLabel: { type: "string", description: "Optional Y-axis label." },
+        targetEntityId: {
+          type: "string",
+          description:
+            "Optional: target a specific person. If omitted, all members can respond (broadcast).",
+        },
+        replyTo: {
+          type: "string",
+          description: "Optional message ID to reply to.",
+        },
       },
-      required: ["spaceId", "type", "title", "data"],
+      required: ["spaceId", "text", "options"],
+    },
+    mode: "sync" as const,
+  },
+  {
+    name: "send_vote",
+    description:
+      "Send a vote/poll to a space. All members can vote. Stays open forever (like WhatsApp polls). Returns immediately with {messageId}. You'll receive message_response events as people vote.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        spaceId: {
+          type: "string",
+          description: "The space ID to send the vote in.",
+        },
+        title: {
+          type: "string",
+          description: "The vote question/title.",
+        },
+        options: {
+          type: "array",
+          items: { type: "string" },
+          description: "The options to vote on: [\"Pizza\", \"Sushi\", \"Tacos\"]",
+        },
+        allowMultiple: {
+          type: "boolean",
+          description: "Allow selecting multiple options (default: false).",
+        },
+        replyTo: {
+          type: "string",
+          description: "Optional message ID to reply to.",
+        },
+      },
+      required: ["spaceId", "title", "options"],
+    },
+    mode: "sync" as const,
+  },
+  {
+    name: "send_form",
+    description:
+      "Send a form to a space for people to fill out. Can be broadcast (everyone) or targeted. Each person submits independently. Returns immediately with {messageId}.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        spaceId: {
+          type: "string",
+          description: "The space ID to send the form in.",
+        },
+        title: {
+          type: "string",
+          description: "Form title.",
+        },
+        description: {
+          type: "string",
+          description: "Optional description shown above the form.",
+        },
+        fields: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Field key/name." },
+              label: { type: "string", description: "Display label." },
+              type: {
+                type: "string",
+                enum: ["text", "number", "email", "select", "textarea"],
+                description: "Field input type.",
+              },
+              required: { type: "boolean", description: "Is this field required?" },
+              options: {
+                type: "array",
+                items: { type: "string" },
+                description: "Options for select fields.",
+              },
+            },
+            required: ["name", "label", "type"],
+          },
+          description: "Form fields definition.",
+        },
+        targetEntityIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional: target specific people (makes it targeted, auto-resolves when all submit).",
+        },
+        replyTo: {
+          type: "string",
+          description: "Optional message ID to reply to.",
+        },
+      },
+      required: ["spaceId", "title", "fields"],
+    },
+    mode: "sync" as const,
+  },
+  {
+    name: "respond_to_message",
+    description:
+      "Respond to an interactive message (confirmation, vote, choice, form). Use this when you want to confirm/reject, vote on a poll, or submit a form response.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        spaceId: {
+          type: "string",
+          description: "The space ID the message is in.",
+        },
+        messageId: {
+          type: "string",
+          description: "The interactive message ID to respond to.",
+        },
+        value: {
+          description:
+            "Your response value. For confirmation: \"confirmed\" or \"rejected\". For vote/choice: the option string. For form: a JSON object matching the form fields.",
+        },
+      },
+      required: ["spaceId", "messageId", "value"],
+    },
+    mode: "sync" as const,
+  },
+  {
+    name: "close_interactive_message",
+    description:
+      "Close an interactive message you sent (vote, form, choice). Snapshots the current results as final. Rarely needed — votes/forms normally stay open forever.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        spaceId: {
+          type: "string",
+          description: "The space ID the message is in.",
+        },
+        messageId: {
+          type: "string",
+          description: "The interactive message ID to close.",
+        },
+      },
+      required: ["spaceId", "messageId"],
+    },
+    mode: "sync" as const,
+  },
+  {
+    name: "invite_to_space",
+    description:
+      "Invite someone to a space by email. Requires admin+ role in the space. The person will see a pending invitation they can accept or decline.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        spaceId: {
+          type: "string",
+          description: "The space ID to invite to.",
+        },
+        email: {
+          type: "string",
+          description: "Email address of the person to invite.",
+        },
+        role: {
+          type: "string",
+          enum: ["member", "admin"],
+          description: "Role to assign (default: member).",
+        },
+        message: {
+          type: "string",
+          description: "Optional personal message with the invitation.",
+        },
+      },
+      required: ["spaceId", "email"],
+    },
+    mode: "sync" as const,
+  },
+  {
+    name: "get_space_members",
+    description:
+      "List all members of a space with their roles and entity types.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        spaceId: {
+          type: "string",
+          description: "The space ID to list members of.",
+        },
+      },
+      required: ["spaceId"],
     },
     mode: "sync" as const,
   },

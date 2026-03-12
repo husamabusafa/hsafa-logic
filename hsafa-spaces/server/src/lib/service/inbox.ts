@@ -15,6 +15,10 @@ export interface InboxMessageParams {
   messageId: string;
   content: string;
   role: string;
+  /** Message type (text, vote, confirmation, etc.) — added per §17.8 */
+  messageType?: string;
+  /** Full message metadata for interactive messages — added per §17.8 */
+  metadata?: Record<string, unknown>;
 }
 
 type InboxHandler = (params: InboxMessageParams) => Promise<void>;
