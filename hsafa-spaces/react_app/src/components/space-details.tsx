@@ -420,6 +420,7 @@ function MemberRow({ member, isCurrentUser, onClick }: { member: MockMember; isC
     >
       <Avatar
         name={member.name}
+        src={member.avatarUrl}
         color={member.avatarColor}
         size="sm"
         isOnline={member.isOnline}
@@ -502,6 +503,7 @@ function EntityProfilePanel({
         <div className="px-4 py-6 text-center border-b border-border">
           <Avatar
             name={member.name}
+            src={member.avatarUrl}
             color={member.avatarColor}
             size="lg"
             isOnline={member.isOnline}

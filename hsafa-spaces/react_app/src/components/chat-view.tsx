@@ -71,6 +71,9 @@ export function ChatView({ space, onToggleDetails, onBack, showSearch: externalS
   const [searchQuery, setSearchQuery] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Use external search state if provided, otherwise internal
   const isSearchActive = externalShowSearch !== undefined ? externalShowSearch : internalShowSearch;
@@ -108,6 +111,30 @@ export function ChatView({ space, onToggleDetails, onBack, showSearch: externalS
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       el.classList.add("ring-2", "ring-primary/50", "rounded-xl");
       setTimeout(() => el.classList.remove("ring-2", "ring-primary/50", "rounded-xl"), 1500);
+    }
+  }, []);
+
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      console.log("File selected:", files[0].name);
+      // TODO: Handle file upload
+    }
+  }, []);
+
+  const handleVideoUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      console.log("Video selected:", files[0].name);
+      // TODO: Handle video upload
+    }
+  }, []);
+
+  const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      console.log("Image selected:", files[0].name);
+      // TODO: Handle image upload
     }
   }, []);
 
@@ -402,9 +429,15 @@ export function ChatView({ space, onToggleDetails, onBack, showSearch: externalS
                         key={ct.type}
                         onClick={() => {
                           setShowPlusMenu(false);
-                          setAiGenType(ct.type);
-                          setAiPrompt("");
-                          setAiGenerated(false);
+                          if (ct.type === "file") {
+                            fileInputRef.current?.click();
+                          } else if (ct.type === "video") {
+                            videoInputRef.current?.click();
+                          } else {
+                            setAiGenType(ct.type);
+                            setAiPrompt("");
+                            setAiGenerated(false);
+                          }
                         }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-left"
                       >
@@ -422,13 +455,40 @@ export function ChatView({ space, onToggleDetails, onBack, showSearch: externalS
 
             {/* Quick actions: image + mic */}
             <div className="flex items-center gap-0.5 shrink-0 pb-1">
-              <button className="size-8 rounded-lg hover:bg-muted flex items-center justify-center transition-colors" title="Send image">
+              <button 
+                onClick={() => imageInputRef.current?.click()}
+                className="size-8 rounded-lg hover:bg-muted flex items-center justify-center transition-colors" 
+                title="Send image"
+              >
                 <ImageIcon className="size-4 text-muted-foreground" />
               </button>
               <button className="size-8 rounded-lg hover:bg-muted flex items-center justify-center transition-colors" title="Voice message">
                 <MicIcon className="size-4 text-muted-foreground" />
               </button>
             </div>
+
+            {/* Hidden file inputs */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx"
+              onChange={handleFileUpload}
+            />
+            <input
+              ref={videoInputRef}
+              type="file"
+              className="hidden"
+              accept="video/*"
+              onChange={handleVideoUpload}
+            />
+            <input
+              ref={imageInputRef}
+              type="file"
+              className="hidden"
+              accept="image/*"
+              onChange={handleImageUpload}
+            />
 
             {/* Text input */}
             <div className="flex-1 rounded-2xl border border-border bg-muted/50 focus-within:border-ring/50 focus-within:ring-1 focus-within:ring-ring/20">
@@ -851,6 +911,7 @@ function SearchResults({ messages, query, space, onSelect }: SearchResultsProps)
           >
             <Avatar
               name={msg.senderName}
+              src={member?.avatarUrl}
               color={member?.avatarColor}
               size="sm"
               isOnline={member?.isOnline}

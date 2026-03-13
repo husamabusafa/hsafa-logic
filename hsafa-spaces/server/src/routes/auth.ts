@@ -409,23 +409,38 @@ router.get("/auth/google/callback", async (req, res) => {
     });
 
     if (user) {
-      // Link Google account if not already linked
-      if (!user.googleId) {
+      // Ensure entity and space exist (for legacy users or incomplete registrations)
+      if (!user.hsafaEntityId) {
+        const { entity, smartSpace } = await createEntityAndSpace(user.name, user.email);
         user = await prisma.user.update({
           where: { id: user.id },
           data: {
+            hsafaEntityId: entity.id,
+            hsafaSpaceId: smartSpace.id,
             googleId,
             avatarUrl: picture || user.avatarUrl,
             emailVerified: true,
           },
         });
-      }
-      // Always mark email as verified for Google users
-      if (!user.emailVerified) {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: { emailVerified: true },
-        });
+      } else {
+        // Link Google account if not already linked
+        if (!user.googleId) {
+          user = await prisma.user.update({
+            where: { id: user.id },
+            data: {
+              googleId,
+              avatarUrl: picture || user.avatarUrl,
+              emailVerified: true,
+            },
+          });
+        }
+        // Always mark email as verified for Google users
+        if (!user.emailVerified) {
+          user = await prisma.user.update({
+            where: { id: user.id },
+            data: { emailVerified: true },
+          });
+        }
       }
     } else {
       // New user via Google

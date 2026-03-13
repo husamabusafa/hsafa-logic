@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { haseefsApi, mediaApi, type HaseefListItem, type Haseef } from "@/lib/api";
+import { useToast } from "@/components/ui/toast";
 
 // ─── Grid Page ───────────────────────────────────────────────────────────────
 
@@ -147,6 +148,7 @@ interface HaseefDetailPageProps {
 export function HaseefDetailPage({ onDeleted }: HaseefDetailPageProps) {
   const { haseefId } = useParams<{ haseefId: string }>();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [haseef, setHaseef] = useState<Haseef | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -184,12 +186,13 @@ export function HaseefDetailPage({ onDeleted }: HaseefDetailPageProps) {
       await haseefsApi.delete(haseef.id);
       setShowDeleteConfirm(false);
       onDeleted();
+      toast("Haseef deleted", "success");
       navigate("/haseefs");
     } catch (err: any) {
-      setError(err.message || "Failed to delete");
+      toast(err.message || "Failed to delete haseef", "error");
       setIsDeleting(false);
     }
-  }, [haseef, onDeleted, navigate]);
+  }, [haseef, onDeleted, navigate, toast]);
 
   const copyToClipboard = useCallback((text: string, field: string) => {
     navigator.clipboard.writeText(text);
@@ -477,9 +480,10 @@ interface HaseefCreatePageProps {
 
 export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [model, setModel] = useState("gpt-4o");
+  const [model, setModel] = useState("gpt-5.2");
   const [customModel, setCustomModel] = useState("");
   const [instructions, setInstructions] = useState("");
   const [isCreating, setIsCreating] = useState(false);
@@ -502,10 +506,11 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
   };
 
   const models = [
-    { value: "gpt-4o", label: "GPT-4o" },
-    { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-    { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
-    { value: "o3-mini", label: "o3-mini" },
+    { value: "gpt-5.2", label: "GPT-5.2" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+    { value: "qwen/qwen3.5-flash-02-23", label: "Qwen 3.5 Flash", tag: "OpenRouter" },
+    { value: "moonshotai/kimi-k2-thinking", label: "Kimi K2 Thinking", tag: "OpenRouter" },
     { value: "custom", label: "Custom" },
   ];
 
@@ -524,9 +529,10 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
         ...(avatarUrl ? { avatarUrl } : {}),
       });
       onCreated();
+      toast("Haseef created", "success");
       navigate(`/haseefs/${haseef.id}`);
     } catch (err: any) {
-      setError(err.message || "Failed to create haseef");
+      toast(err.message || "Failed to create haseef", "error");
       setIsCreating(false);
     }
   };
@@ -628,6 +634,9 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
                 >
                   <CpuIcon className="size-3.5 inline mr-1.5" />
                   {m.label}
+                  {"tag" in m && m.tag && (
+                    <span className="block text-[10px] opacity-60 mt-0.5">{m.tag}</span>
+                  )}
                 </button>
               ))}
             </div>
@@ -693,6 +702,7 @@ interface HaseefEditPageProps {
 export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
   const { haseefId } = useParams<{ haseefId: string }>();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [haseef, setHaseef] = useState<Haseef | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -766,9 +776,10 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
         ...(avatarChanged ? { avatarUrl: avatarUrl || undefined } : {}),
       });
       onSaved();
+      toast("Changes saved", "success");
       navigate(`/haseefs/${haseef.id}`);
     } catch (err: any) {
-      setError(err.message || "Failed to update haseef");
+      toast(err.message || "Failed to update haseef", "error");
     } finally {
       setIsSaving(false);
     }

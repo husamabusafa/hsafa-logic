@@ -24,6 +24,7 @@ import { mockSpaces } from "@/lib/mock-data";
 import { haseefsApi, spacesApi, invitationsApi, type HaseefListItem, type SmartSpace, type SpaceMember } from "@/lib/api";
 import type { MockMember } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
+import { ToastProvider, useToast } from "@/components/ui/toast";
 
 // ─── Route-aware page components ────────────────────────────────────────────
 
@@ -39,6 +40,7 @@ function SpaceChatRoute({
   const { spaceId } = useParams<{ spaceId: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { toast } = useToast();
   const [showDetails, setShowDetails] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
@@ -98,35 +100,65 @@ function SpaceChatRoute({
 
   // ─── Action callbacks ────────────────────────────────────────────────
   const handleDeleteSpace = async () => {
-    await spacesApi.delete(realSpace.id);
-    await onRefreshSpaces();
-    navigate("/spaces");
+    try {
+      await spacesApi.delete(realSpace.id);
+      await onRefreshSpaces();
+      toast("Space deleted", "success");
+      navigate("/spaces");
+    } catch (err: any) {
+      toast(err.message || "Failed to delete space", "error");
+    }
   };
 
   const handleLeaveSpace = async () => {
-    await spacesApi.leave(realSpace.id);
-    await onRefreshSpaces();
-    navigate("/spaces");
+    try {
+      await spacesApi.leave(realSpace.id);
+      await onRefreshSpaces();
+      toast("Left space", "success");
+      navigate("/spaces");
+    } catch (err: any) {
+      toast(err.message || "Failed to leave space", "error");
+    }
   };
 
   const handleSaveSettings = async (data: { name?: string; description?: string }) => {
-    await spacesApi.update(realSpace.id, data);
-    await onRefreshSpaces();
+    try {
+      await spacesApi.update(realSpace.id, data);
+      await onRefreshSpaces();
+      toast("Settings saved", "success");
+    } catch (err: any) {
+      toast(err.message || "Failed to save settings", "error");
+    }
   };
 
   const handleUpdateMemberRole = async (entityId: string, role: string) => {
-    await spacesApi.updateMemberRole(realSpace.id, entityId, role);
-    await fetchMembers();
+    try {
+      await spacesApi.updateMemberRole(realSpace.id, entityId, role);
+      await fetchMembers();
+      toast("Role updated", "success");
+    } catch (err: any) {
+      toast(err.message || "Failed to update role", "error");
+    }
   };
 
   const handleRemoveMember = async (entityId: string) => {
-    await spacesApi.removeMember(realSpace.id, entityId);
-    await fetchMembers();
+    try {
+      await spacesApi.removeMember(realSpace.id, entityId);
+      await fetchMembers();
+      toast("Member removed", "success");
+    } catch (err: any) {
+      toast(err.message || "Failed to remove member", "error");
+    }
   };
 
   const handleAddMember = async (entityId: string) => {
-    await spacesApi.addMember(realSpace.id, entityId);
-    await fetchMembers();
+    try {
+      await spacesApi.addMember(realSpace.id, entityId);
+      await fetchMembers();
+      toast("Member added", "success");
+    } catch (err: any) {
+      toast(err.message || "Failed to add member", "error");
+    }
   };
 
   return (
@@ -229,6 +261,7 @@ function AppContent() {
   const navigate = useNavigate();
   const location = useLocation();
   const { logout } = useAuth();
+  const { toast } = useToast();
   const [sidebarOpen, setSidebarOpen] = useState(() => !location.pathname.startsWith("/invitations"));
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showCreateSpace, setShowCreateSpace] = useState(false);
@@ -355,26 +388,7 @@ function AppContent() {
         mobileSidebarOpen={mobileSidebarOpen}
         onMobileSidebarClose={() => setMobileSidebarOpen(false)}
       >
-        {/* Profile Panel — full-screen overlay on mobile, side panel on desktop */}
-        {showProfile ? (
-          <div className="flex h-full">
-            <div className="hidden md:flex md:flex-1 min-w-0">
-              <Routes>
-                <Route path="/spaces" element={<ChatEmptyState />} />
-                <Route path="/spaces/:spaceId" element={<SpaceChatRoute spaces={spaces} haseefs={haseefs} onRefreshSpaces={fetchSpaces} />} />
-                <Route path="/haseefs" element={<HaseefsGridPage haseefs={haseefs} isLoading={haseefsLoading} />} />
-                <Route path="/haseefs/new" element={<HaseefCreatePage onCreated={fetchHaseefs} />} />
-                <Route path="/haseefs/:haseefId" element={<HaseefDetailPage onDeleted={fetchHaseefs} />} />
-                <Route path="/haseefs/:haseefId/edit" element={<HaseefEditPage onSaved={fetchHaseefs} />} />
-                <Route path="/invitations" element={<InvitationsPage />} />
-                <Route path="*" element={<Navigate to="/spaces" replace />} />
-              </Routes>
-            </div>
-            <aside className="w-full md:w-[340px] md:border-l border-border bg-card md:shrink-0 h-full">
-              <UserProfile onClose={() => setShowProfile(false)} />
-            </aside>
-          </div>
-        ) : (
+        <div className="relative h-full">
           <Routes>
             {/* Spaces */}
             <Route path="/spaces" element={<ChatEmptyState />} />
@@ -392,7 +406,19 @@ function AppContent() {
             {/* Catch-all */}
             <Route path="*" element={<Navigate to="/spaces" replace />} />
           </Routes>
-        )}
+
+          {showProfile && (
+            <>
+              <div
+                className="fixed inset-0 z-40 bg-black/20 md:absolute"
+                onClick={() => setShowProfile(false)}
+              />
+              <aside className="fixed inset-y-0 right-0 z-50 w-full bg-card md:absolute md:w-[340px] md:border-l md:border-border md:shadow-xl">
+                <UserProfile onClose={() => setShowProfile(false)} />
+              </aside>
+            </>
+          )}
+        </div>
       </AppShell>
 
       {/* Dialogs */}
@@ -400,22 +426,27 @@ function AppContent() {
         open={showCreateSpace}
         onClose={() => setShowCreateSpace(false)}
         onCreate={async (data) => {
-          const { smartSpace } = await spacesApi.create({
-            name: data.name,
-            description: data.description || undefined,
-            memberEntityIds: data.memberEntityIds.length > 0 ? data.memberEntityIds : undefined,
-          });
-          // Send email invitations for humans (fire-and-forget, non-blocking)
-          if (data.inviteEmails && data.inviteEmails.length > 0) {
-            for (const email of data.inviteEmails) {
-              invitationsApi.createForSpace(smartSpace.id, { email, role: "member" }).catch((err) => {
-                console.warn("Failed to send invitation to", email, err);
-              });
+          try {
+            const { smartSpace } = await spacesApi.create({
+              name: data.name,
+              description: data.description || undefined,
+              memberEntityIds: data.memberEntityIds.length > 0 ? data.memberEntityIds : undefined,
+            });
+            // Send email invitations for humans (fire-and-forget, non-blocking)
+            if (data.inviteEmails && data.inviteEmails.length > 0) {
+              for (const email of data.inviteEmails) {
+                invitationsApi.createForSpace(smartSpace.id, { email, role: "member" }).catch((err) => {
+                  console.warn("Failed to send invitation to", email, err);
+                });
+              }
             }
+            await fetchSpaces();
+            toast("Space created", "success");
+            navigate(`/spaces/${smartSpace.id}`);
+            setMobileSidebarOpen(false);
+          } catch (err: any) {
+            toast(err.message || "Failed to create space", "error");
           }
-          await fetchSpaces();
-          navigate(`/spaces/${smartSpace.id}`);
-          setMobileSidebarOpen(false);
         }}
       />
 
@@ -428,17 +459,19 @@ function AppContent() {
 export default function App() {
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <Routes>
-          {/* Auth routes (public) */}
-          <Route path="/auth" element={<RequireUnauth><AuthPage /></RequireUnauth>} />
-          <Route path="/auth/verify" element={<VerifyEmailPage />} />
-          <Route path="/auth/callback" element={<AuthCallback />} />
+      <ToastProvider>
+        <AuthProvider>
+          <Routes>
+            {/* Auth routes (public) */}
+            <Route path="/auth" element={<RequireUnauth><AuthPage /></RequireUnauth>} />
+            <Route path="/auth/verify" element={<VerifyEmailPage />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
 
-          {/* Protected routes */}
-          <Route path="/*" element={<RequireAuth><AppContent /></RequireAuth>} />
-        </Routes>
-      </AuthProvider>
+            {/* Protected routes */}
+            <Route path="/*" element={<RequireAuth><AppContent /></RequireAuth>} />
+          </Routes>
+        </AuthProvider>
+      </ToastProvider>
     </ThemeProvider>
   );
 }
