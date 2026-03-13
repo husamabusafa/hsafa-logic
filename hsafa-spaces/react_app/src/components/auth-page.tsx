@@ -4,7 +4,6 @@ import {
   UserPlusIcon,
   LogInIcon,
   LoaderIcon,
-  SparklesIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth-context";
@@ -76,11 +75,20 @@ export function AuthPage() {
       <div className="w-full max-w-md space-y-8">
         {/* Header */}
         <div className="text-center space-y-3">
-          <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-            <SparklesIcon className="size-7" />
+          <div className="mx-auto flex items-center justify-center">
+            <img 
+              src="/logo/dark-logo-spaces.svg" 
+              alt="Hsafa Spaces" 
+              className="h-12 w-auto dark:hidden"
+            />
+            <img 
+              src="/logo/white-logo-spaces.svg" 
+              alt="Hsafa Spaces" 
+              className="h-12 w-auto hidden dark:block"
+            />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            {isLogin ? "Welcome back" : "Welcome to Hsafa"}
+            {isLogin ? "Welcome back" : "Welcome to Hsafa Spaces"}
           </h1>
           <p className="text-sm text-muted-foreground">
             {isLogin

@@ -11,10 +11,10 @@ import { CreateSpaceDialog } from "@/components/create-space-dialog";
 import { InviteDialog } from "@/components/invite-dialog";
 import { InvitationsPage } from "@/components/invitations-page";
 import {
-  HaseefsSidebar,
-  HaseefDetail,
-  HaseefEmptyState,
-  CreateHaseefDialog,
+  HaseefsGridPage,
+  HaseefDetailPage,
+  HaseefCreatePage,
+  HaseefEditPage,
 } from "@/components/haseefs-page";
 import { AuthPage } from "@/components/auth-page";
 import { VerifyEmailPage } from "@/components/verify-email-page";
@@ -179,22 +179,6 @@ function SpaceChatRoute({
   );
 }
 
-function HaseefDetailRoute({ onDeleted }: { onDeleted: () => void }) {
-  const { haseefId } = useParams<{ haseefId: string }>();
-  const navigate = useNavigate();
-
-  if (!haseefId) return <HaseefEmptyState onCreate={() => navigate("/haseefs")} />;
-  return (
-    <HaseefDetail
-      haseefId={haseefId}
-      onDeleted={() => {
-        onDeleted();
-        navigate("/haseefs");
-      }}
-    />
-  );
-}
-
 // ─── Auth Guard ─────────────────────────────────────────────────────────────
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -248,7 +232,6 @@ function AppContent() {
   const [sidebarOpen, setSidebarOpen] = useState(() => !location.pathname.startsWith("/invitations"));
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showCreateSpace, setShowCreateSpace] = useState(false);
-  const [showCreateHaseef, setShowCreateHaseef] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
 
   // ── Haseefs state ──
@@ -314,15 +297,16 @@ function AppContent() {
     return match ? match[1] : null;
   }, [location.pathname]);
 
-  const selectedHaseefId = useMemo(() => {
-    const match = location.pathname.match(/^\/haseefs\/([^/]+)/);
-    return match && match[1] !== "new" ? match[1] : null;
-  }, [location.pathname]);
-
   const handlePageChange = useCallback((page: AppPage) => {
     setShowProfile(false);
     if (page === "invitations") {
       navigate("/invitations");
+      setSidebarOpen(false);
+      setMobileSidebarOpen(false);
+      return;
+    }
+    if (page === "haseefs") {
+      navigate("/haseefs");
       setSidebarOpen(false);
       setMobileSidebarOpen(false);
       return;
@@ -356,17 +340,6 @@ function AppContent() {
         onCreateSpace={() => setShowCreateSpace(true)}
         isLoading={spacesLoading}
       />
-    ) : activePage === "haseefs" ? (
-      <HaseefsSidebar
-        haseefs={haseefs}
-        selectedId={selectedHaseefId}
-        onSelect={(id) => {
-          navigate(`/haseefs/${id}`);
-          setMobileSidebarOpen(false);
-        }}
-        onCreate={() => setShowCreateHaseef(true)}
-        isLoading={haseefsLoading}
-      />
     ) : null;
 
   return (
@@ -389,8 +362,10 @@ function AppContent() {
               <Routes>
                 <Route path="/spaces" element={<ChatEmptyState />} />
                 <Route path="/spaces/:spaceId" element={<SpaceChatRoute spaces={spaces} haseefs={haseefs} onRefreshSpaces={fetchSpaces} />} />
-                <Route path="/haseefs" element={<HaseefEmptyState onCreate={() => setShowCreateHaseef(true)} />} />
-                <Route path="/haseefs/:haseefId" element={<HaseefDetailRoute onDeleted={fetchHaseefs} />} />
+                <Route path="/haseefs" element={<HaseefsGridPage haseefs={haseefs} isLoading={haseefsLoading} />} />
+                <Route path="/haseefs/new" element={<HaseefCreatePage onCreated={fetchHaseefs} />} />
+                <Route path="/haseefs/:haseefId" element={<HaseefDetailPage onDeleted={fetchHaseefs} />} />
+                <Route path="/haseefs/:haseefId/edit" element={<HaseefEditPage onSaved={fetchHaseefs} />} />
                 <Route path="/invitations" element={<InvitationsPage />} />
                 <Route path="*" element={<Navigate to="/spaces" replace />} />
               </Routes>
@@ -406,8 +381,10 @@ function AppContent() {
             <Route path="/spaces/:spaceId" element={<SpaceChatRoute spaces={spaces} haseefs={haseefs} onRefreshSpaces={fetchSpaces} />} />
 
             {/* Haseefs */}
-            <Route path="/haseefs" element={<HaseefEmptyState onCreate={() => setShowCreateHaseef(true)} />} />
-            <Route path="/haseefs/:haseefId" element={<HaseefDetailRoute onDeleted={fetchHaseefs} />} />
+            <Route path="/haseefs" element={<HaseefsGridPage haseefs={haseefs} isLoading={haseefsLoading} />} />
+            <Route path="/haseefs/new" element={<HaseefCreatePage onCreated={fetchHaseefs} />} />
+            <Route path="/haseefs/:haseefId" element={<HaseefDetailPage onDeleted={fetchHaseefs} />} />
+            <Route path="/haseefs/:haseefId/edit" element={<HaseefEditPage onSaved={fetchHaseefs} />} />
 
             {/* Invitations */}
             <Route path="/invitations" element={<InvitationsPage />} />
@@ -442,20 +419,6 @@ function AppContent() {
         }}
       />
 
-      <CreateHaseefDialog
-        open={showCreateHaseef}
-        onClose={() => setShowCreateHaseef(false)}
-        onCreate={async (data) => {
-          await haseefsApi.create({
-            name: data.name,
-            description: data.description || undefined,
-            model: data.model || undefined,
-            instructions: data.instructions || undefined,
-            avatarUrl: data.avatarUrl || undefined,
-          });
-          await fetchHaseefs();
-        }}
-      />
     </>
   );
 }

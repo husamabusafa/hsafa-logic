@@ -97,7 +97,7 @@ export function AppShell({
       </nav>
 
       {/* Desktop sidebar panel */}
-      {activePage !== "invitations" && (
+      {activePage === "spaces" && (
         <aside
           className={cn(
             "hidden md:flex flex-col border-r border-border bg-card transition-all duration-200 overflow-hidden",

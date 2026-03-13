@@ -24,7 +24,18 @@ export function SpacesSidebar({ spaces, selectedSpaceId, onSelectSpace, onCreate
     <>
       {/* Header */}
       <div className="flex items-center justify-between px-4 h-14 shrink-0">
-        <h2 className="text-lg font-semibold text-foreground">Spaces</h2>
+        <div className="flex items-center">
+          <img 
+            src="/logo/dark-logo-spaces.svg" 
+            alt="Hsafa Spaces" 
+            className="h-7 w-auto dark:hidden"
+          />
+          <img 
+            src="/logo/white-logo-spaces.svg" 
+            alt="Hsafa Spaces" 
+            className="h-7 w-auto hidden dark:block"
+          />
+        </div>
         <Button variant="ghost" size="icon" onClick={onCreateSpace} title="Create space">
           <PlusIcon className="size-5" />
         </Button>
