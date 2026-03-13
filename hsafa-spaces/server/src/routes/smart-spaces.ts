@@ -111,19 +111,59 @@ router.post("/create-for-user", async (req: Request, res: Response) => {
       return;
     }
 
-    const { name } = req.body as { name?: string };
+    const { name, description, memberEntityIds } = req.body as {
+      name?: string;
+      description?: string;
+      memberEntityIds?: string[];
+    };
 
-    const smartSpace = await prisma.smartSpace.create({
-      data: { name: name || `Chat ${new Date().toLocaleTimeString()}` },
+    // Use transaction to create space + all memberships atomically
+    const smartSpace = await prisma.$transaction(async (tx) => {
+      const space = await tx.smartSpace.create({
+        data: {
+          name: name || `Chat ${new Date().toLocaleTimeString()}`,
+          description: description || null,
+        },
+      });
+
+      // Creator is always owner
+      await tx.smartSpaceMembership.create({
+        data: {
+          smartSpaceId: space.id,
+          entityId: payload.entityId,
+          role: "owner",
+        },
+      });
+
+      // Add additional members (skip if same as creator)
+      if (memberEntityIds && memberEntityIds.length > 0) {
+        const uniqueIds = [...new Set(memberEntityIds)].filter(
+          (id) => id !== payload.entityId,
+        );
+        if (uniqueIds.length > 0) {
+          await tx.smartSpaceMembership.createMany({
+            data: uniqueIds.map((entityId) => ({
+              smartSpaceId: space.id,
+              entityId,
+              role: "member",
+            })),
+          });
+        }
+      }
+
+      return space;
     });
 
-    await prisma.smartSpaceMembership.create({
-      data: {
-        smartSpaceId: smartSpace.id,
-        entityId: payload.entityId,
-        role: "owner",
-      },
-    });
+    // Notify new members about membership change (outside transaction)
+    if (memberEntityIds && memberEntityIds.length > 0) {
+      const uniqueIds = [...new Set(memberEntityIds)].filter(
+        (id) => id !== payload.entityId,
+      );
+      for (const entityId of uniqueIds) {
+        invalidateSpace(smartSpace.id);
+        handleMembershipChanged(entityId, smartSpace.id, "added");
+      }
+    }
 
     res.json({ smartSpace: { id: smartSpace.id, name: smartSpace.name } });
   } catch (error) {

@@ -26,16 +26,33 @@ import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { currentUser, mockUsers, mockHaseefs, mockMessages, type MockSpace, type MockMember, type MockMessage } from "@/lib/mock-data";
+import { mockMessages, type MockSpace, type MockMember, type MockMessage } from "@/lib/mock-data";
+
+interface AvailableHaseef {
+  entityId: string;
+  name: string;
+  description?: string;
+}
 
 interface SpaceDetailsProps {
   space: MockSpace;
   onClose: () => void;
   onInvite: () => void;
   onSearchClick?: () => void;
+  onDeleteSpace?: () => Promise<void>;
+  onLeaveSpace?: () => Promise<void>;
+  currentEntityId?: string;
+  onSaveSettings?: (data: { name?: string; description?: string }) => Promise<void>;
+  onUpdateMemberRole?: (entityId: string, role: string) => Promise<void>;
+  onRemoveMember?: (entityId: string) => Promise<void>;
+  onAddMember?: (entityId: string) => Promise<void>;
+  availableHaseefs?: AvailableHaseef[];
 }
 
-export function SpaceDetails({ space, onClose, onInvite, onSearchClick }: SpaceDetailsProps) {
+export function SpaceDetails({
+  space, onClose, onInvite, onSearchClick, onDeleteSpace, onLeaveSpace,
+  currentEntityId, onSaveSettings, onUpdateMemberRole, onRemoveMember, onAddMember, availableHaseefs,
+}: SpaceDetailsProps) {
   const [copiedId, setCopiedId] = useState(false);
   const [selectedMember, setSelectedMember] = useState<MockMember | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -80,6 +97,14 @@ export function SpaceDetails({ space, onClose, onInvite, onSearchClick }: SpaceD
         onBack={() => setShowSettings(false)}
         onClose={onClose}
         onInvite={onInvite}
+        onDeleteSpace={onDeleteSpace}
+        onLeaveSpace={onLeaveSpace}
+        currentEntityId={currentEntityId}
+        onSaveSettings={onSaveSettings}
+        onUpdateMemberRole={onUpdateMemberRole}
+        onRemoveMember={onRemoveMember}
+        onAddMember={onAddMember}
+        availableHaseefs={availableHaseefs}
       />
     );
   }
@@ -91,15 +116,18 @@ export function SpaceDetails({ space, onClose, onInvite, onSearchClick }: SpaceD
         space={space}
         onBack={() => setSelectedMember(null)}
         onClose={onClose}
+        currentEntityId={currentEntityId}
       />
     );
   }
 
   const humanMembers = space.members.filter((m) => m.type === "human");
   const agentMembers = space.members.filter((m) => m.type === "agent");
-  const isAdmin = space.members.some(
-    (m) => m.entityId === currentUser.entityId && (m.role === "owner" || m.role === "admin"),
-  );
+  const isAdmin = currentEntityId
+    ? space.members.some(
+        (m) => m.entityId === currentEntityId && (m.role === "owner" || m.role === "admin"),
+      )
+    : false;
 
   const handleCopyId = () => {
     navigator.clipboard.writeText(space.id);
@@ -219,7 +247,7 @@ export function SpaceDetails({ space, onClose, onInvite, onSearchClick }: SpaceD
                   <MemberRow
                     key={member.entityId}
                     member={member}
-                    isCurrentUser={member.entityId === currentUser.entityId}
+                    isCurrentUser={member.entityId === currentEntityId}
                     onClick={() => setSelectedMember(member)}
                   />
                 ))}
@@ -242,10 +270,17 @@ export function SpaceDetails({ space, onClose, onInvite, onSearchClick }: SpaceD
 
             {/* Danger zone */}
             <div className="px-4 py-4 border-t border-border mt-2">
-              <Button variant="ghost" size="sm" className="w-full text-destructive hover:text-destructive hover:bg-destructive/10">
-                <LogOutIcon className="size-4" />
-                Leave space
-              </Button>
+              {onLeaveSpace && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"
+                  onClick={onLeaveSpace}
+                >
+                  <LogOutIcon className="size-4" />
+                  Leave space
+                </Button>
+              )}
             </div>
           </>
         )}
@@ -440,16 +475,16 @@ function EntityProfilePanel({
   space,
   onBack,
   onClose,
+  currentEntityId,
 }: {
   member: MockMember;
   space: MockSpace;
   onBack: () => void;
   onClose: () => void;
+  currentEntityId?: string;
 }) {
   const isAgent = member.type === "agent";
-  const userData = mockUsers.find((u) => u.entityId === member.entityId);
-  const haseefData = mockHaseefs.find((h) => h.entityId === member.entityId);
-  const isCurrentUser = member.entityId === currentUser.entityId;
+  const isCurrentUser = member.entityId === currentEntityId;
 
   return (
     <div className="flex flex-col h-full">
@@ -487,26 +522,6 @@ function EntityProfilePanel({
         </div>
 
         <div className="px-4 py-4 space-y-3">
-          {userData?.email && (
-            <div className="flex items-center gap-3">
-              <MailIcon className="size-4 text-muted-foreground shrink-0" />
-              <div>
-                <p className="text-[11px] text-muted-foreground">Email</p>
-                <p className="text-sm text-foreground">{userData.email}</p>
-              </div>
-            </div>
-          )}
-
-          {haseefData?.description && (
-            <div className="flex items-start gap-3">
-              <MessageSquareIcon className="size-4 text-muted-foreground shrink-0 mt-0.5" />
-              <div>
-                <p className="text-[11px] text-muted-foreground">Description</p>
-                <p className="text-sm text-foreground">{haseefData.description}</p>
-              </div>
-            </div>
-          )}
-
           <div className="flex items-center gap-3">
             <CalendarIcon className="size-4 text-muted-foreground shrink-0" />
             <div>
@@ -557,30 +572,73 @@ import {
   TrashIcon as TrashIcon2,
   ChevronDownIcon,
 } from "lucide-react";
-import { mockHaseefs as mockHaseefsData } from "@/lib/mock-data";
 
 function SpaceSettingsPanel({
   space,
   onBack,
   onClose,
   onInvite,
+  onDeleteSpace,
+  onLeaveSpace,
+  currentEntityId,
+  onSaveSettings,
+  onUpdateMemberRole,
+  onRemoveMember,
+  onAddMember,
+  availableHaseefs,
 }: {
   space: MockSpace;
   onBack: () => void;
   onClose: () => void;
   onInvite: () => void;
+  onDeleteSpace?: () => Promise<void>;
+  onLeaveSpace?: () => Promise<void>;
+  currentEntityId?: string;
+  onSaveSettings?: (data: { name?: string; description?: string }) => Promise<void>;
+  onUpdateMemberRole?: (entityId: string, role: string) => Promise<void>;
+  onRemoveMember?: (entityId: string) => Promise<void>;
+  onAddMember?: (entityId: string) => Promise<void>;
+  availableHaseefs?: AvailableHaseef[];
 }) {
   const [name, setName] = useState(space.name);
   const [description, setDescription] = useState(space.description);
-  const myMember = space.members.find((m) => m.entityId === currentUser.entityId);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [addingHaseefId, setAddingHaseefId] = useState<string | null>(null);
+  const myMember = currentEntityId
+    ? space.members.find((m) => m.entityId === currentEntityId)
+    : undefined;
   const isOwner = myMember?.role === "owner";
   const isAdmin = myMember?.role === "admin" || isOwner;
 
   const humans = space.members.filter((m) => m.type === "human");
   const agents = space.members.filter((m) => m.type === "agent");
-  const availableHaseefs = mockHaseefsData.filter(
-    (h) => !space.members.some((m) => m.entityId === h.entityId)
-  );
+
+  const handleSave = async () => {
+    if (!onSaveSettings || isSaving) return;
+    setIsSaving(true);
+    try {
+      await onSaveSettings({ name, description });
+    } catch (err) {
+      console.error("Save settings error:", err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleAddHaseef = async (entityId: string) => {
+    if (!onAddMember || addingHaseefId) return;
+    setAddingHaseefId(entityId);
+    try {
+      await onAddMember(entityId);
+    } catch (err) {
+      console.error("Add haseef error:", err);
+    } finally {
+      setAddingHaseefId(null);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -620,9 +678,13 @@ function SpaceSettingsPanel({
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
               />
             </div>
-            {isAdmin && (
-              <Button size="sm" disabled={name === space.name && description === space.description}>
-                Save Changes
+            {isAdmin && onSaveSettings && (
+              <Button
+                size="sm"
+                disabled={isSaving || (name === space.name && description === space.description)}
+                onClick={handleSave}
+              >
+                {isSaving ? "Saving..." : "Save Changes"}
               </Button>
             )}
           </div>
@@ -649,7 +711,15 @@ function SpaceSettingsPanel({
             </span>
             <div className="mt-2 space-y-1">
               {humans.map((m) => (
-                <MemberSettingsRow key={m.entityId} member={m} isAdmin={isAdmin} isOwner={isOwner} />
+                <MemberSettingsRow
+                  key={m.entityId}
+                  member={m}
+                  isAdmin={isAdmin}
+                  isOwner={isOwner}
+                  currentEntityId={currentEntityId}
+                  onChangeRole={onUpdateMemberRole ? (role) => onUpdateMemberRole(m.entityId, role) : undefined}
+                  onRemove={onRemoveMember ? () => onRemoveMember(m.entityId) : undefined}
+                />
               ))}
             </div>
           </div>
@@ -662,7 +732,15 @@ function SpaceSettingsPanel({
               </span>
               <div className="mt-2 space-y-1">
                 {agents.map((m) => (
-                  <MemberSettingsRow key={m.entityId} member={m} isAdmin={isAdmin} isOwner={isOwner} />
+                  <MemberSettingsRow
+                    key={m.entityId}
+                    member={m}
+                    isAdmin={isAdmin}
+                    isOwner={isOwner}
+                    currentEntityId={currentEntityId}
+                    onChangeRole={onUpdateMemberRole ? (role) => onUpdateMemberRole(m.entityId, role) : undefined}
+                    onRemove={onRemoveMember ? () => onRemoveMember(m.entityId) : undefined}
+                  />
                 ))}
               </div>
             </div>
@@ -670,20 +748,29 @@ function SpaceSettingsPanel({
         </div>
 
         {/* Add Haseef */}
-        {isAdmin && availableHaseefs.length > 0 && (
+        {isAdmin && availableHaseefs && availableHaseefs.length > 0 && (
           <div className="rounded-xl border border-border bg-card p-4">
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Add Haseef to Space</h4>
             <div className="space-y-2">
               {availableHaseefs.map((h) => (
-                <div key={h.id} className="flex items-center justify-between py-1.5">
+                <div key={h.entityId} className="flex items-center justify-between py-1.5">
                   <div className="flex items-center gap-2.5">
-                    <Avatar name={h.name} color={h.avatarColor} size="sm" isOnline={h.isOnline} />
+                    <div className="flex size-8 items-center justify-center rounded-full bg-emerald-500/15 shrink-0">
+                      <BotIcon className="size-3.5 text-emerald-600" />
+                    </div>
                     <div>
                       <span className="text-sm font-medium">{h.name}</span>
-                      <p className="text-[11px] text-muted-foreground">{h.description}</p>
+                      {h.description && <p className="text-[11px] text-muted-foreground">{h.description}</p>}
                     </div>
                   </div>
-                  <Button size="sm" variant="outline">Add</Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={addingHaseefId === h.entityId}
+                    onClick={() => handleAddHaseef(h.entityId)}
+                  >
+                    {addingHaseefId === h.entityId ? "Adding..." : "Add"}
+                  </Button>
                 </div>
               ))}
             </div>
@@ -694,26 +781,61 @@ function SpaceSettingsPanel({
         <div className="rounded-xl border border-red-200 dark:border-red-900/50 bg-card p-4">
           <h4 className="text-xs font-semibold text-red-600 dark:text-red-400 mb-3">Danger Zone</h4>
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium">Leave Space</p>
-                <p className="text-[11px] text-muted-foreground">You will lose access to all messages.</p>
+            {!isOwner && onLeaveSpace && (
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Leave Space</p>
+                  <p className="text-[11px] text-muted-foreground">You will lose access to all messages.</p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-red-600 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-800 dark:hover:bg-red-900/30"
+                  disabled={isLeaving}
+                  onClick={async () => {
+                    setIsLeaving(true);
+                    try { await onLeaveSpace(); } catch { setIsLeaving(false); }
+                  }}
+                >
+                  <LogOutIcon className="size-3.5 mr-1.5" />
+                  {isLeaving ? "Leaving..." : "Leave"}
+                </Button>
               </div>
-              <Button size="sm" variant="outline" className="text-red-600 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-800 dark:hover:bg-red-900/30">
-                <LogOutIcon className="size-3.5 mr-1.5" />
-                Leave
-              </Button>
-            </div>
-            {isOwner && (
-              <div className="flex items-center justify-between pt-3 border-t border-red-200 dark:border-red-900/50">
+            )}
+            {isOwner && onDeleteSpace && (
+              <div className={cn("flex items-center justify-between", !isOwner && "pt-3 border-t border-red-200 dark:border-red-900/50")}>
                 <div>
                   <p className="text-sm font-medium">Delete Space</p>
                   <p className="text-[11px] text-muted-foreground">Permanently delete this space and all messages.</p>
                 </div>
-                <Button size="sm" variant="destructive">
-                  <TrashIcon2 className="size-3.5 mr-1.5" />
-                  Delete
-                </Button>
+                {!confirmDelete ? (
+                  <Button size="sm" variant="destructive" onClick={() => setConfirmDelete(true)}>
+                    <TrashIcon2 className="size-3.5 mr-1.5" />
+                    Delete
+                  </Button>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setConfirmDelete(false)}
+                      disabled={isDeleting}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={isDeleting}
+                      onClick={async () => {
+                        setIsDeleting(true);
+                        try { await onDeleteSpace(); } catch { setIsDeleting(false); setConfirmDelete(false); }
+                      }}
+                    >
+                      {isDeleting ? "Deleting..." : "Confirm"}
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -727,13 +849,20 @@ function MemberSettingsRow({
   member,
   isAdmin,
   isOwner,
+  currentEntityId,
+  onChangeRole,
+  onRemove,
 }: {
   member: MockMember;
   isAdmin: boolean;
   isOwner: boolean;
+  currentEntityId?: string;
+  onChangeRole?: (role: string) => Promise<void>;
+  onRemove?: () => Promise<void>;
 }) {
   const [showMenu, setShowMenu] = useState(false);
-  const isCurrentUser = member.entityId === currentUser.entityId;
+  const [loading, setLoading] = useState(false);
+  const isCurrentUser = member.entityId === currentEntityId;
   const isAgent = member.type === "agent";
   const canManage = isAdmin && !isCurrentUser && member.role !== "owner";
 
@@ -743,6 +872,32 @@ function MemberSettingsRow({
     member: UsersIcon,
   }[member.role];
   const RoleIcon = roleIcon;
+
+  const handleChangeRole = async (newRole: string) => {
+    if (!onChangeRole || loading) return;
+    setLoading(true);
+    setShowMenu(false);
+    try {
+      await onChangeRole(newRole);
+    } catch (err) {
+      console.error("Change role error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    if (!onRemove || loading) return;
+    setLoading(true);
+    setShowMenu(false);
+    try {
+      await onRemove();
+    } catch (err) {
+      console.error("Remove member error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-muted/50 transition-colors">
@@ -763,18 +918,19 @@ function MemberSettingsRow({
       <div className="relative">
         <button
           onClick={() => canManage && setShowMenu(!showMenu)}
-          disabled={!canManage}
+          disabled={!canManage || loading}
           className={cn(
             "flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium",
             member.role === "owner" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300" :
             member.role === "admin" ? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300" :
             "bg-muted text-muted-foreground",
-            canManage && "cursor-pointer hover:opacity-80"
+            canManage && !loading && "cursor-pointer hover:opacity-80",
+            loading && "opacity-50",
           )}
         >
           <RoleIcon className="size-3" />
-          <span className="capitalize">{member.role}</span>
-          {canManage && <ChevronDownIcon className="size-3" />}
+          <span className="capitalize">{loading ? "..." : member.role}</span>
+          {canManage && !loading && <ChevronDownIcon className="size-3" />}
         </button>
 
         {showMenu && (
@@ -783,7 +939,7 @@ function MemberSettingsRow({
             <div className="absolute right-0 top-full mt-1 z-50 bg-popover border rounded-lg shadow-lg py-1 min-w-[140px]">
               {isOwner && member.role !== "admin" && (
                 <button
-                  onClick={() => setShowMenu(false)}
+                  onClick={() => handleChangeRole("admin")}
                   className="w-full text-left px-3 py-1.5 text-sm hover:bg-muted transition-colors flex items-center gap-2"
                 >
                   <ShieldIcon2 className="size-3.5" /> Make Admin
@@ -791,14 +947,14 @@ function MemberSettingsRow({
               )}
               {isOwner && member.role === "admin" && (
                 <button
-                  onClick={() => setShowMenu(false)}
+                  onClick={() => handleChangeRole("member")}
                   className="w-full text-left px-3 py-1.5 text-sm hover:bg-muted transition-colors flex items-center gap-2"
                 >
                   <UsersIcon className="size-3.5" /> Make Member
                 </button>
               )}
               <button
-                onClick={() => setShowMenu(false)}
+                onClick={handleRemove}
                 className="w-full text-left px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2"
               >
                 <TrashIcon2 className="size-3.5" /> Remove

@@ -67,9 +67,9 @@ export function AppShell({
           >
             <item.icon className="size-5" />
             <span className="text-[9px] font-medium mt-0.5">{item.label}</span>
-            {item.page === "invitations" && invitationCount && invitationCount > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 size-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
-                {invitationCount}
+            {item.page === "invitations" && invitationCount !== undefined && invitationCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                {invitationCount > 99 ? '99+' : invitationCount}
               </span>
             )}
           </button>
@@ -97,16 +97,18 @@ export function AppShell({
       </nav>
 
       {/* Desktop sidebar panel */}
-      <aside
-        className={cn(
-          "hidden md:flex flex-col border-r border-border bg-card transition-all duration-200 overflow-hidden",
-          sidebarOpen ? "w-[320px]" : "w-0 border-r-0",
-        )}
-      >
-        <div className="w-[320px] h-full flex flex-col">
-          {sidebar}
-        </div>
-      </aside>
+      {activePage !== "invitations" && (
+        <aside
+          className={cn(
+            "hidden md:flex flex-col border-r border-border bg-card transition-all duration-200 overflow-hidden",
+            sidebarOpen ? "w-[320px]" : "w-0 border-r-0",
+          )}
+        >
+          <div className="w-[320px] h-full flex flex-col">
+            {sidebar}
+          </div>
+        </aside>
+      )}
 
       {/* Mobile sidebar drawer overlay */}
       {mobileSidebarOpen && (
@@ -146,9 +148,9 @@ export function AppShell({
           >
             <item.icon className="size-5" />
             <span className="text-[10px] font-medium mt-0.5">{item.label}</span>
-            {item.page === "invitations" && invitationCount && invitationCount > 0 && (
-              <span className="absolute top-1.5 right-1/4 size-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
-                {invitationCount}
+            {item.page === "invitations" && invitationCount !== undefined && invitationCount > 0 && (
+              <span className="absolute top-1.5 right-[calc(50%-16px)] min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center translate-x-1/2">
+                {invitationCount > 99 ? '99+' : invitationCount}
               </span>
             )}
           </button>

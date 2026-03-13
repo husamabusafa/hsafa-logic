@@ -189,10 +189,10 @@ export const spacesApi = {
     return request<{ smartSpace: SmartSpace }>(`/smart-spaces/${id}`);
   },
 
-  create(name: string) {
+  create(data: { name: string; description?: string; memberEntityIds?: string[] }) {
     return request<{ smartSpace: { id: string; name: string } }>("/smart-spaces/create-for-user", {
       method: "POST",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(data),
     });
   },
 
@@ -210,6 +210,13 @@ export const spacesApi = {
   // Members
   listMembers(spaceId: string) {
     return request<{ members: SpaceMember[] }>(`/smart-spaces/${spaceId}/members`);
+  },
+
+  addMember(spaceId: string, entityId: string, role: string = "member") {
+    return request<{ membership: SpaceMember }>(`/smart-spaces/${spaceId}/members`, {
+      method: "POST",
+      body: JSON.stringify({ entityId, role }),
+    });
   },
 
   removeMember(spaceId: string, entityId: string) {
