@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { Routes, Route, Navigate, useParams, useNavigate, useLocation } from "react-router-dom";
+import { LoaderIcon } from "lucide-react";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AppShell, type AppPage } from "@/components/app-shell";
 import { SpacesSidebar } from "@/components/spaces-sidebar";
@@ -15,6 +16,10 @@ import {
   HaseefEmptyState,
   CreateHaseefDialog,
 } from "@/components/haseefs-page";
+import { AuthPage } from "@/components/auth-page";
+import { VerifyEmailPage } from "@/components/verify-email-page";
+import { AuthCallback } from "@/components/auth-callback";
+import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { mockSpaces, mockHaseefs, mockInvitations } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 
@@ -77,11 +82,56 @@ function HaseefDetailRoute() {
   return <HaseefDetail haseef={haseef} />;
 }
 
-// ─── Main App ───────────────────────────────────────────────────────────────
+// ─── Auth Guard ─────────────────────────────────────────────────────────────
 
-export default function App() {
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading, user } = useAuth();
+  const location = useLocation();
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center bg-background">
+        <LoaderIcon className="size-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/auth" state={{ from: location }} replace />;
+  }
+
+  // If email not verified, redirect to verification
+  if (user && !user.emailVerified) {
+    return <Navigate to="/auth/verify" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function RequireUnauth({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center bg-background">
+        <LoaderIcon className="size-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
+    return <Navigate to="/spaces" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+// ─── Main App Content (authenticated) ────────────────────────────────────────
+
+function AppContent() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showCreateSpace, setShowCreateSpace] = useState(false);
@@ -128,8 +178,9 @@ export default function App() {
   }, [activePage, navigate]);
 
   const handleLogout = useCallback(() => {
-    alert("Logout clicked (mock)");
-  }, []);
+    logout();
+    navigate("/auth");
+  }, [logout, navigate]);
 
   // ── Sidebar content based on active page ──
   const sidebar =
@@ -156,7 +207,7 @@ export default function App() {
     ) : null;
 
   return (
-    <ThemeProvider>
+    <>
       <AppShell
         activePage={activePage}
         onPageChange={handlePageChange}
@@ -173,7 +224,6 @@ export default function App() {
           <div className="flex h-full">
             <div className="hidden md:flex md:flex-1 min-w-0">
               <Routes>
-                <Route path="/" element={<Navigate to="/spaces" replace />} />
                 <Route path="/spaces" element={<ChatEmptyState />} />
                 <Route path="/spaces/:spaceId" element={<SpaceChatRoute />} />
                 <Route path="/haseefs" element={<HaseefEmptyState onCreate={() => setShowCreateHaseef(true)} />} />
@@ -188,8 +238,6 @@ export default function App() {
           </div>
         ) : (
           <Routes>
-            <Route path="/" element={<Navigate to="/spaces" replace />} />
-
             {/* Spaces */}
             <Route path="/spaces" element={<ChatEmptyState />} />
             <Route path="/spaces/:spaceId" element={<SpaceChatRoute />} />
@@ -225,6 +273,26 @@ export default function App() {
           setShowCreateHaseef(false);
         }}
       />
+    </>
+  );
+}
+
+// ─── Root App ────────────────────────────────────────────────────────────────
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AuthProvider>
+        <Routes>
+          {/* Auth routes (public) */}
+          <Route path="/auth" element={<RequireUnauth><AuthPage /></RequireUnauth>} />
+          <Route path="/auth/verify" element={<VerifyEmailPage />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
+
+          {/* Protected routes */}
+          <Route path="/*" element={<RequireAuth><AppContent /></RequireAuth>} />
+        </Routes>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

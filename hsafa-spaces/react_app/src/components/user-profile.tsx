@@ -1,13 +1,17 @@
-import { X, Mail, Calendar, Shield } from "lucide-react";
+import { X, Mail, Calendar, Shield, CheckCircle, AlertCircle, LogOut } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { currentUser } from "@/lib/mock-data";
+import { useAuth } from "@/lib/auth-context";
 
 interface UserProfileProps {
   onClose: () => void;
 }
 
 export function UserProfile({ onClose }: UserProfileProps) {
+  const { user, logout } = useAuth();
+
+  if (!user) return null;
+
   return (
     <div className="flex flex-col h-full bg-card">
       {/* Header */}
@@ -25,19 +29,33 @@ export function UserProfile({ onClose }: UserProfileProps) {
       <div className="flex-1 overflow-y-auto p-4">
         {/* Avatar and Name */}
         <div className="flex flex-col items-center text-center mb-6">
-          <Avatar
-            name={currentUser.name}
-            color={currentUser.avatarColor}
-            size="xl"
-            isOnline={currentUser.isOnline}
-          />
-          <h3 className="text-lg font-semibold mt-3">{currentUser.name}</h3>
-          <p className="text-sm text-muted-foreground">{currentUser.email}</p>
+          {user.avatarUrl ? (
+            <img
+              src={user.avatarUrl}
+              alt={user.name}
+              className="size-20 rounded-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <Avatar
+              name={user.name}
+              size="xl"
+            />
+          )}
+          <h3 className="text-lg font-semibold mt-3">{user.name}</h3>
+          <p className="text-sm text-muted-foreground">{user.email}</p>
           <div className="flex items-center gap-1.5 mt-2">
-            <div className={`size-2 rounded-full ${currentUser.isOnline ? "bg-green-500" : "bg-muted-foreground"}`} />
-            <span className="text-xs text-muted-foreground">
-              {currentUser.isOnline ? "Online" : "Offline"}
-            </span>
+            {user.emailVerified ? (
+              <>
+                <CheckCircle className="size-3.5 text-green-500" />
+                <span className="text-xs text-green-600">Verified</span>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="size-3.5 text-amber-500" />
+                <span className="text-xs text-amber-600">Unverified</span>
+              </>
+            )}
           </div>
         </div>
 
@@ -48,7 +66,7 @@ export function UserProfile({ onClose }: UserProfileProps) {
               <Mail className="size-4 text-muted-foreground" />
               <span className="text-xs font-medium text-muted-foreground">Email</span>
             </div>
-            <p className="text-sm pl-6">{currentUser.email}</p>
+            <p className="text-sm pl-6">{user.email}</p>
           </div>
 
           <div className="rounded-lg border border-border p-3">
@@ -56,16 +74,18 @@ export function UserProfile({ onClose }: UserProfileProps) {
               <Shield className="size-4 text-muted-foreground" />
               <span className="text-xs font-medium text-muted-foreground">Account Type</span>
             </div>
-            <p className="text-sm pl-6 capitalize">{currentUser.type}</p>
+            <p className="text-sm pl-6 capitalize">Human</p>
           </div>
 
-          <div className="rounded-lg border border-border p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <Calendar className="size-4 text-muted-foreground" />
-              <span className="text-xs font-medium text-muted-foreground">Entity ID</span>
+          {user.entityId && (
+            <div className="rounded-lg border border-border p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Calendar className="size-4 text-muted-foreground" />
+                <span className="text-xs font-medium text-muted-foreground">Entity ID</span>
+              </div>
+              <p className="text-xs pl-6 font-mono text-muted-foreground">{user.entityId}</p>
             </div>
-            <p className="text-xs pl-6 font-mono text-muted-foreground">{currentUser.entityId}</p>
-          </div>
+          )}
         </div>
 
         {/* Actions */}
@@ -74,10 +94,16 @@ export function UserProfile({ onClose }: UserProfileProps) {
             Edit Profile
           </Button>
           <Button variant="outline" className="w-full justify-start" size="sm">
-            Privacy Settings
-          </Button>
-          <Button variant="outline" className="w-full justify-start" size="sm">
             Notification Preferences
+          </Button>
+          <Button
+            variant="outline"
+            className="w-full justify-start text-destructive hover:text-destructive"
+            size="sm"
+            onClick={logout}
+          >
+            <LogOut className="size-4" />
+            Sign Out
           </Button>
         </div>
       </div>
