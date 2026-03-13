@@ -18,22 +18,29 @@ import {
   VideoIcon,
   PieChartIcon,
   LoaderIcon,
+  ForwardIcon,
+  SearchIcon,
+  CheckIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
 import {
   currentUser,
   mockMessages,
+  mockSpaces,
   mockTypingUsers,
   type MockSpace,
   type MockMember,
 } from "@/lib/mock-data";
 import { MessageRenderer } from "@/components/messages/message-renderer";
+import { cn } from "@/lib/utils";
 
 interface ChatViewProps {
   space: MockSpace;
   onToggleDetails: () => void;
   onBack?: () => void;
+  showSearch?: boolean;
+  onSearchClose?: () => void;
 }
 
 type ComponentType = "confirmation" | "vote" | "choice" | "form" | "card" | "file" | "video" | "chart";
@@ -49,7 +56,7 @@ const COMPONENT_TYPES: { type: ComponentType; icon: typeof CheckCircleIcon; labe
   { type: "chart", icon: PieChartIcon, label: "Chart", description: "Visualize data as a chart" },
 ];
 
-export function ChatView({ space, onToggleDetails, onBack }: ChatViewProps) {
+export function ChatView({ space, onToggleDetails, onBack, showSearch: externalShowSearch, onSearchClose }: ChatViewProps) {
   const messages = mockMessages[space.id] || [];
   const typingEntityIds = mockTypingUsers[space.id] || [];
   const [inputValue, setInputValue] = useState("");
@@ -59,8 +66,19 @@ export function ChatView({ space, onToggleDetails, onBack }: ChatViewProps) {
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiGenerated, setAiGenerated] = useState(false);
+  const [forwardMessageId, setForwardMessageId] = useState<string | null>(null);
+  const [internalShowSearch, setInternalShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // Use external search state if provided, otherwise internal
+  const isSearchActive = externalShowSearch !== undefined ? externalShowSearch : internalShowSearch;
+  const closeSearch = () => {
+    if (onSearchClose) onSearchClose();
+    setInternalShowSearch(false);
+    setSearchQuery("");
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -78,6 +96,10 @@ export function ChatView({ space, onToggleDetails, onBack }: ChatViewProps) {
 
   const handleReply = useCallback((messageId: string) => {
     setReplyingTo(messageId);
+  }, []);
+
+  const handleForward = useCallback((messageId: string) => {
+    setForwardMessageId(messageId);
   }, []);
 
   const handleScrollToMessage = useCallback((messageId: string) => {
@@ -138,11 +160,64 @@ export function ChatView({ space, onToggleDetails, onBack }: ChatViewProps) {
             </div>
           </div>
         </button>
+
+        {/* Search button removed - only in Space Details panel now */}
       </header>
+
+      {/* Search bar - full width with margins */}
+      {isSearchActive && (
+        <div className="mx-4 my-3 border border-border bg-muted/20 shrink-0 rounded-lg">
+          <div className="relative flex items-center">
+            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search messages..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="flex-1 h-9 rounded-lg bg-transparent pl-10 pr-16 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/30"
+              autoFocus
+            />
+            <div className="absolute right-2 flex items-center gap-1">
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="p-0.5 rounded hover:bg-muted/50 transition-colors"
+                  title="Clear search"
+                >
+                  <XIcon className="size-3.5 text-muted-foreground" />
+                </button>
+              )}
+              <button
+                onClick={closeSearch}
+                className="p-0.5 rounded hover:bg-muted/50 transition-colors"
+                title="Close search"
+              >
+                <XIcon className="size-4 text-muted-foreground" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
-        {messages.map((msg, idx) => {
+        {messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-center">
+            <p className="text-sm text-muted-foreground">No messages yet</p>
+            <p className="text-xs text-muted-foreground/60">Start the conversation!</p>
+          </div>
+        ) : searchQuery.trim() ? (
+          /* Search results */
+          <SearchResults
+            messages={messages}
+            query={searchQuery}
+            space={space}
+            onSelect={(id: string) => {
+              handleScrollToMessage(id);
+              closeSearch();
+            }}
+          />
+        ) : (messages.map((msg, idx) => {
           // Only show avatar on LAST message in a consecutive group
           const isFirstInGroup = idx === 0 || messages[idx - 1].entityId !== msg.entityId || messages[idx - 1].type === "system";
           const isLastInGroup = idx === messages.length - 1 || messages[idx + 1].entityId !== msg.entityId || messages[idx + 1].type === "system";
@@ -158,11 +233,12 @@ export function ChatView({ space, onToggleDetails, onBack }: ChatViewProps) {
                 showSenderName={showSenderName}
                 otherMemberCount={space.members.length - 1}
                 onReply={handleReply}
+                onForward={handleForward}
                 onScrollToMessage={handleScrollToMessage}
               />
             </div>
           );
-        })}
+        }))}
 
         {/* Typing indicator — supports multiple entities */}
         {typingMembers.length > 0 && (
@@ -391,6 +467,156 @@ export function ChatView({ space, onToggleDetails, onBack }: ChatViewProps) {
           </div>
         </div>
       </div>
+
+      {/* Forward Dialog */}
+      {forwardMessageId && (
+        <ForwardDialog
+          messageId={forwardMessageId}
+          currentSpaceId={space.id}
+          messages={messages}
+          onClose={() => setForwardMessageId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Forward Dialog ─────────────────────────────────────────────────────────
+
+function ForwardDialog({
+  messageId,
+  currentSpaceId,
+  messages,
+  onClose,
+}: {
+  messageId: string;
+  currentSpaceId: string;
+  messages: any[];
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [selectedSpaces, setSelectedSpaces] = useState<string[]>([]);
+  const [sent, setSent] = useState(false);
+
+  const forwardMessage = (messages as any[]).find((m: any) => m.id === messageId);
+  const otherSpaces = mockSpaces.filter((s) => s.id !== currentSpaceId);
+  const filtered = otherSpaces.filter((s) =>
+    s.name.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  const toggleSpace = (spaceId: string) => {
+    setSelectedSpaces((prev) =>
+      prev.includes(spaceId) ? prev.filter((id) => id !== spaceId) : [...prev, spaceId],
+    );
+  };
+
+  const handleForward = () => {
+    console.log("Forward message:", messageId, "to spaces:", selectedSpaces);
+    setSent(true);
+    setTimeout(onClose, 1200);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative w-full max-w-sm bg-popover border border-border rounded-xl shadow-xl overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <div className="flex items-center gap-2">
+            <ForwardIcon className="size-4 text-primary" />
+            <span className="text-sm font-semibold">Forward Message</span>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-muted transition-colors">
+            <XIcon className="size-4 text-muted-foreground" />
+          </button>
+        </div>
+
+        {sent ? (
+          <div className="flex flex-col items-center justify-center py-10 gap-2">
+            <div className="size-10 rounded-full bg-green-500/15 flex items-center justify-center">
+              <CheckIcon className="size-5 text-green-500" />
+            </div>
+            <p className="text-sm font-medium">Message forwarded!</p>
+          </div>
+        ) : (
+          <>
+            {/* Message preview */}
+            {forwardMessage && (
+              <div className="px-4 py-2.5 bg-muted/30 border-b border-border">
+                <p className="text-xs text-muted-foreground mb-0.5">{forwardMessage.senderName}</p>
+                <p className="text-sm truncate">
+                  {forwardMessage.content || forwardMessage.title || forwardMessage.formTitle || forwardMessage.cardTitle || forwardMessage.imageCaption || forwardMessage.fileName || "Message"}
+                </p>
+              </div>
+            )}
+
+            {/* Search */}
+            <div className="px-3 pt-3 pb-2">
+              <div className="relative">
+                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search spaces..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full h-9 rounded-lg bg-muted/60 pl-9 pr-3 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/30"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            {/* Space list */}
+            <div className="max-h-56 overflow-y-auto px-2 pb-2">
+              {filtered.map((s) => {
+                const isSelected = selectedSpaces.includes(s.id);
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => toggleSpace(s.id)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors",
+                      isSelected ? "bg-primary/10" : "hover:bg-muted/60",
+                    )}
+                  >
+                    <Avatar
+                      name={s.name}
+                      color={s.members.find((m) => m.entityId !== currentUser.entityId)?.avatarColor}
+                      size="sm"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{s.name}</p>
+                      <p className="text-[11px] text-muted-foreground">{s.members.length} members</p>
+                    </div>
+                    {isSelected && (
+                      <div className="size-5 rounded-full bg-primary flex items-center justify-center shrink-0">
+                        <CheckIcon className="size-3 text-primary-foreground" />
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+              {filtered.length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-6">No spaces found</p>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between px-4 py-3 border-t border-border">
+              <span className="text-xs text-muted-foreground">
+                {selectedSpaces.length > 0 ? `${selectedSpaces.length} selected` : "Select spaces"}
+              </span>
+              <Button
+                size="sm"
+                disabled={selectedSpaces.length === 0}
+                onClick={handleForward}
+              >
+                <ForwardIcon className="size-3.5 mr-1.5" />
+                Forward
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -572,6 +798,73 @@ export function ChatEmptyState() {
       <p className="text-sm text-muted-foreground max-w-xs">
         Choose a space from the sidebar to start chatting, or create a new one.
       </p>
+    </div>
+  );
+}
+
+// ─── Search Results Component ───────────────────────────────────────────────
+
+import type { MockMessage } from "@/lib/mock-data";
+
+interface SearchResultsProps {
+  messages: MockMessage[];
+  query: string;
+  space: MockSpace;
+  onSelect: (messageId: string) => void;
+}
+
+function SearchResults({ messages, query, space, onSelect }: SearchResultsProps) {
+  const searchResults = messages.filter((m) => {
+    const text = (m.content || m.title || m.formTitle || m.cardTitle || m.imageCaption || m.fileName || "").toLowerCase();
+    return text.includes(query.toLowerCase()) || m.senderName.toLowerCase().includes(query.toLowerCase());
+  }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  if (searchResults.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center py-12">
+        <div className="size-12 rounded-full bg-muted flex items-center justify-center mb-3">
+          <SearchIcon className="size-5 text-muted-foreground" />
+        </div>
+        <p className="text-sm font-medium text-foreground">No results found</p>
+        <p className="text-xs text-muted-foreground mt-1">Try a different search term</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="sticky top-0 bg-background/95 backdrop-blur-sm py-2 px-2 border-b border-border z-10">
+        <p className="text-xs text-muted-foreground font-medium">
+          {searchResults.length} result{searchResults.length !== 1 ? "s" : ""}
+        </p>
+      </div>
+      {searchResults.map((msg) => {
+        const time = new Date(msg.createdAt).toLocaleDateString([], { month: "short", day: "numeric" });
+        const text = msg.content || msg.title || msg.formTitle || msg.cardTitle || msg.imageCaption || msg.fileName || "Message";
+        const member = space.members.find((m) => m.entityId === msg.entityId);
+        
+        return (
+          <button
+            key={msg.id}
+            onClick={() => onSelect(msg.id)}
+            className="w-full flex items-start gap-3 px-3 py-2.5 rounded-lg hover:bg-muted/50 transition-colors text-left"
+          >
+            <Avatar
+              name={msg.senderName}
+              color={member?.avatarColor}
+              size="sm"
+              isOnline={member?.isOnline}
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-foreground">{msg.senderName}</span>
+                <span className="text-[10px] text-muted-foreground shrink-0">{time}</span>
+              </div>
+              <p className="text-sm text-muted-foreground truncate mt-0.5">{text}</p>
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }

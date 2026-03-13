@@ -5,6 +5,7 @@ import { AppShell, type AppPage } from "@/components/app-shell";
 import { SpacesSidebar } from "@/components/spaces-sidebar";
 import { ChatView, ChatEmptyState } from "@/components/chat-view";
 import { SpaceDetails } from "@/components/space-details";
+import { UserProfile } from "@/components/user-profile";
 import { CreateSpaceDialog } from "@/components/create-space-dialog";
 import { InviteDialog } from "@/components/invite-dialog";
 import { InvitationsPage } from "@/components/invitations-page";
@@ -24,29 +25,36 @@ function SpaceChatRoute() {
   const navigate = useNavigate();
   const [showDetails, setShowDetails] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
 
   const space = mockSpaces.find((s) => s.id === spaceId) || null;
   if (!space) return <ChatEmptyState />;
 
   return (
     <>
-      <div className="flex h-full">
+      <div className="flex h-full overflow-hidden">
+        {/* Chat — hidden on mobile when details open */}
         <div className={cn(
-          "flex-1 min-w-0 transition-all",
-          showDetails && "hidden md:flex md:flex-col",
+          "flex-1 min-w-0 flex flex-col",
+          showDetails && "hidden md:flex",
         )}>
           <ChatView
             space={space}
             onToggleDetails={() => setShowDetails((v) => !v)}
             onBack={() => navigate("/spaces")}
+            showSearch={showSearch}
+            onSearchClose={() => setShowSearch(false)}
           />
         </div>
+
+        {/* Space Details — full screen on mobile, side panel on desktop */}
         {showDetails && (
-          <aside className="w-full md:w-[340px] border-l border-border bg-card shrink-0">
+          <aside className="w-full md:w-[340px] md:border-l border-border bg-card md:shrink-0 overflow-y-auto">
             <SpaceDetails
               space={space}
               onClose={() => setShowDetails(false)}
               onInvite={() => setShowInvite(true)}
+              onSearchClick={() => setShowSearch(true)}
             />
           </aside>
         )}
@@ -75,8 +83,10 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showCreateSpace, setShowCreateSpace] = useState(false);
   const [showCreateHaseef, setShowCreateHaseef] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
 
   const pendingInvitations = mockInvitations.filter((i) => i.status === "pending").length;
 
@@ -99,16 +109,21 @@ export default function App() {
   }, [location.pathname]);
 
   const handlePageChange = useCallback((page: AppPage) => {
+    setShowProfile(false);
     if (page === "invitations") {
       navigate("/invitations");
       setSidebarOpen(false);
+      setMobileSidebarOpen(false);
       return;
     }
+    // On mobile, tapping the same page opens the sidebar drawer
     if (page === activePage) {
       setSidebarOpen((v) => !v);
+      setMobileSidebarOpen((v) => !v);
     } else {
       navigate(`/${page}`);
       setSidebarOpen(true);
+      setMobileSidebarOpen(true);
     }
   }, [activePage, navigate]);
 
@@ -122,14 +137,20 @@ export default function App() {
       <SpacesSidebar
         spaces={mockSpaces}
         selectedSpaceId={selectedSpaceId}
-        onSelectSpace={(id) => navigate(`/spaces/${id}`)}
+        onSelectSpace={(id) => {
+          navigate(`/spaces/${id}`);
+          setMobileSidebarOpen(false);
+        }}
         onCreateSpace={() => setShowCreateSpace(true)}
       />
     ) : activePage === "haseefs" ? (
       <HaseefsSidebar
         haseefs={mockHaseefs}
         selectedId={selectedHaseefId}
-        onSelect={(id) => navigate(`/haseefs/${id}`)}
+        onSelect={(id) => {
+          navigate(`/haseefs/${id}`);
+          setMobileSidebarOpen(false);
+        }}
         onCreate={() => setShowCreateHaseef(true)}
       />
     ) : null;
@@ -142,25 +163,48 @@ export default function App() {
         sidebarOpen={sidebarOpen}
         sidebar={sidebar}
         onLogout={handleLogout}
+        onOpenProfile={() => { setShowProfile(true); setMobileSidebarOpen(false); }}
         invitationCount={pendingInvitations}
+        mobileSidebarOpen={mobileSidebarOpen}
+        onMobileSidebarClose={() => setMobileSidebarOpen(false)}
       >
-        <Routes>
-          <Route path="/" element={<Navigate to="/spaces" replace />} />
+        {/* Profile Panel — full-screen overlay on mobile, side panel on desktop */}
+        {showProfile ? (
+          <div className="flex h-full">
+            <div className="hidden md:flex md:flex-1 min-w-0">
+              <Routes>
+                <Route path="/" element={<Navigate to="/spaces" replace />} />
+                <Route path="/spaces" element={<ChatEmptyState />} />
+                <Route path="/spaces/:spaceId" element={<SpaceChatRoute />} />
+                <Route path="/haseefs" element={<HaseefEmptyState onCreate={() => setShowCreateHaseef(true)} />} />
+                <Route path="/haseefs/:haseefId" element={<HaseefDetailRoute />} />
+                <Route path="/invitations" element={<InvitationsPage />} />
+                <Route path="*" element={<Navigate to="/spaces" replace />} />
+              </Routes>
+            </div>
+            <aside className="w-full md:w-[340px] md:border-l border-border bg-card md:shrink-0 h-full">
+              <UserProfile onClose={() => setShowProfile(false)} />
+            </aside>
+          </div>
+        ) : (
+          <Routes>
+            <Route path="/" element={<Navigate to="/spaces" replace />} />
 
-          {/* Spaces */}
-          <Route path="/spaces" element={<ChatEmptyState />} />
-          <Route path="/spaces/:spaceId" element={<SpaceChatRoute />} />
+            {/* Spaces */}
+            <Route path="/spaces" element={<ChatEmptyState />} />
+            <Route path="/spaces/:spaceId" element={<SpaceChatRoute />} />
 
-          {/* Haseefs */}
-          <Route path="/haseefs" element={<HaseefEmptyState onCreate={() => setShowCreateHaseef(true)} />} />
-          <Route path="/haseefs/:haseefId" element={<HaseefDetailRoute />} />
+            {/* Haseefs */}
+            <Route path="/haseefs" element={<HaseefEmptyState onCreate={() => setShowCreateHaseef(true)} />} />
+            <Route path="/haseefs/:haseefId" element={<HaseefDetailRoute />} />
 
-          {/* Invitations */}
-          <Route path="/invitations" element={<InvitationsPage />} />
+            {/* Invitations */}
+            <Route path="/invitations" element={<InvitationsPage />} />
 
-          {/* Catch-all */}
-          <Route path="*" element={<Navigate to="/spaces" replace />} />
-        </Routes>
+            {/* Catch-all */}
+            <Route path="*" element={<Navigate to="/spaces" replace />} />
+          </Routes>
+        )}
       </AppShell>
 
       {/* Dialogs */}

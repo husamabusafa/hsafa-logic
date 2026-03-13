@@ -13,17 +13,19 @@ import { ChartMessage } from "./chart-message";
 import { SystemMessage } from "./system-message";
 import { ReplyBanner } from "./reply-banner";
 import { Avatar } from "@/components/ui/avatar";
-import { CheckIcon, CheckCheckIcon } from "lucide-react";
+import { CheckIcon, CheckCheckIcon, CornerUpLeftIcon, ForwardIcon, CopyIcon, MoreHorizontalIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useState } from "react";
 
 interface MessageRendererProps {
   message: MockMessage;
   member?: MockMember;
   isOwn: boolean;
   showSender: boolean;
-  showSenderName?: boolean;  // Only show name on first message in group
+  showSenderName?: boolean;
   otherMemberCount: number;
   onReply: (messageId: string) => void;
+  onForward?: (messageId: string) => void;
   onScrollToMessage?: (messageId: string) => void;
 }
 
@@ -35,8 +37,10 @@ export function MessageRenderer({
   showSenderName = false,
   otherMemberCount,
   onReply,
+  onForward,
   onScrollToMessage,
 }: MessageRendererProps) {
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
   if (message.type === "system") {
     return <SystemMessage message={message} />;
   }
@@ -57,6 +61,72 @@ export function MessageRenderer({
 
   const content = renderContent(message);
 
+  const handleCopy = () => {
+    const text = message.content || message.title || message.formTitle || message.cardTitle || message.imageCaption || message.fileName || "";
+    navigator.clipboard.writeText(text);
+    setShowMoreMenu(false);
+  };
+
+  // Hover action buttons
+  const actionButtons = (
+    <>
+      {showMoreMenu && <div className="fixed inset-0 z-30" onClick={() => setShowMoreMenu(false)} />}
+      <div className={cn(
+        "absolute top-0 z-40 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-card border border-border rounded-lg shadow-sm px-0.5 py-0.5",
+        isOwn ? "right-full mr-1.5" : "left-full ml-1.5",
+      )}>
+        <button
+          onClick={() => onReply(message.id)}
+          className="p-1.5 rounded-md hover:bg-muted transition-colors"
+          title="Reply"
+        >
+          <CornerUpLeftIcon className="size-3.5 text-muted-foreground" />
+        </button>
+        <button
+          onClick={() => onForward?.(message.id)}
+          className="p-1.5 rounded-md hover:bg-muted transition-colors"
+          title="Forward"
+        >
+          <ForwardIcon className="size-3.5 text-muted-foreground" />
+        </button>
+        <div className="relative">
+          <button
+            onClick={() => setShowMoreMenu((v) => !v)}
+            className="p-1.5 rounded-md hover:bg-muted transition-colors"
+            title="More"
+          >
+            <MoreHorizontalIcon className="size-3.5 text-muted-foreground" />
+          </button>
+          {showMoreMenu && (
+            <div className={cn(
+              "absolute top-full mt-1 z-50 w-36 bg-popover border border-border rounded-lg shadow-lg py-1",
+              isOwn ? "right-0" : "left-0",
+            )}>
+              <button onClick={handleCopy} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-sm text-left transition-colors">
+                <CopyIcon className="size-3.5 text-muted-foreground" />
+                Copy text
+              </button>
+              <button
+                onClick={() => { onReply(message.id); setShowMoreMenu(false); }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-sm text-left transition-colors"
+              >
+                <CornerUpLeftIcon className="size-3.5 text-muted-foreground" />
+                Reply
+              </button>
+              <button
+                onClick={() => { onForward?.(message.id); setShowMoreMenu(false); }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-sm text-left transition-colors"
+              >
+                <ForwardIcon className="size-3.5 text-muted-foreground" />
+                Forward
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+
   // Own messages — right-aligned bubble
   if (isOwn) {
     return (
@@ -67,6 +137,7 @@ export function MessageRenderer({
           </div>
         )}
         <div className="max-w-[75%] group relative" onDoubleClick={() => onReply(message.id)}>
+          {actionButtons}
           <div className={cn(
             "px-3.5 py-2 overflow-hidden bg-primary text-primary-foreground",
             showSender ? "rounded-2xl rounded-br-md" : "rounded-2xl"
@@ -102,6 +173,7 @@ export function MessageRenderer({
           </div>
         )}
         <div className="group relative" onDoubleClick={() => onReply(message.id)}>
+          {actionButtons}
           <div className={cn(
             "px-3.5 py-2 overflow-hidden bg-muted",
             showSender ? "rounded-2xl rounded-bl-md" : "rounded-2xl"
