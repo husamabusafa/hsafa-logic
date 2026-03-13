@@ -451,6 +451,7 @@ function AppContent() {
             description: data.description || undefined,
             model: data.model || undefined,
             instructions: data.instructions || undefined,
+            avatarUrl: data.avatarUrl || undefined,
           });
           await fetchHaseefs();
         }}

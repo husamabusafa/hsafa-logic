@@ -7,6 +7,10 @@
 const CORE_URL = process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
 const API_KEY = process.env.CORE_API_KEY || "";
 
+if (!API_KEY) {
+  console.warn("[core-proxy] ⚠ CORE_API_KEY is not set — haseef CRUD will fail. Set it to match HSAFA_API_KEY in your core .env");
+}
+
 function headers(): Record<string, string> {
   return {
     "Content-Type": "application/json",

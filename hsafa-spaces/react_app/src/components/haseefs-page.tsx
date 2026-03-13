@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   PlusIcon,
   BotIcon,
@@ -9,6 +9,7 @@ import {
   ChevronRightIcon,
   CpuIcon,
   LoaderIcon,
+  CameraIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -22,7 +23,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { haseefsApi, spacesApi, type HaseefListItem, type Haseef, type SmartSpace } from "@/lib/api";
+import { haseefsApi, spacesApi, mediaApi, type HaseefListItem, type Haseef, type SmartSpace } from "@/lib/api";
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 
@@ -62,7 +63,11 @@ export function HaseefsSidebar({ haseefs, selectedId, onSelect, onCreate, isLoad
                     : "hover:bg-muted/60 border-l-2 border-l-transparent",
                 )}
               >
-                <Avatar name={h.name} size="md" />
+                {h.avatarUrl ? (
+                  <img src={h.avatarUrl} alt={h.name} className="size-9 rounded-full object-cover shrink-0" />
+                ) : (
+                  <Avatar name={h.name} size="md" />
+                )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm font-medium text-foreground truncate">{h.name}</span>
@@ -176,7 +181,11 @@ export function HaseefDetail({ haseefId, onDeleted }: HaseefDetailProps) {
       <div className="max-w-xl mx-auto p-6 space-y-4">
         {/* Profile Card */}
         <div className="rounded-2xl border border-border bg-card p-6 text-center">
-          <Avatar name={haseef.name} size="lg" />
+          {haseef.avatarUrl ? (
+            <img src={haseef.avatarUrl} alt={haseef.name} className="size-16 rounded-full object-cover mx-auto border-2 border-border" />
+          ) : (
+            <Avatar name={haseef.name} size="lg" />
+          )}
           <h2 className="text-xl font-semibold text-foreground mt-3">{haseef.name}</h2>
           {haseef.description && (
             <p className="text-sm text-muted-foreground mt-1">{haseef.description}</p>
@@ -231,6 +240,7 @@ export function HaseefDetail({ haseefId, onDeleted }: HaseefDetailProps) {
       {showEdit && (
         <EditHaseefDialog
           haseef={haseef}
+          currentAvatarUrl={haseef.avatarUrl}
           onClose={() => setShowEdit(false)}
           onSaved={(updated) => {
             setHaseef(updated);
@@ -311,7 +321,7 @@ export function HaseefEmptyState({ onCreate }: { onCreate: () => void }) {
 interface CreateHaseefDialogProps {
   open: boolean;
   onClose: () => void;
-  onCreate: (data: { name: string; description: string; model: string; instructions: string }) => Promise<void>;
+  onCreate: (data: { name: string; description: string; model: string; instructions: string; avatarUrl?: string }) => Promise<void>;
 }
 
 export function CreateHaseefDialog({ open, onClose, onCreate }: CreateHaseefDialogProps) {
@@ -322,6 +332,23 @@ export function CreateHaseefDialog({ open, onClose, onCreate }: CreateHaseefDial
   const [instructions, setInstructions] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Avatar upload
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+
+  const handleAvatarUpload = async (file: File) => {
+    setIsUploading(true);
+    try {
+      const { url } = await mediaApi.upload(file);
+      setAvatarUrl(url);
+    } catch (err: any) {
+      setError(err.message || "Failed to upload avatar");
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const models = [
     { value: "gpt-4o", label: "GPT-4o" },
@@ -338,8 +365,14 @@ export function CreateHaseefDialog({ open, onClose, onCreate }: CreateHaseefDial
     setIsCreating(true);
     setError(null);
     try {
-      await onCreate({ name: name.trim(), description: description.trim(), model: resolvedModel, instructions: instructions.trim() });
-      setName(""); setDescription(""); setModel("gpt-4o"); setCustomModel(""); setInstructions("");
+      await onCreate({
+        name: name.trim(),
+        description: description.trim(),
+        model: resolvedModel,
+        instructions: instructions.trim(),
+        ...(avatarUrl ? { avatarUrl } : {}),
+      });
+      setName(""); setDescription(""); setModel("gpt-4o"); setCustomModel(""); setInstructions(""); setAvatarUrl(null);
       onClose();
     } catch (err: any) {
       setError(err.message || "Failed to create haseef");
@@ -358,6 +391,42 @@ export function CreateHaseefDialog({ open, onClose, onCreate }: CreateHaseefDial
       </DialogHeader>
 
       <div className="space-y-4">
+        {/* Avatar upload */}
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="relative group"
+            disabled={isUploading}
+          >
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="Avatar" className="size-20 rounded-full object-cover border-2 border-border" />
+            ) : (
+              <div className="size-20 rounded-full bg-emerald-500/15 flex items-center justify-center border-2 border-dashed border-border">
+                <BotIcon className="size-8 text-emerald-500" />
+              </div>
+            )}
+            <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              {isUploading ? (
+                <LoaderIcon className="size-5 text-white animate-spin" />
+              ) : (
+                <CameraIcon className="size-5 text-white" />
+              )}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleAvatarUpload(file);
+                e.target.value = "";
+              }}
+            />
+          </button>
+        </div>
+
         <Input
           label="Name"
           id="haseef-name"
@@ -474,10 +543,12 @@ function ActionButton({
 
 function EditHaseefDialog({
   haseef,
+  currentAvatarUrl,
   onClose,
   onSaved,
 }: {
   haseef: Haseef;
+  currentAvatarUrl?: string | null;
   onClose: () => void;
   onSaved: (updated: Haseef) => void;
 }) {
@@ -493,6 +564,25 @@ function EditHaseefDialog({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Avatar upload
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(currentAvatarUrl || null);
+  const [avatarChanged, setAvatarChanged] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+
+  const handleAvatarUpload = async (file: File) => {
+    setIsUploading(true);
+    try {
+      const { url } = await mediaApi.upload(file);
+      setAvatarUrl(url);
+      setAvatarChanged(true);
+    } catch (err: any) {
+      setError(err.message || "Failed to upload avatar");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!name.trim() || isSaving) return;
     setIsSaving(true);
@@ -506,6 +596,7 @@ function EditHaseefDialog({
         name: name.trim(),
         description: description.trim() || undefined,
         configJson,
+        ...(avatarChanged ? { avatarUrl: avatarUrl || undefined } : {}),
       });
       onSaved(updated);
     } catch (err: any) {
@@ -523,6 +614,42 @@ function EditHaseefDialog({
       </DialogHeader>
 
       <div className="space-y-4">
+        {/* Avatar upload */}
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="relative group"
+            disabled={isUploading}
+          >
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="Avatar" className="size-20 rounded-full object-cover border-2 border-border" />
+            ) : (
+              <div className="size-20 rounded-full bg-emerald-500/15 flex items-center justify-center border-2 border-dashed border-border">
+                <BotIcon className="size-8 text-emerald-500" />
+              </div>
+            )}
+            <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              {isUploading ? (
+                <LoaderIcon className="size-5 text-white animate-spin" />
+              ) : (
+                <CameraIcon className="size-5 text-white" />
+              )}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleAvatarUpload(file);
+                e.target.value = "";
+              }}
+            />
+          </button>
+        </div>
+
         <Input
           label="Name"
           id="edit-haseef-name"

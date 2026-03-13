@@ -95,6 +95,79 @@ router.get("/", async (req: Request, res: Response) => {
 });
 
 // =============================================================================
+// GET /api/smart-spaces/contacts — List known contacts (humans sharing spaces)
+// =============================================================================
+router.get("/contacts", async (req: Request, res: Response) => {
+  const auth = await requireAnyAuth(req);
+  if (isAuthError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  try {
+    const myEntityId = auth.entityId;
+    if (!myEntityId) {
+      res.json({ contacts: [] });
+      return;
+    }
+
+    // Find all spaces I belong to
+    const myMemberships = await prisma.smartSpaceMembership.findMany({
+      where: { entityId: myEntityId },
+      select: { smartSpaceId: true },
+    });
+    const mySpaceIds = myMemberships.map((m: any) => m.smartSpaceId);
+
+    if (mySpaceIds.length === 0) {
+      res.json({ contacts: [] });
+      return;
+    }
+
+    // Find all human entities in those spaces (excluding myself)
+    const coMembers = await prisma.smartSpaceMembership.findMany({
+      where: {
+        smartSpaceId: { in: mySpaceIds },
+        entityId: { not: myEntityId },
+        entity: { type: "human" },
+      },
+      include: {
+        entity: {
+          select: { id: true, displayName: true, type: true },
+        },
+      },
+      distinct: ["entityId"],
+    });
+
+    // Enrich with avatarUrl from User table
+    const entityIds = coMembers.map((m: any) => m.entity.id);
+    const avatarMap: Record<string, string> = {};
+    if (entityIds.length > 0) {
+      const users = await prisma.user.findMany({
+        where: { hsafaEntityId: { in: entityIds } },
+        select: { hsafaEntityId: true, avatarUrl: true, email: true },
+      });
+      for (const u of users) {
+        if (u.hsafaEntityId) {
+          if (u.avatarUrl) avatarMap[u.hsafaEntityId] = u.avatarUrl;
+        }
+      }
+    }
+
+    const contacts = coMembers.map((m: any) => ({
+      entityId: m.entity.id,
+      displayName: m.entity.displayName,
+      type: m.entity.type,
+      avatarUrl: avatarMap[m.entity.id] || null,
+    }));
+
+    res.json({ contacts });
+  } catch (error) {
+    console.error("List contacts error:", error);
+    res.status(500).json({ error: "Failed to list contacts" });
+  }
+});
+
+// =============================================================================
 // POST /api/spaces/create — Create space (JWT auth, used by frontend)
 // =============================================================================
 router.post("/create-for-user", async (req: Request, res: Response) => {
@@ -704,7 +777,7 @@ router.get("/:smartSpaceId/members", async (req: Request, res: Response) => {
       where: { smartSpaceId },
       include: {
         entity: {
-          select: { id: true, displayName: true, type: true },
+          select: { id: true, displayName: true, type: true, metadata: true },
         },
       },
     });
@@ -727,13 +800,19 @@ router.get("/:smartSpaceId/members", async (req: Request, res: Response) => {
       }
     }
 
-    const enriched = memberships.map((m: any) => ({
-      ...m,
-      entity: {
-        ...m.entity,
-        avatarUrl: avatarMap[m.entity.id] || null,
-      },
-    }));
+    const enriched = memberships.map((m: any) => {
+      // For agents: avatarUrl from entity.metadata; for humans: from User table
+      const agentAvatar = (m.entity.metadata as any)?.avatarUrl;
+      return {
+        ...m,
+        entity: {
+          id: m.entity.id,
+          displayName: m.entity.displayName,
+          type: m.entity.type,
+          avatarUrl: avatarMap[m.entity.id] || agentAvatar || null,
+        },
+      };
+    });
 
     res.json({ members: enriched });
   } catch (error) {

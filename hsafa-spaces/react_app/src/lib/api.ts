@@ -102,6 +102,7 @@ export interface Haseef {
   name: string;
   description?: string;
   entityId: string;
+  avatarUrl?: string | null;
   configJson?: Record<string, unknown>;
   createdAt?: string;
 }
@@ -110,6 +111,7 @@ export interface HaseefListItem {
   haseefId: string;
   entityId: string;
   name: string;
+  avatarUrl?: string | null;
   createdAt: string;
 }
 
@@ -124,14 +126,14 @@ export const haseefsApi = {
     return request<{ haseef: Haseef }>(`/haseefs/${id}`);
   },
 
-  create(data: { name: string; description?: string; model?: string; instructions?: string }) {
+  create(data: { name: string; description?: string; model?: string; instructions?: string; avatarUrl?: string }) {
     return request<{ haseef: Haseef }>("/haseefs", {
       method: "POST",
       body: JSON.stringify(data),
     });
   },
 
-  update(id: string, data: { name?: string; description?: string; configJson?: Record<string, unknown> }) {
+  update(id: string, data: { name?: string; description?: string; configJson?: Record<string, unknown>; avatarUrl?: string }) {
     return request<{ haseef: Haseef }>(`/haseefs/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -179,11 +181,24 @@ export interface SpaceMember {
   };
 }
 
+// ── Contact type ─────────────────────────────────────────────────────────────
+
+export interface Contact {
+  entityId: string;
+  displayName: string | null;
+  type: "human" | "agent";
+  avatarUrl?: string | null;
+}
+
 // ── Spaces API ──────────────────────────────────────────────────────────────
 
 export const spacesApi = {
   list() {
     return request<{ smartSpaces: SmartSpace[] }>("/smart-spaces");
+  },
+
+  listContacts() {
+    return request<{ contacts: Contact[] }>("/smart-spaces/contacts");
   },
 
   get(id: string) {

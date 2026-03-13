@@ -72,12 +72,14 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     // Create entity in Spaces for this agent
+    const { avatarUrl } = req.body;
     const entityId = crypto.randomUUID();
     const entity = await prisma.entity.create({
       data: {
         id: entityId,
         type: "agent",
         displayName: name,
+        ...(avatarUrl ? { metadata: { avatarUrl } } : {}),
       },
     });
 
@@ -141,7 +143,7 @@ router.get("/", async (req: Request, res: Response) => {
     const ownerships = await prisma.haseefOwnership.findMany({
       where: { userId: auth.userId },
       include: {
-        entity: { select: { id: true, displayName: true, type: true } },
+        entity: { select: { id: true, displayName: true, type: true, metadata: true } },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -150,6 +152,7 @@ router.get("/", async (req: Request, res: Response) => {
       haseefId: o.haseefId,
       entityId: o.entityId,
       name: o.entity.displayName,
+      avatarUrl: (o.entity.metadata as any)?.avatarUrl || null,
       createdAt: o.createdAt,
     }));
 
@@ -173,9 +176,10 @@ router.get("/:id", async (req: Request, res: Response) => {
   try {
     const haseefId = req.params.id as string;
 
-    // Verify ownership
+    // Verify ownership + fetch entity metadata for avatarUrl
     const ownership = await prisma.haseefOwnership.findUnique({
       where: { userId_haseefId: { userId: auth.userId, haseefId } },
+      include: { entity: { select: { metadata: true } } },
     });
     if (!ownership) {
       res.status(404).json({ error: "Haseef not found or not owned by you" });
@@ -189,6 +193,7 @@ router.get("/:id", async (req: Request, res: Response) => {
       haseef: {
         ...coreHaseef,
         entityId: ownership.entityId,
+        avatarUrl: (ownership.entity?.metadata as any)?.avatarUrl || null,
       },
     });
   } catch (error: any) {
@@ -222,18 +227,24 @@ router.patch("/:id", async (req: Request, res: Response) => {
       return;
     }
 
-    const { name, description, configJson } = req.body;
+    const { name, description, configJson, avatarUrl } = req.body;
     const coreHaseef = await coreUpdateHaseef(haseefId, {
       name,
       description,
       configJson,
     });
 
-    // If name changed, update the entity display name too
-    if (name) {
+    // Update entity display name and/or avatar
+    const entityUpdate: Record<string, unknown> = {};
+    if (name) entityUpdate.displayName = name;
+    if (avatarUrl !== undefined) {
+      const existing = await prisma.entity.findUnique({ where: { id: ownership.entityId }, select: { metadata: true } });
+      entityUpdate.metadata = { ...((existing?.metadata as any) || {}), avatarUrl };
+    }
+    if (Object.keys(entityUpdate).length > 0) {
       await prisma.entity.update({
         where: { id: ownership.entityId },
-        data: { displayName: name },
+        data: entityUpdate,
       });
     }
 
