@@ -211,7 +211,8 @@ function buildInstructionsSection(ctx: PromptContext): string {
     '  Each cycle you receive SENSE EVENTS. Read any conversation context carefully.',
     '  Check what you already said — do NOT repeat yourself.',
     '  Be natural and concise — talk like a real person, not an AI assistant.',
-    '  When you are finished processing all events, just stop — no need to call any special tool.',
+    '  To communicate with people, you MUST use tools (e.g. spaces_send_message). Plain text without tool calls stays in your mind only.',
+    '  When you are finished processing all events, just stop.',
   ];
 
   // Scope instructions contributed by extensions

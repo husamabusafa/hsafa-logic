@@ -159,12 +159,20 @@ export const haseefsApi = {
 
 // ── Space types ─────────────────────────────────────────────────────────────
 
+export interface SmartSpaceMemberSummary {
+  entityId: string;
+  displayName: string | null;
+  type: "human" | "agent";
+  role: "owner" | "admin" | "member";
+}
+
 export interface SmartSpace {
   id: string;
   name: string | null;
   description: string | null;
   createdAt: string;
   metadata?: Record<string, unknown>;
+  members?: SmartSpaceMemberSummary[];
 }
 
 export interface SpaceMember {
@@ -270,7 +278,7 @@ export const spacesApi = {
   },
 
   sendMessage(spaceId: string, data: { entityId: string; content: string; type?: string; metadata?: Record<string, unknown>; replyTo?: { messageId: string } }) {
-    return request<{ message: SpaceMessage }>(`/smart-spaces/${spaceId}/messages`, {
+    return request<{ messageId: string; seq: string; createdAt: string }>(`/smart-spaces/${spaceId}/messages`, {
       method: "POST",
       body: JSON.stringify(data),
     });

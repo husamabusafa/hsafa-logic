@@ -11,6 +11,8 @@ export interface ServiceConfig {
   coreUrl: string;
   /** V5 API key for authenticating with Core (x-api-key header) */
   apiKey: string;
+  /** Core's Redis URL — used for action streams + stream bridge (may differ from spaces Redis) */
+  coreRedisUrl: string;
 }
 
 export function loadServiceConfig(): ServiceConfig | null {
@@ -24,5 +26,9 @@ export function loadServiceConfig(): ServiceConfig | null {
     return null;
   }
 
-  return { coreUrl, apiKey };
+  // Core's Redis URL — actions and stream bridge MUST connect to Core's Redis,
+  // not the spaces-app's own Redis (they may be different instances).
+  const coreRedisUrl = process.env.CORE_REDIS_URL || process.env.REDIS_URL || "redis://localhost:6379";
+
+  return { coreUrl, apiKey, coreRedisUrl };
 }

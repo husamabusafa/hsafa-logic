@@ -78,12 +78,51 @@ router.get("/", async (req: Request, res: Response) => {
     if (entityId) {
       const memberships = await prisma.smartSpaceMembership.findMany({
         where: { entityId },
-        include: { smartSpace: true },
+        include: {
+          smartSpace: {
+            include: {
+              memberships: {
+                select: {
+                  entityId: true,
+                  role: true,
+                  entity: { select: { id: true, displayName: true, type: true } },
+                },
+              },
+            },
+          },
+        },
       });
-      spaces = memberships.map((m: any) => m.smartSpace);
+      spaces = memberships.map((m: any) => {
+        const s = m.smartSpace;
+        const members = (s.memberships || []).map((mb: any) => ({
+          entityId: mb.entityId,
+          displayName: mb.entity?.displayName || null,
+          type: mb.entity?.type || "human",
+          role: mb.role,
+        }));
+        return { ...s, memberships: undefined, members };
+      });
     } else {
-      spaces = await prisma.smartSpace.findMany({
+      const rawSpaces = await prisma.smartSpace.findMany({
         orderBy: { createdAt: "desc" },
+        include: {
+          memberships: {
+            select: {
+              entityId: true,
+              role: true,
+              entity: { select: { id: true, displayName: true, type: true } },
+            },
+          },
+        },
+      });
+      spaces = rawSpaces.map((s: any) => {
+        const members = (s.memberships || []).map((mb: any) => ({
+          entityId: mb.entityId,
+          displayName: mb.entity?.displayName || null,
+          type: mb.entity?.type || "human",
+          role: mb.role,
+        }));
+        return { ...s, memberships: undefined, members };
       });
     }
 
@@ -496,6 +535,12 @@ router.get(
 // =============================================================================
 router.get("/:smartSpaceId/stream", async (req: Request, res: Response) => {
   const smartSpaceId = req.params.smartSpaceId as string;
+
+  // EventSource can't set headers — support ?token= query param for SSE auth
+  if (!req.headers.authorization && req.query.token) {
+    req.headers.authorization = `Bearer ${req.query.token}`;
+  }
+
   const auth = await requireAuthWithMembership(req, smartSpaceId);
   if (isAuthError(auth)) {
     res.status(auth.status).json({ error: auth.error });

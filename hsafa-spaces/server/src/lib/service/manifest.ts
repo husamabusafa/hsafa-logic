@@ -17,31 +17,33 @@ export const SCOPE = "spaces";
  * These are spaces-specific — core remains generic.
  */
 export const SCOPE_INSTRUCTIONS = `You interact with people through spaces — each space is a separate conversation.
+CRITICAL: You MUST use spaces_send_message to reply to people. Plain text responses stay in your mind and are NOT delivered to anyone. The ONLY way to communicate is by calling spaces_send_message with the correct spaceId.
+
 Events may include [recent conversation] context showing the last messages in that space.
 ALWAYS read the conversation context carefully before responding:
   - Check what YOU already said — do NOT repeat yourself.
   - Understand what the person is replying to.
   - If you already answered their question, acknowledge and move on.
 You may receive events from multiple spaces in one cycle — keep them distinct.
-Always use the correct spaceId when calling send_message.
+Always use the correct spaceId when calling spaces_send_message.
 Do NOT mix up conversations across spaces.
 Do NOT send the same or similar message twice to the same space.
-If a tool call fails or times out, tell the person briefly and move on.
+If a tool call fails or times out, tell the person briefly (via spaces_send_message) and move on.
 
 INTERACTIVE MESSAGES:
-  - Use send_confirmation to ask someone to confirm/reject something. You'll get a message_resolved event with the outcome.
-  - Use send_choice to present options. Target a specific person or broadcast to everyone.
-  - Use send_vote to create polls. Stays open forever — you'll get message_response events as people vote.
-  - Use send_form to collect structured data from people.
-  - Use respond_to_message to respond to interactive messages others created (vote on polls, confirm requests, etc.).
-  - Use close_interactive_message only if you explicitly want to finalize a vote/form early (rare).
+  - Use spaces_send_confirmation to ask someone to confirm/reject something. You'll get a message_resolved event with the outcome.
+  - Use spaces_send_choice to present options. Target a specific person or broadcast to everyone.
+  - Use spaces_send_vote to create polls. Stays open forever — you'll get message_response events as people vote.
+  - Use spaces_send_form to collect structured data from people.
+  - Use spaces_respond_to_message to respond to interactive messages others created (vote on polls, confirm requests, etc.).
+  - Use spaces_close_interactive_message only if you explicitly want to finalize a vote/form early (rare).
   - When you receive a message_resolved event, read the outcome and act on it immediately.
   - When you receive a message_response event, you can track progress (e.g. vote counts) but don't need to act unless relevant.
-  - Messages in get_messages include a "type" field (text, confirmation, vote, choice, form, etc.) and structured metadata.
+  - Messages in spaces_get_messages include a "type" field (text, confirmation, vote, choice, form, etc.) and structured metadata.
 
 SPACE MANAGEMENT:
-  - Use get_space_members to see who is in a space (names, roles, entity IDs).
-  - Use invite_to_space to invite someone by email (requires admin+ role).`;
+  - Use spaces_get_space_members to see who is in a space (names, roles, entity IDs).
+  - Use spaces_invite_to_space to invite someone by email (requires admin+ role).`;
 
 /**
  * Tool definitions to register with Core.

@@ -8,17 +8,22 @@ import type { SmartSpace } from "@/lib/api";
 interface SpacesSidebarProps {
   spaces: SmartSpace[];
   selectedSpaceId: string | null;
+  currentEntityId: string;
   onSelectSpace: (spaceId: string) => void;
   onCreateSpace: () => void;
   isLoading?: boolean;
 }
 
-export function SpacesSidebar({ spaces, selectedSpaceId, onSelectSpace, onCreateSpace, isLoading }: SpacesSidebarProps) {
+export function SpacesSidebar({ spaces, selectedSpaceId, currentEntityId, onSelectSpace, onCreateSpace, isLoading }: SpacesSidebarProps) {
   const [search, setSearch] = useState("");
 
-  const filtered = spaces.filter((s) =>
-    (s.name || "").toLowerCase().includes(search.toLowerCase()),
-  );
+  const filtered = spaces.filter((s) => {
+    const q = search.toLowerCase();
+    if ((s.name || "").toLowerCase().includes(q)) return true;
+    // Also search by member display names (for direct spaces)
+    if (s.members?.some((m) => m.entityId !== currentEntityId && (m.displayName || "").toLowerCase().includes(q))) return true;
+    return false;
+  });
 
   return (
     <>
@@ -72,6 +77,7 @@ export function SpacesSidebar({ spaces, selectedSpaceId, onSelectSpace, onCreate
               <SpaceItem
                 key={space.id}
                 space={space}
+                currentEntityId={currentEntityId}
                 isSelected={space.id === selectedSpaceId}
                 onClick={() => onSelectSpace(space.id)}
               />
@@ -89,8 +95,12 @@ export function SpacesSidebar({ spaces, selectedSpaceId, onSelectSpace, onCreate
   );
 }
 
-function SpaceItem({ space, isSelected, onClick }: { space: SmartSpace; isSelected: boolean; onClick: () => void }) {
-  const name = space.name || "Unnamed Space";
+function SpaceItem({ space, currentEntityId, isSelected, onClick }: { space: SmartSpace; currentEntityId: string; isSelected: boolean; onClick: () => void }) {
+  const members = space.members || [];
+  const isDirect = members.length <= 2 && members.every((m) => m.type === "human");
+  const otherMember = isDirect ? members.find((m) => m.entityId !== currentEntityId) : null;
+  const displayName = isDirect && otherMember?.displayName ? otherMember.displayName : (space.name || "Unnamed Space");
+  const isGroup = !isDirect;
 
   return (
     <button
@@ -104,17 +114,25 @@ function SpaceItem({ space, isSelected, onClick }: { space: SmartSpace; isSelect
     >
       {/* Avatar */}
       <div className="relative shrink-0">
-        <div className={cn(
-          "flex size-12 items-center justify-center rounded-full bg-primary/15 text-primary font-semibold text-sm",
-        )}>
-          {name.charAt(0).toUpperCase()}
-        </div>
+        {isGroup ? (
+          <div className={cn(
+            "flex size-12 items-center justify-center rounded-full bg-primary/15 text-primary font-semibold text-sm",
+          )}>
+            {displayName.charAt(0).toUpperCase()}
+          </div>
+        ) : (
+          <Avatar
+            name={displayName}
+            color={otherMember?.type === "agent" ? "bg-emerald-500" : "bg-primary"}
+            size="md"
+          />
+        )}
       </div>
 
       {/* Content */}
       <div className="flex-1 min-w-0">
         <span className="text-sm font-medium truncate text-foreground/80 block">
-          {name}
+          {displayName}
         </span>
         {space.description && (
           <p className="text-xs text-muted-foreground truncate mt-0.5">

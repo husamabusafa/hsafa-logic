@@ -52,7 +52,13 @@ export async function postSpaceMessage(
     metadata: mergedMetadata,
   });
 
-  // 2. Emit to space SSE channel
+  // 3. Resolve entity info (needed for both SSE and inbox)
+  const [entityInfo, spaceName] = await Promise.all([
+    getEntityInfo(entityId).catch(() => ({ displayName: "Unknown", type: "human" })),
+    getSpaceName(spaceId).catch(() => spaceId),
+  ]);
+
+  // 2. Emit to space SSE channel (include entity for self-contained rendering)
   await emitSmartSpaceEvent(spaceId, {
     type: "space.message",
     ...(streamId ? { streamId } : {}),
@@ -65,14 +71,13 @@ export async function postSpaceMessage(
       metadata: mergedMetadata ?? null,
       seq: message.seq.toString(),
       createdAt: message.createdAt.toISOString(),
+      entity: {
+        id: entityId,
+        displayName: entityInfo.displayName,
+        type: entityInfo.type,
+      },
     },
   });
-
-  // 3. Notify extension inbox
-  const [entityInfo, spaceName] = await Promise.all([
-    getEntityInfo(entityId).catch(() => ({ displayName: "Unknown", type: "human" })),
-    getSpaceName(spaceId).catch(() => spaceId),
-  ]);
 
   notifyNewMessage({
     spaceId,

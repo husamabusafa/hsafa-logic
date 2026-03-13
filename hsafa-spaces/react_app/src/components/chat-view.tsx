@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   ArrowUpIcon,
   ChevronLeftIcon,
@@ -21,22 +21,33 @@ import {
   ForwardIcon,
   SearchIcon,
   CheckIcon,
+  CheckCheckIcon,
+  EyeIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
 import {
-  currentUser,
-  mockMessages,
   mockSpaces,
-  mockTypingUsers,
   type MockSpace,
   type MockMember,
+  type MockMessage,
 } from "@/lib/mock-data";
 import { MessageRenderer } from "@/components/messages/message-renderer";
 import { cn } from "@/lib/utils";
+import type { AgentActivity, TypingUser } from "@/lib/use-space-chat";
 
 interface ChatViewProps {
   space: MockSpace;
+  messages: MockMessage[];
+  currentEntityId: string;
+  typingUsers: TypingUser[];
+  activeAgents: AgentActivity[];
+  onlineUserIds: string[];
+  seenWatermarks: Record<string, string>;
+  isLoading?: boolean;
+  onSendMessage: (text: string, replyToId?: string) => Promise<void>;
+  onTyping?: (typing?: boolean) => void;
+  onMarkSeen?: (messageId: string) => void;
   onToggleDetails: () => void;
   onBack?: () => void;
   showSearch?: boolean;
@@ -56,11 +67,10 @@ const COMPONENT_TYPES: { type: ComponentType; icon: typeof CheckCircleIcon; labe
   { type: "chart", icon: PieChartIcon, label: "Chart", description: "Visualize data as a chart" },
 ];
 
-export function ChatView({ space, onToggleDetails, onBack, showSearch: externalShowSearch, onSearchClose }: ChatViewProps) {
-  const messages = mockMessages[space.id] || [];
-  const typingEntityIds = mockTypingUsers[space.id] || [];
+export function ChatView({ space, messages, currentEntityId, typingUsers, activeAgents, onlineUserIds, seenWatermarks, isLoading, onSendMessage, onTyping, onMarkSeen, onToggleDetails, onBack, showSearch: externalShowSearch, onSearchClose }: ChatViewProps) {
   const [inputValue, setInputValue] = useState("");
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [aiGenType, setAiGenType] = useState<ComponentType | null>(null);
   const [aiPrompt, setAiPrompt] = useState("");
@@ -69,6 +79,7 @@ export function ChatView({ space, onToggleDetails, onBack, showSearch: externalS
   const [forwardMessageId, setForwardMessageId] = useState<string | null>(null);
   const [internalShowSearch, setInternalShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [seenInfoMessageId, setSeenInfoMessageId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -83,19 +94,89 @@ export function ChatView({ space, onToggleDetails, onBack, showSearch: externalS
     setSearchQuery("");
   };
 
+  // Compute per-message seenBy from seenWatermarks
+  // A message is "seen by entity X" if X's watermark is at or after this message in the list
+  const messageSeenMap = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    if (!messages.length) return map;
+
+    // Build messageId → index for ordering
+    const idxMap = new Map<string, number>();
+    messages.forEach((m, i) => idxMap.set(m.id, i));
+
+    for (const msg of messages) {
+      const msgIdx = idxMap.get(msg.id) ?? 0;
+      const seenBy: string[] = [];
+      for (const [entityId, watermarkId] of Object.entries(seenWatermarks)) {
+        if (entityId === msg.entityId) continue; // sender doesn't count
+        const watermarkIdx = idxMap.get(watermarkId);
+        if (watermarkIdx !== undefined && watermarkIdx >= msgIdx) {
+          seenBy.push(entityId);
+        }
+      }
+      map[msg.id] = seenBy;
+    }
+    return map;
+  }, [messages, seenWatermarks]);
+
+  // Auto-mark last message as seen when messages change
+  useEffect(() => {
+    if (messages.length > 0 && onMarkSeen) {
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg.entityId !== currentEntityId) {
+        onMarkSeen(lastMsg.id);
+      }
+    }
+  }, [messages.length, currentEntityId, onMarkSeen]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
-  const typingMembers = typingEntityIds
-    .map((eid) => space.members.find((m) => m.entityId === eid))
-    .filter(Boolean) as MockMember[];
+  const typingMembers = typingUsers
+    .filter((t) => t.entityId !== currentEntityId)
+    .map((t) => {
+      const member = space.members.find((m) => m.entityId === t.entityId);
+      return member || {
+        entityId: t.entityId,
+        name: t.entityName,
+        type: "agent" as const,
+        role: "member" as const,
+        avatarColor: "bg-emerald-500",
+        isOnline: true,
+      };
+    });
 
   const onlineCount = space.members.filter(
-    (m) => m.isOnline && m.entityId !== currentUser.entityId,
+    (m) => onlineUserIds.includes(m.entityId) && m.entityId !== currentEntityId,
   ).length;
 
-  const replyMessage = replyingTo ? messages.find((m) => m.id === replyingTo) : null;
+  // Agent thinking indicator
+  const thinkingAgents = activeAgents
+    .filter((a) => !typingUsers.some((t) => t.entityId === a.agentEntityId))
+    .map((a) => {
+      const member = space.members.find((m) => m.entityId === a.agentEntityId);
+      return member ? member.name : a.agentName || "AI";
+    });
+
+  const replyMessage = replyingTo ? messages.find((m: MockMessage) => m.id === replyingTo) : null;
+
+  // ── Send handler ──
+  const handleSend = useCallback(async () => {
+    const text = inputValue.trim();
+    if (!text || sending) return;
+    const replyId = replyingTo ?? undefined;
+    setInputValue("");
+    setReplyingTo(null);
+    setSending(true);
+    try {
+      await onSendMessage(text, replyId);
+    } catch (err) {
+      console.error("Failed to send message:", err);
+    } finally {
+      setSending(false);
+    }
+  }, [inputValue, replyingTo, sending, onSendMessage]);
 
   const handleReply = useCallback((messageId: string) => {
     setReplyingTo(messageId);
@@ -162,9 +243,9 @@ export function ChatView({ space, onToggleDetails, onBack, showSearch: externalS
           ) : (
             <Avatar
               name={space.name}
-              color={space.members.find((m) => m.entityId !== currentUser.entityId)?.avatarColor}
+              color={space.members.find((m) => m.entityId !== currentEntityId)?.avatarColor}
               size="sm"
-              isOnline={space.members.find((m) => m.entityId !== currentUser.entityId)?.isOnline}
+              isOnline={space.members.find((m) => m.entityId !== currentEntityId)?.isOnline}
             />
           )}
 
@@ -228,7 +309,12 @@ export function ChatView({ space, onToggleDetails, onBack, showSearch: externalS
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
-        {messages.length === 0 ? (
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center h-full text-center">
+            <LoaderIcon className="size-6 animate-spin text-muted-foreground mb-2" />
+            <p className="text-sm text-muted-foreground">Loading messages...</p>
+          </div>
+        ) : messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <p className="text-sm text-muted-foreground">No messages yet</p>
             <p className="text-xs text-muted-foreground/60">Start the conversation!</p>
@@ -250,45 +336,74 @@ export function ChatView({ space, onToggleDetails, onBack, showSearch: externalS
           const isLastInGroup = idx === messages.length - 1 || messages[idx + 1].entityId !== msg.entityId || messages[idx + 1].type === "system";
           const showAvatar = isLastInGroup;           // Avatar only on last message
           const showSenderName = isFirstInGroup;      // Name only on first message
+          const msgWithSeen = { ...msg, seenBy: messageSeenMap[msg.id] || [] };
           return (
             <div key={msg.id} ref={(el) => { messageRefs.current[msg.id] = el; }} className="transition-all">
               <MessageRenderer
-                message={msg}
+                message={msgWithSeen}
                 member={space.members.find((m) => m.entityId === msg.entityId)}
-                isOwn={msg.entityId === currentUser.entityId}
+                isOwn={msg.entityId === currentEntityId}
                 showSender={showAvatar}
                 showSenderName={showSenderName}
                 otherMemberCount={space.members.length - 1}
+                currentEntityId={currentEntityId}
                 onReply={handleReply}
                 onForward={handleForward}
                 onScrollToMessage={handleScrollToMessage}
+                onSeenInfo={space.members.length > 2 ? (id) => setSeenInfoMessageId(id) : undefined}
               />
             </div>
           );
         }))}
 
-        {/* Typing indicator — supports multiple entities */}
+        {/* Seen info popup */}
+        {seenInfoMessageId && (
+          <SeenInfoPopup
+            messageId={seenInfoMessageId}
+            seenBy={messageSeenMap[seenInfoMessageId] || []}
+            members={space.members}
+            currentEntityId={currentEntityId}
+            senderId={messages.find((m) => m.id === seenInfoMessageId)?.entityId || ""}
+            onClose={() => setSeenInfoMessageId(null)}
+          />
+        )}
+
+        {/* Typing indicator — always show avatars */}
         {typingMembers.length > 0 && (
-          <div className="flex items-center gap-1.5 mt-2 ml-10">
-            {/* Stacked avatars for multiple typers */}
-            {typingMembers.length > 1 ? (
-              <div className="flex -space-x-1.5">
-                {typingMembers.slice(0, 3).map((m) => (
-                  <div
-                    key={m.entityId}
-                    className={`size-5 rounded-full ${m.avatarColor} ring-2 ring-background flex items-center justify-center`}
-                  >
-                    <span className="text-[8px] text-white font-bold">{m.name.charAt(0)}</span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            <div className="rounded-full bg-muted px-3 py-1.5 flex items-center gap-1">
-              <span className="size-1 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0ms]" />
-              <span className="size-1 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:150ms]" />
-              <span className="size-1 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:300ms]" />
+          <div className="flex items-center gap-2 mt-2 ml-2">
+            <div className="flex -space-x-1.5">
+              {typingMembers.slice(0, 4).map((m) => (
+                <div
+                  key={m.entityId}
+                  className={cn(
+                    "size-6 rounded-full ring-2 ring-background flex items-center justify-center",
+                    m.type === "agent" ? "bg-emerald-500" : (m.avatarColor || "bg-primary"),
+                  )}
+                >
+                  <span className="text-[9px] text-white font-bold">{m.name.charAt(0)}</span>
+                </div>
+              ))}
             </div>
-            <span className="text-[10px] text-muted-foreground">{typingText}</span>
+            <div className="rounded-full bg-muted px-3 py-1.5 flex items-center gap-1">
+              <span className="size-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0ms]" />
+              <span className="size-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:150ms]" />
+              <span className="size-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:300ms]" />
+            </div>
+            <span className="text-[11px] text-muted-foreground">{typingText}</span>
+          </div>
+        )}
+
+        {/* Agent thinking indicator */}
+        {thinkingAgents.length > 0 && (
+          <div className="flex items-center gap-1.5 mt-2 ml-10">
+            <div className="rounded-full bg-primary/10 px-3 py-1.5 flex items-center gap-1.5">
+              <SparklesIcon className="size-3 text-primary animate-pulse" />
+              <span className="text-[11px] text-primary font-medium">
+                {thinkingAgents.length === 1
+                  ? `${thinkingAgents[0]} is thinking...`
+                  : `${thinkingAgents[0]} and ${thinkingAgents.length - 1} other${thinkingAgents.length > 2 ? "s" : ""} thinking...`}
+              </span>
+            </div>
           </div>
         )}
 
@@ -494,17 +609,17 @@ export function ChatView({ space, onToggleDetails, onBack, showSearch: externalS
             <div className="flex-1 rounded-2xl border border-border bg-muted/50 focus-within:border-ring/50 focus-within:ring-1 focus-within:ring-ring/20">
               <textarea
                 value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
+                onChange={(e) => {
+                  setInputValue(e.target.value);
+                  onTyping?.(true);
+                }}
                 placeholder="Type a message..."
                 className="w-full bg-transparent px-4 py-2.5 text-sm resize-none focus:outline-none min-h-[40px] max-h-32"
                 rows={1}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    if (inputValue.trim()) {
-                      setInputValue("");
-                      setReplyingTo(null);
-                    }
+                    handleSend();
                   }
                 }}
               />
@@ -514,13 +629,8 @@ export function ChatView({ space, onToggleDetails, onBack, showSearch: externalS
             <Button
               size="icon"
               className="size-10 rounded-full shrink-0"
-              disabled={!inputValue.trim()}
-              onClick={() => {
-                if (inputValue.trim()) {
-                  setInputValue("");
-                  setReplyingTo(null);
-                }
-              }}
+              disabled={!inputValue.trim() || sending}
+              onClick={handleSend}
             >
               <ArrowUpIcon className="size-4" />
             </Button>
@@ -640,7 +750,7 @@ function ForwardDialog({
                   >
                     <Avatar
                       name={s.name}
-                      color={s.members.find((m) => m.entityId !== currentUser.entityId)?.avatarColor}
+                      color={s.members[0]?.avatarColor}
                       size="sm"
                     />
                     <div className="flex-1 min-w-0">
@@ -676,6 +786,97 @@ function ForwardDialog({
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Seen Info Popup ────────────────────────────────────────────────────────
+
+function SeenInfoPopup({
+  messageId,
+  seenBy,
+  members,
+  currentEntityId,
+  senderId,
+  onClose,
+}: {
+  messageId: string;
+  seenBy: string[];
+  members: MockMember[];
+  currentEntityId: string;
+  senderId: string;
+  onClose: () => void;
+}) {
+  // All members except the sender and current user
+  const relevantMembers = members.filter(
+    (m) => m.entityId !== senderId,
+  );
+  const seenSet = new Set(seenBy);
+
+  const seenMembers = relevantMembers.filter((m) => seenSet.has(m.entityId));
+  const unseenMembers = relevantMembers.filter((m) => !seenSet.has(m.entityId));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative w-full max-w-xs bg-popover border border-border rounded-xl shadow-xl overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <div className="flex items-center gap-2">
+            <EyeIcon className="size-4 text-primary" />
+            <span className="text-sm font-semibold">Message Info</span>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-muted transition-colors">
+            <XIcon className="size-4 text-muted-foreground" />
+          </button>
+        </div>
+
+        <div className="max-h-64 overflow-y-auto">
+          {/* Seen */}
+          {seenMembers.length > 0 && (
+            <div className="px-4 pt-3 pb-1">
+              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                Seen by ({seenMembers.length})
+              </p>
+              {seenMembers.map((m) => (
+                <div key={m.entityId} className="flex items-center gap-2.5 py-1.5">
+                  <div className={cn(
+                    "size-7 rounded-full flex items-center justify-center shrink-0",
+                    m.type === "agent" ? "bg-emerald-500" : (m.avatarColor || "bg-primary"),
+                  )}>
+                    <span className="text-[10px] text-white font-bold">{m.name.charAt(0)}</span>
+                  </div>
+                  <span className="text-sm">{m.name}</span>
+                  <CheckCheckIcon className="size-3.5 text-blue-300 ml-auto" />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Not seen */}
+          {unseenMembers.length > 0 && (
+            <div className="px-4 pt-3 pb-3">
+              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                Not seen ({unseenMembers.length})
+              </p>
+              {unseenMembers.map((m) => (
+                <div key={m.entityId} className="flex items-center gap-2.5 py-1.5">
+                  <div className={cn(
+                    "size-7 rounded-full flex items-center justify-center shrink-0 opacity-50",
+                    m.type === "agent" ? "bg-emerald-500" : (m.avatarColor || "bg-primary"),
+                  )}>
+                    <span className="text-[10px] text-white font-bold">{m.name.charAt(0)}</span>
+                  </div>
+                  <span className="text-sm text-muted-foreground">{m.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {relevantMembers.length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-6">No members</p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -863,8 +1064,6 @@ export function ChatEmptyState() {
 }
 
 // ─── Search Results Component ───────────────────────────────────────────────
-
-import type { MockMessage } from "@/lib/mock-data";
 
 interface SearchResultsProps {
   messages: MockMessage[];

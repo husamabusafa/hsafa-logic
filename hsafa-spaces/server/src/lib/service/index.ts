@@ -21,6 +21,10 @@ import {
   setSpaceActiveRun,
   removeSpaceActiveRun,
   broadcastSeen,
+  markOnline,
+  refreshPresence,
+  markOffline,
+  broadcastTyping,
 } from "../smartspace-events.js";
 import { redis } from "../redis.js";
 import type { ReplyToMetadata } from "../message-types.js";
@@ -55,6 +59,8 @@ interface ServiceState {
   actionConsumer: InstanceType<typeof Redis> | null;
   /** Whether the action listener loop is running */
   actionListenerRunning: boolean;
+  /** Heartbeat interval for keeping haseef entities online */
+  presenceInterval: ReturnType<typeof setInterval> | null;
 }
 
 const state: ServiceState = {
@@ -63,6 +69,7 @@ const state: ServiceState = {
   sharedSubscriber: null,
   actionConsumer: null,
   actionListenerRunning: false,
+  presenceInterval: null,
 };
 
 /** Find all connections interested in a given space */
@@ -185,13 +192,20 @@ export async function bootstrapExtension(): Promise<void> {
     }
   }
 
-  // Start the action listener (Redis Streams)
-  if (process.env.REDIS_URL) {
-    startActionListener().catch((err: unknown) => {
-      console.error("[spaces-service] Action listener failed:", err);
-    });
-  } else {
-    console.warn("[spaces-service] No REDIS_URL — action listener disabled (use Redis for V5 action dispatch)");
+  // Start the action listener (Redis Streams) — uses Core's Redis
+  startActionListener().catch((err: unknown) => {
+    console.error("[spaces-service] Action listener failed:", err);
+  });
+
+  // Start presence heartbeat — refresh online TTL every 60s for all haseef entities
+  if (!state.presenceInterval) {
+    state.presenceInterval = setInterval(() => {
+      for (const conn of state.connections.values()) {
+        for (const sid of conn.spaceIds) {
+          refreshPresence(sid, conn.agentEntityId).catch(() => {});
+        }
+      }
+    }, 60_000);
   }
 
   console.log("[spaces-service] Bootstrap complete");
@@ -278,6 +292,14 @@ async function setupHaseefConnection(haseef: {
   // Sync tools to Core
   await syncTools(haseefId);
   console.log(`[spaces-service] Tools synced for ${haseefName} (scope: ${SCOPE})`);
+
+  // Mark haseef entity online in all its spaces
+  for (const sid of spaceIds) {
+    await markOnline(sid, agentEntityId).catch(() => {});
+  }
+  if (spaceIds.length > 0) {
+    console.log(`[spaces-service] ${haseefName} marked online in ${spaceIds.length} space(s)`);
+  }
 }
 
 // =============================================================================
@@ -330,7 +352,8 @@ async function startActionListener(): Promise<void> {
   if (state.actionListenerRunning) return;
   state.actionListenerRunning = true;
 
-  const redisUrl = process.env.REDIS_URL || "redis://localhost:6380";
+  // MUST use Core's Redis — actions are dispatched there by Core
+  const redisUrl = state.config!.coreRedisUrl;
   const consumer = new Redis(redisUrl, {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
@@ -922,7 +945,8 @@ async function executeAction(
 async function startSharedSubscriber(): Promise<void> {
   if (state.sharedSubscriber) return;
 
-  const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+  // MUST use Core's Redis — stream events are published there by Core
+  const redisUrl = state.config!.coreRedisUrl;
   const sub = new Redis(redisUrl, {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
@@ -1001,6 +1025,8 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           runId,
           data: { agentEntityId: conn.agentEntityId, agentName: conn.haseefName, runId },
         });
+        // Show typing indicator when haseef run starts
+        void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
       }
     } else if (event.type === "tool.started") {
       const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
@@ -1060,6 +1086,8 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           runId,
           data: { agentEntityId: conn.agentEntityId, runId },
         });
+        // Stop typing indicator when haseef run finishes
+        void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, false);
       }
       if (runId) conn.runSpaces.delete(runId);
     }

@@ -20,9 +20,9 @@ import { AuthPage } from "@/components/auth-page";
 import { VerifyEmailPage } from "@/components/verify-email-page";
 import { AuthCallback } from "@/components/auth-callback";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
-import { mockSpaces } from "@/lib/mock-data";
 import { haseefsApi, spacesApi, invitationsApi, type HaseefListItem, type SmartSpace, type SpaceMember } from "@/lib/api";
 import type { MockMember } from "@/lib/mock-data";
+import { useSpaceChat } from "@/lib/use-space-chat";
 import { cn } from "@/lib/utils";
 import { ToastProvider, useToast } from "@/components/ui/toast";
 
@@ -46,7 +46,7 @@ function SpaceChatRoute({
   const [showSearch, setShowSearch] = useState(false);
   const [members, setMembers] = useState<SpaceMember[]>([]);
 
-  const currentEntityId = user?.entityId ?? undefined;
+  const currentEntityId = user?.entityId ?? "";
 
   const realSpace = spaces.find((s) => s.id === spaceId);
 
@@ -65,9 +65,7 @@ function SpaceChatRoute({
     fetchMembers();
   }, [fetchMembers]);
 
-  if (!realSpace) return <ChatEmptyState />;
-
-  // Convert SpaceMember[] → MockMember[]
+  // Convert SpaceMember[] → MockMember[] (must be before hooks)
   const mockMembers: MockMember[] = members.map((m) => ({
     entityId: m.entityId,
     name: m.entity.displayName || "Unknown",
@@ -79,12 +77,22 @@ function SpaceChatRoute({
     joinedAt: m.joinedAt,
   }));
 
+  // Real-time chat hook (must be called unconditionally — Rules of Hooks)
+  const chat = useSpaceChat(spaceId, mockMembers);
+
+  if (!realSpace) return <ChatEmptyState />;
+
+  // Determine if this is a direct (1:1 human) space
+  const isDirect = mockMembers.length <= 2 && mockMembers.every((m) => m.type === "human");
+  const otherMember = isDirect ? mockMembers.find((m) => m.entityId !== currentEntityId) : null;
+  const displayName = isDirect && otherMember ? otherMember.name : (realSpace.name || "Unnamed Space");
+
   // MockSpace adapter
   const space = {
     id: realSpace.id,
-    name: realSpace.name || "Unnamed Space",
+    name: displayName,
     description: realSpace.description || "",
-    isGroup: true,
+    isGroup: !isDirect,
     members: mockMembers,
     unreadCount: 0,
     lastMessage: undefined,
@@ -171,6 +179,16 @@ function SpaceChatRoute({
         )}>
           <ChatView
             space={space}
+            messages={chat.messages}
+            currentEntityId={currentEntityId}
+            typingUsers={chat.typingUsers}
+            activeAgents={chat.activeAgents}
+            onlineUserIds={chat.onlineUserIds}
+            seenWatermarks={chat.seenWatermarks}
+            isLoading={chat.isLoading}
+            onSendMessage={chat.sendMessage}
+            onTyping={chat.sendTyping}
+            onMarkSeen={chat.markSeen}
             onToggleDetails={() => setShowDetails((v) => !v)}
             onBack={() => navigate("/spaces")}
             showSearch={showSearch}
@@ -260,8 +278,9 @@ function RequireUnauth({ children }: { children: React.ReactNode }) {
 function AppContent() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
   const { toast } = useToast();
+  const currentEntityId = user?.entityId ?? "";
   const [sidebarOpen, setSidebarOpen] = useState(() => !location.pathname.startsWith("/invitations"));
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showCreateSpace, setShowCreateSpace] = useState(false);
@@ -366,6 +385,7 @@ function AppContent() {
       <SpacesSidebar
         spaces={spaces}
         selectedSpaceId={selectedSpaceId}
+        currentEntityId={currentEntityId}
         onSelectSpace={(id) => {
           navigate(`/spaces/${id}`);
           setMobileSidebarOpen(false);

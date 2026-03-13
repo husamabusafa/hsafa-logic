@@ -1,4 +1,4 @@
-import { type MockMessage, type MockMember, currentUser } from "@/lib/mock-data";
+import { type MockMessage, type MockMember } from "@/lib/mock-data";
 import { TextMessage } from "./text-message";
 import { ConfirmationMessage } from "./confirmation-message";
 import { VoteMessage } from "./vote-message";
@@ -24,9 +24,11 @@ interface MessageRendererProps {
   showSender: boolean;
   showSenderName?: boolean;
   otherMemberCount: number;
+  currentEntityId?: string;
   onReply: (messageId: string) => void;
   onForward?: (messageId: string) => void;
   onScrollToMessage?: (messageId: string) => void;
+  onSeenInfo?: (messageId: string) => void;
 }
 
 export function MessageRenderer({
@@ -36,27 +38,35 @@ export function MessageRenderer({
   showSender,
   showSenderName = false,
   otherMemberCount,
+  currentEntityId,
   onReply,
   onForward,
   onScrollToMessage,
+  onSeenInfo,
 }: MessageRendererProps) {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   if (message.type === "system") {
     return <SystemMessage message={message} />;
   }
 
-  const seenByOthers = message.seenBy.filter((eid) => eid !== currentUser.entityId);
+  const seenByOthers = message.seenBy.filter((eid) => eid !== currentEntityId);
   const allSeen = seenByOthers.length >= otherMemberCount;
   const time = new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+  const seenIcon = allSeen ? (
+    <CheckCheckIcon className="size-3.5 text-blue-300" />
+  ) : seenByOthers.length > 0 ? (
+    <CheckCheckIcon className="size-3.5 opacity-60" />
+  ) : (
+    <CheckIcon className="size-3.5 opacity-60" />
+  );
+
   const seenIndicator = isOwn ? (
-    allSeen ? (
-      <CheckCheckIcon className="size-3.5 text-blue-300" />
-    ) : seenByOthers.length > 0 ? (
-      <CheckCheckIcon className="size-3.5 opacity-60" />
-    ) : (
-      <CheckIcon className="size-3.5 opacity-60" />
-    )
+    onSeenInfo ? (
+      <button onClick={() => onSeenInfo(message.id)} className="inline-flex hover:opacity-70 transition-opacity">
+        {seenIcon}
+      </button>
+    ) : seenIcon
   ) : null;
 
   const content = renderContent(message);
