@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { UsersIcon, UserIcon, LoaderIcon, BotIcon, CheckIcon, XIcon } from "lucide-react";
+import { UsersIcon, UserIcon, LoaderIcon, BotIcon, CheckIcon, XIcon, MailIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import {
@@ -20,6 +20,7 @@ interface CreateSpaceDialogProps {
     description: string;
     isGroup: boolean;
     memberEntityIds: string[];
+    inviteEmails: string[];
   }) => Promise<void>;
 }
 
@@ -34,6 +35,10 @@ export function CreateSpaceDialog({ open, onClose, onCreate }: CreateSpaceDialog
   const [haseefs, setHaseefs] = useState<HaseefListItem[]>([]);
   const [haseefsLoading, setHaseefsLoading] = useState(false);
   const [selectedEntityIds, setSelectedEntityIds] = useState<Set<string>>(new Set());
+
+  // Human email invitations
+  const [emailInput, setEmailInput] = useState("");
+  const [inviteEmails, setInviteEmails] = useState<string[]>([]);
 
   // Fetch haseefs when dialog opens
   useEffect(() => {
@@ -67,11 +72,14 @@ export function CreateSpaceDialog({ open, onClose, onCreate }: CreateSpaceDialog
         description: description.trim(),
         isGroup,
         memberEntityIds: [...selectedEntityIds],
+        inviteEmails,
       });
       setName("");
       setDescription("");
       setIsGroup(true);
       setSelectedEntityIds(new Set());
+      setInviteEmails([]);
+      setEmailInput("");
       onClose();
     } catch (err: any) {
       setError(err.message || "Failed to create space");
@@ -85,6 +93,8 @@ export function CreateSpaceDialog({ open, onClose, onCreate }: CreateSpaceDialog
     setDescription("");
     setIsGroup(true);
     setSelectedEntityIds(new Set());
+    setInviteEmails([]);
+    setEmailInput("");
     setError(null);
     onClose();
   };
@@ -94,7 +104,7 @@ export function CreateSpaceDialog({ open, onClose, onCreate }: CreateSpaceDialog
       <DialogHeader onClose={handleClose}>
         <DialogTitle>Create a new space</DialogTitle>
         <DialogDescription>
-          Spaces are where conversations happen. Add haseefs to collaborate.
+          Spaces are where conversations happen. Add haseefs and invite people.
         </DialogDescription>
       </DialogHeader>
 
@@ -208,6 +218,70 @@ export function CreateSpaceDialog({ open, onClose, onCreate }: CreateSpaceDialog
               </div>
             </>
           )}
+        </div>
+
+        {/* Invite people by email */}
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-foreground">
+            <MailIcon className="size-3.5 inline mr-1.5" />
+            Invite People
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="email"
+              placeholder="Enter email address..."
+              value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && emailInput.includes("@")) {
+                  e.preventDefault();
+                  const trimmed = emailInput.trim().toLowerCase();
+                  if (!inviteEmails.includes(trimmed)) {
+                    setInviteEmails((prev) => [...prev, trimmed]);
+                  }
+                  setEmailInput("");
+                }
+              }}
+              className={cn(
+                "flex-1 h-9 rounded-lg bg-muted/60 px-3 text-sm",
+                "placeholder:text-muted-foreground/60",
+                "focus:outline-none focus:ring-2 focus:ring-ring/30",
+              )}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!emailInput.includes("@")}
+              onClick={() => {
+                const trimmed = emailInput.trim().toLowerCase();
+                if (trimmed.includes("@") && !inviteEmails.includes(trimmed)) {
+                  setInviteEmails((prev) => [...prev, trimmed]);
+                }
+                setEmailInput("");
+              }}
+            >
+              Add
+            </Button>
+          </div>
+          {inviteEmails.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {inviteEmails.map((email) => (
+                <button
+                  key={email}
+                  onClick={() => setInviteEmails((prev) => prev.filter((e) => e !== email))}
+                  className="flex items-center gap-1 px-2 py-1 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-medium hover:bg-blue-500/20 transition-colors"
+                >
+                  <MailIcon className="size-3" />
+                  {email}
+                  <XIcon className="size-3" />
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="text-[11px] text-muted-foreground">
+            They'll receive an invitation after the space is created.
+          </p>
         </div>
       </div>
 

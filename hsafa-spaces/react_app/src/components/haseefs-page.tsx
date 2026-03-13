@@ -102,6 +102,7 @@ export function HaseefDetail({ haseefId, onDeleted }: HaseefDetailProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -193,7 +194,7 @@ export function HaseefDetail({ haseefId, onDeleted }: HaseefDetailProps) {
             <ActionButton
               icon={PencilIcon}
               label="Edit"
-              onClick={() => {}}
+              onClick={() => setShowEdit(true)}
             />
             <ActionButton
               icon={TrashIcon}
@@ -225,6 +226,18 @@ export function HaseefDetail({ haseefId, onDeleted }: HaseefDetailProps) {
           </Button>
         </DialogFooter>
       </Dialog>
+
+      {/* Edit Haseef Modal */}
+      {showEdit && (
+        <EditHaseefDialog
+          haseef={haseef}
+          onClose={() => setShowEdit(false)}
+          onSaved={(updated) => {
+            setHaseef(updated);
+            setShowEdit(false);
+          }}
+        />
+      )}
 
         {/* Instructions Card */}
         {instructions && (
@@ -305,6 +318,7 @@ export function CreateHaseefDialog({ open, onClose, onCreate }: CreateHaseefDial
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [model, setModel] = useState("gpt-4o");
+  const [customModel, setCustomModel] = useState("");
   const [instructions, setInstructions] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -314,15 +328,18 @@ export function CreateHaseefDialog({ open, onClose, onCreate }: CreateHaseefDial
     { value: "gpt-4o-mini", label: "GPT-4o Mini" },
     { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
     { value: "o3-mini", label: "o3-mini" },
+    { value: "custom", label: "Custom" },
   ];
+
+  const resolvedModel = model === "custom" ? customModel.trim() : model;
 
   const handleCreate = async () => {
     if (!name.trim() || isCreating) return;
     setIsCreating(true);
     setError(null);
     try {
-      await onCreate({ name: name.trim(), description: description.trim(), model, instructions: instructions.trim() });
-      setName(""); setDescription(""); setModel("gpt-4o"); setInstructions("");
+      await onCreate({ name: name.trim(), description: description.trim(), model: resolvedModel, instructions: instructions.trim() });
+      setName(""); setDescription(""); setModel("gpt-4o"); setCustomModel(""); setInstructions("");
       onClose();
     } catch (err: any) {
       setError(err.message || "Failed to create haseef");
@@ -377,6 +394,15 @@ export function CreateHaseefDialog({ open, onClose, onCreate }: CreateHaseefDial
               </button>
             ))}
           </div>
+          {model === "custom" && (
+            <input
+              type="text"
+              placeholder="e.g. openrouter/meta-llama/llama-3.1-70b"
+              value={customModel}
+              onChange={(e) => setCustomModel(e.target.value)}
+              className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+          )}
         </div>
 
         <Textarea
@@ -397,7 +423,7 @@ export function CreateHaseefDialog({ open, onClose, onCreate }: CreateHaseefDial
 
       <DialogFooter>
         <Button variant="outline" onClick={onClose} disabled={isCreating}>Cancel</Button>
-        <Button onClick={handleCreate} disabled={!name.trim() || isCreating}>
+        <Button onClick={handleCreate} disabled={!name.trim() || !resolvedModel || isCreating}>
           {isCreating ? <LoaderIcon className="size-4 animate-spin" /> : <SparklesIcon className="size-4" />}
           {isCreating ? "Creating..." : "Create Haseef"}
         </Button>
@@ -441,5 +467,106 @@ function ActionButton({
       />
       <span className="text-xs text-muted-foreground">{label}</span>
     </button>
+  );
+}
+
+// ─── Edit Haseef Dialog ──────────────────────────────────────────────────────
+
+function EditHaseefDialog({
+  haseef,
+  onClose,
+  onSaved,
+}: {
+  haseef: Haseef;
+  onClose: () => void;
+  onSaved: (updated: Haseef) => void;
+}) {
+  const currentModel =
+    (haseef.configJson?.model as Record<string, string>)?.model ||
+    (haseef.configJson?.model as string) ||
+    "";
+  const currentInstructions = (haseef.configJson?.instructions as string) || "";
+
+  const [name, setName] = useState(haseef.name);
+  const [description, setDescription] = useState(haseef.description || "");
+  const [instructions, setInstructions] = useState(currentInstructions);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    if (!name.trim() || isSaving) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const configJson: Record<string, unknown> = { ...haseef.configJson };
+      if (instructions.trim() !== currentInstructions) {
+        configJson.instructions = instructions.trim();
+      }
+      const { haseef: updated } = await haseefsApi.update(haseef.id, {
+        name: name.trim(),
+        description: description.trim() || undefined,
+        configJson,
+      });
+      onSaved(updated);
+    } catch (err: any) {
+      setError(err.message || "Failed to update haseef");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onClose={onClose}>
+      <DialogHeader onClose={onClose}>
+        <DialogTitle>Edit {haseef.name}</DialogTitle>
+        <DialogDescription>Update this haseef's details.</DialogDescription>
+      </DialogHeader>
+
+      <div className="space-y-4">
+        <Input
+          label="Name"
+          id="edit-haseef-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoFocus
+        />
+        <Textarea
+          label="Description"
+          id="edit-haseef-desc"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={2}
+        />
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Model</label>
+          <p className="text-sm text-foreground bg-muted/40 px-3 py-2 rounded-lg">
+            <CpuIcon className="size-3.5 inline mr-1.5 text-muted-foreground" />
+            {currentModel || "unknown"}
+          </p>
+        </div>
+        <Textarea
+          label="Instructions"
+          id="edit-haseef-instructions"
+          placeholder="Describe how this haseef should behave..."
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+          rows={4}
+        />
+
+        {error && (
+          <div className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </div>
+        )}
+      </div>
+
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose} disabled={isSaving}>Cancel</Button>
+        <Button onClick={handleSave} disabled={!name.trim() || isSaving}>
+          {isSaving ? <LoaderIcon className="size-4 animate-spin" /> : <PencilIcon className="size-4" />}
+          {isSaving ? "Saving..." : "Save Changes"}
+        </Button>
+      </DialogFooter>
+    </Dialog>
   );
 }

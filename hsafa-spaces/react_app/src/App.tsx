@@ -72,6 +72,7 @@ function SpaceChatRoute({
     type: m.entity.type,
     role: m.role,
     avatarColor: m.entity.type === "agent" ? "bg-emerald-500" : "bg-primary",
+    avatarUrl: m.entity.avatarUrl || null,
     isOnline: false,
     joinedAt: m.joinedAt,
   }));
@@ -168,7 +169,11 @@ function SpaceChatRoute({
       <InviteDialog
         open={showInvite}
         onClose={() => setShowInvite(false)}
-        space={space}
+        spaceId={realSpace.id}
+        spaceName={space.name}
+        memberEntityIds={memberEntityIds}
+        availableHaseefs={availableHaseefs}
+        onMembersChanged={fetchMembers}
       />
     </>
   );
@@ -423,6 +428,14 @@ function AppContent() {
             description: data.description || undefined,
             memberEntityIds: data.memberEntityIds.length > 0 ? data.memberEntityIds : undefined,
           });
+          // Send email invitations for humans (fire-and-forget, non-blocking)
+          if (data.inviteEmails && data.inviteEmails.length > 0) {
+            for (const email of data.inviteEmails) {
+              invitationsApi.createForSpace(smartSpace.id, { email, role: "member" }).catch((err) => {
+                console.warn("Failed to send invitation to", email, err);
+              });
+            }
+          }
           await fetchSpaces();
           navigate(`/spaces/${smartSpace.id}`);
           setMobileSidebarOpen(false);
@@ -436,6 +449,7 @@ function AppContent() {
           await haseefsApi.create({
             name: data.name,
             description: data.description || undefined,
+            model: data.model || undefined,
             instructions: data.instructions || undefined,
           });
           await fetchHaseefs();

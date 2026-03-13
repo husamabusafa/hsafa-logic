@@ -205,7 +205,7 @@ function MemberSettingsRow({
 
   return (
     <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-muted/50 transition-colors">
-      <Avatar name={member.name} color={member.avatarColor} size="sm" isOnline={member.isOnline} />
+      <Avatar name={member.name} src={member.avatarUrl} color={member.avatarColor} size="sm" isOnline={member.isOnline} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="text-sm font-medium truncate">

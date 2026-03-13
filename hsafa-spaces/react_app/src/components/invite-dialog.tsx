@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { SearchIcon, UserPlusIcon, BotIcon, CheckIcon, MailIcon, ShieldIcon, UsersIcon } from "lucide-react";
+import { SearchIcon, BotIcon, CheckIcon, MailIcon, ShieldIcon, UsersIcon, LoaderIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogHeader,
@@ -10,41 +9,53 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { mockUsers, mockHaseefs, currentUser, type MockSpace } from "@/lib/mock-data";
+import { spacesApi, invitationsApi, type HaseefListItem } from "@/lib/api";
+
+interface AvailableHaseef {
+  entityId: string;
+  name: string;
+  description?: string;
+}
 
 interface InviteDialogProps {
   open: boolean;
   onClose: () => void;
-  space: MockSpace;
+  spaceId: string;
+  spaceName: string;
+  memberEntityIds: Set<string>;
+  availableHaseefs: AvailableHaseef[];
+  onMembersChanged?: () => void;
 }
 
-export function InviteDialog({ open, onClose, space }: InviteDialogProps) {
+export function InviteDialog({
+  open,
+  onClose,
+  spaceId,
+  spaceName,
+  memberEntityIds,
+  availableHaseefs,
+  onMembersChanged,
+}: InviteDialogProps) {
+  const [tab, setTab] = useState<"haseefs" | "email">("haseefs");
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState<"people" | "haseefs" | "email">("people");
-  const [invited, setInvited] = useState<Set<string>>(new Set());
   const [inviteRole, setInviteRole] = useState<"member" | "admin">("member");
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // Haseef selection (add directly as members)
+  const [selectedHaseefIds, setSelectedHaseefIds] = useState<Set<string>>(new Set());
+
+  // Email invitation
   const [emailInput, setEmailInput] = useState("");
   const [emailList, setEmailList] = useState<string[]>([]);
 
-  const existingEntityIds = new Set(space.members.map((m) => m.entityId));
-
-  // Filter available people (not already members, not current user)
-  const availablePeople = mockUsers.filter(
-    (u) =>
-      u.entityId !== currentUser.entityId &&
-      !existingEntityIds.has(u.entityId) &&
-      u.name.toLowerCase().includes(search.toLowerCase()),
+  const filteredHaseefs = availableHaseefs.filter(
+    (h) => !memberEntityIds.has(h.entityId) && h.name.toLowerCase().includes(search.toLowerCase()),
   );
 
-  // Filter available haseefs (not already members)
-  const availableHaseefs = mockHaseefs.filter(
-    (h) =>
-      !existingEntityIds.has(h.entityId) &&
-      h.name.toLowerCase().includes(search.toLowerCase()),
-  );
-
-  const toggleInvite = (entityId: string) => {
-    setInvited((prev) => {
+  const toggleHaseef = (entityId: string) => {
+    setSelectedHaseefIds((prev) => {
       const next = new Set(prev);
       if (next.has(entityId)) next.delete(entityId);
       else next.add(entityId);
@@ -52,36 +63,78 @@ export function InviteDialog({ open, onClose, space }: InviteDialogProps) {
     });
   };
 
-  const handleSendInvites = () => {
-    // Mock — just close
-    setInvited(new Set());
+  const addEmail = (email: string) => {
+    const trimmed = email.trim().toLowerCase();
+    if (trimmed.includes("@") && !emailList.includes(trimmed)) {
+      setEmailList((prev) => [...prev, trimmed]);
+    }
+    setEmailInput("");
+  };
+
+  const handleSend = async () => {
+    setIsSending(true);
+    setError(null);
+    setSuccessMsg(null);
+    let addedCount = 0;
+    let invitedCount = 0;
+
+    try {
+      // Add haseefs directly as members
+      for (const entityId of selectedHaseefIds) {
+        await spacesApi.addMember(spaceId, entityId, "member");
+        addedCount++;
+      }
+
+      // Send email invitations for humans
+      for (const email of emailList) {
+        await invitationsApi.createForSpace(spaceId, { email, role: inviteRole });
+        invitedCount++;
+      }
+
+      const parts: string[] = [];
+      if (addedCount > 0) parts.push(`${addedCount} haseef${addedCount > 1 ? "s" : ""} added`);
+      if (invitedCount > 0) parts.push(`${invitedCount} invitation${invitedCount > 1 ? "s" : ""} sent`);
+      setSuccessMsg(parts.join(", ") + "!");
+
+      setSelectedHaseefIds(new Set());
+      setEmailList([]);
+      onMembersChanged?.();
+
+      // Auto-close after brief delay
+      setTimeout(() => {
+        setSuccessMsg(null);
+        onClose();
+      }, 1200);
+    } catch (err: any) {
+      setError(err.message || "Failed to send invites");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleClose = () => {
+    setSelectedHaseefIds(new Set());
+    setEmailList([]);
+    setEmailInput("");
     setSearch("");
+    setError(null);
+    setSuccessMsg(null);
     onClose();
   };
 
+  const totalSelected = selectedHaseefIds.size + emailList.length;
+
   return (
-    <Dialog open={open} onClose={onClose} className="max-w-md">
-      <DialogHeader onClose={onClose}>
-        <DialogTitle>Invite to {space.name}</DialogTitle>
+    <Dialog open={open} onClose={handleClose} className="max-w-md">
+      <DialogHeader onClose={handleClose}>
+        <DialogTitle>Invite to {spaceName}</DialogTitle>
         <DialogDescription>
-          Add people or haseefs to this space
+          Add haseefs or invite people by email
         </DialogDescription>
       </DialogHeader>
 
       {/* Tabs */}
       <div className="flex border-b border-border mb-3">
-        <button
-          onClick={() => setTab("people")}
-          className={cn(
-            "flex-1 py-2 text-sm font-medium border-b-2 transition-colors",
-            tab === "people"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <UserPlusIcon className="size-4 inline mr-1.5" />
-          People
-        </button>
         <button
           onClick={() => setTab("haseefs")}
           className={cn(
@@ -104,216 +157,179 @@ export function InviteDialog({ open, onClose, space }: InviteDialogProps) {
           )}
         >
           <MailIcon className="size-4 inline mr-1.5" />
-          Email
+          Invite by Email
         </button>
       </div>
 
-      {/* Search (for people/haseefs tabs) */}
-      {tab !== "email" && (
-        <div className="relative mb-3">
-          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder={tab === "people" ? "Search people..." : "Search haseefs..."}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className={cn(
-              "w-full h-9 rounded-lg bg-muted/60 pl-9 pr-3 text-sm",
-              "placeholder:text-muted-foreground/60",
-              "focus:outline-none focus:ring-2 focus:ring-ring/30",
-            )}
-          />
-        </div>
-      )}
-
-      {/* Email input */}
-      {tab === "email" && (
-        <div className="mb-3 space-y-2">
-          <div className="flex gap-2">
+      {/* Haseefs tab */}
+      {tab === "haseefs" && (
+        <>
+          <div className="relative mb-3">
+            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
             <input
-              type="email"
-              placeholder="Enter email address..."
-              value={emailInput}
-              onChange={(e) => setEmailInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && emailInput.includes("@")) {
-                  e.preventDefault();
-                  if (!emailList.includes(emailInput.trim())) {
-                    setEmailList((prev) => [...prev, emailInput.trim()]);
-                  }
-                  setEmailInput("");
-                }
-              }}
+              type="text"
+              placeholder="Search haseefs..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
               className={cn(
-                "flex-1 h-9 rounded-lg bg-muted/60 px-3 text-sm",
+                "w-full h-9 rounded-lg bg-muted/60 pl-9 pr-3 text-sm",
                 "placeholder:text-muted-foreground/60",
                 "focus:outline-none focus:ring-2 focus:ring-ring/30",
               )}
             />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!emailInput.includes("@")}
-              onClick={() => {
-                if (emailInput.includes("@") && !emailList.includes(emailInput.trim())) {
-                  setEmailList((prev) => [...prev, emailInput.trim()]);
-                }
-                setEmailInput("");
-              }}
-            >
-              Add
-            </Button>
           </div>
-          {emailList.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {emailList.map((email) => (
-                <span
-                  key={email}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium"
+
+          <div className="max-h-[280px] overflow-y-auto -mx-2 px-2 space-y-0.5">
+            {filteredHaseefs.length === 0 ? (
+              <EmptyList text="No haseefs available to add" />
+            ) : (
+              filteredHaseefs.map((h) => (
+                <button
+                  key={h.entityId}
+                  onClick={() => toggleHaseef(h.entityId)}
+                  className={cn(
+                    "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg transition-colors text-left",
+                    selectedHaseefIds.has(h.entityId) ? "bg-primary/8" : "hover:bg-muted/60",
+                  )}
                 >
-                  {email}
-                  <button
-                    onClick={() => setEmailList((prev) => prev.filter((e) => e !== email))}
-                    className="hover:text-primary/70"
+                  <div className="flex size-8 items-center justify-center rounded-full bg-emerald-500/15 shrink-0">
+                    <BotIcon className="size-3.5 text-emerald-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-sm font-medium text-foreground truncate">{h.name}</span>
+                      <BotIcon className="size-3 text-emerald-500 shrink-0" />
+                    </div>
+                    {h.description && <p className="text-[11px] text-muted-foreground truncate">{h.description}</p>}
+                  </div>
+                  <div
+                    className={cn(
+                      "flex size-5 items-center justify-center rounded-full border-2 transition-colors shrink-0",
+                      selectedHaseefIds.has(h.entityId)
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-muted-foreground/30",
+                    )}
                   >
-                    ×
-                  </button>
-                </span>
-              ))}
+                    {selectedHaseefIds.has(h.entityId) && <CheckIcon className="size-3" />}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Email tab */}
+      {tab === "email" && (
+        <>
+          <div className="mb-3 space-y-2">
+            <div className="flex gap-2">
+              <input
+                type="email"
+                placeholder="Enter email address..."
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && emailInput.includes("@")) {
+                    e.preventDefault();
+                    addEmail(emailInput);
+                  }
+                }}
+                className={cn(
+                  "flex-1 h-9 rounded-lg bg-muted/60 px-3 text-sm",
+                  "placeholder:text-muted-foreground/60",
+                  "focus:outline-none focus:ring-2 focus:ring-ring/30",
+                )}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!emailInput.includes("@")}
+                onClick={() => addEmail(emailInput)}
+              >
+                Add
+              </Button>
             </div>
-          )}
-          <p className="text-[11px] text-muted-foreground">Press Enter or click Add to queue emails. They'll receive an invitation link.</p>
+            {emailList.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {emailList.map((email) => (
+                  <span
+                    key={email}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium"
+                  >
+                    {email}
+                    <button
+                      onClick={() => setEmailList((prev) => prev.filter((e) => e !== email))}
+                      className="hover:text-primary/70"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Press Enter or click Add. They'll receive an invitation to join this space.
+              {"\n"}If they don't have an account yet, they can register and accept.
+            </p>
+          </div>
+
+          {/* Role picker for email invites */}
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs text-muted-foreground">Invite as:</span>
+            <button
+              onClick={() => setInviteRole("member")}
+              className={cn(
+                "flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
+                inviteRole === "member"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <UsersIcon className="size-3" /> Member
+            </button>
+            <button
+              onClick={() => setInviteRole("admin")}
+              className={cn(
+                "flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
+                inviteRole === "admin"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <ShieldIcon className="size-3" /> Admin
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Error / Success */}
+      {error && (
+        <div className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive mt-2">
+          {error}
+        </div>
+      )}
+      {successMsg && (
+        <div className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400 mt-2">
+          {successMsg}
         </div>
       )}
 
-      {/* Role picker */}
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-xs text-muted-foreground">Invite as:</span>
-        <button
-          onClick={() => setInviteRole("member")}
-          className={cn(
-            "flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
-            inviteRole === "member"
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <UsersIcon className="size-3" /> Member
-        </button>
-        <button
-          onClick={() => setInviteRole("admin")}
-          className={cn(
-            "flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
-            inviteRole === "admin"
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <ShieldIcon className="size-3" /> Admin
-        </button>
-      </div>
-
-      {/* List */}
-      <div className="max-h-[280px] overflow-y-auto -mx-2 px-2 space-y-0.5">
-        {tab === "people" ? (
-          availablePeople.length === 0 ? (
-            <EmptyList text="No people to invite" />
-          ) : (
-            availablePeople.map((user) => (
-              <InviteRow
-                key={user.entityId}
-                entityId={user.entityId}
-                name={user.name}
-                subtitle={user.email}
-                avatarColor={user.avatarColor}
-                isOnline={user.isOnline}
-                isSelected={invited.has(user.entityId)}
-                onToggle={() => toggleInvite(user.entityId)}
-              />
-            ))
-          )
-        ) : tab === "haseefs" ? (
-          availableHaseefs.length === 0 ? (
-            <EmptyList text="No haseefs to invite" />
-          ) : (
-            availableHaseefs.map((h) => (
-              <InviteRow
-                key={h.entityId}
-                entityId={h.entityId}
-                name={h.name}
-                subtitle={h.description}
-                avatarColor={h.avatarColor}
-                isOnline={h.isOnline}
-                isAgent
-                isSelected={invited.has(h.entityId)}
-                onToggle={() => toggleInvite(h.entityId)}
-              />
-            ))
-          )
-        ) : null}
-      </div>
-
       {/* Footer */}
-      {(invited.size > 0 || emailList.length > 0) && (
+      {totalSelected > 0 && !successMsg && (
         <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
           <span className="text-sm text-muted-foreground">
-            {invited.size + emailList.length} selected · as {inviteRole}
+            {selectedHaseefIds.size > 0 && `${selectedHaseefIds.size} haseef${selectedHaseefIds.size > 1 ? "s" : ""}`}
+            {selectedHaseefIds.size > 0 && emailList.length > 0 && " + "}
+            {emailList.length > 0 && `${emailList.length} email${emailList.length > 1 ? "s" : ""} as ${inviteRole}`}
           </span>
-          <Button onClick={handleSendInvites}>
-            Send invites
+          <Button onClick={handleSend} disabled={isSending}>
+            {isSending && <LoaderIcon className="size-4 animate-spin mr-1.5" />}
+            {isSending ? "Sending..." : "Send"}
           </Button>
         </div>
       )}
     </Dialog>
-  );
-}
-
-function InviteRow({
-  entityId,
-  name,
-  subtitle,
-  avatarColor,
-  isOnline,
-  isAgent,
-  isSelected,
-  onToggle,
-}: {
-  entityId: string;
-  name: string;
-  subtitle: string;
-  avatarColor: string;
-  isOnline: boolean;
-  isAgent?: boolean;
-  isSelected: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      onClick={onToggle}
-      className={cn(
-        "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg transition-colors text-left",
-        isSelected ? "bg-primary/8" : "hover:bg-muted/60",
-      )}
-    >
-      <Avatar name={name} color={avatarColor} size="sm" isOnline={isOnline} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1">
-          <span className="text-sm font-medium text-foreground truncate">{name}</span>
-          {isAgent && <BotIcon className="size-3 text-emerald-500 shrink-0" />}
-        </div>
-        <p className="text-[11px] text-muted-foreground truncate">{subtitle}</p>
-      </div>
-      <div
-        className={cn(
-          "flex size-5 items-center justify-center rounded-full border-2 transition-colors shrink-0",
-          isSelected
-            ? "border-primary bg-primary text-primary-foreground"
-            : "border-muted-foreground/30",
-        )}
-      >
-        {isSelected && <CheckIcon className="size-3" />}
-      </div>
-    </button>
   );
 }
 

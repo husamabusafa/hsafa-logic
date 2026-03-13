@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import {
   XIcon,
   ShieldIcon,
@@ -571,7 +571,9 @@ import {
   UsersIcon,
   TrashIcon as TrashIcon2,
   ChevronDownIcon,
+  LoaderIcon as LoaderIcon2,
 } from "lucide-react";
+import { mediaApi, spacesApi } from "@/lib/api";
 
 function SpaceSettingsPanel({
   space,
@@ -607,6 +609,28 @@ function SpaceSettingsPanel({
   const [isLeaving, setIsLeaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [addingHaseefId, setAddingHaseefId] = useState<string | null>(null);
+  const [spaceImageUrl, setSpaceImageUrl] = useState<string | null>(
+    (space as any).metadata?.imageUrl || null,
+  );
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingImage(true);
+    try {
+      const result = await mediaApi.upload(file);
+      const imageUrl = result.url;
+      await spacesApi.update(space.id, { metadata: { imageUrl } });
+      setSpaceImageUrl(imageUrl);
+    } catch (err) {
+      console.error("Image upload error:", err);
+    } finally {
+      setIsUploadingImage(false);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
+  };
   const myMember = currentEntityId
     ? space.members.find((m) => m.entityId === currentEntityId)
     : undefined;
@@ -659,6 +683,42 @@ function SpaceSettingsPanel({
         <div className="rounded-xl border border-border bg-card p-4">
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">General</h4>
           <div className="space-y-3">
+            {/* Space Image */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Space Image</label>
+              <div className="flex items-center gap-3">
+                {spaceImageUrl ? (
+                  <img src={spaceImageUrl} alt={space.name} className="size-14 rounded-xl object-cover border border-border" />
+                ) : (
+                  <div className="size-14 rounded-xl bg-muted flex items-center justify-center border border-border">
+                    <ImageIcon className="size-6 text-muted-foreground/40" />
+                  </div>
+                )}
+                {isAdmin && (
+                  <>
+                    <input
+                      ref={imageInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleImageUpload}
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={isUploadingImage}
+                      onClick={() => imageInputRef.current?.click()}
+                    >
+                      {isUploadingImage ? (
+                        <><LoaderIcon2 className="size-3.5 animate-spin mr-1.5" />Uploading...</>
+                      ) : (
+                        <>{spaceImageUrl ? "Change" : "Upload"}</>
+                      )}
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Space Name</label>
               <input
@@ -901,7 +961,7 @@ function MemberSettingsRow({
 
   return (
     <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-muted/50 transition-colors">
-      <Avatar name={member.name} color={member.avatarColor} size="sm" isOnline={member.isOnline} />
+      <Avatar name={member.name} src={member.avatarUrl} color={member.avatarColor} size="sm" isOnline={member.isOnline} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="text-sm font-medium truncate">

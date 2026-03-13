@@ -53,17 +53,23 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
-    const { name, description, configJson, instructions } = req.body;
+    const { name, description, configJson, instructions, model } = req.body;
     if (!name) {
       res.status(400).json({ error: "name is required" });
       return;
     }
 
     // Build configJson with sensible defaults if not provided
-    const config = configJson || {
-      model: { provider: "openai", model: "gpt-4o-mini" },
-      ...(instructions ? { instructions } : {}),
-    };
+    // Accept "model" field as shorthand (e.g. "gpt-4o", "claude-sonnet-4-20250514")
+    let config = configJson;
+    if (!config) {
+      const modelId = model || "gpt-4o-mini";
+      const provider = modelId.startsWith("claude") ? "anthropic" : "openai";
+      config = {
+        model: { provider, model: modelId },
+        ...(instructions ? { instructions } : {}),
+      };
+    }
 
     // Create entity in Spaces for this agent
     const entityId = crypto.randomUUID();

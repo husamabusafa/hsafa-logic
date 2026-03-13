@@ -157,7 +157,7 @@ export function MessageRenderer({
   return (
     <div className={cn("flex items-end gap-2", showSenderName ? "mt-4" : "mt-1")}>
       {showSender ? (
-        <Avatar name={message.senderName} color={member?.avatarColor} size="sm" isOnline={member?.isOnline} />
+        <Avatar name={message.senderName} src={member?.avatarUrl} color={member?.avatarColor} size="sm" isOnline={member?.isOnline} />
       ) : (
         <div className="w-8" />
       )}

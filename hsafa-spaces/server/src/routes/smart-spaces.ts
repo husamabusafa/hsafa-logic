@@ -709,7 +709,33 @@ router.get("/:smartSpaceId/members", async (req: Request, res: Response) => {
       },
     });
 
-    res.json({ members: memberships });
+    // Enrich human entities with avatarUrl from User table
+    const humanEntityIds = memberships
+      .filter((m: any) => m.entity?.type === "human")
+      .map((m: any) => m.entity.id);
+
+    const avatarMap: Record<string, string> = {};
+    if (humanEntityIds.length > 0) {
+      const users = await prisma.user.findMany({
+        where: { hsafaEntityId: { in: humanEntityIds } },
+        select: { hsafaEntityId: true, avatarUrl: true },
+      });
+      for (const u of users) {
+        if (u.hsafaEntityId && u.avatarUrl) {
+          avatarMap[u.hsafaEntityId] = u.avatarUrl;
+        }
+      }
+    }
+
+    const enriched = memberships.map((m: any) => ({
+      ...m,
+      entity: {
+        ...m.entity,
+        avatarUrl: avatarMap[m.entity.id] || null,
+      },
+    }));
+
+    res.json({ members: enriched });
   } catch (error) {
     console.error("List members error:", error);
     res.status(500).json({ error: "Failed to list members" });

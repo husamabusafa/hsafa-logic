@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 
 interface AvatarProps {
   name: string;
+  src?: string | null;
   color?: string;
   size?: "sm" | "md" | "lg" | "xl";
   isOnline?: boolean;
@@ -15,7 +16,7 @@ const sizeClasses = {
   xl: "size-20 text-2xl",
 };
 
-export function Avatar({ name, color = "bg-primary", size = "md", isOnline, className }: AvatarProps) {
+export function Avatar({ name, src, color = "bg-primary", size = "md", isOnline, className }: AvatarProps) {
   const initials = name
     .split(" ")
     .map((w) => w[0])
@@ -25,15 +26,27 @@ export function Avatar({ name, color = "bg-primary", size = "md", isOnline, clas
 
   return (
     <div className={cn("relative inline-flex shrink-0", className)}>
-      <div
-        className={cn(
-          "flex items-center justify-center rounded-full font-semibold text-white",
-          color,
-          sizeClasses[size],
-        )}
-      >
-        {initials}
-      </div>
+      {src ? (
+        <img
+          src={src}
+          alt={name}
+          referrerPolicy="no-referrer"
+          className={cn(
+            "rounded-full object-cover",
+            sizeClasses[size],
+          )}
+        />
+      ) : (
+        <div
+          className={cn(
+            "flex items-center justify-center rounded-full font-semibold text-white",
+            color,
+            sizeClasses[size],
+          )}
+        >
+          {initials}
+        </div>
+      )}
       {isOnline !== undefined && (
         <span
           className={cn(

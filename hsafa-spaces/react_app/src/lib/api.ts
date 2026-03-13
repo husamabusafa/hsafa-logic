@@ -175,6 +175,7 @@ export interface SpaceMember {
     id: string;
     displayName: string | null;
     type: "human" | "agent";
+    avatarUrl?: string | null;
   };
 }
 
@@ -196,7 +197,7 @@ export const spacesApi = {
     });
   },
 
-  update(id: string, data: { name?: string; description?: string }) {
+  update(id: string, data: { name?: string; description?: string; metadata?: Record<string, unknown> }) {
     return request<{ smartSpace: SmartSpace }>(`/smart-spaces/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -336,6 +337,26 @@ export const invitationsApi = {
 
   listForSpace(spaceId: string) {
     return request<{ invitations: Invitation[] }>(`/smart-spaces/${spaceId}/invitations`);
+  },
+};
+
+// ── Media API ──────────────────────────────────────────────────────────────
+
+export const mediaApi = {
+  async upload(file: File): Promise<{ id: string; url: string; thumbnailUrl?: string }> {
+    const token = getToken();
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch(`${API_BASE}/media/upload`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new ApiError(data.error || "Upload failed", res.status);
+    return data;
   },
 };
 

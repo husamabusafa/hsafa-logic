@@ -39,6 +39,7 @@ export interface MockMember {
   type: "human" | "agent";
   role: "owner" | "admin" | "member";
   avatarColor: string;
+  avatarUrl?: string | null;
   isOnline: boolean;
   lastSeen?: string;
   joinedAt?: string;
