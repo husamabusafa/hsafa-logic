@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   MailIcon,
   CheckIcon,
@@ -6,28 +6,59 @@ import {
   ClockIcon,
   ShieldIcon,
   UsersIcon,
+  LoaderIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import { mockInvitations, type MockInvitation } from "@/lib/mock-data";
+import { invitationsApi, type Invitation } from "@/lib/api";
 
 export function InvitationsPage() {
-  const [invitations, setInvitations] = useState<MockInvitation[]>(mockInvitations);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+
+  const fetchInvitations = useCallback(async () => {
+    try {
+      const { invitations: list } = await invitationsApi.listMine("pending");
+      setInvitations(list);
+    } catch (err) {
+      console.error("Failed to fetch invitations:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchInvitations();
+  }, [fetchInvitations]);
+
   const pending = invitations.filter((inv) => inv.status === "pending");
   const responded = invitations.filter((inv) => inv.status !== "pending");
 
-  const handleAccept = (id: string) => {
-    setInvitations((prev) =>
-      prev.map((inv) => (inv.id === id ? { ...inv, status: "accepted" as const } : inv))
-    );
+  const handleAccept = async (id: string) => {
+    setActionInProgress(id);
+    try {
+      await invitationsApi.accept(id);
+      await fetchInvitations();
+    } catch (err) {
+      console.error("Failed to accept invitation:", err);
+    } finally {
+      setActionInProgress(null);
+    }
   };
 
-  const handleDecline = (id: string) => {
-    setInvitations((prev) =>
-      prev.map((inv) => (inv.id === id ? { ...inv, status: "declined" as const } : inv))
-    );
+  const handleDecline = async (id: string) => {
+    setActionInProgress(id);
+    try {
+      await invitationsApi.decline(id);
+      await fetchInvitations();
+    } catch (err) {
+      console.error("Failed to decline invitation:", err);
+    } finally {
+      setActionInProgress(null);
+    }
   };
 
   return (
@@ -49,49 +80,56 @@ export function InvitationsPage() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-2xl mx-auto space-y-6">
-          {/* Pending */}
-          {pending.length > 0 && (
-            <section>
-              <h3 className="text-sm font-medium text-muted-foreground mb-3">Pending</h3>
-              <div className="space-y-3">
-                {pending.map((inv) => (
-                  <InvitationCard
-                    key={inv.id}
-                    invitation={inv}
-                    onAccept={() => handleAccept(inv.id)}
-                    onDecline={() => handleDecline(inv.id)}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
+        {isLoading ? (
+          <div className="flex justify-center py-16">
+            <LoaderIcon className="size-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="max-w-2xl mx-auto space-y-6">
+            {/* Pending */}
+            {pending.length > 0 && (
+              <section>
+                <h3 className="text-sm font-medium text-muted-foreground mb-3">Pending</h3>
+                <div className="space-y-3">
+                  {pending.map((inv) => (
+                    <InvitationCard
+                      key={inv.id}
+                      invitation={inv}
+                      onAccept={() => handleAccept(inv.id)}
+                      onDecline={() => handleDecline(inv.id)}
+                      isLoading={actionInProgress === inv.id}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
 
-          {/* Responded */}
-          {responded.length > 0 && (
-            <section>
-              <h3 className="text-sm font-medium text-muted-foreground mb-3">Responded</h3>
-              <div className="space-y-3">
-                {responded.map((inv) => (
-                  <InvitationCard key={inv.id} invitation={inv} />
-                ))}
-              </div>
-            </section>
-          )}
+            {/* Responded */}
+            {responded.length > 0 && (
+              <section>
+                <h3 className="text-sm font-medium text-muted-foreground mb-3">Responded</h3>
+                <div className="space-y-3">
+                  {responded.map((inv) => (
+                    <InvitationCard key={inv.id} invitation={inv} />
+                  ))}
+                </div>
+              </section>
+            )}
 
-          {/* Empty */}
-          {invitations.length === 0 && (
-            <div className="text-center py-16">
-              <div className="size-16 rounded-2xl bg-muted flex items-center justify-center mx-auto mb-4">
-                <MailIcon className="size-8 text-muted-foreground" />
+            {/* Empty */}
+            {invitations.length === 0 && (
+              <div className="text-center py-16">
+                <div className="size-16 rounded-2xl bg-muted flex items-center justify-center mx-auto mb-4">
+                  <MailIcon className="size-8 text-muted-foreground" />
+                </div>
+                <h3 className="text-lg font-semibold mb-1">No invitations</h3>
+                <p className="text-sm text-muted-foreground">
+                  You'll see invitations to join spaces here.
+                </p>
               </div>
-              <h3 className="text-lg font-semibold mb-1">No invitations</h3>
-              <p className="text-sm text-muted-foreground">
-                You'll see invitations to join spaces here.
-              </p>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -103,14 +141,19 @@ function InvitationCard({
   invitation,
   onAccept,
   onDecline,
+  isLoading,
 }: {
-  invitation: MockInvitation;
+  invitation: Invitation;
   onAccept?: () => void;
   onDecline?: () => void;
+  isLoading?: boolean;
 }) {
   const isPending = invitation.status === "pending";
   const isAccepted = invitation.status === "accepted";
   const timeAgo = getTimeAgo(invitation.createdAt);
+
+  const spaceName = invitation.smartSpace?.name || "Unknown Space";
+  const inviterName = invitation.inviter?.displayName || "Someone";
 
   return (
     <div
@@ -121,12 +164,12 @@ function InvitationCard({
     >
       <div className="flex items-start gap-3">
         {/* Space avatar */}
-        <Avatar name={invitation.spaceName} size="sm" />
+        <Avatar name={spaceName} size="sm" />
 
         <div className="flex-1 min-w-0">
           {/* Space name + role */}
           <div className="flex items-center gap-2 flex-wrap">
-            <h4 className="text-sm font-semibold text-foreground">{invitation.spaceName}</h4>
+            <h4 className="text-sm font-semibold text-foreground">{spaceName}</h4>
             <Badge variant={invitation.role === "admin" ? "default" : "secondary"}>
               {invitation.role === "admin" ? (
                 <><ShieldIcon className="size-3 mr-0.5" /> Admin</>
@@ -138,7 +181,7 @@ function InvitationCard({
 
           {/* Inviter + time */}
           <p className="text-xs text-muted-foreground mt-0.5">
-            Invited by <span className="font-medium">{invitation.inviterName}</span> · {timeAgo}
+            Invited by <span className="font-medium">{inviterName}</span> · {timeAgo}
           </p>
 
           {/* Message */}
@@ -151,11 +194,11 @@ function InvitationCard({
           {/* Actions */}
           {isPending && (
             <div className="flex items-center gap-2 mt-3">
-              <Button size="sm" onClick={onAccept}>
-                <CheckIcon className="size-3.5 mr-1" />
+              <Button size="sm" onClick={onAccept} disabled={isLoading}>
+                {isLoading ? <LoaderIcon className="size-3.5 mr-1 animate-spin" /> : <CheckIcon className="size-3.5 mr-1" />}
                 Accept
               </Button>
-              <Button size="sm" variant="outline" onClick={onDecline}>
+              <Button size="sm" variant="outline" onClick={onDecline} disabled={isLoading}>
                 <XIcon className="size-3.5 mr-1" />
                 Decline
               </Button>

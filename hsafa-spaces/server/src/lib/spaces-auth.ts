@@ -1,5 +1,6 @@
 import { jwtVerify, createRemoteJWKSet, type JWTPayload } from "jose";
 import { prisma } from "./db.js";
+import { verifyToken } from "./auth.js";
 import type { Request, Response, NextFunction } from "express";
 
 // =============================================================================
@@ -7,7 +8,7 @@ import type { Request, Response, NextFunction } from "express";
 // =============================================================================
 
 export interface AuthContext {
-  method: "secret_key" | "public_key_jwt";
+  method: "secret_key" | "public_key_jwt" | "user_jwt";
   entityId?: string;
   externalId?: string;
 }
@@ -119,6 +120,22 @@ export async function authenticateRequest(
       entityId: entity.id,
       externalId,
     };
+  }
+
+  // Plain Bearer token — user JWT (React app / frontend)
+  if (authHeader?.startsWith("Bearer ")) {
+    try {
+      const userPayload = await verifyToken(authHeader.slice(7));
+      if (userPayload && userPayload.entityId) {
+        return {
+          method: "user_jwt",
+          entityId: userPayload.entityId,
+          externalId: userPayload.sub,
+        };
+      }
+    } catch {
+      // Not a valid user JWT
+    }
   }
 
   return null;

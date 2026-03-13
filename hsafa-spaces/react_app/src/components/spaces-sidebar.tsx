@@ -1,22 +1,23 @@
 import { useState } from "react";
-import { PlusIcon, SearchIcon, UsersIcon, BotIcon } from "lucide-react";
+import { PlusIcon, SearchIcon, LoaderIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import type { MockSpace } from "@/lib/mock-data";
+import type { SmartSpace } from "@/lib/api";
 
 interface SpacesSidebarProps {
-  spaces: MockSpace[];
+  spaces: SmartSpace[];
   selectedSpaceId: string | null;
   onSelectSpace: (spaceId: string) => void;
   onCreateSpace: () => void;
+  isLoading?: boolean;
 }
 
-export function SpacesSidebar({ spaces, selectedSpaceId, onSelectSpace, onCreateSpace }: SpacesSidebarProps) {
+export function SpacesSidebar({ spaces, selectedSpaceId, onSelectSpace, onCreateSpace, isLoading }: SpacesSidebarProps) {
   const [search, setSearch] = useState("");
 
   const filtered = spaces.filter((s) =>
-    s.name.toLowerCase().includes(search.toLowerCase()),
+    (s.name || "").toLowerCase().includes(search.toLowerCase()),
   );
 
   return (
@@ -50,28 +51,35 @@ export function SpacesSidebar({ spaces, selectedSpaceId, onSelectSpace, onCreate
 
       {/* Spaces list */}
       <div className="flex-1 overflow-y-auto">
-        {filtered.map((space) => (
-          <SpaceItem
-            key={space.id}
-            space={space}
-            isSelected={space.id === selectedSpaceId}
-            onClick={() => onSelectSpace(space.id)}
-          />
-        ))}
-
-        {filtered.length === 0 && (
-          <div className="px-4 py-8 text-center">
-            <p className="text-sm text-muted-foreground">No spaces found</p>
+        {isLoading ? (
+          <div className="flex justify-center py-8">
+            <LoaderIcon className="size-5 animate-spin text-muted-foreground" />
           </div>
+        ) : (
+          <>
+            {filtered.map((space) => (
+              <SpaceItem
+                key={space.id}
+                space={space}
+                isSelected={space.id === selectedSpaceId}
+                onClick={() => onSelectSpace(space.id)}
+              />
+            ))}
+
+            {filtered.length === 0 && (
+              <div className="px-4 py-8 text-center">
+                <p className="text-sm text-muted-foreground">No spaces found</p>
+              </div>
+            )}
+          </>
         )}
       </div>
     </>
   );
 }
 
-function SpaceItem({ space, isSelected, onClick }: { space: MockSpace; isSelected: boolean; onClick: () => void }) {
-  const onlineCount = space.members.filter((m) => m.isOnline && m.entityId !== "entity-husam").length;
-  const agentCount = space.members.filter((m) => m.type === "agent").length;
+function SpaceItem({ space, isSelected, onClick }: { space: SmartSpace; isSelected: boolean; onClick: () => void }) {
+  const name = space.name || "Unnamed Space";
 
   return (
     <button
@@ -85,65 +93,23 @@ function SpaceItem({ space, isSelected, onClick }: { space: MockSpace; isSelecte
     >
       {/* Avatar */}
       <div className="relative shrink-0">
-        {space.isGroup ? (
-          <div className={cn(
-            "flex size-12 items-center justify-center rounded-full bg-primary/15 text-primary font-semibold text-sm",
-          )}>
-            {space.name.charAt(0).toUpperCase()}
-          </div>
-        ) : (
-          <Avatar
-            name={space.name}
-            color={space.members.find((m) => m.entityId !== "entity-husam")?.avatarColor}
-            size="md"
-            isOnline={space.members.find((m) => m.entityId !== "entity-husam")?.isOnline}
-          />
-        )}
+        <div className={cn(
+          "flex size-12 items-center justify-center rounded-full bg-primary/15 text-primary font-semibold text-sm",
+        )}>
+          {name.charAt(0).toUpperCase()}
+        </div>
       </div>
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2">
-          <span className={cn(
-            "text-sm font-medium truncate",
-            space.unreadCount > 0 ? "text-foreground" : "text-foreground/80",
-          )}>
-            {space.name}
-          </span>
-          {space.lastMessage && (
-            <span className={cn(
-              "text-[11px] shrink-0",
-              space.unreadCount > 0 ? "text-primary font-medium" : "text-muted-foreground",
-            )}>
-              {space.lastMessage.time}
-            </span>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between gap-2 mt-0.5">
-          <p className="text-xs text-muted-foreground truncate">
-            {space.lastMessage && (
-              <>
-                <span className="font-medium">{space.lastMessage.senderName}: </span>
-                {space.lastMessage.content}
-              </>
-            )}
+        <span className="text-sm font-medium truncate text-foreground/80 block">
+          {name}
+        </span>
+        {space.description && (
+          <p className="text-xs text-muted-foreground truncate mt-0.5">
+            {space.description}
           </p>
-
-          <div className="flex items-center gap-1 shrink-0">
-            {space.isGroup && agentCount > 0 && (
-              <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/60">
-                <BotIcon className="size-3" />
-                {agentCount}
-              </span>
-            )}
-            {space.unreadCount > 0 && (
-              <span className="flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
-                {space.unreadCount}
-              </span>
-            )}
-          </div>
-        </div>
+        )}
       </div>
     </button>
   );

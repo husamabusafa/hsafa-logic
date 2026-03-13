@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { UsersIcon, UserIcon } from "lucide-react";
+import { UsersIcon, UserIcon, LoaderIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import {
@@ -14,21 +14,31 @@ import { cn } from "@/lib/utils";
 interface CreateSpaceDialogProps {
   open: boolean;
   onClose: () => void;
-  onCreate: (space: { name: string; description: string; isGroup: boolean }) => void;
+  onCreate: (space: { name: string; description: string; isGroup: boolean }) => Promise<void>;
 }
 
 export function CreateSpaceDialog({ open, onClose, onCreate }: CreateSpaceDialogProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [isGroup, setIsGroup] = useState(true);
+  const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleCreate = () => {
-    if (!name.trim()) return;
-    onCreate({ name: name.trim(), description: description.trim(), isGroup });
-    setName("");
-    setDescription("");
-    setIsGroup(true);
-    onClose();
+  const handleCreate = async () => {
+    if (!name.trim() || isCreating) return;
+    setIsCreating(true);
+    setError(null);
+    try {
+      await onCreate({ name: name.trim(), description: description.trim(), isGroup });
+      setName("");
+      setDescription("");
+      setIsGroup(true);
+      onClose();
+    } catch (err: any) {
+      setError(err.message || "Failed to create space");
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (
@@ -93,10 +103,17 @@ export function CreateSpaceDialog({ open, onClose, onCreate }: CreateSpaceDialog
         />
       </div>
 
+      {error && (
+        <div className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+
       <DialogFooter>
-        <Button variant="outline" onClick={onClose}>Cancel</Button>
-        <Button onClick={handleCreate} disabled={!name.trim()}>
-          Create space
+        <Button variant="outline" onClick={onClose} disabled={isCreating}>Cancel</Button>
+        <Button onClick={handleCreate} disabled={!name.trim() || isCreating}>
+          {isCreating && <LoaderIcon className="size-4 animate-spin" />}
+          {isCreating ? "Creating..." : "Create space"}
         </Button>
       </DialogFooter>
     </Dialog>

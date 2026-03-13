@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { Routes, Route, Navigate, useParams, useNavigate, useLocation } from "react-router-dom";
 import { LoaderIcon } from "lucide-react";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -20,20 +20,35 @@ import { AuthPage } from "@/components/auth-page";
 import { VerifyEmailPage } from "@/components/verify-email-page";
 import { AuthCallback } from "@/components/auth-callback";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
-import { mockSpaces, mockHaseefs, mockInvitations } from "@/lib/mock-data";
+import { mockSpaces } from "@/lib/mock-data";
+import { haseefsApi, spacesApi, invitationsApi, type HaseefListItem, type SmartSpace } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 // ─── Route-aware page components ────────────────────────────────────────────
 
-function SpaceChatRoute() {
+function SpaceChatRoute({ spaces }: { spaces: SmartSpace[] }) {
   const { spaceId } = useParams<{ spaceId: string }>();
   const navigate = useNavigate();
   const [showDetails, setShowDetails] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
 
-  const space = mockSpaces.find((s) => s.id === spaceId) || null;
-  if (!space) return <ChatEmptyState />;
+  const realSpace = spaces.find((s) => s.id === spaceId);
+  if (!realSpace) return <ChatEmptyState />;
+
+  // Temporary adapter: convert SmartSpace to MockSpace format for ChatView
+  // TODO Phase 5: Rewrite ChatView to use real API
+  const space = {
+    id: realSpace.id,
+    name: realSpace.name || "Unnamed Space",
+    description: realSpace.description || "",
+    isGroup: true,
+    members: [],
+    unreadCount: 0,
+    lastMessage: undefined,
+    createdAt: realSpace.createdAt,
+    adminEntityId: "",
+  };
 
   return (
     <>
@@ -73,13 +88,20 @@ function SpaceChatRoute() {
   );
 }
 
-function HaseefDetailRoute() {
+function HaseefDetailRoute({ onDeleted }: { onDeleted: () => void }) {
   const { haseefId } = useParams<{ haseefId: string }>();
   const navigate = useNavigate();
-  const haseef = mockHaseefs.find((h) => h.id === haseefId) || null;
 
-  if (!haseef) return <HaseefEmptyState onCreate={() => navigate("/haseefs/new")} />;
-  return <HaseefDetail haseef={haseef} />;
+  if (!haseefId) return <HaseefEmptyState onCreate={() => navigate("/haseefs")} />;
+  return (
+    <HaseefDetail
+      haseefId={haseefId}
+      onDeleted={() => {
+        onDeleted();
+        navigate("/haseefs");
+      }}
+    />
+  );
 }
 
 // ─── Auth Guard ─────────────────────────────────────────────────────────────
@@ -138,7 +160,55 @@ function AppContent() {
   const [showCreateHaseef, setShowCreateHaseef] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
 
-  const pendingInvitations = mockInvitations.filter((i) => i.status === "pending").length;
+  // ── Haseefs state ──
+  const [haseefs, setHaseefs] = useState<HaseefListItem[]>([]);
+  const [haseefsLoading, setHaseefsLoading] = useState(false);
+
+  const fetchHaseefs = useCallback(async () => {
+    setHaseefsLoading(true);
+    try {
+      const { haseefs: list } = await haseefsApi.list();
+      setHaseefs(list);
+    } catch (err) {
+      console.error("Failed to fetch haseefs:", err);
+    } finally {
+      setHaseefsLoading(false);
+    }
+  }, []);
+
+  // ── Spaces state ──
+  const [spaces, setSpaces] = useState<SmartSpace[]>([]);
+  const [spacesLoading, setSpacesLoading] = useState(false);
+
+  const fetchSpaces = useCallback(async () => {
+    setSpacesLoading(true);
+    try {
+      const { smartSpaces } = await spacesApi.list();
+      setSpaces(smartSpaces);
+    } catch (err) {
+      console.error("Failed to fetch spaces:", err);
+    } finally {
+      setSpacesLoading(false);
+    }
+  }, []);
+
+  // ── Invitations count ──
+  const [pendingInvitations, setPendingInvitations] = useState(0);
+
+  const fetchInvitationsCount = useCallback(async () => {
+    try {
+      const { invitations } = await invitationsApi.listMine("pending");
+      setPendingInvitations(invitations.length);
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHaseefs();
+    fetchSpaces();
+    fetchInvitationsCount();
+  }, [fetchHaseefs, fetchSpaces, fetchInvitationsCount]);
 
   // Derive active page from URL
   const activePage: AppPage = useMemo(() => {
@@ -186,23 +256,25 @@ function AppContent() {
   const sidebar =
     activePage === "spaces" ? (
       <SpacesSidebar
-        spaces={mockSpaces}
+        spaces={spaces}
         selectedSpaceId={selectedSpaceId}
         onSelectSpace={(id) => {
           navigate(`/spaces/${id}`);
           setMobileSidebarOpen(false);
         }}
         onCreateSpace={() => setShowCreateSpace(true)}
+        isLoading={spacesLoading}
       />
     ) : activePage === "haseefs" ? (
       <HaseefsSidebar
-        haseefs={mockHaseefs}
+        haseefs={haseefs}
         selectedId={selectedHaseefId}
         onSelect={(id) => {
           navigate(`/haseefs/${id}`);
           setMobileSidebarOpen(false);
         }}
         onCreate={() => setShowCreateHaseef(true)}
+        isLoading={haseefsLoading}
       />
     ) : null;
 
@@ -225,9 +297,9 @@ function AppContent() {
             <div className="hidden md:flex md:flex-1 min-w-0">
               <Routes>
                 <Route path="/spaces" element={<ChatEmptyState />} />
-                <Route path="/spaces/:spaceId" element={<SpaceChatRoute />} />
+                <Route path="/spaces/:spaceId" element={<SpaceChatRoute spaces={spaces} />} />
                 <Route path="/haseefs" element={<HaseefEmptyState onCreate={() => setShowCreateHaseef(true)} />} />
-                <Route path="/haseefs/:haseefId" element={<HaseefDetailRoute />} />
+                <Route path="/haseefs/:haseefId" element={<HaseefDetailRoute onDeleted={fetchHaseefs} />} />
                 <Route path="/invitations" element={<InvitationsPage />} />
                 <Route path="*" element={<Navigate to="/spaces" replace />} />
               </Routes>
@@ -240,11 +312,11 @@ function AppContent() {
           <Routes>
             {/* Spaces */}
             <Route path="/spaces" element={<ChatEmptyState />} />
-            <Route path="/spaces/:spaceId" element={<SpaceChatRoute />} />
+            <Route path="/spaces/:spaceId" element={<SpaceChatRoute spaces={spaces} />} />
 
             {/* Haseefs */}
             <Route path="/haseefs" element={<HaseefEmptyState onCreate={() => setShowCreateHaseef(true)} />} />
-            <Route path="/haseefs/:haseefId" element={<HaseefDetailRoute />} />
+            <Route path="/haseefs/:haseefId" element={<HaseefDetailRoute onDeleted={fetchHaseefs} />} />
 
             {/* Invitations */}
             <Route path="/invitations" element={<InvitationsPage />} />
@@ -259,18 +331,23 @@ function AppContent() {
       <CreateSpaceDialog
         open={showCreateSpace}
         onClose={() => setShowCreateSpace(false)}
-        onCreate={(data) => {
-          console.log("Create space:", data);
-          setShowCreateSpace(false);
+        onCreate={async (data) => {
+          const { smartSpace } = await spacesApi.create(data.name);
+          await fetchSpaces();
+          navigate(`/spaces/${smartSpace.id}`);
         }}
       />
 
       <CreateHaseefDialog
         open={showCreateHaseef}
         onClose={() => setShowCreateHaseef(false)}
-        onCreate={(data) => {
-          console.log("Create haseef:", data);
-          setShowCreateHaseef(false);
+        onCreate={async (data) => {
+          await haseefsApi.create({
+            name: data.name,
+            description: data.description || undefined,
+            instructions: data.instructions || undefined,
+          });
+          await fetchHaseefs();
         }}
       />
     </>
