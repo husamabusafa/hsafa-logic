@@ -20,9 +20,9 @@ import {
   emitSmartSpaceEvent,
   setSpaceActiveRun,
   removeSpaceActiveRun,
+  listSpaceActiveRuns,
   broadcastSeen,
   markOnline,
-  refreshPresence,
   markOffline,
   broadcastTyping,
 } from "../smartspace-events.js";
@@ -176,10 +176,16 @@ export async function bootstrapExtension(): Promise<void> {
   // Start the shared Redis subscriber for stream bridges
   await startSharedSubscriber();
 
-  // Auto-discover haseefs from Core
-  const haseefs = await discoverHaseefs();
+  // Auto-discover haseefs from Core (retry up to 5 times if Core isn't ready yet)
+  let haseefs: Awaited<ReturnType<typeof discoverHaseefs>> = [];
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    haseefs = await discoverHaseefs();
+    if (haseefs.length > 0) break;
+    console.warn(`[spaces-service] No haseefs found (attempt ${attempt}/5) — retrying in ${attempt * 2}s...`);
+    await new Promise((r) => setTimeout(r, attempt * 2000));
+  }
   if (haseefs.length === 0) {
-    console.warn("[spaces-service] No haseefs found in Core — nothing to connect to");
+    console.warn("[spaces-service] No haseefs found in Core after retries — nothing to connect to");
     return;
   }
 
@@ -197,16 +203,7 @@ export async function bootstrapExtension(): Promise<void> {
     console.error("[spaces-service] Action listener failed:", err);
   });
 
-  // Start presence heartbeat — refresh online TTL every 60s for all haseef entities
-  if (!state.presenceInterval) {
-    state.presenceInterval = setInterval(() => {
-      for (const conn of state.connections.values()) {
-        for (const sid of conn.spaceIds) {
-          refreshPresence(sid, conn.agentEntityId).catch(() => {});
-        }
-      }
-    }, 60_000);
-  }
+  // NOTE: No presence heartbeat for haseefs — they only go online during active runs.
 
   console.log("[spaces-service] Bootstrap complete");
 }
@@ -276,7 +273,7 @@ async function setupHaseefConnection(haseef: {
 
   // Resolve spaces this entity is a member of
   const spaces = await getSpacesForEntity(agentEntityId);
-  const spaceIds = spaces.map((s) => s.spaceId);
+  const spaceIds = [...new Set(spaces.map((s) => s.spaceId))];
   console.log(`[spaces-service] ${haseefName} has ${spaceIds.length} space(s)`);
 
   // Store connection
@@ -293,13 +290,9 @@ async function setupHaseefConnection(haseef: {
   await syncTools(haseefId);
   console.log(`[spaces-service] Tools synced for ${haseefName} (scope: ${SCOPE})`);
 
-  // Mark haseef entity online in all its spaces
-  for (const sid of spaceIds) {
-    await markOnline(sid, agentEntityId).catch(() => {});
-  }
-  if (spaceIds.length > 0) {
-    console.log(`[spaces-service] ${haseefName} marked online in ${spaceIds.length} space(s)`);
-  }
+  // NOTE: Haseefs are NOT marked online at bootstrap.
+  // They go online only when a run starts (agent.active) and offline when it finishes.
+  console.log(`[spaces-service] ${haseefName} connected (will go online when running cycles)`);
 }
 
 // =============================================================================
@@ -459,6 +452,14 @@ async function resolveReplyTo(
 // =============================================================================
 // Action Execution — routes to the correct tool handler
 // =============================================================================
+
+/** Tools that produce messages — typing indicator should show while these execute */
+const MESSAGE_TOOLS = new Set([
+  "send_message", "send_confirmation", "send_choice", "send_vote", "send_form",
+]);
+function isMessageTool(toolName?: string): boolean {
+  return !!toolName && MESSAGE_TOOLS.has(toolName);
+}
 
 async function executeAction(
   haseefId: string,
@@ -1015,18 +1016,23 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
       if (runId && isSpacesTrigger && event.triggerSource) {
         conn.runSpaces.set(runId, event.triggerSource);
       }
-      for (const spaceId of conn.spaceIds) {
+      // Only broadcast to the trigger space (the space that caused this run)
+      const targetSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      const targetSpaces = targetSpaceId ? [targetSpaceId] : conn.spaceIds;
+      for (const spaceId of targetSpaces) {
         if (runId) {
           void setSpaceActiveRun(spaceId, runId, conn.agentEntityId, conn.haseefName);
         }
+        // Mark haseef online when cycle starts
+        void markOnline(spaceId, conn.agentEntityId);
+        // Show typing indicator immediately when cycle starts
+        void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
         void emitSmartSpaceEvent(spaceId, {
           type: "agent.active",
           agentEntityId: conn.agentEntityId,
           runId,
           data: { agentEntityId: conn.agentEntityId, agentName: conn.haseefName, runId },
         });
-        // Show typing indicator when haseef run starts
-        void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
       }
     } else if (event.type === "tool.started") {
       const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
@@ -1038,6 +1044,10 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           agentEntityId: conn.agentEntityId,
           runId,
         });
+        // Show typing when agent starts composing a message
+        if (isMessageTool(event.toolName)) {
+          void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
+        }
       }
     } else if (event.type === "tool-input.delta") {
       const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
@@ -1062,6 +1072,10 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           agentEntityId: conn.agentEntityId,
           runId,
         });
+        // Stop typing when message tool finishes
+        if (isMessageTool(event.toolName)) {
+          void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, false);
+        }
       }
     } else if (event.type === "tool.error") {
       const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
@@ -1076,18 +1090,28 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
         });
       }
     } else if (event.type === "run.finished") {
-      for (const spaceId of conn.spaceIds) {
+      // Only broadcast to the trigger space
+      const targetSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      const targetSpaces = targetSpaceId ? [targetSpaceId] : conn.spaceIds;
+      for (const spaceId of targetSpaces) {
         if (runId) {
           void removeSpaceActiveRun(spaceId, runId);
         }
+        // Typing=false BEFORE agent.inactive so UI clears typing before removing active state
+        void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, false);
         void emitSmartSpaceEvent(spaceId, {
           type: "agent.inactive",
           agentEntityId: conn.agentEntityId,
           runId,
           data: { agentEntityId: conn.agentEntityId, runId },
         });
-        // Stop typing indicator when haseef run finishes
-        void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, false);
+        // Mark haseef offline when cycle finishes (only if no other active runs in this space)
+        listSpaceActiveRuns(spaceId).then((runs) => {
+          const stillActive = runs.some((r) => r.entityId === conn.agentEntityId);
+          if (!stillActive) {
+            void markOffline(spaceId, conn.agentEntityId);
+          }
+        }).catch(() => {});
       }
       if (runId) conn.runSpaces.delete(runId);
     }

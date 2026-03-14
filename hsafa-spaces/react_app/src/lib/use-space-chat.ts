@@ -177,11 +177,13 @@ export function useSpaceChat(
   const typingThrottleRef = useRef<number>(0);
   const currentEntityId = user?.entityId ?? null;
 
-  // Refs to avoid stale closures in SSE handler
+  // Refs to avoid stale closures in SSE handler and sendMessage
   const membersRef = useRef(members);
   membersRef.current = members;
   const currentEntityIdRef = useRef(currentEntityId);
   currentEntityIdRef.current = currentEntityId;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   // ── Fetch initial messages ──
   useEffect(() => {
@@ -272,8 +274,14 @@ export function useSpaceChat(
           const msg = data.message as SpaceMessage;
           if (!msg) break;
           setMessages((prev) => {
-            // Deduplicate — avoid adding if already exists
-            if (prev.some((m) => m.id === msg.id)) return prev;
+            const idx = prev.findIndex((m) => m.id === msg.id);
+            if (idx !== -1) {
+              // Optimistic stub exists — replace with full server data
+              const adapted = adaptMessage(msg, mems);
+              const updated = [...prev];
+              updated[idx] = adapted;
+              return updated;
+            }
             return [...prev, adaptMessage(msg, mems)];
           });
 
@@ -388,6 +396,20 @@ export function useSpaceChat(
         seenBy: [],
         type: "text",
       };
+
+      // Include replyTo data in the optimistic message so the banner shows immediately
+      if (replyToId) {
+        const replyMsg = messagesRef.current.find((m) => m.id === replyToId);
+        if (replyMsg) {
+          optimistic.replyTo = {
+            messageId: replyToId,
+            snippet: (replyMsg.content || replyMsg.title || replyMsg.formTitle || replyMsg.cardTitle || "").slice(0, 100),
+            senderName: replyMsg.senderName,
+            messageType: replyMsg.type,
+          };
+        }
+      }
+
       setMessages((prev) => [...prev, optimistic]);
 
       try {
@@ -405,7 +427,8 @@ export function useSpaceChat(
         // The SSE event will add the real message; remove the temp.
         // But the SSE might arrive before or after this response.
         // Handle both: if real message already in list, just remove temp.
-        // If not yet, keep temp but update its ID so SSE dedup works.
+        // If not yet, keep temp but update its ID so SSE dedup catches it.
+        // When SSE arrives later, the dedup merges full data onto the stub.
         setMessages((prev) => {
           const hasReal = prev.some((m) => m.id === realId);
           if (hasReal) {

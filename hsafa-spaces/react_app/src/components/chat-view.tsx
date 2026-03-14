@@ -79,6 +79,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
   const [forwardMessageId, setForwardMessageId] = useState<string | null>(null);
   const [internalShowSearch, setInternalShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [pendingScrollToId, setPendingScrollToId] = useState<string | null>(null);
   const [seenInfoMessageId, setSeenInfoMessageId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -151,13 +152,6 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
     (m) => onlineUserIds.includes(m.entityId) && m.entityId !== currentEntityId,
   ).length;
 
-  // Agent thinking indicator
-  const thinkingAgents = activeAgents
-    .filter((a) => !typingUsers.some((t) => t.entityId === a.agentEntityId))
-    .map((a) => {
-      const member = space.members.find((m) => m.entityId === a.agentEntityId);
-      return member ? member.name : a.agentName || "AI";
-    });
 
   const replyMessage = replyingTo ? messages.find((m: MockMessage) => m.id === replyingTo) : null;
 
@@ -194,6 +188,17 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
       setTimeout(() => el.classList.remove("ring-2", "ring-primary/50", "rounded-xl"), 1500);
     }
   }, []);
+
+  // Deferred scroll after search closes — wait for messages to re-render
+  useEffect(() => {
+    if (pendingScrollToId && !isSearchActive) {
+      // Use requestAnimationFrame to ensure DOM has updated
+      requestAnimationFrame(() => {
+        handleScrollToMessage(pendingScrollToId);
+        setPendingScrollToId(null);
+      });
+    }
+  }, [pendingScrollToId, isSearchActive, handleScrollToMessage]);
 
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -326,7 +331,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
             query={searchQuery}
             space={space}
             onSelect={(id: string) => {
-              handleScrollToMessage(id);
+              setPendingScrollToId(id);
               closeSearch();
             }}
           />
@@ -393,19 +398,6 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
           </div>
         )}
 
-        {/* Agent thinking indicator */}
-        {thinkingAgents.length > 0 && (
-          <div className="flex items-center gap-1.5 mt-2 ml-10">
-            <div className="rounded-full bg-primary/10 px-3 py-1.5 flex items-center gap-1.5">
-              <SparklesIcon className="size-3 text-primary animate-pulse" />
-              <span className="text-[11px] text-primary font-medium">
-                {thinkingAgents.length === 1
-                  ? `${thinkingAgents[0]} is thinking...`
-                  : `${thinkingAgents[0]} and ${thinkingAgents.length - 1} other${thinkingAgents.length > 2 ? "s" : ""} thinking...`}
-              </span>
-            </div>
-          </div>
-        )}
 
         <div ref={bottomRef} />
       </div>

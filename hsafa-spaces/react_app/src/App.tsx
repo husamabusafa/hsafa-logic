@@ -66,7 +66,8 @@ function SpaceChatRoute({
   }, [fetchMembers]);
 
   // Convert SpaceMember[] → MockMember[] (must be before hooks)
-  const mockMembers: MockMember[] = members.map((m) => ({
+  // isOnline is set to false initially — updated below after chat hook provides real-time data
+  const baseMockMembers: MockMember[] = members.map((m) => ({
     entityId: m.entityId,
     name: m.entity.displayName || "Unknown",
     type: m.entity.type,
@@ -78,7 +79,18 @@ function SpaceChatRoute({
   }));
 
   // Real-time chat hook (must be called unconditionally — Rules of Hooks)
-  const chat = useSpaceChat(spaceId, mockMembers);
+  const chat = useSpaceChat(spaceId, baseMockMembers);
+
+  // Derive real online status from chat hook:
+  // - Humans: online if in chat.onlineUserIds
+  // - Agents: online if in chat.activeAgents (running a cycle)
+  const mockMembers: MockMember[] = baseMockMembers.map((m) => ({
+    ...m,
+    isOnline:
+      m.type === "agent"
+        ? chat.activeAgents.some((a) => a.agentEntityId === m.entityId)
+        : chat.onlineUserIds.includes(m.entityId),
+  }));
 
   if (!realSpace) return <ChatEmptyState />;
 

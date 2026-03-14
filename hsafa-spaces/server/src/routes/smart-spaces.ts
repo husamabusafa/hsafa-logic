@@ -605,9 +605,19 @@ router.get("/:smartSpaceId/stream", async (req: Request, res: Response) => {
     // Non-fatal — client will work without initial state
   }
 
-  // Forward Redis messages to SSE
+  // Forward Redis messages to SSE (with dedup for stream bridge events)
+  const recentSSEKeys = new Set<string>();
   const messageHandler = (_ch: string, message: string) => {
     try {
+      const parsed = JSON.parse(message);
+      const t = parsed.type as string | undefined;
+      // Dedup agent/tool/typing events by type+runId+streamId (text.delta exempt)
+      if (t && t !== "text.delta" && t !== "space.message" && t !== "message.seen") {
+        const key = `${t}:${parsed.runId ?? ""}:${parsed.streamId ?? ""}`;
+        if (recentSSEKeys.has(key)) return;
+        recentSSEKeys.add(key);
+        setTimeout(() => recentSSEKeys.delete(key), 5000);
+      }
       res.write(`data: ${message}\n\n`);
     } catch {}
   };
