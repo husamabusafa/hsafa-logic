@@ -176,6 +176,8 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
       });
 
       // 8. INJECT events into consciousness
+      // Save pre-cycle length so we can roll back on failure
+      const preCycleMessageCount = consciousness.messages.length;
       const eventMessage: ModelMessage = {
         role: 'user',
         content: formatInboxEvents(events),
@@ -237,6 +239,12 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
         if (streamMs > 3000) {
           const toolNames = streamResult.toolCalls.map((tc) => tc.toolName);
           console.log(`[process] ${haseefName} stream done (${streamMs}ms, tools: [${toolNames.join(', ')}])`);
+        }
+
+        // If the stream had errors and produced no output, throw with the actual
+        // error message — prevents the generic AI SDK "No output generated" error
+        if (streamResult.streamErrors.length > 0 && streamResult.toolCalls.length === 0 && !streamResult.text) {
+          throw new Error(`LLM stream error: ${streamResult.streamErrors.join('; ')}`);
         }
 
         // 11. APPEND result messages to consciousness
@@ -303,6 +311,10 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
 
         consecutiveErrors = 0;
       } catch (innerErr) {
+        // Roll back consciousness to pre-cycle state — prevents stacking
+        // user messages on repeated failures
+        consciousness.messages.length = preCycleMessageCount;
+
         // Stream or post-stream error — update run as failed
         cycleError = innerErr instanceof Error ? innerErr.message : String(innerErr);
         console.error(`[process] ${haseefName} cycle #${newCycleCount} inner error:`, cycleError);
@@ -315,6 +327,7 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
             completedAt: new Date(),
             stepCount: cycleToolCount,
             durationMs,
+            errorMessage: cycleError?.slice(0, 2000) ?? null,
           },
         }).catch(() => {});
 
@@ -349,9 +362,10 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
       // Exponential backoff: 2s, 4s, 8s, 16s, 32s, max 60s
       const backoffMs = Math.min(2000 * Math.pow(2, consecutiveErrors - 1), 60_000);
 
-      // For quota/billing errors, rest for 5 minutes
+      // For quota/billing errors, rest for 5 minutes; rate limits rest for 60s
       const isQuotaError = errMsg.includes('quota') || errMsg.includes('billing');
-      const waitMs = isQuotaError ? 300_000 : backoffMs;
+      const isRateLimitError = errMsg.includes('rate limit') || errMsg.includes('rate_limit');
+      const waitMs = isQuotaError ? 300_000 : isRateLimitError ? 60_000 : backoffMs;
 
       console.log(`[process] ${haseefName} waiting ${waitMs / 1000}s before retry...`);
       await new Promise((r) => setTimeout(r, waitMs));

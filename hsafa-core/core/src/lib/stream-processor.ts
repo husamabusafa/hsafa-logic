@@ -36,6 +36,8 @@ export interface StreamResult {
   finishReason: string;
   /** Haseef's text output — also streamed as text.delta events for services */
   text: string;
+  /** Stream errors collected during processing (from LLM provider) */
+  streamErrors: string[];
 }
 
 // =============================================================================
@@ -62,6 +64,7 @@ export async function processStream(
   const activeTiming = new Map<string, { toolName: string; startedAt: number }>();
   let text = '';
   let finishReason = 'unknown';
+  const streamErrors: string[] = [];
 
   // ── Run-stream emit helper ──────────────────────────────────────────────
 
@@ -189,7 +192,10 @@ export async function processStream(
         const errMsg =
           part.error instanceof Error
             ? part.error.message
-            : String(part.error ?? 'Stream error');
+            : (typeof part.error === 'object' && part.error !== null)
+              ? JSON.stringify(part.error)
+              : String(part.error ?? 'Stream error');
+        streamErrors.push(errMsg);
         console.error(`[stream-processor] runId=${runId} stream ERROR:`, errMsg, part.error);
 
         // For quota / billing errors, throw so agent-process error recovery
@@ -207,6 +213,16 @@ export async function processStream(
           errMsgLower.includes('billing')
         ) {
           throw new Error(`LLM quota/billing error: ${errMsg}`);
+        }
+
+        // Anthropic rate limit errors — throw so agent-process applies backoff
+        if (
+          errMsgLower.includes('rate limit') ||
+          errMsgLower.includes('rate_limit') ||
+          errCode === 'rate_limit_error' ||
+          errCode === 'too_many_requests'
+        ) {
+          throw new Error(`LLM rate limit: ${errMsg}`);
         }
 
         finishReason = 'error';
@@ -231,6 +247,6 @@ export async function processStream(
     }
   }
 
-  return { toolCalls, finishReason, text };
+  return { toolCalls, finishReason, text, streamErrors };
 }
 

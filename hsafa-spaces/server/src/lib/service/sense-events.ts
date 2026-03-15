@@ -106,13 +106,19 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
 
   const isGroupSpace = memberRows.length > 2;
 
+  console.log(
+    `[spaces-service] handleInboxMessage: sender="${senderName}" (${entityId.slice(0, 8)}) in "${spaceName}" (${spaceId.slice(0, 8)}), ` +
+    `connectedHaseefs=${conns.length} [${conns.map(c => `${c.haseefName}(${c.agentEntityId.slice(0,8)})`).join(', ')}]`,
+  );
+
   // Skip messages from THIS haseef's own entity (avoid loops)
   for (const conn of conns) {
-    if (entityId === conn.agentEntityId) continue;
+    if (entityId === conn.agentEntityId) {
+      console.log(`[spaces-service]   SKIP ${conn.haseefName} — sender is self`);
+      continue;
+    }
 
-    console.log(
-      `[spaces-service] → sense: ${senderName} in "${spaceName}": "${content.slice(0, 50)}"`,
-    );
+    console.log(`[spaces-service]   TRIGGER ${conn.haseefName} — pushing sense event`);
 
     // Label per-haseef: "You" for this haseef's own messages, display name for everyone else
     const recentMessages = recentRaw.map((m) => ({

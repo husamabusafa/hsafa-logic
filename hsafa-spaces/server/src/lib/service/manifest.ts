@@ -62,6 +62,11 @@ INTERACTIVE MESSAGES:
   - When you receive a message_response event, you can track progress (e.g. vote counts) but don't need to act unless relevant.
   - Messages in spaces_get_messages include a "type" field (text, confirmation, vote, choice, form, etc.) and structured metadata.
 
+DISCOVERING SPACES:
+  - Use spaces_get_spaces to list ALL spaces you are a member of (returns id, name, description, memberCount).
+  - When someone asks you to send a message to another space BY NAME, call spaces_get_spaces first to find the correct spaceId, then use spaces_send_message with that spaceId.
+  - Do NOT guess spaceIds — always look them up with spaces_get_spaces if you don't already know the ID.
+
 SPACE MANAGEMENT:
   - Use spaces_get_space_members to see who is in a space (names, roles, entity IDs).
   - Use spaces_invite_to_space to invite someone by email (requires admin+ role).
