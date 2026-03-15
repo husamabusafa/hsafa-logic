@@ -13,6 +13,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { haseefsApi, mediaApi } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
+import { PRESET_MODELS, PROVIDER_OPTIONS, getProviderForModel } from "@/lib/models-config";
 
 // ─── Create Page ─────────────────────────────────────────────────────────────
 
@@ -48,32 +49,14 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
     }
   };
 
-  const models = [
-    { value: "gpt-5.2", label: "GPT-5.2" },
-    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4" },
-    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
-    { value: "qwen/qwen3.5-flash-02-23", label: "Qwen 3.5 Flash", tag: "OpenRouter" },
-    { value: "moonshotai/kimi-k2-thinking", label: "Kimi K2 Thinking", tag: "OpenRouter" },
-    { value: "custom", label: "Custom" },
-  ];
-
+  const models = [...PRESET_MODELS, { value: "custom", label: "Custom" }];
   const resolvedModel = model === "custom" ? customModel.trim() : model;
 
-  // Auto-detect provider for predefined models
   const getProvider = (): string => {
     if (model === "custom") {
       return customProvider;
     }
-    if (model.startsWith("gpt")) {
-      return "openai";
-    }
-    if (model.startsWith("claude")) {
-      return "anthropic";
-    }
-    if (model.startsWith("qwen/") || model.startsWith("moonshotai/")) {
-      return "openrouter";
-    }
-    return "openai"; // default
+    return getProviderForModel(model);
   };
 
   const handleCreate = async () => {
@@ -208,11 +191,7 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
                     Provider
                   </label>
                   <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { value: "openai", label: "OpenAI" },
-                      { value: "anthropic", label: "Anthropic" },
-                      { value: "openrouter", label: "OpenRouter" },
-                    ].map((p) => (
+                    {PROVIDER_OPTIONS.map((p) => (
                       <button
                         key={p.value}
                         type="button"

@@ -10,8 +10,10 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { haseefsApi, mediaApi, type Haseef } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
+import { PRESET_MODELS, PROVIDER_OPTIONS, getProviderForModel, isPresetModel } from "@/lib/models-config";
 
 // ─── Edit Page ───────────────────────────────────────────────────────────────
 
@@ -30,6 +32,9 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
   // Form state
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [model, setModel] = useState("");
+  const [customModel, setCustomModel] = useState("");
+  const [customProvider, setCustomProvider] = useState("openai");
   const [instructions, setInstructions] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +58,24 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
         setDescription(h.description || "");
         setInstructions((h.configJson?.instructions as string) || "");
         setAvatarUrl(h.avatarUrl || null);
+        
+        // Extract model info
+        const modelConfig = h.configJson?.model;
+        if (modelConfig && typeof modelConfig === "object") {
+          const modelId = (modelConfig as Record<string, string>).model || "";
+          const provider = (modelConfig as Record<string, string>).provider || "openai";
+          
+          if (isPresetModel(modelId)) {
+            setModel(modelId);
+          } else {
+            setModel("custom");
+            setCustomModel(modelId);
+            setCustomProvider(provider);
+          }
+        } else if (typeof modelConfig === "string") {
+          setModel("custom");
+          setCustomModel(modelConfig);
+        }
       })
       .catch((err) => {
         if (!cancelled) setLoadError(err.message || "Failed to load haseef");
@@ -79,6 +102,16 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
     }
   };
 
+  const models = [...PRESET_MODELS, { value: "custom", label: "Custom" }];
+  const resolvedModel = model === "custom" ? customModel.trim() : model;
+
+  const getProvider = (): string => {
+    if (model === "custom") {
+      return customProvider;
+    }
+    return getProviderForModel(model);
+  };
+
   const handleSave = async () => {
     if (!haseef || !name.trim() || isSaving) return;
     setIsSaving(true);
@@ -86,9 +119,20 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
     try {
       const currentInstructions = (haseef.configJson?.instructions as string) || "";
       const configJson: Record<string, unknown> = { ...haseef.configJson };
+      
+      // Update instructions if changed
       if (instructions.trim() !== currentInstructions) {
         configJson.instructions = instructions.trim();
       }
+      
+      // Update model if changed
+      if (resolvedModel) {
+        configJson.model = {
+          provider: getProvider(),
+          model: resolvedModel,
+        };
+      }
+      
       await haseefsApi.update(haseef.id, {
         name: name.trim(),
         description: description.trim() || undefined,
@@ -129,11 +173,6 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
       </div>
     );
   }
-
-  const currentModel =
-    (haseef.configJson?.model as Record<string, string>)?.model ||
-    (haseef.configJson?.model as string) ||
-    "unknown";
 
   return (
     <div className="h-full overflow-y-auto">
@@ -215,17 +254,62 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
             rows={2}
           />
 
-          <div>
-            <label className="text-sm font-medium text-foreground mb-1.5 block">
-              Model
-            </label>
-            <div className="flex items-center gap-2 bg-muted/40 px-3 py-2.5 rounded-lg">
-              <CpuIcon className="size-4 text-muted-foreground" />
-              <span className="text-sm text-foreground">{currentModel}</span>
-              <span className="text-[10px] text-muted-foreground ml-auto">
-                (set at creation)
-              </span>
+          {/* Model selector */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Model</label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {models.map((m) => (
+                <button
+                  key={m.value}
+                  onClick={() => setModel(m.value)}
+                  className={cn(
+                    "rounded-xl border-2 px-3 py-2.5 text-sm text-left transition-all",
+                    model === m.value
+                      ? "border-primary bg-primary/5 text-primary font-medium shadow-sm"
+                      : "border-border hover:border-primary/30 text-foreground",
+                  )}
+                >
+                  <CpuIcon className="size-3.5 inline mr-1.5" />
+                  {m.label}
+                  {"tag" in m && m.tag && (
+                    <span className="block text-[10px] opacity-60 mt-0.5">{m.tag}</span>
+                  )}
+                </button>
+              ))}
             </div>
+            {model === "custom" && (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    Provider
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {PROVIDER_OPTIONS.map((p) => (
+                      <button
+                        key={p.value}
+                        type="button"
+                        onClick={() => setCustomProvider(p.value)}
+                        className={cn(
+                          "rounded-lg border px-3 py-2 text-xs transition-all",
+                          customProvider === p.value
+                            ? "border-primary bg-primary/5 text-primary font-medium"
+                            : "border-border hover:border-primary/30 text-foreground",
+                        )}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <input
+                  type="text"
+                  placeholder="e.g. gpt-4o or meta-llama/llama-3.1-70b"
+                  value={customModel}
+                  onChange={(e) => setCustomModel(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+              </div>
+            )}
           </div>
 
           <Textarea
