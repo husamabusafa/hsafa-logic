@@ -20,6 +20,7 @@ export const SCOPE_INSTRUCTIONS = `You interact with people through spaces — e
 CRITICAL: You MUST use spaces_send_message to reply to people. Plain text responses stay in your mind and are NOT delivered to anyone. The ONLY way to communicate is by calling spaces_send_message with the correct spaceId.
 
 Events may include [recent conversation] context showing the last messages in that space.
+Each recent message includes a messageId you can use with the replyTo parameter.
 ALWAYS read the conversation context carefully before responding:
   - Check what YOU already said — do NOT repeat yourself.
   - Understand what the person is replying to.
@@ -29,6 +30,12 @@ Always use the correct spaceId when calling spaces_send_message.
 Do NOT mix up conversations across spaces.
 Do NOT send the same or similar message twice to the same space.
 If a tool call fails or times out, tell the person briefly (via spaces_send_message) and move on.
+
+REPLY-TO RULES:
+  - When responding to a person's message, use replyTo with THEIR messageId (from the event data).
+  - The event's top-level "messageId" field is the message that triggered you — use THAT as replyTo when responding.
+  - NEVER reply to your own messages. Only reply to messages from other people.
+  - If the person's message itself has a replyTo, they are replying to an earlier message — read that context but still reply to THEIR message.
 
 INTERACTIVE MESSAGES:
   - Use spaces_send_confirmation to ask someone to confirm/reject something. You'll get a message_resolved event with the outcome.

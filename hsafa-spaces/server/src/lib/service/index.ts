@@ -1315,6 +1315,7 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
 
   // Fetch recent messages once (shared across connections, labeled per-haseef below)
   let recentRaw: Array<{
+    id: string;
     entityId: string;
     displayName: string;
     type: string;
@@ -1334,6 +1335,7 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
       },
     });
     recentRaw = recent.reverse().map((m: any) => ({
+      id: m.id,
       entityId: m.entityId,
       displayName: m.entity?.displayName ?? "Unknown",
       type: m.entity?.type ?? "unknown",
@@ -1358,6 +1360,7 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
 
     // Label per-haseef: "You" for this haseef's own messages, display name for everyone else
     const recentMessages = recentRaw.map((m) => ({
+      messageId: m.id,
       sender: m.entityId === conn.agentEntityId ? "You" : m.displayName,
       content: m.content,
       createdAt: m.createdAt.toISOString(),
@@ -1380,6 +1383,12 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
     if (replyTo) {
       eventData.replyTo = replyTo;
     }
+
+    console.log(`[spaces-service] Sense event data for ${conn.haseefName}:`, JSON.stringify({
+      triggerMessageId: messageId,
+      recentMessageIds: recentMessages.map((m: any) => `${m.messageId?.slice(0,8)}...(${m.sender})`),
+      hasReplyTo: !!replyTo,
+    }));
 
     await pushSenseEvent(conn.haseefId, {
       eventId: messageId,
