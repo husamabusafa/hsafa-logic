@@ -1037,8 +1037,6 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
         }
         // Mark haseef online when cycle starts
         void markOnline(spaceId, conn.agentEntityId);
-        // Show typing indicator immediately when cycle starts
-        void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
         void emitSmartSpaceEvent(spaceId, {
           type: "agent.active",
           agentEntityId: conn.agentEntityId,
@@ -1058,16 +1056,6 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           markHaseefSeen(sid, conn.agentEntityId, mid).catch(() => {});
         }
       }
-      // Start typing heartbeat — re-broadcast every 3s so client's 5s auto-expire
-      // doesn't kill the indicator during long-running cycles
-      if (runId && targetSpaces.length > 0) {
-        const hb = setInterval(() => {
-          for (const spaceId of targetSpaces) {
-            void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
-          }
-        }, 3000);
-        conn.typingHeartbeats.set(runId, hb);
-      }
     } else if (event.type === "tool.started") {
       const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
       if (spaceId) {
@@ -1081,6 +1069,14 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
         // Show typing when agent starts composing a message
         if (isMessageTool(event.toolName)) {
           void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
+          // Start typing heartbeat — re-broadcast every 3s so client's 5s auto-expire
+          // doesn't kill the indicator during long message composition
+          if (runId && !conn.typingHeartbeats.has(runId)) {
+            const hb = setInterval(() => {
+              void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
+            }, 3000);
+            conn.typingHeartbeats.set(runId, hb);
+          }
         }
       }
     } else if (event.type === "tool-input.delta") {
