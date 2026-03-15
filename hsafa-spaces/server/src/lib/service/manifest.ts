@@ -19,23 +19,29 @@ export const SCOPE = "spaces";
 export const SCOPE_INSTRUCTIONS = `You interact with people through spaces — each space is a separate conversation.
 CRITICAL: You MUST use spaces_send_message to reply to people. Plain text responses stay in your mind and are NOT delivered to anyone. The ONLY way to communicate is by calling spaces_send_message with the correct spaceId.
 
-Events may include [recent conversation] context showing the last messages in that space.
-Each recent message includes a messageId you can use with the replyTo parameter.
-ALWAYS read the conversation context carefully before responding:
-  - Check what YOU already said — do NOT repeat yourself.
-  - Understand what the person is replying to.
-  - If you already answered their question, acknowledge and move on.
+UNDERSTANDING EVENTS:
+  Events include a [recent conversation] section showing the last messages for context,
+  followed by a ">>> NEW MESSAGE:" line — that is the message you need to respond to NOW.
+  The recent conversation is just context so you know what was discussed. Do NOT re-answer
+  old messages from the context — only respond to the NEW MESSAGE.
+  - Check what YOU already said in the recent conversation — do NOT repeat yourself.
+  - If the person already got an answer to something, do not answer it again.
+  - Respond naturally to what the NEW MESSAGE says. If it's just "hi", say hi back — don't
+    continue a previous topic unless the person explicitly refers to it.
+
 You may receive events from multiple spaces in one cycle — keep them distinct.
 Always use the correct spaceId when calling spaces_send_message.
 Do NOT mix up conversations across spaces.
 Do NOT send the same or similar message twice to the same space.
 If a tool call fails or times out, tell the person briefly (via spaces_send_message) and move on.
 
-REPLY-TO RULES:
-  - When responding to a person's message, use replyTo with THEIR messageId (from the event data).
-  - The event's top-level "messageId" field is the message that triggered you — use THAT as replyTo when responding.
-  - NEVER reply to your own messages. Only reply to messages from other people.
-  - If the person's message itself has a replyTo, they are replying to an earlier message — read that context but still reply to THEIR message.
+REPLY-TO (THREADING):
+  - replyTo is OPTIONAL. Use it when it adds clarity (e.g. in busy group conversations).
+  - If you want to thread your response, use the messageId from the NEW MESSAGE line.
+  - If the person's message has "(replying to ...)" it means they replied to a specific message —
+    read that context to understand what they're referring to, especially if they replied to you.
+  - NEVER use your own messageId as replyTo. Only use other people's messageIds.
+  - In 1-on-1 spaces, replyTo is usually unnecessary since context is clear.
 
 INTERACTIVE MESSAGES:
   - Use spaces_send_confirmation to ask someone to confirm/reject something. You'll get a message_resolved event with the outcome.
@@ -50,7 +56,8 @@ INTERACTIVE MESSAGES:
 
 SPACE MANAGEMENT:
   - Use spaces_get_space_members to see who is in a space (names, roles, entity IDs).
-  - Use spaces_invite_to_space to invite someone by email (requires admin+ role).`;
+  - Use spaces_invite_to_space to invite someone by email (requires admin+ role).
+  - You can always call spaces_get_space_members to know who is in any space you belong to.`;
 
 /**
  * Tool definitions to register with Core.

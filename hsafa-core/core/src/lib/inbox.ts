@@ -307,23 +307,63 @@ export function formatInboxEvents(events: SenseEvent[]): string {
       // Render conversation context once per space (if available)
       // The sender field is pre-labeled by the service ("You" for this haseef's own messages)
       const recentMessages = data.recentMessages as Array<{
+        messageId: string;
         sender: string;
         content: string;
         createdAt: string;
+        replyTo?: { messageId: string; senderName: string; snippet: string };
       }> | undefined;
+
+      const messageId = data.messageId as string | undefined;
+      const msgIdTag = messageId ? ` [messageId:${messageId}]` : '';
+
+      // Format replyTo info for the trigger message
+      const replyTo = data.replyTo as { messageId?: string; senderName?: string; snippet?: string } | undefined;
+      const replyTag = replyTo?.messageId
+        ? ` (replying to ${replyTo.senderName ?? 'someone'}: "${(replyTo.snippet ?? '').slice(0, 60)}")`
+        : '';
+
+      // Space members and context
+      const spaceMembers = data.spaceMembers as Array<{
+        name: string; type: string; role: string; isYou: boolean;
+      }> | undefined;
+      const isGroupSpace = data.isGroupSpace as boolean | undefined;
+      const isDirectedAtYou = data.isDirectedAtYou as boolean | undefined;
+
+      // Build space header (members + type) — rendered once per space
+      let spaceHeader = '';
+      if (spaceMembers && spaceMembers.length > 0 && spaceId && !spaceContextRendered.has(`members:${spaceId}`)) {
+        spaceContextRendered.add(`members:${spaceId}`);
+        const memberList = spaceMembers.map((m) =>
+          `${m.name}${m.isYou ? ' (You)' : ''} [${m.type}, ${m.role}]`
+        ).join(', ');
+        const spaceType = isGroupSpace ? 'GROUP' : '1-on-1';
+        spaceHeader = `  [space: ${spaceType}, members: ${memberList}]\n`;
+      }
+
+      // Directed-at hint for group spaces
+      const directedTag = isGroupSpace !== undefined && isGroupSpace
+        ? (isDirectedAtYou ? ' [directed at you]' : ' [NOT directed at you — someone else is being addressed]')
+        : '';
 
       if (recentMessages && recentMessages.length > 0 && spaceId && !spaceContextRendered.has(spaceId)) {
         spaceContextRendered.add(spaceId);
         const contextLines = recentMessages.map((m) => {
           const age = relativeTime(m.createdAt, now);
-          return `    ${m.sender} (${age}): "${m.content}"`;
+          const idTag = m.messageId ? ` [messageId:${m.messageId}]` : '';
+          const mReplyTag = m.replyTo?.messageId
+            ? ` (replying to ${m.replyTo.senderName}: "${(m.replyTo.snippet ?? '').slice(0, 40)}")`
+            : '';
+          return `    ${m.sender} (${age})${idTag}${mReplyTag}: "${m.content}"`;
         });
         blocks.push(
-          `[${e.scope}:${e.type}]${ts} ${senderName}${spaceInfo}: "${content}"\n` +
-          `  [recent conversation in "${spaceName}"]:\n${contextLines.join('\n')}`,
+          `${spaceHeader}` +
+          `  [recent conversation in "${spaceName}"]:\n${contextLines.join('\n')}\n` +
+          `  >>> NEW MESSAGE${directedTag}:\n` +
+          `  ${senderName}${spaceInfo}${msgIdTag}${replyTag}: "${content}"`,
         );
       } else {
-        blocks.push(`[${e.scope}:${e.type}]${ts} ${senderName}${spaceInfo}: "${content}"`);
+        blocks.push(`${spaceHeader}[${e.scope}:${e.type}]${ts} ${senderName}${spaceInfo}${msgIdTag}${replyTag}${directedTag}: "${content}"`);
       }
     } else {
       // Generic format

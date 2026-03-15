@@ -48,6 +48,10 @@ interface ActiveConnection {
   spaceIds: string[];
   /** runId → triggerSpaceId — routes tool streaming events to the correct space */
   runSpaces: Map<string, string>;
+  /** runId → typing heartbeat interval — re-broadcasts typing every 3s to keep client indicator alive */
+  typingHeartbeats: Map<string, ReturnType<typeof setInterval>>;
+  /** Pending seen messages — flushed when run.started confirms events were consumed from inbox */
+  pendingSeenMessages: Array<{ spaceId: string; messageId: string }>;
 }
 
 interface ServiceState {
@@ -283,6 +287,8 @@ async function setupHaseefConnection(haseef: {
     agentEntityId,
     spaceIds,
     runSpaces: new Map(),
+    typingHeartbeats: new Map(),
+    pendingSeenMessages: [],
   };
   state.connections.set(haseefId, conn);
 
@@ -453,12 +459,18 @@ async function resolveReplyTo(
 // Action Execution — routes to the correct tool handler
 // =============================================================================
 
-/** Tools that produce messages — typing indicator should show while these execute */
+/** Tools that produce messages — typing indicator should show while these execute.
+ *  Checks both unprefixed ('send_message') and prefixed ('spaces_send_message') names
+ *  since Core emits prefixed tool names in stream events. */
 const MESSAGE_TOOLS = new Set([
   "send_message", "send_confirmation", "send_choice", "send_vote", "send_form",
 ]);
 function isMessageTool(toolName?: string): boolean {
-  return !!toolName && MESSAGE_TOOLS.has(toolName);
+  if (!toolName) return false;
+  if (MESSAGE_TOOLS.has(toolName)) return true;
+  // Core prefixes tool names with scope: "spaces_send_message" → strip prefix and check
+  const unprefixed = toolName.replace(/^spaces_/, '');
+  return MESSAGE_TOOLS.has(unprefixed);
 }
 
 async function executeAction(
@@ -1034,6 +1046,28 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           data: { agentEntityId: conn.agentEntityId, agentName: conn.haseefName, runId },
         });
       }
+      // Flush pending seen messages — run.started means events were consumed from inbox
+      if (conn.pendingSeenMessages.length > 0) {
+        const pending = conn.pendingSeenMessages.splice(0);
+        // Group by spaceId and take the latest messageId per space
+        const latestPerSpace = new Map<string, string>();
+        for (const p of pending) {
+          latestPerSpace.set(p.spaceId, p.messageId);
+        }
+        for (const [sid, mid] of latestPerSpace) {
+          markHaseefSeen(sid, conn.agentEntityId, mid).catch(() => {});
+        }
+      }
+      // Start typing heartbeat — re-broadcast every 3s so client's 5s auto-expire
+      // doesn't kill the indicator during long-running cycles
+      if (runId && targetSpaces.length > 0) {
+        const hb = setInterval(() => {
+          for (const spaceId of targetSpaces) {
+            void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
+          }
+        }, 3000);
+        conn.typingHeartbeats.set(runId, hb);
+      }
     } else if (event.type === "tool.started") {
       const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
       if (spaceId) {
@@ -1090,6 +1124,14 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
         });
       }
     } else if (event.type === "run.finished") {
+      // Stop typing heartbeat FIRST
+      if (runId) {
+        const hb = conn.typingHeartbeats.get(runId);
+        if (hb) {
+          clearInterval(hb);
+          conn.typingHeartbeats.delete(runId);
+        }
+      }
       // Only broadcast to the trigger space
       const targetSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
       const targetSpaces = targetSpaceId ? [targetSpaceId] : conn.spaceIds;
@@ -1321,6 +1363,7 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
     type: string;
     content: string;
     createdAt: Date;
+    replyTo?: { messageId: string; senderName: string; snippet: string };
   }> = [];
   try {
     const recent = await prisma.smartSpaceMessage.findMany({
@@ -1334,14 +1377,19 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
         entity: { select: { id: true, displayName: true, type: true } },
       },
     });
-    recentRaw = recent.reverse().map((m: any) => ({
-      id: m.id,
-      entityId: m.entityId,
-      displayName: m.entity?.displayName ?? "Unknown",
-      type: m.entity?.type ?? "unknown",
-      content: m.content ?? "",
-      createdAt: m.createdAt,
-    }));
+    recentRaw = recent.reverse().map((m: any) => {
+      const meta = (m.metadata ?? {}) as Record<string, unknown>;
+      const rt = meta.replyTo as { messageId?: string; senderName?: string; snippet?: string } | undefined;
+      return {
+        id: m.id,
+        entityId: m.entityId,
+        displayName: m.entity?.displayName ?? "Unknown",
+        type: m.entity?.type ?? "unknown",
+        content: m.content ?? "",
+        createdAt: m.createdAt,
+        ...(rt?.messageId ? { replyTo: { messageId: rt.messageId, senderName: rt.senderName ?? "Unknown", snippet: rt.snippet ?? "" } } : {}),
+      };
+    });
   } catch (err) {
     // Non-fatal — send event without context
     console.warn("[spaces-service] Failed to fetch conversation context:", err);
@@ -1349,6 +1397,25 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
 
   // Extract replyTo from metadata if present
   const replyTo = metadata?.replyTo as Record<string, unknown> | undefined;
+
+  // Fetch space members once (shared across connections)
+  let memberRows: Array<{ entityId: string; displayName: string; type: string; role: string }> = [];
+  try {
+    const memberships = await prisma.smartSpaceMembership.findMany({
+      where: { smartSpaceId: spaceId },
+      include: { entity: { select: { id: true, displayName: true, type: true } } },
+    });
+    memberRows = memberships.map((m: any) => ({
+      entityId: m.entityId,
+      displayName: m.entity?.displayName ?? "Unknown",
+      type: m.entity?.type ?? "unknown",
+      role: m.role ?? "member",
+    }));
+  } catch {
+    // Non-fatal — proceed without member data
+  }
+
+  const isGroupSpace = memberRows.length > 2;
 
   // Skip messages from THIS haseef's own entity (avoid loops)
   for (const conn of conns) {
@@ -1364,7 +1431,28 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
       sender: m.entityId === conn.agentEntityId ? "You" : m.displayName,
       content: m.content,
       createdAt: m.createdAt.toISOString(),
+      ...(m.replyTo ? { replyTo: m.replyTo } : {}),
     }));
+
+    // Build labeled member list for this haseef
+    const spaceMembers = memberRows.map((m) => ({
+      name: m.entityId === conn.agentEntityId ? "You" : m.displayName,
+      type: m.type,
+      role: m.role,
+      isYou: m.entityId === conn.agentEntityId,
+    }));
+
+    // Detect if the message is directed at this haseef:
+    // 1. The message is a reply to a message this haseef sent
+    // 2. The message mentions the haseef by name
+    // 3. It's a 1-on-1 space (only 2 members)
+    const replyToData = replyTo as { senderName?: string; messageId?: string } | undefined;
+    const haseefDisplayName = memberRows.find((m) => m.entityId === conn.agentEntityId)?.displayName ?? conn.haseefName;
+    const isReplyToYou = !!replyToData?.senderName &&
+      replyToData.senderName.toLowerCase() === haseefDisplayName.toLowerCase();
+    const mentionsYou = content.toLowerCase().includes(haseefDisplayName.toLowerCase()) ||
+      content.toLowerCase().includes(conn.haseefName.toLowerCase());
+    const isDirectedAtYou = !isGroupSpace || isReplyToYou || mentionsYou;
 
     const eventData: Record<string, unknown> = {
       messageId,
@@ -1375,6 +1463,9 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
       senderType,
       content,
       recentMessages,
+      spaceMembers,
+      isGroupSpace,
+      isDirectedAtYou,
     };
     // Include message type info (§17.8)
     if (messageType && messageType !== "text") {
@@ -1388,6 +1479,8 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
       triggerMessageId: messageId,
       recentMessageIds: recentMessages.map((m: any) => `${m.messageId?.slice(0,8)}...(${m.sender})`),
       hasReplyTo: !!replyTo,
+      isGroupSpace,
+      isDirectedAtYou,
     }));
 
     await pushSenseEvent(conn.haseefId, {
@@ -1397,8 +1490,9 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
       data: eventData,
     });
 
-    // Auto-mark haseef as having "seen" this message (advance watermark)
-    markHaseefSeen(spaceId, conn.agentEntityId, messageId).catch(() => {});
+    // Track message as pending-seen — will be flushed when run.started confirms
+    // the events were actually consumed from the inbox (not while haseef is mid-cycle)
+    conn.pendingSeenMessages.push({ spaceId, messageId });
   }
 }
 

@@ -13,7 +13,7 @@ import { ChartMessage } from "./chart-message";
 import { SystemMessage } from "./system-message";
 import { ReplyBanner } from "./reply-banner";
 import { Avatar } from "@/components/ui/avatar";
-import { CheckIcon, CheckCheckIcon, CornerUpLeftIcon, ForwardIcon, CopyIcon, MoreHorizontalIcon } from "lucide-react";
+import { CheckIcon, CheckCheckIcon, CornerUpLeftIcon, ForwardIcon, CopyIcon, MoreHorizontalIcon, EyeIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 
@@ -61,13 +61,7 @@ export function MessageRenderer({
     <CheckIcon className="size-3.5 opacity-60" />
   );
 
-  const seenIndicator = isOwn ? (
-    onSeenInfo ? (
-      <button onClick={() => onSeenInfo(message.id)} className="inline-flex hover:opacity-70 transition-opacity">
-        {seenIcon}
-      </button>
-    ) : seenIcon
-  ) : null;
+  const seenIndicator = isOwn ? seenIcon : null;
 
   const content = renderContent(message);
 
@@ -130,6 +124,15 @@ export function MessageRenderer({
                 <ForwardIcon className="size-3.5 text-muted-foreground" />
                 Forward
               </button>
+              {onSeenInfo && isOwn && (
+                <button
+                  onClick={() => { onSeenInfo(message.id); setShowMoreMenu(false); }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-sm text-left transition-colors"
+                >
+                  <EyeIcon className="size-3.5 text-muted-foreground" />
+                  Info
+                </button>
+              )}
             </div>
           )}
         </div>
