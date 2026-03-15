@@ -147,8 +147,9 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
         });
       }
 
-      // Start typing heartbeat — broadcasts to activeSpace every 3s
-      startTypingHeartbeat(conn);
+      // NOTE: typing heartbeat is NOT started here — it only starts when
+      // a message tool begins (tool.started). This prevents showing "typing..."
+      // during the model's reasoning phase.
 
       // Flush pending seen messages — run.started means events were consumed from inbox
       if (conn.pendingSeenMessages.length > 0) {
@@ -172,9 +173,9 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           agentEntityId: conn.agentEntityId,
           runId,
         });
-        // Typing indicator fires in activeSpace — always correct since
-        // haseef must enter_space before calling message tools
+        // For message tools: start heartbeat + broadcast typing
         if (isMessageTool(event.toolName)) {
+          startTypingHeartbeat(conn);
           void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
         }
       }
@@ -201,6 +202,13 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           agentEntityId: conn.agentEntityId,
           runId,
         });
+        // Stop typing heartbeat after a message tool completes — the message
+        // is already delivered, so showing "typing..." after it arrives is wrong.
+        // If the model sends another message later, tool.started will restart it.
+        if (isMessageTool(event.toolName)) {
+          stopTypingHeartbeat(conn);
+          void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, false);
+        }
       }
     } else if (event.type === "tool.error") {
       const spaceId = conn.activeSpace?.spaceId;

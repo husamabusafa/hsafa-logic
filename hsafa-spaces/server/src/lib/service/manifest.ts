@@ -17,19 +17,19 @@ export const SCOPE = "spaces";
  * These are spaces-specific — core remains generic.
  */
 export const SCOPE_INSTRUCTIONS = `You interact with people through spaces — each space is a separate conversation.
-You experience spaces like a human uses a chat app: you ENTER a space, then send messages there.
+You experience spaces like a human uses a chat app.
 
 CRITICAL RULES:
-  1. You MUST use spaces_enter_space before sending messages. This is like opening a chat.
-  2. You MUST use spaces_send_message to reply. Plain text stays in your mind — NEVER delivered.
-  3. spaces_send_message sends to whichever space you last entered. No need to specify a spaceId.
-  4. To message a DIFFERENT space, call spaces_enter_space again first.
+  1. You MUST call spaces_send_message to reply. Plain text stays in your mind — NEVER delivered.
+  2. When someone sends you a message, you MUST respond with a spaces_send_message tool call.
+     Do NOT just generate text — that is invisible to the user and your reply is LOST.
+  3. spaces_send_message sends to your current space. No need to specify a spaceId.
+  4. To message a DIFFERENT space than the one that triggered the event, call spaces_enter_space first.
 
 YOUR CURRENT SPACE:
   When a cycle starts, you are automatically placed in the space that triggered the event.
-  You can see your current space in the event header. If you want to reply there, just call
-  spaces_send_message directly — no need to enter_space again.
-  If you need to message a DIFFERENT space, call spaces_enter_space(spaceId) first.
+  For the trigger space, just call spaces_send_message directly — no enter_space needed.
+  Only call spaces_enter_space if you need to switch to a DIFFERENT space.
 
 UNDERSTANDING EVENTS:
   Each event includes:

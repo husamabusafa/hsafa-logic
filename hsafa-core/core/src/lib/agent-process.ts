@@ -291,21 +291,85 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
           },
         });
 
-        // 14. DETECT silent cycles — LLM processed a spaces message but didn't
+        // 14. DETECT & RETRY silent cycles — LLM processed a spaces message but didn't
         // call any send_message tool. Text stays in consciousness, user gets nothing.
+        // Fix: inject a correction message and re-stream ONCE so the response is delivered.
         if (triggerScope === 'spaces' && triggerType === 'message') {
           const sentMessage = streamResult.toolCalls.some(
             (tc) => tc.toolName === 'spaces_send_message' || tc.toolName.endsWith('_send_message'),
           );
-          if (!sentMessage) {
-            const toolNames = streamResult.toolCalls.map((tc) => tc.toolName);
-            const textPreview = streamResult.text?.slice(0, 200) || '(empty)';
+          if (!sentMessage && streamResult.text) {
+            const textPreview = streamResult.text.slice(0, 200);
             console.warn(
-              `[process] ⚠️ ${haseefName} cycle #${newCycleCount} completed WITHOUT sending a message!\n` +
-              `  trigger: spaces:message from "${(firstEvent?.data as any)?.senderName}" in space ${triggerSpaceId}\n` +
-              `  tools called: [${toolNames.join(', ') || 'none'}]\n` +
-              `  text output (stays in mind): "${textPreview}"`,
+              `[process] ⚠️ ${haseefName} cycle #${newCycleCount} produced text without sending — retrying with correction`,
             );
+
+            // Inject a correction into consciousness so the model knows to use the tool
+            consciousness.messages.push({
+              role: 'user',
+              content:
+                '[SYSTEM] Your previous response was text-only and was NOT delivered. ' +
+                'Nobody saw it. You MUST call spaces_send_message to deliver your reply. ' +
+                'Call spaces_send_message now with your response.',
+            } as ModelMessage);
+
+            // Re-stream with the correction
+            const { streamText: streamText2 } = await import('ai');
+            const retryMessages = consciousness.messages.filter((m) => m.role !== 'system');
+            const retryResult = streamText2({
+              model: built.model as any,
+              tools: built.tools as any,
+              system: systemPrompt,
+              messages: retryMessages as any,
+              maxSteps: 3,
+              toolCallStreaming: true,
+            } as any);
+
+            const retryStreamResult = await processStream(retryResult.fullStream, {
+              runId: run.id,
+              haseefId,
+            });
+
+            // Append retry response messages to consciousness
+            const retryResponseMessages = await retryResult.response;
+            if (retryResponseMessages?.messages) {
+              for (const msg of retryResponseMessages.messages) {
+                consciousness.messages.push(msg as unknown as ModelMessage);
+              }
+            }
+
+            // Update step count
+            cycleToolCount += retryStreamResult.toolCalls.length;
+
+            const retrySent = retryStreamResult.toolCalls.some(
+              (tc) => tc.toolName === 'spaces_send_message' || tc.toolName.endsWith('_send_message'),
+            );
+            if (retrySent) {
+              console.log(`[process] ✅ ${haseefName} retry succeeded — message delivered`);
+            } else {
+              console.warn(
+                `[process] ❌ ${haseefName} retry also failed to send — text: "${retryStreamResult.text?.slice(0, 100) || textPreview}"`,
+              );
+            }
+
+            // Re-save consciousness with the retry messages included
+            consciousness.messages = await pruneConsciousness(
+              haseefId,
+              consciousness.messages,
+              newCycleCount,
+              config.consciousness?.maxTokens ?? DEFAULT_MAX_TOKENS,
+            );
+            await saveConsciousness(haseefId, consciousness.messages, newCycleCount);
+
+            // Update run with new step count
+            const durationMs2 = Date.now() - cycleStart;
+            await prisma.run.update({
+              where: { id: run.id },
+              data: {
+                stepCount: cycleToolCount,
+                durationMs: durationMs2,
+              },
+            }).catch(() => {});
           }
         }
 
