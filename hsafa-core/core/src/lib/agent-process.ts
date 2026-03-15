@@ -283,6 +283,24 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
           },
         });
 
+        // 14. DETECT silent cycles — LLM processed a spaces message but didn't
+        // call any send_message tool. Text stays in consciousness, user gets nothing.
+        if (triggerScope === 'spaces' && triggerType === 'message') {
+          const sentMessage = streamResult.toolCalls.some(
+            (tc) => tc.toolName === 'spaces_send_message' || tc.toolName.endsWith('_send_message'),
+          );
+          if (!sentMessage) {
+            const toolNames = streamResult.toolCalls.map((tc) => tc.toolName);
+            const textPreview = streamResult.text?.slice(0, 200) || '(empty)';
+            console.warn(
+              `[process] ⚠️ ${haseefName} cycle #${newCycleCount} completed WITHOUT sending a message!\n` +
+              `  trigger: spaces:message from "${(firstEvent?.data as any)?.senderName}" in space ${triggerSpaceId}\n` +
+              `  tools called: [${toolNames.join(', ') || 'none'}]\n` +
+              `  text output (stays in mind): "${textPreview}"`,
+            );
+          }
+        }
+
         consecutiveErrors = 0;
       } catch (innerErr) {
         // Stream or post-stream error — update run as failed
@@ -337,6 +355,13 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
 
       console.log(`[process] ${haseefName} waiting ${waitMs / 1000}s before retry...`);
       await new Promise((r) => setTimeout(r, waitMs));
+
+      // Recover events stuck in "processing" from the failed cycle — re-push
+      // them to Redis so they get retried in the next cycle instead of being lost.
+      const reRecovered = await recoverStuckEvents(haseefId).catch(() => 0);
+      if (reRecovered && reRecovered > 0) {
+        console.log(`[process] ${haseefName} recovered ${reRecovered} stuck events after failed cycle`);
+      }
 
       // After 10 consecutive errors, give up
       if (consecutiveErrors >= 10) {
