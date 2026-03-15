@@ -1,9 +1,13 @@
 // =============================================================================
 // Spaces Service — Tool Handlers
 //
-// Executes tool actions dispatched by Core: send_message, get_messages,
-// get_spaces, send_confirmation, send_choice, send_vote, send_form,
-// respond_to_message, close_interactive_message, invite_to_space, get_space_members.
+// Executes tool actions dispatched by Core: enter_space, send_message,
+// get_messages, get_spaces, send_confirmation, send_choice, send_vote,
+// send_form, respond_to_message, close_interactive_message, invite_to_space,
+// get_space_members.
+//
+// The haseef has an "active space" — set by enter_space or auto-set on
+// run.started. All message tools operate on the active space.
 // =============================================================================
 
 import { prisma } from "../db.js";
@@ -13,9 +17,9 @@ import type { ReplyToMetadata } from "../message-types.js";
 import {
   respondToMessage,
   closeInteractiveMessage,
-  ServiceError,
 } from "../response-service.js";
-import { state } from "./types.js";
+import { markOnline } from "../smartspace-events.js";
+import { state, type ActiveConnection } from "./types.js";
 import { pushInteractiveMessageEvent, emitEntityChannelEvent } from "./sense-events.js";
 
 // =============================================================================
@@ -59,6 +63,17 @@ export function isMessageTool(toolName?: string): boolean {
 }
 
 // =============================================================================
+// Active Space Helper
+// =============================================================================
+
+/** Get the active spaceId for a connection, with clear error if none set. */
+function getActiveSpaceId(conn: ActiveConnection | undefined): { spaceId: string } | { error: string } {
+  if (!conn) return { error: "Haseef not connected" };
+  if (!conn.activeSpace) return { error: "No active space. Call enter_space first to open a chat." };
+  return { spaceId: conn.activeSpace.spaceId };
+}
+
+// =============================================================================
 // Action Execution — routes to the correct tool handler
 // =============================================================================
 
@@ -71,21 +86,71 @@ export async function executeAction(
   const conn = state.connections.get(haseefId);
   const agentEntityId = conn?.agentEntityId;
 
-  console.log(`[spaces-service] [${haseefId.slice(0, 8)}] ${toolName} (${actionId.slice(0, 8)})`);
+  console.log(`[spaces-service] [${haseefId.slice(0, 8)}] ${toolName} (${actionId.slice(0, 8)}) [activeSpace: ${conn?.activeSpace?.spaceName ?? 'none'}]`);
 
   try {
     switch (toolName) {
-      case "send_message": {
+      case "enter_space": {
         const spaceId = args.spaceId as string;
+        if (!spaceId) return { error: "spaceId is required" };
+        if (!conn) return { error: "Haseef not connected" };
+        if (!agentEntityId) return { error: "agentEntityId not resolved" };
+
+        // Verify membership
+        const membership = await prisma.smartSpaceMembership.findUnique({
+          where: { smartSpaceId_entityId: { smartSpaceId: spaceId, entityId: agentEntityId } },
+        });
+        if (!membership) return { error: `You are not a member of space ${spaceId}` };
+
+        // Load space info + members
+        const [space, memberships] = await Promise.all([
+          prisma.smartSpace.findUnique({ where: { id: spaceId }, select: { id: true, name: true, description: true } }),
+          prisma.smartSpaceMembership.findMany({
+            where: { smartSpaceId: spaceId },
+            include: { entity: { select: { id: true, displayName: true, type: true } } },
+          }),
+        ]);
+
+        if (!space) return { error: "Space not found" };
+
+        // Set active space
+        conn.activeSpace = { spaceId: space.id, spaceName: space.name ?? spaceId };
+
+        // Mark online in this space
+        void markOnline(spaceId, agentEntityId);
+
+        const members = memberships.map((m: any) => ({
+          name: m.entityId === agentEntityId ? "You" : (m.entity?.displayName ?? "Unknown"),
+          type: m.entity?.type ?? "unknown",
+          role: m.role,
+          entityId: m.entityId,
+          isYou: m.entityId === agentEntityId,
+        }));
+
+        return {
+          success: true,
+          currentSpace: {
+            id: space.id,
+            name: space.name,
+            description: space.description,
+          },
+          members,
+          message: `You are now in "${space.name}". All messages you send will go here.`,
+        };
+      }
+
+      case "send_message": {
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
         const text = args.text as string;
-        if (!spaceId || !text)
-          return { error: "spaceId and text are required" };
+        if (!text) return { error: "text is required" };
         if (!agentEntityId)
           return { error: "agentEntityId not resolved — is this haseef connected?" };
 
         const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
 
-        // Direct persist + emit (no HTTP call)
         const result = await postSpaceMessage({
           spaceId,
           entityId: agentEntityId,
@@ -99,13 +164,18 @@ export async function executeAction(
           },
         });
 
-        return { success: true, messageId: result.messageId };
+        return { success: true, messageId: result.messageId, sentTo: conn!.activeSpace!.spaceName };
       }
 
       case "get_messages": {
-        const spaceId = args.spaceId as string;
+        // Optional spaceId override; defaults to active space
+        let spaceId = args.spaceId as string | undefined;
+        if (!spaceId) {
+          const active = getActiveSpaceId(conn);
+          if ('error' in active) return active;
+          spaceId = active.spaceId;
+        }
         const limit = (args.limit as number) || 20;
-        if (!spaceId) return { error: "spaceId is required" };
 
         const messages = await prisma.smartSpaceMessage.findMany({
           where: { smartSpaceId: spaceId },
@@ -173,12 +243,15 @@ export async function executeAction(
       }
 
       case "send_confirmation": {
-        const spaceId = args.spaceId as string;
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
         const title = args.title as string;
         const message = args.message as string;
         const targetEntityId = args.targetEntityId as string;
-        if (!spaceId || !title || !message || !targetEntityId)
-          return { error: "spaceId, title, message, and targetEntityId are required" };
+        if (!title || !message || !targetEntityId)
+          return { error: "title, message, and targetEntityId are required" };
         if (!agentEntityId)
           return { error: "agentEntityId not resolved" };
 
@@ -217,11 +290,14 @@ export async function executeAction(
       }
 
       case "send_choice": {
-        const spaceId = args.spaceId as string;
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
         const text = args.text as string;
         const options = args.options as Array<{ label: string; value: string }>;
-        if (!spaceId || !text || !Array.isArray(options) || options.length === 0)
-          return { error: "spaceId, text, and options are required" };
+        if (!text || !Array.isArray(options) || options.length === 0)
+          return { error: "text and options are required" };
         if (!agentEntityId)
           return { error: "agentEntityId not resolved" };
 
@@ -262,11 +338,14 @@ export async function executeAction(
       }
 
       case "send_vote": {
-        const spaceId = args.spaceId as string;
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
         const title = args.title as string;
         const options = args.options as string[];
-        if (!spaceId || !title || !Array.isArray(options) || options.length < 2)
-          return { error: "spaceId, title, and at least 2 options are required" };
+        if (!title || !Array.isArray(options) || options.length < 2)
+          return { error: "title and at least 2 options are required" };
         if (!agentEntityId)
           return { error: "agentEntityId not resolved" };
 
@@ -306,11 +385,14 @@ export async function executeAction(
       }
 
       case "send_form": {
-        const spaceId = args.spaceId as string;
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
         const title = args.title as string;
         const fields = args.fields as Array<Record<string, unknown>>;
-        if (!spaceId || !title || !Array.isArray(fields) || fields.length === 0)
-          return { error: "spaceId, title, and at least 1 field are required" };
+        if (!title || !Array.isArray(fields) || fields.length === 0)
+          return { error: "title and at least 1 field are required" };
         if (!agentEntityId)
           return { error: "agentEntityId not resolved" };
 
@@ -371,11 +453,14 @@ export async function executeAction(
       }
 
       case "respond_to_message": {
-        const spaceId = args.spaceId as string;
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
         const messageId = args.messageId as string;
         const value = args.value;
-        if (!spaceId || !messageId || value === undefined)
-          return { error: "spaceId, messageId, and value are required" };
+        if (!messageId || value === undefined)
+          return { error: "messageId and value are required" };
         if (!agentEntityId)
           return { error: "agentEntityId not resolved" };
 
@@ -394,10 +479,13 @@ export async function executeAction(
       }
 
       case "close_interactive_message": {
-        const spaceId = args.spaceId as string;
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
         const messageId = args.messageId as string;
-        if (!spaceId || !messageId)
-          return { error: "spaceId and messageId are required" };
+        if (!messageId)
+          return { error: "messageId is required" };
         if (!agentEntityId)
           return { error: "agentEntityId not resolved" };
 
@@ -409,10 +497,13 @@ export async function executeAction(
       }
 
       case "invite_to_space": {
-        const spaceId = args.spaceId as string;
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
         const email = args.email as string;
-        if (!spaceId || !email)
-          return { error: "spaceId and email are required" };
+        if (!email)
+          return { error: "email is required" };
         if (!agentEntityId)
           return { error: "agentEntityId not resolved" };
 
@@ -506,8 +597,13 @@ export async function executeAction(
       }
 
       case "get_space_members": {
-        const spaceId = args.spaceId as string;
-        if (!spaceId) return { error: "spaceId is required" };
+        // Optional spaceId override; defaults to active space
+        let spaceId = args.spaceId as string | undefined;
+        if (!spaceId) {
+          const active = getActiveSpaceId(conn);
+          if ('error' in active) return active;
+          spaceId = active.spaceId;
+        }
 
         const memberships = await prisma.smartSpaceMembership.findMany({
           where: { smartSpaceId: spaceId },

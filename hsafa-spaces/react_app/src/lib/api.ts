@@ -126,7 +126,7 @@ export const haseefsApi = {
     return request<{ haseef: Haseef }>(`/haseefs/${id}`);
   },
 
-  create(data: { name: string; description?: string; model?: string; instructions?: string; avatarUrl?: string }) {
+  create(data: { name: string; description?: string; model?: string; provider?: string; instructions?: string; avatarUrl?: string }) {
     return request<{ haseef: Haseef }>("/haseefs", {
       method: "POST",
       body: JSON.stringify(data),

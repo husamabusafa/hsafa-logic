@@ -17,7 +17,19 @@ export const SCOPE = "spaces";
  * These are spaces-specific — core remains generic.
  */
 export const SCOPE_INSTRUCTIONS = `You interact with people through spaces — each space is a separate conversation.
-CRITICAL: You MUST use spaces_send_message to reply to people. Plain text responses stay in your mind and are NOT delivered to anyone. The ONLY way to communicate is by calling spaces_send_message with the correct spaceId.
+You experience spaces like a human uses a chat app: you ENTER a space, then send messages there.
+
+CRITICAL RULES:
+  1. You MUST use spaces_enter_space before sending messages. This is like opening a chat.
+  2. You MUST use spaces_send_message to reply. Plain text stays in your mind — NEVER delivered.
+  3. spaces_send_message sends to whichever space you last entered. No need to specify a spaceId.
+  4. To message a DIFFERENT space, call spaces_enter_space again first.
+
+YOUR CURRENT SPACE:
+  When a cycle starts, you are automatically placed in the space that triggered the event.
+  You can see your current space in the event header. If you want to reply there, just call
+  spaces_send_message directly — no need to enter_space again.
+  If you need to message a DIFFERENT space, call spaces_enter_space(spaceId) first.
 
 UNDERSTANDING EVENTS:
   Each event includes:
@@ -29,7 +41,7 @@ UNDERSTANDING EVENTS:
   - Check what YOU already said in the recent conversation — do NOT repeat yourself.
   - If the person already got an answer to something, do not answer it again.
   WHEN TO RESPOND:
-  - In 1-on-1 spaces with a HUMAN: you should respond to substantive messages (questions, requests, 
+  - In 1-on-1 spaces with a HUMAN: respond to substantive messages (questions, requests,
     conversations). You can skip pure acknowledgments like "ok", "thanks", "got it".
   - In 1-on-1 spaces with another HASEEF: do NOT automatically respond to every message — that creates
     infinite loops. Only respond if you have something meaningful to add or were explicitly asked.
@@ -38,8 +50,7 @@ UNDERSTANDING EVENTS:
     respond naturally.
 
 You may receive events from multiple spaces in one cycle — keep them distinct.
-Always use the correct spaceId when calling spaces_send_message.
-Do NOT mix up conversations across spaces.
+When handling multiple spaces, enter each space before sending messages to it.
 Do NOT send the same or similar message twice to the same space.
 If a tool call fails or times out, tell the person briefly (via spaces_send_message) and move on.
 
@@ -58,19 +69,19 @@ INTERACTIVE MESSAGES:
   - Use spaces_send_form to collect structured data from people.
   - Use spaces_respond_to_message to respond to interactive messages others created (vote on polls, confirm requests, etc.).
   - Use spaces_close_interactive_message only if you explicitly want to finalize a vote/form early (rare).
+  - All interactive message tools send to your CURRENT space (the one you last entered).
   - When you receive a message_resolved event, read the outcome and act on it immediately.
   - When you receive a message_response event, you can track progress (e.g. vote counts) but don't need to act unless relevant.
-  - Messages in spaces_get_messages include a "type" field (text, confirmation, vote, choice, form, etc.) and structured metadata.
 
 DISCOVERING SPACES:
   - Use spaces_get_spaces to list ALL spaces you are a member of (returns id, name, description, memberCount).
-  - When someone asks you to send a message to another space BY NAME, call spaces_get_spaces first to find the correct spaceId, then use spaces_send_message with that spaceId.
+  - When someone asks you to send a message to another space BY NAME, call spaces_get_spaces first
+    to find the correct spaceId, then spaces_enter_space, then spaces_send_message.
   - Do NOT guess spaceIds — always look them up with spaces_get_spaces if you don't already know the ID.
 
 SPACE MANAGEMENT:
   - Use spaces_get_space_members to see who is in a space (names, roles, entity IDs).
-  - Use spaces_invite_to_space to invite someone by email (requires admin+ role).
-  - You can always call spaces_get_space_members to know who is in any space you belong to.`;
+  - Use spaces_invite_to_space to invite someone by email (requires admin+ role).`;
 
 /**
  * Tool definitions to register with Core.
@@ -78,16 +89,28 @@ SPACE MANAGEMENT:
  */
 export const TOOLS = [
   {
-    name: "send_message",
+    name: "enter_space",
     description:
-      "Send a message to a space. Returns {success:true, messageId} on delivery — do NOT retry on success.",
+      "Enter a space — like opening a chat. Sets this as your current space. All subsequent send_message and interactive tool calls go here until you enter a different space. Returns the space name and member list so you know where you are.",
     inputSchema: {
       type: "object" as const,
       properties: {
         spaceId: {
           type: "string",
-          description: "The space ID to send the message to.",
+          description: "The space ID to enter.",
         },
+      },
+      required: ["spaceId"],
+    },
+    mode: "sync" as const,
+  },
+  {
+    name: "send_message",
+    description:
+      "Send a message to your current space (the one you last entered). Returns {success:true, messageId} on delivery — do NOT retry on success.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
         text: {
           type: "string",
           description: "The message text to send.",
@@ -97,27 +120,26 @@ export const TOOLS = [
           description: "Optional message ID to reply to.",
         },
       },
-      required: ["spaceId", "text"],
+      required: ["text"],
     },
     mode: "sync" as const,
   },
   {
     name: "get_messages",
     description:
-      "Read recent messages from a space. Returns the latest messages in chronological order.",
+      "Read recent messages from a space. Defaults to your current space if no spaceId given.",
     inputSchema: {
       type: "object" as const,
       properties: {
         spaceId: {
           type: "string",
-          description: "The space ID to read messages from.",
+          description: "Optional space ID. Defaults to your current space.",
         },
         limit: {
           type: "number",
           description: "Number of messages to read (default 20, max 100).",
         },
       },
-      required: ["spaceId"],
     },
     mode: "sync" as const,
   },
@@ -134,14 +156,10 @@ export const TOOLS = [
   {
     name: "send_confirmation",
     description:
-      "Send a confirmation card to a specific person in a space. They will see Confirm/Cancel buttons. Returns immediately with {messageId, status:'pending'}. You will receive a message_resolved sense event when they respond.",
+      "Send a confirmation card to a specific person in your current space. They will see Confirm/Cancel buttons. Returns immediately with {messageId, status:'pending'}. You will receive a message_resolved sense event when they respond.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        spaceId: {
-          type: "string",
-          description: "The space ID to send the confirmation in.",
-        },
         title: {
           type: "string",
           description: "Short title for the confirmation card.",
@@ -168,21 +186,17 @@ export const TOOLS = [
           description: "Optional message ID to reply to.",
         },
       },
-      required: ["spaceId", "title", "message", "targetEntityId"],
+      required: ["title", "message", "targetEntityId"],
     },
     mode: "sync" as const,
   },
   {
     name: "send_choice",
     description:
-      "Send a choice card with custom buttons. Can target a specific person (auto-resolves on response) or broadcast to everyone (stays open). Returns immediately with {messageId, status:'pending'}.",
+      "Send a choice card with custom buttons in your current space. Can target a specific person (auto-resolves on response) or broadcast to everyone (stays open). Returns immediately with {messageId, status:'pending'}.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        spaceId: {
-          type: "string",
-          description: "The space ID to send the choice in.",
-        },
         text: {
           type: "string",
           description: "The question or prompt text.",
@@ -209,21 +223,17 @@ export const TOOLS = [
           description: "Optional message ID to reply to.",
         },
       },
-      required: ["spaceId", "text", "options"],
+      required: ["text", "options"],
     },
     mode: "sync" as const,
   },
   {
     name: "send_vote",
     description:
-      "Send a vote/poll to a space. All members can vote. Stays open forever (like WhatsApp polls). Returns immediately with {messageId}. You'll receive message_response events as people vote.",
+      "Send a vote/poll in your current space. All members can vote. Stays open forever (like WhatsApp polls). Returns immediately with {messageId}. You'll receive message_response events as people vote.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        spaceId: {
-          type: "string",
-          description: "The space ID to send the vote in.",
-        },
         title: {
           type: "string",
           description: "The vote question/title.",
@@ -242,21 +252,17 @@ export const TOOLS = [
           description: "Optional message ID to reply to.",
         },
       },
-      required: ["spaceId", "title", "options"],
+      required: ["title", "options"],
     },
     mode: "sync" as const,
   },
   {
     name: "send_form",
     description:
-      "Send a form to a space for people to fill out. Can be broadcast (everyone) or targeted. Each person submits independently. Returns immediately with {messageId}.",
+      "Send a form in your current space for people to fill out. Can be broadcast (everyone) or targeted. Each person submits independently. Returns immediately with {messageId}.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        spaceId: {
-          type: "string",
-          description: "The space ID to send the form in.",
-        },
         title: {
           type: "string",
           description: "Form title.",
@@ -298,21 +304,17 @@ export const TOOLS = [
           description: "Optional message ID to reply to.",
         },
       },
-      required: ["spaceId", "title", "fields"],
+      required: ["title", "fields"],
     },
     mode: "sync" as const,
   },
   {
     name: "respond_to_message",
     description:
-      "Respond to an interactive message (confirmation, vote, choice, form). Use this when you want to confirm/reject, vote on a poll, or submit a form response.",
+      "Respond to an interactive message in your current space (confirmation, vote, choice, form). Use this when you want to confirm/reject, vote on a poll, or submit a form response.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        spaceId: {
-          type: "string",
-          description: "The space ID the message is in.",
-        },
         messageId: {
           type: "string",
           description: "The interactive message ID to respond to.",
@@ -322,41 +324,33 @@ export const TOOLS = [
             "Your response value. For confirmation: \"confirmed\" or \"rejected\". For vote/choice: the option string. For form: a JSON object matching the form fields.",
         },
       },
-      required: ["spaceId", "messageId", "value"],
+      required: ["messageId", "value"],
     },
     mode: "sync" as const,
   },
   {
     name: "close_interactive_message",
     description:
-      "Close an interactive message you sent (vote, form, choice). Snapshots the current results as final. Rarely needed — votes/forms normally stay open forever.",
+      "Close an interactive message you sent in your current space (vote, form, choice). Snapshots the current results as final. Rarely needed — votes/forms normally stay open forever.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        spaceId: {
-          type: "string",
-          description: "The space ID the message is in.",
-        },
         messageId: {
           type: "string",
           description: "The interactive message ID to close.",
         },
       },
-      required: ["spaceId", "messageId"],
+      required: ["messageId"],
     },
     mode: "sync" as const,
   },
   {
     name: "invite_to_space",
     description:
-      "Invite someone to a space by email. Requires admin+ role in the space. The person will see a pending invitation they can accept or decline.",
+      "Invite someone to your current space by email. Requires admin+ role. The person will see a pending invitation they can accept or decline.",
     inputSchema: {
       type: "object" as const,
       properties: {
-        spaceId: {
-          type: "string",
-          description: "The space ID to invite to.",
-        },
         email: {
           type: "string",
           description: "Email address of the person to invite.",
@@ -371,23 +365,22 @@ export const TOOLS = [
           description: "Optional personal message with the invitation.",
         },
       },
-      required: ["spaceId", "email"],
+      required: ["email"],
     },
     mode: "sync" as const,
   },
   {
     name: "get_space_members",
     description:
-      "List all members of a space with their roles and entity types.",
+      "List all members of a space with their roles and entity types. Defaults to your current space if no spaceId given.",
     inputSchema: {
       type: "object" as const,
       properties: {
         spaceId: {
           type: "string",
-          description: "The space ID to list members of.",
+          description: "Optional space ID. Defaults to your current space.",
         },
       },
-      required: ["spaceId"],
     },
     mode: "sync" as const,
   },

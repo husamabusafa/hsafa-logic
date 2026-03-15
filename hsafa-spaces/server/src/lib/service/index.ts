@@ -160,7 +160,8 @@ async function setupHaseefConnection(haseef: {
     agentEntityId,
     spaceIds,
     runSpaces: new Map(),
-    typingHeartbeats: new Map(),
+    activeSpace: null,
+    typingHeartbeat: null,
     pendingSeenMessages: [],
   });
 

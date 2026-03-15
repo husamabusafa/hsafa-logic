@@ -27,6 +27,7 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
   const [description, setDescription] = useState("");
   const [model, setModel] = useState("gpt-5.2");
   const [customModel, setCustomModel] = useState("");
+  const [customProvider, setCustomProvider] = useState("openai");
   const [instructions, setInstructions] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +59,23 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
 
   const resolvedModel = model === "custom" ? customModel.trim() : model;
 
+  // Auto-detect provider for predefined models
+  const getProvider = (): string => {
+    if (model === "custom") {
+      return customProvider;
+    }
+    if (model.startsWith("gpt")) {
+      return "openai";
+    }
+    if (model.startsWith("claude")) {
+      return "anthropic";
+    }
+    if (model.startsWith("qwen/") || model.startsWith("moonshotai/")) {
+      return "openrouter";
+    }
+    return "openai"; // default
+  };
+
   const handleCreate = async () => {
     if (!name.trim() || isCreating) return;
     setIsCreating(true);
@@ -67,6 +85,7 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
         name: name.trim(),
         description: description.trim() || undefined,
         model: resolvedModel || undefined,
+        provider: getProvider(),
         instructions: instructions.trim() || undefined,
         ...(avatarUrl ? { avatarUrl } : {}),
       });
@@ -183,13 +202,41 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
               ))}
             </div>
             {model === "custom" && (
-              <input
-                type="text"
-                placeholder="e.g. openrouter/meta-llama/llama-3.1-70b"
-                value={customModel}
-                onChange={(e) => setCustomModel(e.target.value)}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    Provider
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { value: "openai", label: "OpenAI" },
+                      { value: "anthropic", label: "Anthropic" },
+                      { value: "openrouter", label: "OpenRouter" },
+                    ].map((p) => (
+                      <button
+                        key={p.value}
+                        type="button"
+                        onClick={() => setCustomProvider(p.value)}
+                        className={cn(
+                          "rounded-lg border px-3 py-2 text-xs transition-all",
+                          customProvider === p.value
+                            ? "border-primary bg-primary/5 text-primary font-medium"
+                            : "border-border hover:border-primary/30 text-foreground",
+                        )}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <input
+                  type="text"
+                  placeholder="e.g. gpt-4o or meta-llama/llama-3.1-70b"
+                  value={customModel}
+                  onChange={(e) => setCustomModel(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+              </div>
             )}
           </div>
 

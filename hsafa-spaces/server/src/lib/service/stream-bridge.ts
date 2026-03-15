@@ -5,11 +5,13 @@
 // Uses psubscribe('haseef:*:stream') to receive events for ALL connected
 // haseefs through one Redis connection.
 //
-// run.start / run.finish  → agent.active / agent.inactive (all spaces)
-// tool.started            → tool.started  (trigger space only)
-// tool-input.delta        → tool.streaming (trigger space only)
-// tool.done               → tool.done      (trigger space only)
-// tool.error              → tool.error     (trigger space only)
+// Typing & online indicators use the haseef's activeSpace (set by enter_space
+// tool or auto-set on run.started). No more guessing from partial tool args.
+//
+// run.started   → auto-set activeSpace to trigger space, agent.active, online, start typing heartbeat
+// tool.started  → tool.started event (active space), typing in activeSpace for message tools
+// tool.done     → tool.done event (active space)
+// run.finished  → stop heartbeat, typing=false, agent.inactive, offline, clear activeSpace
 // =============================================================================
 
 import Redis from "ioredis";
@@ -22,6 +24,7 @@ import {
   markOffline,
   broadcastTyping,
 } from "../smartspace-events.js";
+import { prisma } from "../db.js";
 import { state, type ActiveConnection } from "./types.js";
 import { isMessageTool } from "./tool-handlers.js";
 import { markHaseefSeen } from "./sense-events.js";
@@ -63,6 +66,30 @@ export async function startSharedSubscriber(): Promise<void> {
   });
 }
 
+// =============================================================================
+// Typing Heartbeat — single interval per connection, broadcasts to activeSpace
+// =============================================================================
+
+function startTypingHeartbeat(conn: ActiveConnection): void {
+  stopTypingHeartbeat(conn);
+  conn.typingHeartbeat = setInterval(() => {
+    if (conn.activeSpace) {
+      void broadcastTyping(conn.activeSpace.spaceId, conn.agentEntityId, conn.haseefName, true);
+    }
+  }, 3000);
+}
+
+function stopTypingHeartbeat(conn: ActiveConnection): void {
+  if (conn.typingHeartbeat) {
+    clearInterval(conn.typingHeartbeat);
+    conn.typingHeartbeat = null;
+  }
+}
+
+// =============================================================================
+// Event Bridge
+// =============================================================================
+
 function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
   try {
     const event = JSON.parse(message) as {
@@ -90,14 +117,27 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
       if (runId && isSpacesTrigger && event.triggerSource) {
         conn.runSpaces.set(runId, event.triggerSource);
       }
-      // Only broadcast to the trigger space (the space that caused this run)
-      const targetSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
-      const targetSpaces = targetSpaceId ? [targetSpaceId] : conn.spaceIds;
+
+      // Auto-set activeSpace to trigger space (haseef is "in" the conversation that triggered it)
+      const triggerSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      if (triggerSpaceId) {
+        // Quick name lookup — best effort, use spaceId as fallback
+        prisma.smartSpace.findUnique({ where: { id: triggerSpaceId }, select: { name: true } })
+          .then((s) => {
+            if (conn.activeSpace?.spaceId === triggerSpaceId) {
+              conn.activeSpace.spaceName = s?.name ?? triggerSpaceId;
+            }
+          })
+          .catch(() => {});
+        conn.activeSpace = { spaceId: triggerSpaceId, spaceName: triggerSpaceId };
+      }
+
+      // Broadcast agent.active + online to trigger space
+      const targetSpaces = triggerSpaceId ? [triggerSpaceId] : conn.spaceIds;
       for (const spaceId of targetSpaces) {
         if (runId) {
           void setSpaceActiveRun(spaceId, runId, conn.agentEntityId, conn.haseefName);
         }
-        // Mark haseef online when cycle starts
         void markOnline(spaceId, conn.agentEntityId);
         void emitSmartSpaceEvent(spaceId, {
           type: "agent.active",
@@ -106,10 +146,13 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           data: { agentEntityId: conn.agentEntityId, agentName: conn.haseefName, runId },
         });
       }
+
+      // Start typing heartbeat — broadcasts to activeSpace every 3s
+      startTypingHeartbeat(conn);
+
       // Flush pending seen messages — run.started means events were consumed from inbox
       if (conn.pendingSeenMessages.length > 0) {
         const pending = conn.pendingSeenMessages.splice(0);
-        // Group by spaceId and take the latest messageId per space
         const latestPerSpace = new Map<string, string>();
         for (const p of pending) {
           latestPerSpace.set(p.spaceId, p.messageId);
@@ -119,7 +162,8 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
         }
       }
     } else if (event.type === "tool.started") {
-      const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      // Emit tool.started to the active space
+      const spaceId = conn.activeSpace?.spaceId;
       if (spaceId) {
         void emitSmartSpaceEvent(spaceId, {
           type: "tool.started",
@@ -128,41 +172,14 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           agentEntityId: conn.agentEntityId,
           runId,
         });
-        // Show typing when agent starts composing a message
-        // (initially in trigger space — corrected when tool.ready arrives with target spaceId)
+        // Typing indicator fires in activeSpace — always correct since
+        // haseef must enter_space before calling message tools
         if (isMessageTool(event.toolName)) {
           void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
-          // Start typing heartbeat — re-broadcast every 3s so client's 5s auto-expire
-          // doesn't kill the indicator during long message composition
-          if (runId && !conn.typingHeartbeats.has(runId)) {
-            const typingSpaceId = spaceId;
-            const hb = setInterval(() => {
-              // Use the possibly-updated typing space from runTypingSpaces
-              const currentTypingSpace = (conn as any)._runTypingSpaces?.get(runId) ?? typingSpaceId;
-              void broadcastTyping(currentTypingSpace, conn.agentEntityId, conn.haseefName, true);
-            }, 3000);
-            conn.typingHeartbeats.set(runId, hb);
-          }
-        }
-      }
-    } else if (event.type === "tool.ready") {
-      // tool.ready has full args — for message tools, check if target space
-      // differs from trigger space and move typing indicator accordingly
-      const triggerSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
-      if (triggerSpaceId && isMessageTool(event.toolName)) {
-        const args = event.args as Record<string, unknown> | undefined;
-        const targetSpaceId = args?.spaceId as string | undefined;
-        if (targetSpaceId && targetSpaceId !== triggerSpaceId) {
-          // Move typing from trigger space to target space
-          void broadcastTyping(triggerSpaceId, conn.agentEntityId, conn.haseefName, false);
-          void broadcastTyping(targetSpaceId, conn.agentEntityId, conn.haseefName, true);
-          // Track the current typing space for this run so heartbeat and done use it
-          if (!(conn as any)._runTypingSpaces) (conn as any)._runTypingSpaces = new Map<string, string>();
-          (conn as any)._runTypingSpaces.set(runId!, targetSpaceId);
         }
       }
     } else if (event.type === "tool-input.delta") {
-      const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      const spaceId = conn.activeSpace?.spaceId;
       if (spaceId) {
         void emitSmartSpaceEvent(spaceId, {
           type: "tool.streaming",
@@ -174,7 +191,7 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
         });
       }
     } else if (event.type === "tool.done") {
-      const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      const spaceId = conn.activeSpace?.spaceId;
       if (spaceId) {
         void emitSmartSpaceEvent(spaceId, {
           type: "tool.done",
@@ -184,17 +201,9 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           agentEntityId: conn.agentEntityId,
           runId,
         });
-        // Stop typing when message tool finishes — use the actual typing space
-        // (may have been moved to target space by tool.ready handler)
-        if (isMessageTool(event.toolName)) {
-          const typingSpace = (conn as any)._runTypingSpaces?.get(runId) ?? spaceId;
-          void broadcastTyping(typingSpace, conn.agentEntityId, conn.haseefName, false);
-          // Clean up the per-tool typing space tracking
-          (conn as any)._runTypingSpaces?.delete(runId);
-        }
       }
     } else if (event.type === "tool.error") {
-      const spaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      const spaceId = conn.activeSpace?.spaceId;
       if (spaceId) {
         void emitSmartSpaceEvent(spaceId, {
           type: "tool.error",
@@ -208,34 +217,19 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
     } else if (event.type === "run.finished") {
       const hasError = !!(event as any).error;
 
-      // Stop typing heartbeat FIRST
-      if (runId) {
-        const hb = conn.typingHeartbeats.get(runId);
-        if (hb) {
-          clearInterval(hb);
-          conn.typingHeartbeats.delete(runId);
-        }
+      // Stop typing heartbeat
+      stopTypingHeartbeat(conn);
+
+      // Clear typing in the active space
+      if (conn.activeSpace) {
+        void broadcastTyping(conn.activeSpace.spaceId, conn.agentEntityId, conn.haseefName, false);
       }
 
-      // Also clear typing in any cross-space target that was tracked
-      if (runId) {
-        const crossSpaceId = (conn as any)._runTypingSpaces?.get(runId) as string | undefined;
-        if (crossSpaceId) {
-          void broadcastTyping(crossSpaceId, conn.agentEntityId, conn.haseefName, false);
-          (conn as any)._runTypingSpaces.delete(runId);
-        }
-      }
+      const triggerSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      const targetSpaces = triggerSpaceId ? [triggerSpaceId] : conn.spaceIds;
 
-      // On failed runs (process will retry), only clear typing but do NOT
-      // send agent.inactive / markOffline — this prevents online/offline
-      // flickering when a haseef retries after transient errors.
       if (hasError) {
-        const targetSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
-        const targetSpaces = targetSpaceId ? [targetSpaceId] : conn.spaceIds;
-        for (const spaceId of targetSpaces) {
-          void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, false);
-        }
-        // Clean up the failed run's active run entry and space mapping
+        // On failed runs, only clear active run entries (no agent.inactive / offline)
         if (runId) {
           for (const spaceId of targetSpaces) {
             void removeSpaceActiveRun(spaceId, runId);
@@ -243,22 +237,17 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           conn.runSpaces.delete(runId);
         }
       } else {
-        // Successful completion — broadcast agent.inactive and go offline
-        const targetSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
-        const targetSpaces = targetSpaceId ? [targetSpaceId] : conn.spaceIds;
+        // Successful completion — agent.inactive + offline
         for (const spaceId of targetSpaces) {
           if (runId) {
             void removeSpaceActiveRun(spaceId, runId);
           }
-          // Typing=false BEFORE agent.inactive so UI clears typing before removing active state
-          void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, false);
           void emitSmartSpaceEvent(spaceId, {
             type: "agent.inactive",
             agentEntityId: conn.agentEntityId,
             runId,
             data: { agentEntityId: conn.agentEntityId, runId },
           });
-          // Mark haseef offline when cycle finishes (only if no other active runs in this space)
           listSpaceActiveRuns(spaceId).then((runs) => {
             const stillActive = runs.some((r) => r.entityId === conn.agentEntityId);
             if (!stillActive) {
@@ -268,6 +257,9 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
         }
         if (runId) conn.runSpaces.delete(runId);
       }
+
+      // Clear active space — run is over
+      conn.activeSpace = null;
     }
   } catch {}
 }
