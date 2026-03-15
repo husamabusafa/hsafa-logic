@@ -1442,18 +1442,6 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
       isYou: m.entityId === conn.agentEntityId,
     }));
 
-    // Detect if the message is directed at this haseef:
-    // 1. The message is a reply to a message this haseef sent
-    // 2. The message mentions the haseef by name
-    // 3. It's a 1-on-1 space (only 2 members)
-    const replyToData = replyTo as { senderName?: string; messageId?: string } | undefined;
-    const haseefDisplayName = memberRows.find((m) => m.entityId === conn.agentEntityId)?.displayName ?? conn.haseefName;
-    const isReplyToYou = !!replyToData?.senderName &&
-      replyToData.senderName.toLowerCase() === haseefDisplayName.toLowerCase();
-    const mentionsYou = content.toLowerCase().includes(haseefDisplayName.toLowerCase()) ||
-      content.toLowerCase().includes(conn.haseefName.toLowerCase());
-    const isDirectedAtYou = !isGroupSpace || isReplyToYou || mentionsYou;
-
     const eventData: Record<string, unknown> = {
       messageId,
       spaceId,
@@ -1465,7 +1453,6 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
       recentMessages,
       spaceMembers,
       isGroupSpace,
-      isDirectedAtYou,
     };
     // Include message type info (§17.8)
     if (messageType && messageType !== "text") {
@@ -1480,7 +1467,6 @@ async function handleInboxMessage(params: InboxMessageParams): Promise<void> {
       recentMessageIds: recentMessages.map((m: any) => `${m.messageId?.slice(0,8)}...(${m.sender})`),
       hasReplyTo: !!replyTo,
       isGroupSpace,
-      isDirectedAtYou,
     }));
 
     await pushSenseEvent(conn.haseefId, {

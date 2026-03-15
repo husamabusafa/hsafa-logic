@@ -328,7 +328,6 @@ export function formatInboxEvents(events: SenseEvent[]): string {
         name: string; type: string; role: string; isYou: boolean;
       }> | undefined;
       const isGroupSpace = data.isGroupSpace as boolean | undefined;
-      const isDirectedAtYou = data.isDirectedAtYou as boolean | undefined;
 
       // Build space header (members + type) — rendered once per space
       let spaceHeader = '';
@@ -340,11 +339,6 @@ export function formatInboxEvents(events: SenseEvent[]): string {
         const spaceType = isGroupSpace ? 'GROUP' : '1-on-1';
         spaceHeader = `  [space: ${spaceType}, members: ${memberList}]\n`;
       }
-
-      // Directed-at hint for group spaces
-      const directedTag = isGroupSpace !== undefined && isGroupSpace
-        ? (isDirectedAtYou ? ' [directed at you]' : ' [NOT directed at you — someone else is being addressed]')
-        : '';
 
       if (recentMessages && recentMessages.length > 0 && spaceId && !spaceContextRendered.has(spaceId)) {
         spaceContextRendered.add(spaceId);
@@ -359,11 +353,11 @@ export function formatInboxEvents(events: SenseEvent[]): string {
         blocks.push(
           `${spaceHeader}` +
           `  [recent conversation in "${spaceName}"]:\n${contextLines.join('\n')}\n` +
-          `  >>> NEW MESSAGE${directedTag}:\n` +
+          `  >>> NEW MESSAGE:\n` +
           `  ${senderName}${spaceInfo}${msgIdTag}${replyTag}: "${content}"`,
         );
       } else {
-        blocks.push(`${spaceHeader}[${e.scope}:${e.type}]${ts} ${senderName}${spaceInfo}${msgIdTag}${replyTag}${directedTag}: "${content}"`);
+        blocks.push(`${spaceHeader}[${e.scope}:${e.type}]${ts} ${senderName}${spaceInfo}${msgIdTag}${replyTag}: "${content}"`);
       }
     } else {
       // Generic format
