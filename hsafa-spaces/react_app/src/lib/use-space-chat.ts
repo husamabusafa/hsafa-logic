@@ -412,6 +412,50 @@ export function useSpaceChat(
           );
           break;
         }
+
+        case "message.response":
+        case "message.response_updated": {
+          // Someone responded to an interactive message — update responseSummary in place
+          const msgId = data.messageId as string;
+          const responseSummary = data.responseSummary as MockMessage["responseSummary"];
+          if (!msgId || !responseSummary) break;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === msgId ? { ...m, responseSummary } : m,
+            ),
+          );
+          break;
+        }
+
+        case "message.resolved": {
+          const msgId = data.messageId as string;
+          const resolution = data.resolution as MockMessage["resolution"];
+          const responseSummary = data.responseSummary as MockMessage["responseSummary"];
+          if (!msgId) break;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === msgId
+                ? { ...m, status: "resolved" as const, resolution, ...(responseSummary ? { responseSummary } : {}) }
+                : m,
+            ),
+          );
+          break;
+        }
+
+        case "message.closed": {
+          const msgId = data.messageId as string;
+          const resolution = data.resolution as MockMessage["resolution"];
+          const responseSummary = data.responseSummary as MockMessage["responseSummary"];
+          if (!msgId) break;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === msgId
+                ? { ...m, status: "closed" as const, resolution, ...(responseSummary ? { responseSummary } : {}) }
+                : m,
+            ),
+          );
+          break;
+        }
       }
     },
     [],

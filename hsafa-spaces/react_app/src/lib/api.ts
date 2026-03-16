@@ -284,6 +284,20 @@ export const spacesApi = {
     });
   },
 
+  // Responses (interactive messages)
+  respondToMessage(spaceId: string, messageId: string, value: unknown) {
+    return request<{ success: boolean; isUpdate: boolean; resolved: boolean; responseSummary: Record<string, unknown> }>(
+      `/smart-spaces/${spaceId}/messages/${messageId}/respond`,
+      { method: "POST", body: JSON.stringify({ value }) },
+    );
+  },
+
+  listResponses(spaceId: string, messageId: string) {
+    return request<{ responses: Array<{ entityId: string; entityName: string; entityType: string; value: unknown; createdAt: string; updatedAt: string }> }>(
+      `/smart-spaces/${spaceId}/messages/${messageId}/responses`,
+    );
+  },
+
   // Typing & Seen
   sendTyping(spaceId: string, typing: boolean = true) {
     return request<{ success: boolean }>(`/smart-spaces/${spaceId}/typing`, {

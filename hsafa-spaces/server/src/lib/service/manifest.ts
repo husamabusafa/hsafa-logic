@@ -63,15 +63,16 @@ REPLY-TO (THREADING):
   - In 1-on-1 spaces, replyTo is usually unnecessary since context is clear.
 
 INTERACTIVE MESSAGES:
-  - Use spaces_send_confirmation to ask someone to confirm/reject something. You'll get a message_resolved event with the outcome.
-  - Use spaces_send_choice to present options. Target a specific person or broadcast to everyone.
-  - Use spaces_send_vote to create polls. Stays open forever — you'll get message_response events as people vote.
-  - Use spaces_send_form to collect structured data from people.
+  - All interactive messages are BROADCAST — everyone in the space can respond, and they never auto-close.
+  - Use spaces_send_confirmation to ask a yes/no question. Everyone sees Confirm/Cancel buttons.
+  - Use spaces_send_choice to present options. Everyone can pick one.
+  - Use spaces_send_vote to create polls. Everyone can vote.
+  - Use spaces_send_form to collect structured data from everyone.
   - Use spaces_respond_to_message to respond to interactive messages others created (vote on polls, confirm requests, etc.).
   - Use spaces_close_interactive_message only if you explicitly want to finalize a vote/form early (rare).
   - All interactive message tools send to your CURRENT space (the one you last entered).
-  - When you receive a message_resolved event, read the outcome and act on it immediately.
-  - When you receive a message_response event, you can track progress (e.g. vote counts) but don't need to act unless relevant.
+  - You'll receive message_response events as people respond — track progress (e.g. vote counts, confirmations).
+  - When you receive a message_response event with the response data, acknowledge it if relevant.
 
 DISCOVERING SPACES:
   - Use spaces_get_spaces to list ALL spaces you are a member of (returns id, name, description, memberCount).
@@ -165,7 +166,7 @@ export const TOOLS = [
   {
     name: "send_confirmation",
     description:
-      "Send a confirmation card to a specific person in your current space. They will see Confirm/Cancel buttons. Returns immediately with {messageId, status:'pending'}. You will receive a message_resolved sense event when they respond.",
+      "Send a confirmation card to your current space. All members can confirm or reject. Stays open — you'll receive message_response events as people respond. Returns immediately with {messageId, status:'open'}.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -176,11 +177,6 @@ export const TOOLS = [
         message: {
           type: "string",
           description: "The message or question to display.",
-        },
-        targetEntityId: {
-          type: "string",
-          description:
-            "The entity ID of the person who should confirm/reject.",
         },
         confirmLabel: {
           type: "string",
@@ -195,14 +191,14 @@ export const TOOLS = [
           description: "Optional message ID to reply to.",
         },
       },
-      required: ["title", "message", "targetEntityId"],
+      required: ["title", "message"],
     },
     mode: "sync" as const,
   },
   {
     name: "send_choice",
     description:
-      "Send a choice card with custom buttons in your current space. Can target a specific person (auto-resolves on response) or broadcast to everyone (stays open). Returns immediately with {messageId, status:'pending'}.",
+      "Send a choice card with custom buttons in your current space. All members can respond. Stays open. Returns immediately with {messageId, status:'open'}.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -221,11 +217,6 @@ export const TOOLS = [
             required: ["label", "value"],
           },
           description: "The options to choose from: [{label, value}, ...]",
-        },
-        targetEntityId: {
-          type: "string",
-          description:
-            "Optional: target a specific person. If omitted, all members can respond (broadcast).",
         },
         replyTo: {
           type: "string",
@@ -268,7 +259,7 @@ export const TOOLS = [
   {
     name: "send_form",
     description:
-      "Send a form in your current space for people to fill out. Can be broadcast (everyone) or targeted. Each person submits independently. Returns immediately with {messageId}.",
+      "Send a form in your current space for people to fill out. All members can submit independently. Stays open. Returns immediately with {messageId}.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -302,11 +293,6 @@ export const TOOLS = [
             required: ["name", "label", "type"],
           },
           description: "Form fields definition.",
-        },
-        targetEntityIds: {
-          type: "array",
-          items: { type: "string" },
-          description: "Optional: target specific people (makes it targeted, auto-resolves when all submit).",
         },
         replyTo: {
           type: "string",

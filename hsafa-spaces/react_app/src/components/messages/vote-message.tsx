@@ -1,20 +1,37 @@
-import { type MockMessage, currentUser } from "@/lib/mock-data";
+import { useState } from "react";
+import { type MockMessage } from "@/lib/mock-data";
 import { BarChart3Icon, CheckIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useInteractive } from "@/lib/interactive-context";
+import { ResponsesDrawer } from "./responses-drawer";
 
 interface VoteMessageProps {
   message: MockMessage;
 }
 
 export function VoteMessage({ message }: VoteMessageProps) {
+  const { respondToMessage, currentEntityId } = useInteractive();
+  const [submitting, setSubmitting] = useState<string | null>(null);
+
   const options = message.options || [];
   const counts = message.responseSummary?.counts || {};
   const totalVotes = message.responseSummary?.totalResponses || 0;
   const myResponse = message.responseSummary?.responses?.find(
-    (r) => r.entityId === currentUser.entityId
+    (r) => r.entityId === currentEntityId
   );
   const myVote = myResponse?.value as string | undefined;
   const isClosed = message.status === "closed";
+
+  const handleVote = async (option: string) => {
+    setSubmitting(option);
+    try {
+      await respondToMessage(message.id, option);
+    } catch (err) {
+      console.error("Failed to vote:", err);
+    } finally {
+      setSubmitting(null);
+    }
+  };
 
   return (
     <div className="space-y-2">
@@ -32,7 +49,8 @@ export function VoteMessage({ message }: VoteMessageProps) {
           return (
             <button
               key={option}
-              disabled={isClosed}
+              disabled={isClosed || submitting !== null}
+              onClick={() => handleVote(option)}
               className={cn(
                 "w-full relative rounded-lg border px-2.5 py-1.5 text-left transition-all overflow-hidden",
                 isMyVote
@@ -61,6 +79,8 @@ export function VoteMessage({ message }: VoteMessageProps) {
         <span>{totalVotes} {totalVotes === 1 ? "vote" : "votes"}</span>
         <span>{isClosed ? "Closed" : myVote ? "Tap to change" : "Tap to vote"}</span>
       </div>
+
+      <ResponsesDrawer responseSummary={message.responseSummary} />
     </div>
   );
 }

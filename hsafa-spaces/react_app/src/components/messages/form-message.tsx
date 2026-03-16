@@ -1,19 +1,63 @@
 import { useState } from "react";
-import { type MockMessage, currentUser } from "@/lib/mock-data";
+import { type MockMessage } from "@/lib/mock-data";
 import { Button } from "@/components/ui/button";
-import { ClipboardListIcon, CheckIcon, UsersIcon } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { ClipboardListIcon, CheckIcon } from "lucide-react";
+import { useInteractive } from "@/lib/interactive-context";
+import { ResponsesDrawer } from "./responses-drawer";
 
 interface FormMessageProps {
   message: MockMessage;
 }
 
 export function FormMessage({ message }: FormMessageProps) {
+  const { respondToMessage, currentEntityId } = useInteractive();
   const fields = message.formFields || [];
-  const totalResponses = message.responseSummary?.totalResponses || 0;
-  const hasResponded = message.responseSummary?.respondedEntityIds?.includes(currentUser.entityId) ?? false;
   const isClosed = message.status === "closed";
-  const [showResponses, setShowResponses] = useState(false);
+  const myResponse = message.responseSummary?.responses?.find(
+    (r) => r.entityId === currentEntityId,
+  );
+  const hasResponded = !!myResponse;
+
+  const [formData, setFormData] = useState<Record<string, string>>(() => {
+    // Pre-fill with previous response if updating
+    if (myResponse && typeof myResponse.value === "object" && myResponse.value !== null) {
+      const prev: Record<string, string> = {};
+      for (const [k, v] of Object.entries(myResponse.value as Record<string, unknown>)) {
+        prev[k] = String(v ?? "");
+      }
+      return prev;
+    }
+    return {};
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [editing, setEditing] = useState(false);
+
+  const showForm = (!hasResponded || editing) && !isClosed;
+
+  const handleSubmit = async () => {
+    // Validate required fields
+    for (const field of fields) {
+      if (field.required && !formData[field.name]?.trim()) return;
+    }
+    setSubmitting(true);
+    try {
+      await respondToMessage(message.id, formData);
+      setEditing(false);
+    } catch (err) {
+      console.error("Failed to submit form:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const formatValue = (value: unknown): string => {
+    if (typeof value === "object" && value !== null) {
+      return Object.entries(value as Record<string, unknown>)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ");
+    }
+    return String(value);
+  };
 
   return (
     <div className="space-y-2">
@@ -25,7 +69,7 @@ export function FormMessage({ message }: FormMessageProps) {
         <p className="text-xs opacity-70">{message.formDescription}</p>
       )}
 
-      {!hasResponded && !isClosed && (
+      {showForm && (
         <div className="space-y-2 pt-1">
           {fields.map((field) => (
             <div key={field.name}>
@@ -36,10 +80,16 @@ export function FormMessage({ message }: FormMessageProps) {
               {field.type === "textarea" ? (
                 <textarea
                   placeholder={field.placeholder}
+                  value={formData[field.name] || ""}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, [field.name]: e.target.value }))}
                   className="w-full rounded-lg border border-border/50 bg-background/50 px-2.5 py-1.5 text-xs resize-none h-12 focus:outline-none focus:ring-1 focus:ring-primary/50"
                 />
               ) : field.type === "select" ? (
-                <select className="w-full rounded-lg border border-border/50 bg-background/50 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50">
+                <select
+                  value={formData[field.name] || ""}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, [field.name]: e.target.value }))}
+                  className="w-full rounded-lg border border-border/50 bg-background/50 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                >
                   <option value="">Select...</option>
                   {field.options?.map((opt) => (
                     <option key={opt} value={opt}>{opt}</option>
@@ -49,19 +99,31 @@ export function FormMessage({ message }: FormMessageProps) {
                 <input
                   type={field.type}
                   placeholder={field.placeholder}
+                  value={formData[field.name] || ""}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, [field.name]: e.target.value }))}
                   className="w-full rounded-lg border border-border/50 bg-background/50 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
                 />
               )}
             </div>
           ))}
-          <Button size="sm" className="w-full h-7 text-xs">Submit</Button>
+          <Button size="sm" className="w-full h-7 text-xs" disabled={submitting} onClick={handleSubmit}>
+            {submitting ? "Submitting..." : hasResponded ? "Update Response" : "Submit"}
+          </Button>
         </div>
       )}
 
-      {hasResponded && (
-        <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-          <CheckIcon className="size-3.5" />
-          <span>You submitted your response</span>
+      {hasResponded && !editing && !isClosed && (
+        <div className="flex items-center gap-2 text-xs">
+          <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
+            <CheckIcon className="size-3.5" />
+            <span>You submitted your response</span>
+          </div>
+          <button
+            onClick={() => setEditing(true)}
+            className="text-primary/70 hover:text-primary underline text-[11px]"
+          >
+            Edit
+          </button>
         </div>
       )}
 
@@ -69,34 +131,7 @@ export function FormMessage({ message }: FormMessageProps) {
         <div className="text-xs opacity-60">This form is closed.</div>
       )}
 
-      <button
-        onClick={() => setShowResponses(!showResponses)}
-        className="flex items-center gap-1.5 text-[10px] opacity-60 hover:opacity-100 transition-opacity"
-      >
-        <UsersIcon className="size-3" />
-        <span>{totalResponses} {totalResponses === 1 ? "response" : "responses"}</span>
-      </button>
-
-      {showResponses && totalResponses > 0 && (
-        <div className="space-y-1.5 pt-1 border-t border-current/10 max-h-32 overflow-y-auto">
-          {message.responseSummary?.responses?.map((r) => (
-            <div key={r.entityId} className="text-[11px]">
-              <span className="font-medium">{r.entityName}</span>
-              <div className="mt-0.5 opacity-70">
-                {typeof r.value === "object" && r.value !== null
-                  ? Object.entries(r.value as Record<string, unknown>).map(([k, v]) => (
-                      <div key={k} className={cn("flex gap-1")}>
-                        <span className="font-medium capitalize">{k.replace(/_/g, " ")}:</span>
-                        <span>{String(v)}</span>
-                      </div>
-                    ))
-                  : String(r.value)
-                }
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <ResponsesDrawer responseSummary={message.responseSummary} formatValue={formatValue} />
     </div>
   );
 }

@@ -36,6 +36,7 @@ import { ForwardDialog } from "@/components/chat-forward-dialog";
 import { SeenInfoPopup } from "@/components/chat-seen-info";
 import { AiGeneratedPreview } from "@/components/chat-ai-previews";
 import { SearchResults } from "@/components/chat-search-results";
+import { InteractiveProvider } from "@/lib/interactive-context";
 
 interface ChatViewProps {
   space: MockSpace;
@@ -518,6 +519,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
       )}
 
       {/* Messages */}
+      <InteractiveProvider spaceId={space.id} currentEntityId={currentEntityId}>
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
@@ -606,6 +608,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
 
         <div ref={bottomRef} />
       </div>
+      </InteractiveProvider>
 
       {/* AI Generation Popup - positioned above composer */}
       {aiGenType && (

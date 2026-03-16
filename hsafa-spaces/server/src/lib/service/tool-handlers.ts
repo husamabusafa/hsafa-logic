@@ -251,9 +251,8 @@ export async function executeAction(
 
         const title = args.title as string;
         const message = args.message as string;
-        const targetEntityId = args.targetEntityId as string;
-        if (!title || !message || !targetEntityId)
-          return { error: "title, message, and targetEntityId are required" };
+        if (!title || !message)
+          return { error: "title and message are required" };
         if (!agentEntityId)
           return { error: "agentEntityId not resolved" };
 
@@ -271,12 +270,11 @@ export async function executeAction(
           metadata: {
             toolName,
             actionId,
-            audience: "targeted",
-            targetEntityIds: [targetEntityId],
+            audience: "broadcast",
             status: "open",
             responseSchema: { type: "enum", values: ["confirmed", "rejected"] },
             payload: { title, message, confirmLabel, rejectLabel },
-            responseSummary: { totalResponses: 0, responses: [], respondedEntityIds: [] },
+            responseSummary: { totalResponses: 0, responses: [] },
           },
         });
 
@@ -286,8 +284,8 @@ export async function executeAction(
         return {
           success: true,
           messageId: result.messageId,
-          status: "pending",
-          message: `Confirmation sent to target. You'll receive a message_resolved event when they respond.`,
+          status: "open",
+          message: `Confirmation broadcast to all members. You'll receive message_response events as people respond.`,
         };
       }
 
@@ -303,8 +301,6 @@ export async function executeAction(
         if (!agentEntityId)
           return { error: "agentEntityId not resolved" };
 
-        const targetEntityId = args.targetEntityId as string | undefined;
-        const isTargeted = !!targetEntityId;
         const values = options.map((o) => o.value);
         const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
 
@@ -318,12 +314,11 @@ export async function executeAction(
           metadata: {
             toolName,
             actionId,
-            audience: isTargeted ? "targeted" : "broadcast",
-            ...(isTargeted ? { targetEntityIds: [targetEntityId] } : {}),
+            audience: "broadcast",
             status: "open",
             responseSchema: { type: "enum", values },
             payload: { text, options },
-            responseSummary: { totalResponses: 0, responses: [], ...(isTargeted ? { respondedEntityIds: [] } : {}) },
+            responseSummary: { totalResponses: 0, responses: [] },
           },
         });
 
@@ -332,10 +327,8 @@ export async function executeAction(
         return {
           success: true,
           messageId: result.messageId,
-          status: "pending",
-          message: isTargeted
-            ? `Choice sent to target. You'll receive a message_resolved event when they respond.`
-            : `Choice broadcast to all members. You'll receive message_response events as people respond.`,
+          status: "open",
+          message: `Choice broadcast to all members. You'll receive message_response events as people respond.`,
         };
       }
 
@@ -399,8 +392,6 @@ export async function executeAction(
           return { error: "agentEntityId not resolved" };
 
         const description = args.description as string | undefined;
-        const targetEntityIds = args.targetEntityIds as string[] | undefined;
-        const isTargeted = Array.isArray(targetEntityIds) && targetEntityIds.length > 0;
 
         // Build a basic JSON schema from fields for validation
         const jsonSchema: Record<string, unknown> = {
@@ -433,12 +424,11 @@ export async function executeAction(
           metadata: {
             toolName,
             actionId,
-            audience: isTargeted ? "targeted" : "broadcast",
-            ...(isTargeted ? { targetEntityIds } : {}),
+            audience: "broadcast",
             status: "open",
             responseSchema: { type: "json", schema: jsonSchema },
             payload: { title, description, fields },
-            responseSummary: { totalResponses: 0, responses: [], ...(isTargeted ? { respondedEntityIds: [] } : {}) },
+            responseSummary: { totalResponses: 0, responses: [] },
           },
         });
 
@@ -448,9 +438,7 @@ export async function executeAction(
           success: true,
           messageId: result.messageId,
           status: "open",
-          message: isTargeted
-            ? `Form sent to target. You'll receive a message_resolved event when they submit.`
-            : `Form broadcast to all members. You'll receive message_response events as people submit.`,
+          message: `Form broadcast to all members. You'll receive message_response events as people submit.`,
         };
       }
 
