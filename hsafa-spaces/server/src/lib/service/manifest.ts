@@ -81,7 +81,16 @@ DISCOVERING SPACES:
 
 SPACE MANAGEMENT:
   - Use spaces_get_space_members to see who is in a space (names, roles, entity IDs).
-  - Use spaces_invite_to_space to invite someone by email (requires admin+ role).`;
+  - Use spaces_invite_to_space to invite someone by email (requires admin+ role).
+
+MEDIA MESSAGES:
+  - Use spaces_send_image to share an image by URL (e.g. generated images, external links).
+  - Use spaces_send_voice to send a voice message with text that will be converted to speech (TTS).
+  - Use spaces_send_file to share a file by URL.
+  - Use spaces_send_card to send a rich card with title, body, optional image, and action buttons.
+  - When you receive a media message from someone (image, voice, file), you will see a text description
+    of the content. Respond naturally — you don't need to "see" images to discuss them.
+  - Voice messages from humans are automatically transcribed — you'll receive the text transcription.`;
 
 /**
  * Tool definitions to register with Core.
@@ -381,6 +390,124 @@ export const TOOLS = [
           description: "Optional space ID. Defaults to your current space.",
         },
       },
+    },
+    mode: "sync" as const,
+  },
+  {
+    name: "send_image",
+    description:
+      "Send an image message to your current space. Provide a URL to an image (e.g. a generated image, an external link). Returns {success:true, messageId}.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        imageUrl: {
+          type: "string",
+          description: "URL of the image to send.",
+        },
+        caption: {
+          type: "string",
+          description: "Optional caption/description for the image.",
+        },
+        replyTo: {
+          type: "string",
+          description: "Optional message ID to reply to.",
+        },
+      },
+      required: ["imageUrl"],
+    },
+    mode: "sync" as const,
+  },
+  {
+    name: "send_voice",
+    description:
+      "Send a voice message to your current space. Provide the text you want spoken — it will be converted to audio via TTS. Returns {success:true, messageId, audioUrl}.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        text: {
+          type: "string",
+          description: "The text to convert to speech and send as a voice message.",
+        },
+        replyTo: {
+          type: "string",
+          description: "Optional message ID to reply to.",
+        },
+      },
+      required: ["text"],
+    },
+    mode: "sync" as const,
+    timeout: 30000,
+  },
+  {
+    name: "send_file",
+    description:
+      "Send a file message to your current space. Provide a URL to the file. Returns {success:true, messageId}.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        fileUrl: {
+          type: "string",
+          description: "URL of the file to send.",
+        },
+        fileName: {
+          type: "string",
+          description: "Display name for the file.",
+        },
+        fileMimeType: {
+          type: "string",
+          description: "MIME type of the file (e.g. application/pdf).",
+        },
+        fileSize: {
+          type: "number",
+          description: "File size in bytes.",
+        },
+        replyTo: {
+          type: "string",
+          description: "Optional message ID to reply to.",
+        },
+      },
+      required: ["fileUrl", "fileName"],
+    },
+    mode: "sync" as const,
+  },
+  {
+    name: "send_card",
+    description:
+      "Send a rich card message to your current space. Cards have a title, body text, optional image, and optional action buttons. Action buttons are broadcast interactive (anyone can click). Returns {success:true, messageId}.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        title: {
+          type: "string",
+          description: "Card title.",
+        },
+        body: {
+          type: "string",
+          description: "Card body text/description.",
+        },
+        imageUrl: {
+          type: "string",
+          description: "Optional image URL for the card header.",
+        },
+        actions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string", description: "Button display text." },
+              value: { type: "string", description: "Value sent on click." },
+              style: { type: "string", enum: ["default", "primary", "danger"], description: "Button style." },
+            },
+            required: ["label", "value"],
+          },
+          description: "Optional action buttons on the card.",
+        },
+        replyTo: {
+          type: "string",
+          description: "Optional message ID to reply to.",
+        },
+      },
+      required: ["title", "body"],
     },
     mode: "sync" as const,
   },

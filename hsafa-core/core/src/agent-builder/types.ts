@@ -5,6 +5,7 @@
 // to every prebuilt tool execute function.
 
 import { z } from 'zod';
+import type { LanguageModel, ToolSet } from 'ai';
 
 // =============================================================================
 // Config JSON Schema
@@ -138,9 +139,9 @@ export interface HaseefProcessContext {
 
 export interface BuiltHaseef {
   /** AI SDK–compatible tools object (prebuilt + scoped + MCP) */
-  tools: Record<string, unknown>;
+  tools: ToolSet;
   /** The resolved LLM model instance */
-  model: unknown;
+  model: LanguageModel;
   /** Active MCP clients to close after cycle completes */
   mcpClients: Array<{ close(): Promise<void> }>;
 }

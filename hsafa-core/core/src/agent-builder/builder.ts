@@ -1,3 +1,4 @@
+import type { ToolSet } from 'ai';
 import { resolveModel } from '../lib/model-registry.js';
 import {
   HaseefConfigSchema,
@@ -118,7 +119,7 @@ export async function buildHaseef(
   const mcp = await loadMCPTools(mcpServers, context.haseefName);
 
   // Merge: prebuilt → scoped → MCP (later sources override on name collision)
-  const tools = { ...prebuilt, ...scoped, ...mcp.tools };
+  const tools = { ...prebuilt, ...scoped, ...mcp.tools } as ToolSet;
 
   return { tools, model, mcpClients: mcp.clients };
 }

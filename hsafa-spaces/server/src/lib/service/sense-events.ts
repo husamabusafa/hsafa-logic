@@ -137,6 +137,15 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       isYou: m.entityId === conn.agentEntityId,
     }));
 
+    // Build content with text fallback for media messages
+    // Non-multimodal LLMs can't process images/audio/video — provide text descriptions
+    let eventContent = content;
+    if (messageType && messageType !== "text") {
+      const payload = metadata?.payload as Record<string, unknown> | undefined;
+      const files = metadata?.files as Array<Record<string, unknown>> | undefined;
+      eventContent = buildMediaFallbackContent(messageType, content, payload, files);
+    }
+
     const eventData: Record<string, unknown> = {
       messageId,
       spaceId,
@@ -144,7 +153,7 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       senderId: entityId,
       senderName,
       senderType,
-      content,
+      content: eventContent,
       recentMessages,
       spaceMembers,
       isGroupSpace,
@@ -152,6 +161,13 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
     // Include message type info (§17.8)
     if (messageType && messageType !== "text") {
       eventData.messageType = messageType;
+    }
+    if (metadata?.payload) {
+      eventData.payload = metadata.payload;
+    }
+    // Include file attachments so Core can see them (multimodal)
+    if (metadata?.files && Array.isArray(metadata.files)) {
+      eventData.files = metadata.files;
     }
     if (replyTo) {
       eventData.replyTo = replyTo;
@@ -351,4 +367,87 @@ export async function emitEntityChannelEvent(
 ): Promise<void> {
   const channel = `entity:${entityId}`;
   await redis.publish(channel, JSON.stringify(event));
+}
+
+// =============================================================================
+// Media Fallback Content — text descriptions for non-multimodal LLMs
+//
+// When a human sends an image, voice, or file message, the haseef receives a
+// text description so it can still understand and respond to the message even
+// if its underlying LLM cannot process binary media.
+// =============================================================================
+
+function buildMediaFallbackContent(
+  messageType: string,
+  originalContent: string | null,
+  payload?: Record<string, unknown>,
+  files?: Array<Record<string, unknown>>,
+): string {
+  // If there are multiple file attachments, describe them
+  if (files && files.length > 0) {
+    const descriptions = files.map((f) => {
+      const name = f.fileName as string || "unknown";
+      const type = f.type as string || "file";
+      const size = f.fileSize as number | undefined;
+      const sizeStr = size ? ` (${formatBytes(size)})` : "";
+      return `[${type}: ${name}${sizeStr}]`;
+    });
+    const attachmentText = descriptions.join(", ");
+    if (originalContent && originalContent.trim()) {
+      return `${originalContent}\n\nAttachments: ${attachmentText}`;
+    }
+    return `Attachments: ${attachmentText}`;
+  }
+
+  // If there's already meaningful text content, use it
+  if (originalContent && originalContent.trim()) return originalContent;
+
+  switch (messageType) {
+    case "image": {
+      const caption = payload?.caption as string | undefined;
+      return caption
+        ? `[Image message] ${caption}`
+        : "[Image message — no caption provided]";
+    }
+    case "voice": {
+      const transcription = payload?.transcription as string | undefined;
+      const duration = payload?.audioDuration as number | undefined;
+      if (transcription) {
+        return `[Voice message${duration ? ` (${duration}s)` : ""}] Transcription: "${transcription}"`;
+      }
+      return `[Voice message${duration ? ` (${duration}s)` : ""} — no transcription available]`;
+    }
+    case "file": {
+      const fileName = payload?.fileName as string | undefined;
+      const fileMimeType = payload?.fileMimeType as string | undefined;
+      const fileSize = payload?.fileSize as number | undefined;
+      const parts = ["[File message]"];
+      if (fileName) parts.push(fileName);
+      if (fileMimeType) parts.push(`(${fileMimeType})`);
+      if (fileSize) parts.push(`${formatBytes(fileSize)}`);
+      return parts.join(" ");
+    }
+    case "video": {
+      const duration = payload?.videoDuration as number | undefined;
+      return `[Video message${duration ? ` (${duration}s)` : ""}]`;
+    }
+    case "confirmation":
+    case "vote":
+    case "choice":
+    case "form":
+    case "card":
+    case "chart": {
+      // Interactive/structured messages — the original content usually has a summary
+      const title = (payload?.title as string) || (payload?.text as string) || "";
+      return title ? `[${messageType} message] ${title}` : `[${messageType} message]`;
+    }
+    default:
+      return originalContent || `[${messageType} message]`;
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

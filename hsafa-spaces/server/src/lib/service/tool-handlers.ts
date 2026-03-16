@@ -21,6 +21,7 @@ import {
 import { markOnline } from "../smartspace-events.js";
 import { state, type ActiveConnection } from "./types.js";
 import { pushInteractiveMessageEvent, emitEntityChannelEvent } from "./sense-events.js";
+import { textToSpeech } from "../cartesia.js";
 
 // =============================================================================
 // Reply-To Resolution — resolves a message ID into ReplyToMetadata
@@ -53,6 +54,7 @@ async function resolveReplyTo(
  *  since Core emits prefixed tool names in stream events. */
 const MESSAGE_TOOLS = new Set([
   "send_message", "send_confirmation", "send_choice", "send_vote", "send_form",
+  "send_image", "send_voice", "send_file", "send_card",
 ]);
 export function isMessageTool(toolName?: string): boolean {
   if (!toolName) return false;
@@ -621,6 +623,155 @@ export async function executeAction(
             isYou: m.entityId === agentEntityId,
           })),
         };
+      }
+
+      case "send_image": {
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
+        const imageUrl = args.imageUrl as string;
+        if (!imageUrl) return { error: "imageUrl is required" };
+        if (!agentEntityId) return { error: "agentEntityId not resolved" };
+
+        const caption = (args.caption as string) || undefined;
+        const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
+
+        const result = await postSpaceMessage({
+          spaceId,
+          entityId: agentEntityId,
+          role: "assistant",
+          content: caption || "",
+          messageType: "image",
+          replyTo,
+          metadata: {
+            toolName,
+            actionId,
+            payload: { imageUrl, caption },
+          },
+        });
+
+        return { success: true, messageId: result.messageId, sentTo: conn!.activeSpace!.spaceName };
+      }
+
+      case "send_voice": {
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
+        const text = args.text as string;
+        if (!text) return { error: "text is required" };
+        if (!agentEntityId) return { error: "agentEntityId not resolved" };
+
+        const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
+
+        // Generate TTS audio via Cartesia
+        let audioUrl: string;
+        let audioDuration: number;
+        try {
+          const protocol = "http";
+          const baseUrl = `${protocol}://localhost:${process.env.PORT || 3005}`;
+          const ttsResult = await textToSpeech(text, baseUrl);
+          audioUrl = ttsResult.audioUrl;
+          audioDuration = ttsResult.audioDuration;
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          return { error: `TTS failed: ${errMsg}` };
+        }
+
+        const result = await postSpaceMessage({
+          spaceId,
+          entityId: agentEntityId,
+          role: "assistant",
+          content: "",
+          messageType: "voice",
+          replyTo,
+          metadata: {
+            toolName,
+            actionId,
+            payload: { audioUrl, audioDuration, transcription: text },
+          },
+        });
+
+        return { success: true, messageId: result.messageId, audioUrl, sentTo: conn!.activeSpace!.spaceName };
+      }
+
+      case "send_file": {
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
+        const fileUrl = args.fileUrl as string;
+        const fileName = args.fileName as string;
+        if (!fileUrl || !fileName) return { error: "fileUrl and fileName are required" };
+        if (!agentEntityId) return { error: "agentEntityId not resolved" };
+
+        const fileMimeType = (args.fileMimeType as string) || "application/octet-stream";
+        const fileSize = (args.fileSize as number) || 0;
+        const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
+
+        const result = await postSpaceMessage({
+          spaceId,
+          entityId: agentEntityId,
+          role: "assistant",
+          content: "",
+          messageType: "file",
+          replyTo,
+          metadata: {
+            toolName,
+            actionId,
+            payload: { fileUrl, fileName, fileMimeType, fileSize },
+          },
+        });
+
+        return { success: true, messageId: result.messageId, sentTo: conn!.activeSpace!.spaceName };
+      }
+
+      case "send_card": {
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
+        const title = args.title as string;
+        const body = args.body as string;
+        if (!title || !body) return { error: "title and body are required" };
+        if (!agentEntityId) return { error: "agentEntityId not resolved" };
+
+        const imageUrl = args.imageUrl as string | undefined;
+        const actions = args.actions as Array<{ label: string; value: string; style?: string }> | undefined;
+        const hasActions = Array.isArray(actions) && actions.length > 0;
+        const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
+
+        const metadata: Record<string, unknown> = {
+          toolName,
+          actionId,
+          payload: { title, body, imageUrl, actions },
+        };
+
+        // If card has action buttons, make it an interactive broadcast message
+        if (hasActions) {
+          const values = actions!.map((a) => a.value);
+          metadata.audience = "broadcast";
+          metadata.status = "open";
+          metadata.responseSchema = { type: "enum", values };
+          metadata.responseSummary = { totalResponses: 0, responses: [] };
+        }
+
+        const result = await postSpaceMessage({
+          spaceId,
+          entityId: agentEntityId,
+          role: "assistant",
+          content: `${title}: ${body}`,
+          messageType: "card",
+          replyTo,
+          metadata,
+        });
+
+        if (hasActions) {
+          await pushInteractiveMessageEvent(spaceId, result.messageId, "card", title);
+        }
+
+        return { success: true, messageId: result.messageId, sentTo: conn!.activeSpace!.spaceName };
       }
 
       default:

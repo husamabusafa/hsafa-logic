@@ -179,18 +179,6 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
         }
       }
-    } else if (event.type === "tool-input.delta") {
-      const spaceId = conn.activeSpace?.spaceId;
-      if (spaceId) {
-        void emitSmartSpaceEvent(spaceId, {
-          type: "tool.streaming",
-          streamId: event.streamId,
-          toolName: event.toolName,
-          delta: event.delta,
-          agentEntityId: conn.agentEntityId,
-          runId,
-        });
-      }
     } else if (event.type === "tool.done") {
       const spaceId = conn.activeSpace?.spaceId;
       if (spaceId) {

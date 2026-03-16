@@ -50,6 +50,13 @@ haseefsRouter.post('/', async (req, res) => {
       },
     });
 
+    // Auto-start the haseef process so it can immediately consume inbox events
+    try {
+      await startProcess(haseef.id, haseef.name);
+    } catch (err) {
+      console.warn(`[haseefs] Failed to auto-start process for ${haseef.name}:`, err);
+    }
+
     res.status(201).json({ haseef });
   } catch (err: any) {
     if (err.code === 'P2002') {

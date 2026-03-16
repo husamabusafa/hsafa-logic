@@ -96,8 +96,9 @@ export async function respondToMessage(
       throw new ServiceError(409, "Message is closed");
     }
 
-    // 3. Check audience targeting
-    if (audience === "targeted" && targetEntityIds) {
+    // 3. Check audience targeting (sender can always interact with own messages)
+    const isSender = message.entityId === entityId;
+    if (audience === "targeted" && targetEntityIds && !isSender) {
       if (!targetEntityIds.includes(entityId)) {
         throw new ServiceError(403, "You are not a target of this message");
       }

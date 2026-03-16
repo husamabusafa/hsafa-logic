@@ -21,11 +21,34 @@ export interface TypingUser {
   entityName: string;
 }
 
+export interface MediaMessageData {
+  type: "image" | "voice" | "file";
+  url?: string;
+  text?: string;
+  fileName?: string;
+  fileSize?: number;
+  fileMimeType?: string;
+  audioDuration?: number;
+  transcription?: string;
+  thumbnailUrl?: string;
+  replyToId?: string;
+  /** Multiple file attachments — each uploaded separately */
+  files?: Array<{
+    url: string;
+    fileName: string;
+    fileSize: number;
+    fileMimeType: string;
+    thumbnailUrl?: string;
+    type: "image" | "file" | "video";
+  }>;
+}
+
 export interface UseSpaceChatReturn {
   messages: MockMessage[];
   isLoading: boolean;
   error: string | null;
-  sendMessage: (text: string, replyToId?: string) => Promise<void>;
+  sendMessage: (text: string, replyToId?: string, opts?: { type?: string; metadata?: Record<string, unknown> }) => Promise<void>;
+  sendMediaMessage: (data: MediaMessageData) => Promise<void>;
   sendTyping: (typing?: boolean) => void;
   markSeen: (messageId: string) => void;
   typingUsers: TypingUser[];
@@ -117,7 +140,7 @@ export function adaptMessage(
 
   // Image
   if (msgType === "image" && payload) {
-    base.imageUrl = payload.url as string;
+    base.imageUrl = (payload.imageUrl ?? payload.url) as string;
     base.imageCaption = payload.caption as string;
     base.imageWidth = payload.width as number;
     base.imageHeight = payload.height as number;
@@ -125,24 +148,24 @@ export function adaptMessage(
 
   // Voice
   if (msgType === "voice" && payload) {
-    base.audioUrl = payload.url as string;
-    base.audioDuration = payload.duration as number;
+    base.audioUrl = (payload.audioUrl ?? payload.url) as string;
+    base.audioDuration = (payload.audioDuration ?? payload.duration) as number;
     base.transcription = payload.transcription as string;
   }
 
   // Video
   if (msgType === "video" && payload) {
-    base.videoUrl = payload.url as string;
-    base.videoThumbnailUrl = payload.thumbnailUrl as string;
-    base.videoDuration = payload.duration as number;
+    base.videoUrl = (payload.videoUrl ?? payload.url) as string;
+    base.videoThumbnailUrl = (payload.videoThumbnailUrl ?? payload.thumbnailUrl) as string;
+    base.videoDuration = (payload.videoDuration ?? payload.duration) as number;
   }
 
   // File
   if (msgType === "file" && payload) {
-    base.fileName = payload.name as string;
-    base.fileSize = payload.size as number;
-    base.fileMimeType = payload.mimeType as string;
-    base.fileUrl = payload.url as string;
+    base.fileName = (payload.fileName ?? payload.name) as string;
+    base.fileSize = (payload.fileSize ?? payload.size) as number;
+    base.fileMimeType = (payload.fileMimeType ?? payload.mimeType) as string;
+    base.fileUrl = (payload.fileUrl ?? payload.url) as string;
   }
 
   // Chart
@@ -378,10 +401,12 @@ export function useSpaceChat(
     [],
   );
 
-  // ── Send message ──
+  // ── Send message (supports optional type + metadata for structured components) ──
   const sendMessage = useCallback(
-    async (text: string, replyToId?: string) => {
+    async (text: string, replyToId?: string, opts?: { type?: string; metadata?: Record<string, unknown> }) => {
       if (!spaceId || !currentEntityId) return;
+
+      const msgType = (opts?.type || "text") as MessageType;
 
       // Optimistic add
       const tempId = `temp-${Date.now()}`;
@@ -394,7 +419,7 @@ export function useSpaceChat(
         content: text,
         createdAt: new Date().toISOString(),
         seenBy: [],
-        type: "text",
+        type: msgType,
       };
 
       // Include replyTo data in the optimistic message so the banner shows immediately
@@ -417,31 +442,132 @@ export function useSpaceChat(
           entityId: currentEntityId,
           content: text,
         };
+        if (opts?.type) body.type = opts.type;
+        if (opts?.metadata) body.metadata = opts.metadata;
         if (replyToId) {
           body.replyTo = { messageId: replyToId };
         }
 
         const { messageId: realId } = await spacesApi.sendMessage(spaceId, body as any);
 
-        // Replace optimistic message with real one when SSE delivers it.
-        // The SSE event will add the real message; remove the temp.
-        // But the SSE might arrive before or after this response.
-        // Handle both: if real message already in list, just remove temp.
-        // If not yet, keep temp but update its ID so SSE dedup catches it.
-        // When SSE arrives later, the dedup merges full data onto the stub.
         setMessages((prev) => {
           const hasReal = prev.some((m) => m.id === realId);
           if (hasReal) {
-            // SSE already delivered it — remove optimistic
             return prev.filter((m) => m.id !== tempId);
           }
-          // SSE hasn't delivered yet — update temp's ID so SSE dedup catches it
           return prev.map((m) =>
             m.id === tempId ? { ...m, id: realId } : m,
           );
         });
       } catch (err: any) {
-        // Remove optimistic on error
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        throw err;
+      }
+    },
+    [spaceId, currentEntityId, user?.name],
+  );
+
+  // ── Send media message (supports multi-file attachments) ──
+  const sendMediaMessage = useCallback(
+    async (data: MediaMessageData) => {
+      if (!spaceId || !currentEntityId) return;
+
+      // Build metadata payload based on type
+      const payload: Record<string, unknown> = {};
+      const filesArray: Array<Record<string, unknown>> = [];
+      let contentText = data.text || "";
+      let msgType = data.type;
+
+      // Multi-file attachments
+      if (data.files && data.files.length > 0) {
+        for (const f of data.files) {
+          filesArray.push({
+            url: f.url,
+            fileName: f.fileName,
+            fileSize: f.fileSize,
+            fileMimeType: f.fileMimeType,
+            thumbnailUrl: f.thumbnailUrl,
+            type: f.type,
+          });
+        }
+        // If all files are images, primary type is "image"; otherwise "file"
+        const allImages = data.files.every(f => f.type === "image");
+        msgType = allImages ? "image" : "file";
+      } else {
+        // Single file fallback
+        switch (data.type) {
+          case "image":
+            payload.imageUrl = data.url;
+            if (data.thumbnailUrl) payload.thumbnailUrl = data.thumbnailUrl;
+            break;
+          case "voice":
+            payload.audioUrl = data.url;
+            payload.audioDuration = data.audioDuration;
+            payload.transcription = data.transcription;
+            if (!contentText) contentText = "";
+            break;
+          case "file":
+            payload.fileUrl = data.url;
+            payload.fileName = data.fileName;
+            payload.fileSize = data.fileSize;
+            payload.fileMimeType = data.fileMimeType;
+            break;
+        }
+      }
+
+      // Optimistic add
+      const tempId = `temp-${Date.now()}`;
+      const optimistic: MockMessage = {
+        id: tempId,
+        spaceId,
+        entityId: currentEntityId,
+        senderName: user?.name ?? "You",
+        senderType: "human",
+        content: contentText,
+        createdAt: new Date().toISOString(),
+        seenBy: [],
+        type: msgType,
+        ...(msgType === "image" && data.url ? { imageUrl: data.url, imageCaption: data.text } : {}),
+        ...(msgType === "voice" ? { audioUrl: data.url, audioDuration: data.audioDuration, transcription: data.transcription } : {}),
+        ...(msgType === "file" && data.url ? { fileUrl: data.url, fileName: data.fileName, fileSize: data.fileSize, fileMimeType: data.fileMimeType } : {}),
+      };
+
+      if (data.replyToId) {
+        const replyMsg = messagesRef.current.find((m) => m.id === data.replyToId);
+        if (replyMsg) {
+          optimistic.replyTo = {
+            messageId: data.replyToId,
+            snippet: (replyMsg.content || replyMsg.title || replyMsg.formTitle || replyMsg.cardTitle || "").slice(0, 100),
+            senderName: replyMsg.senderName,
+            messageType: replyMsg.type,
+          };
+        }
+      }
+
+      setMessages((prev) => [...prev, optimistic]);
+
+      try {
+        const metadata: Record<string, unknown> = { type: msgType, payload };
+        if (filesArray.length > 0) metadata.files = filesArray;
+
+        const body: Record<string, unknown> = {
+          entityId: currentEntityId,
+          content: contentText,
+          type: msgType,
+          metadata,
+        };
+        if (data.replyToId) {
+          body.replyTo = { messageId: data.replyToId };
+        }
+
+        const { messageId: realId } = await spacesApi.sendMessage(spaceId, body as any);
+
+        setMessages((prev) => {
+          const hasReal = prev.some((m) => m.id === realId);
+          if (hasReal) return prev.filter((m) => m.id !== tempId);
+          return prev.map((m) => (m.id === tempId ? { ...m, id: realId } : m));
+        });
+      } catch (err: any) {
         setMessages((prev) => prev.filter((m) => m.id !== tempId));
         throw err;
       }
@@ -475,6 +601,7 @@ export function useSpaceChat(
     isLoading,
     error,
     sendMessage,
+    sendMediaMessage,
     sendTyping,
     markSeen,
     typingUsers,

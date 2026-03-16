@@ -167,8 +167,7 @@ export async function processStream(
       }
 
       // ── Step finish (multi-step streaming) ──────────────────────────────
-      case 'step-finish':
-      case 'finish-step': {
+      case 'step-finish': {
         if (part.finishReason) finishReason = part.finishReason as string;
         await emit({
           type: 'step.finish',

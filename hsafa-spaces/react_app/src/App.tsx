@@ -199,6 +199,7 @@ function SpaceChatRoute({
             seenWatermarks={chat.seenWatermarks}
             isLoading={chat.isLoading}
             onSendMessage={chat.sendMessage}
+            onSendMediaMessage={chat.sendMediaMessage}
             onTyping={chat.sendTyping}
             onMarkSeen={chat.markSeen}
             onToggleDetails={() => setShowDetails((v) => !v)}

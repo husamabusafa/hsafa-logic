@@ -365,8 +365,21 @@ export const invitationsApi = {
 
 // ── Media API ──────────────────────────────────────────────────────────────
 
+export interface MediaUploadResult {
+  mediaId: string;
+  url: string;
+  thumbnailUrl: string | null;
+  mimeType: string;
+  size: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface VoiceUploadResult extends MediaUploadResult {
+  transcription: string;
+}
+
 export const mediaApi = {
-  async upload(file: File): Promise<{ id: string; url: string; thumbnailUrl?: string }> {
+  async upload(file: File): Promise<MediaUploadResult> {
     const token = getToken();
     const formData = new FormData();
     formData.append("file", file);
@@ -380,6 +393,37 @@ export const mediaApi = {
     const data = await res.json();
     if (!res.ok) throw new ApiError(data.error || "Upload failed", res.status);
     return data;
+  },
+
+  async uploadVoice(file: File | Blob): Promise<VoiceUploadResult> {
+    const token = getToken();
+    const formData = new FormData();
+    formData.append("file", file, file instanceof File ? file.name : "voice.webm");
+
+    const res = await fetch(`${API_BASE}/media/upload-voice`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new ApiError(data.error || "Voice upload failed", res.status);
+    return data;
+  },
+};
+
+// ── AI API ──────────────────────────────────────────────────────────────
+
+export const aiApi = {
+  generateComponent(
+    type: string,
+    prompt: string,
+    opts?: { previousComponent?: Record<string, unknown>; history?: Array<{ role: "user" | "assistant"; content: string }> },
+  ) {
+    return request<{ component: Record<string, unknown>; type: string }>("/ai/generate-component", {
+      method: "POST",
+      body: JSON.stringify({ type, prompt, ...opts }),
+    });
   },
 };
 

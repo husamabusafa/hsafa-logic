@@ -1,54 +1,52 @@
-import {
-  FileIcon,
-  VideoIcon,
-} from "lucide-react";
+type ComponentType = "confirmation" | "vote" | "choice" | "form" | "card" | "chart";
 
-type ComponentType = "confirmation" | "vote" | "choice" | "form" | "card" | "file" | "video" | "chart";
+interface AiGeneratedPreviewProps {
+  type: ComponentType;
+  data: Record<string, unknown> | null;
+  prompt: string;
+}
 
-export function AiGeneratedPreview({ type, prompt }: { type: ComponentType; prompt: string }) {
+export function AiGeneratedPreview({ type, data, prompt }: AiGeneratedPreviewProps) {
+  if (!data) {
+    return <div className="text-sm text-muted-foreground italic">No preview available</div>;
+  }
+
   switch (type) {
     case "chart":
-      return <ChartPreview />;
+      return <ChartPreview data={data} />;
     case "vote":
-      return <VotePreview prompt={prompt} />;
+      return <VotePreview data={data} />;
     case "confirmation":
-      return <ConfirmationPreview prompt={prompt} />;
+      return <ConfirmationPreview data={data} />;
     case "choice":
-      return <ChoicePreview prompt={prompt} />;
+      return <ChoicePreview data={data} />;
     case "form":
-      return <FormPreview prompt={prompt} />;
+      return <FormPreview data={data} />;
     case "card":
-      return <CardPreview prompt={prompt} />;
-    case "file":
-      return <FilePreview prompt={prompt} />;
-    case "video":
-      return <VideoPreview prompt={prompt} />;
+      return <CardPreview data={data} />;
     default:
-      return <div className="text-sm text-muted-foreground">Component preview for: {prompt.slice(0, 50)}...</div>;
+      return <pre className="text-xs text-muted-foreground whitespace-pre-wrap">{JSON.stringify(data, null, 2)}</pre>;
   }
 }
 
-function ChartPreview() {
-  const data = [
-    { label: "Jan", value: 45 },
-    { label: "Feb", value: 72 },
-    { label: "Mar", value: 58 },
-    { label: "Apr", value: 90 },
-    { label: "May", value: 65 },
-  ];
-  const max = Math.max(...data.map((d) => d.value));
+function ChartPreview({ data }: { data: Record<string, unknown> }) {
+  const title = data.title as string || "Chart";
+  const chartData = data.data as { labels?: string[]; datasets?: Array<{ label?: string; data?: number[] }> } | undefined;
+  const labels = chartData?.labels ?? [];
+  const values = chartData?.datasets?.[0]?.data ?? [];
+  const max = Math.max(...values, 1);
 
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium">Monthly Sales Report</p>
+      <p className="text-sm font-medium">{title}</p>
       <div className="flex items-end gap-2 h-24">
-        {data.map((d) => (
-          <div key={d.label} className="flex-1 flex flex-col items-center gap-1">
+        {labels.map((label, i) => (
+          <div key={label} className="flex-1 flex flex-col items-center gap-1">
             <div
               className="w-full bg-primary/70 rounded-t"
-              style={{ height: `${(d.value / max) * 80}px` }}
+              style={{ height: `${((values[i] || 0) / max) * 80}px` }}
             />
-            <span className="text-[10px] text-muted-foreground">{d.label}</span>
+            <span className="text-[10px] text-muted-foreground truncate w-full text-center">{label}</span>
           </div>
         ))}
       </div>
@@ -56,53 +54,63 @@ function ChartPreview() {
   );
 }
 
-function VotePreview({ prompt }: { prompt: string }) {
+function VotePreview({ data }: { data: Record<string, unknown> }) {
+  const title = data.title as string || "Poll";
+  const options = (data.options as string[]) ?? [];
+
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium">{prompt.slice(0, 60) || "Quick Poll"}</p>
+      <p className="text-sm font-medium">{title}</p>
       <div className="space-y-1.5">
-        {["Option A", "Option B", "Option C"].map((opt, i) => (
+        {options.map((opt) => (
           <div key={opt} className="flex items-center gap-2">
-            <div className="flex-1 h-6 bg-muted rounded-full overflow-hidden">
-              <div
-                className="h-full bg-primary/60 flex items-center px-2"
-                style={{ width: `${[60, 30, 10][i]}%` }}
-              >
-                <span className="text-[10px] text-white font-medium">{[60, 30, 10][i]}%</span>
-              </div>
+            <div className="flex-1 h-7 bg-muted rounded-full overflow-hidden flex items-center px-3">
+              <span className="text-xs">{opt}</span>
             </div>
-            <span className="text-xs text-muted-foreground w-16">{opt}</span>
           </div>
         ))}
       </div>
+      {!!data.allowMultiple && <p className="text-[10px] text-muted-foreground">Multiple selections allowed</p>}
     </div>
   );
 }
 
-function ConfirmationPreview({ prompt }: { prompt: string }) {
+function ConfirmationPreview({ data }: { data: Record<string, unknown> }) {
+  const title = data.title as string || "Confirmation";
+  const message = data.message as string || "";
+  const confirmLabel = data.confirmLabel as string || "Confirm";
+  const rejectLabel = data.rejectLabel as string || "Cancel";
+
   return (
     <div className="space-y-3">
-      <p className="text-sm">{prompt.slice(0, 80) || "Please confirm this action"}</p>
+      <div>
+        <p className="text-sm font-medium">{title}</p>
+        {message && <p className="text-xs text-muted-foreground mt-0.5">{message}</p>}
+      </div>
       <div className="flex gap-2">
         <button className="flex-1 py-1.5 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium">
-          Confirm
+          {confirmLabel}
         </button>
         <button className="flex-1 py-1.5 px-3 rounded-lg bg-muted text-foreground text-xs font-medium">
-          Cancel
+          {rejectLabel}
         </button>
       </div>
     </div>
   );
 }
 
-function ChoicePreview({ prompt }: { prompt: string }) {
+function ChoicePreview({ data }: { data: Record<string, unknown> }) {
+  const text = data.text as string || "Select an option";
+  const options = (data.options as Array<{ label?: string; value?: string; description?: string }>) ?? [];
+
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium">{prompt.slice(0, 50) || "Select an option"}</p>
+      <p className="text-sm font-medium">{text}</p>
       <div className="space-y-1">
-        {["Choice 1", "Choice 2", "Choice 3"].map((c) => (
-          <button key={c} className="w-full text-left px-3 py-2 rounded-lg bg-muted hover:bg-muted/80 text-sm transition-colors">
-            {c}
+        {options.map((c, i) => (
+          <button key={i} className="w-full text-left px-3 py-2 rounded-lg bg-muted hover:bg-muted/80 text-sm transition-colors">
+            <span>{c.label || c.value}</span>
+            {c.description && <span className="text-[10px] text-muted-foreground ml-2">{c.description}</span>}
           </button>
         ))}
       </div>
@@ -110,50 +118,69 @@ function ChoicePreview({ prompt }: { prompt: string }) {
   );
 }
 
-function FormPreview({ prompt }: { prompt: string }) {
+function FormPreview({ data }: { data: Record<string, unknown> }) {
+  const title = data.title as string || "Form";
+  const description = data.description as string;
+  const fields = (data.fields as Array<{ name?: string; label?: string; type?: string; required?: boolean }>) ?? [];
+
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium">{prompt.slice(0, 40) || "Form"}</p>
+      <div>
+        <p className="text-sm font-medium">{title}</p>
+        {description && <p className="text-[10px] text-muted-foreground">{description}</p>}
+      </div>
       <div className="space-y-1.5">
-        <input placeholder="Name" className="w-full px-2 py-1.5 rounded border border-border bg-background text-xs" disabled />
-        <input placeholder="Email" className="w-full px-2 py-1.5 rounded border border-border bg-background text-xs" disabled />
+        {fields.map((f, i) => (
+          <div key={i}>
+            <label className="text-[10px] text-muted-foreground">{f.label}{f.required && " *"}</label>
+            <input
+              placeholder={f.label || f.name}
+              className="w-full px-2 py-1.5 rounded border border-border bg-background text-xs"
+              disabled
+            />
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-function CardPreview({ prompt }: { prompt: string }) {
+function CardPreview({ data }: { data: Record<string, unknown> }) {
+  const title = data.title as string || "Card";
+  const body = data.body as string || "";
+  const imageUrl = data.imageUrl as string | null;
+  const actions = (data.actions as Array<{ label?: string; style?: string }>) ?? [];
+
   return (
     <div className="rounded-lg overflow-hidden border border-border">
-      <div className="h-16 bg-gradient-to-r from-primary/30 to-primary/10" />
-      <div className="p-2">
-        <p className="text-sm font-medium">{prompt.slice(0, 40) || "Rich Card"}</p>
-        <p className="text-xs text-muted-foreground">Card description goes here...</p>
-      </div>
-    </div>
-  );
-}
-
-function FilePreview({ prompt }: { prompt: string }) {
-  return (
-    <div className="flex items-center gap-3 p-2 rounded-lg bg-muted">
-      <div className="size-8 rounded bg-primary/20 flex items-center justify-center">
-        <FileIcon className="size-4 text-primary" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{prompt.slice(0, 30) || "document.pdf"}</p>
-        <p className="text-xs text-muted-foreground">2.4 MB · PDF</p>
-      </div>
-    </div>
-  );
-}
-
-function VideoPreview({ prompt }: { prompt: string }) {
-  return (
-    <div className="rounded-lg overflow-hidden bg-muted aspect-video flex items-center justify-center">
-      <div className="text-center">
-        <VideoIcon className="size-8 text-muted-foreground mx-auto mb-1" />
-        <p className="text-xs text-muted-foreground">{prompt.slice(0, 30) || "Video preview"}</p>
+      {imageUrl ? (
+        <div className="h-20 bg-muted flex items-center justify-center text-xs text-muted-foreground">
+          🖼 {imageUrl}
+        </div>
+      ) : (
+        <div className="h-12 bg-gradient-to-r from-primary/30 to-primary/10" />
+      )}
+      <div className="p-2 space-y-2">
+        <div>
+          <p className="text-sm font-medium">{title}</p>
+          {body && <p className="text-xs text-muted-foreground">{body}</p>}
+        </div>
+        {actions.length > 0 && (
+          <div className="flex gap-1.5">
+            {actions.map((a, i) => (
+              <button
+                key={i}
+                className={`flex-1 py-1 px-2 rounded text-[10px] font-medium ${
+                  a.style === "primary" ? "bg-primary text-primary-foreground"
+                  : a.style === "danger" ? "bg-destructive text-destructive-foreground"
+                  : "bg-muted text-foreground"
+                }`}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
