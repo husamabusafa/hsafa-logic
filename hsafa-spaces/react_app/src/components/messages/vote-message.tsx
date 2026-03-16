@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { type MockMessage } from "@/lib/mock-data";
 import { BarChart3Icon, CheckIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -19,15 +19,27 @@ export function VoteMessage({ message }: VoteMessageProps) {
   const myResponse = message.responseSummary?.responses?.find(
     (r) => r.entityId === currentEntityId,
   );
-  const myVote = myResponse?.value as string | undefined;
+  const serverVote = myResponse?.value as string | undefined;
   const isClosed = message.status === "closed";
+
+  // Optimistic local state for immediate feedback
+  const [optimisticVote, setOptimisticVote] = useState<string | undefined>(serverVote);
+
+  // Sync optimistic state with server state when SSE update arrives
+  useEffect(() => {
+    setOptimisticVote(serverVote);
+  }, [serverVote]);
+
+  const myVote = optimisticVote;
 
   const handleVote = async (option: string) => {
     setSubmitting(option);
+    setOptimisticVote(option); // Immediate UI update
     try {
       await respondToMessage(message.id, option);
     } catch (err) {
       console.error("Failed to vote:", err);
+      setOptimisticVote(serverVote); // Rollback on error
     } finally {
       setSubmitting(null);
     }

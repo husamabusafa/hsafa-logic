@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { type MockMessage } from "@/lib/mock-data";
 import { Button } from "@/components/ui/button";
 import { ClipboardListIcon, CheckIcon } from "lucide-react";
@@ -17,12 +17,22 @@ export function FormMessage({ message }: FormMessageProps) {
   const myResponse = message.responseSummary?.responses?.find(
     (r) => r.entityId === currentEntityId,
   );
-  const hasResponded = !!myResponse;
+  const serverValue = myResponse?.value as Record<string, unknown> | undefined;
+
+  // Optimistic local state for immediate display after submit
+  const [optimisticValue, setOptimisticValue] = useState<Record<string, unknown> | undefined>(serverValue);
+
+  // Sync optimistic state with server state when SSE update arrives
+  useEffect(() => {
+    setOptimisticValue(serverValue);
+  }, [serverValue]);
+
+  const hasResponded = !!optimisticValue;
 
   const [formData, setFormData] = useState<Record<string, string>>(() => {
-    if (myResponse && typeof myResponse.value === "object" && myResponse.value !== null) {
+    if (optimisticValue && typeof optimisticValue === "object" && optimisticValue !== null) {
       const prev: Record<string, string> = {};
-      for (const [k, v] of Object.entries(myResponse.value as Record<string, unknown>)) {
+      for (const [k, v] of Object.entries(optimisticValue)) {
         prev[k] = String(v ?? "");
       }
       return prev;
@@ -32,6 +42,17 @@ export function FormMessage({ message }: FormMessageProps) {
   const [submitting, setSubmitting] = useState(false);
   const [editing, setEditing] = useState(false);
 
+  // Update formData when editing starts or optimistic value changes
+  useEffect(() => {
+    if (editing && optimisticValue) {
+      const updated: Record<string, string> = {};
+      for (const [k, v] of Object.entries(optimisticValue)) {
+        updated[k] = String(v ?? "");
+      }
+      setFormData(updated);
+    }
+  }, [editing, optimisticValue]);
+
   const showForm = (!hasResponded || (editing && allowUpdate)) && !isClosed;
 
   const handleSubmit = async () => {
@@ -39,11 +60,14 @@ export function FormMessage({ message }: FormMessageProps) {
       if (field.required && !formData[field.name]?.trim()) return;
     }
     setSubmitting(true);
+    setOptimisticValue(formData); // Immediate UI update
+    setEditing(false);
     try {
       await respondToMessage(message.id, formData);
-      setEditing(false);
     } catch (err) {
       console.error("Failed to submit form:", err);
+      setOptimisticValue(serverValue); // Rollback on error
+      setEditing(true);
     } finally {
       setSubmitting(false);
     }

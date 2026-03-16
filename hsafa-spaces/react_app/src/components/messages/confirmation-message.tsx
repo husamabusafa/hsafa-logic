@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { type MockMessage } from "@/lib/mock-data";
 import { Button } from "@/components/ui/button";
-import { XCircleIcon, ClockIcon } from "lucide-react";
+import { CheckCircle2Icon, XCircleIcon, ClockIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useInteractive } from "@/lib/interactive-context";
 import { ResponsesDrawer } from "./responses-drawer";
@@ -19,15 +19,27 @@ export function ConfirmationMessage({ message }: ConfirmationMessageProps) {
   const myResponse = message.responseSummary?.responses?.find(
     (r) => r.entityId === currentEntityId,
   );
-  const myChoice = myResponse?.value as string | undefined;
+  const serverChoice = myResponse?.value as string | undefined;
+
+  // Optimistic local state for immediate feedback
+  const [optimisticChoice, setOptimisticChoice] = useState<string | undefined>(serverChoice);
+
+  // Sync optimistic state with server state when SSE update arrives
+  useEffect(() => {
+    setOptimisticChoice(serverChoice);
+  }, [serverChoice]);
+
+  const myChoice = optimisticChoice;
   const hasResponded = !!myChoice;
 
   const handleRespond = async (value: "confirmed" | "rejected") => {
     setSubmitting(value);
+    setOptimisticChoice(value); // Immediate UI update
     try {
       await respondToMessage(message.id, value);
     } catch (err) {
       console.error("Failed to respond:", err);
+      setOptimisticChoice(serverChoice); // Rollback on error
     } finally {
       setSubmitting(null);
     }
