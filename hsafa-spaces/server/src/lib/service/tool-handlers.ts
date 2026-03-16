@@ -304,7 +304,6 @@ export async function executeAction(
 
         const values = options.map((o) => o.value);
         const allowUpdate = args.allowUpdate !== false;
-        const allowMultiple = !!args.allowMultiple;
         const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
 
         const result = await postSpaceMessage({
@@ -319,8 +318,8 @@ export async function executeAction(
             actionId,
             audience: "broadcast",
             status: "open",
-            responseSchema: { type: "enum", values, multiple: allowMultiple },
-            payload: { text, options, allowUpdate, allowMultiple },
+            responseSchema: { type: "enum", values },
+            payload: { text, options, allowUpdate },
             responseSummary: { totalResponses: 0, responses: [] },
           },
         });
@@ -347,7 +346,6 @@ export async function executeAction(
         if (!agentEntityId)
           return { error: "agentEntityId not resolved" };
 
-        const allowMultiple = !!args.allowMultiple;
         const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
 
         // Initialize counts with 0 for each option
@@ -366,8 +364,8 @@ export async function executeAction(
             actionId,
             audience: "broadcast",
             status: "open",
-            responseSchema: { type: "enum", values: options, multiple: allowMultiple },
-            payload: { title, options, allowMultiple },
+            responseSchema: { type: "enum", values: options },
+            payload: { title, options },
             responseSummary: { totalResponses: 0, counts, responses: [] },
           },
         });

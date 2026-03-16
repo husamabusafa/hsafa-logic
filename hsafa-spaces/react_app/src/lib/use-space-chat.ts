@@ -124,7 +124,6 @@ export function adaptMessage(
     base.title = payload.text as string;
     base.choiceOptions = payload.options as MockMessage["choiceOptions"];
     if (payload.allowUpdate !== undefined) base.allowUpdate = payload.allowUpdate as boolean;
-    if (payload.allowMultiple !== undefined) base.choiceAllowMultiple = payload.allowMultiple as boolean;
   }
 
   // Form
@@ -473,8 +472,11 @@ export function useSpaceChat(
 
       const msgType = (opts?.type || "text") as MessageType;
 
-      // Optimistic add
+      // Optimistic add — extract component payload fields so the component renders immediately
       const tempId = `temp-${Date.now()}`;
+      const meta = opts?.metadata ?? {};
+      const payload = meta.payload as Record<string, unknown> | undefined;
+
       const optimistic: MockMessage = {
         id: tempId,
         spaceId,
@@ -486,6 +488,52 @@ export function useSpaceChat(
         seenBy: [],
         type: msgType,
       };
+
+      // Populate interactive/component fields from metadata so it renders fully
+      if (meta.audience) optimistic.audience = meta.audience as "targeted" | "broadcast";
+      if (meta.status) optimistic.status = meta.status as "open" | "resolved" | "closed";
+      if (meta.responseSummary) optimistic.responseSummary = meta.responseSummary as MockMessage["responseSummary"];
+      if (meta.allowUpdate !== undefined) optimistic.allowUpdate = meta.allowUpdate as boolean;
+
+      if (payload) {
+        if (msgType === "confirmation") {
+          optimistic.title = payload.title as string;
+          optimistic.message = payload.message as string;
+          optimistic.confirmLabel = (payload.confirmLabel as string) || "Confirm";
+          optimistic.rejectLabel = (payload.rejectLabel as string) || "Cancel";
+          if (payload.allowUpdate !== undefined) optimistic.allowUpdate = payload.allowUpdate as boolean;
+        } else if (msgType === "vote") {
+          optimistic.title = payload.title as string;
+          optimistic.options = payload.options as string[];
+          optimistic.allowMultiple = payload.allowMultiple as boolean;
+        } else if (msgType === "choice") {
+          optimistic.title = payload.text as string;
+          optimistic.choiceOptions = payload.options as MockMessage["choiceOptions"];
+          if (payload.allowUpdate !== undefined) optimistic.allowUpdate = payload.allowUpdate as boolean;
+        } else if (msgType === "form") {
+          optimistic.formTitle = payload.title as string;
+          optimistic.formDescription = payload.description as string;
+          optimistic.formFields = payload.fields as MockMessage["formFields"];
+          if (payload.allowUpdate !== undefined) optimistic.allowUpdate = payload.allowUpdate as boolean;
+        } else if (msgType === "card") {
+          optimistic.cardTitle = payload.title as string;
+          optimistic.cardBody = payload.body as string;
+          optimistic.cardImageUrl = payload.imageUrl as string;
+          optimistic.cardActions = payload.actions as MockMessage["cardActions"];
+        } else if (msgType === "chart") {
+          optimistic.chartType = payload.chartType as MockMessage["chartType"];
+          optimistic.chartTitle = payload.title as string;
+          const rawData = payload.data;
+          if (Array.isArray(rawData)) {
+            optimistic.chartData = rawData as MockMessage["chartData"];
+          } else if (rawData && typeof rawData === "object") {
+            const obj = rawData as { labels?: string[]; datasets?: Array<{ data?: number[] }> };
+            const labels = obj.labels || [];
+            const values = obj.datasets?.[0]?.data || [];
+            optimistic.chartData = labels.map((label, i) => ({ label, value: values[i] ?? 0 }));
+          }
+        }
+      }
 
       // Include replyTo data in the optimistic message so the banner shows immediately
       if (replyToId) {

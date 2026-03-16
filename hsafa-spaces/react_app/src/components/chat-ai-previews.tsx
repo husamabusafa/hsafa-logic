@@ -186,14 +186,10 @@ function ConfirmationPreview({ data }: { data: Record<string, unknown> }) {
 function ChoicePreview({ data }: { data: Record<string, unknown> }) {
   const text = data.text as string || "Select an option";
   const options = (data.options as Array<{ label?: string; value?: string; description?: string }>) ?? [];
-  const allowMultiple = !!data.allowMultiple;
 
   return (
     <div className="space-y-2">
-      <div>
-        <p className="text-sm font-medium">{text}</p>
-        {allowMultiple && <p className="text-[10px] text-muted-foreground">Multiple selections allowed</p>}
-      </div>
+      <p className="text-sm font-medium">{text}</p>
       <div className="flex flex-wrap gap-1.5">
         {options.map((c, i) => (
           <button key={i} className="px-3 py-1.5 rounded-lg border border-border bg-muted/50 text-xs transition-colors">

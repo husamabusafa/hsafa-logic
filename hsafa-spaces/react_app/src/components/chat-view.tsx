@@ -82,7 +82,6 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
   const [aiHistory, setAiHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [aiFollowUp, setAiFollowUp] = useState("");
   const [aiAllowUpdate, setAiAllowUpdate] = useState(true);
-  const [aiAllowMultiple, setAiAllowMultiple] = useState(false);
   const [aiPreviewKey, setAiPreviewKey] = useState(0);
   const [forwardMessageId, setForwardMessageId] = useState<string | null>(null);
   const [internalShowSearch, setInternalShowSearch] = useState(false);
@@ -627,7 +626,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                   </span>
                 </div>
                 <button
-                  onClick={() => { setAiGenType(null); setAiPrompt(""); setAiGenerated(false); setAiGenerating(false); setAiGeneratedData(null); setAiHistory([]); setAiFollowUp(""); setAiAllowUpdate(true); setAiAllowMultiple(false); setAiPreviewKey(0); }}
+                  onClick={() => { setAiGenType(null); setAiPrompt(""); setAiGenerated(false); setAiGenerating(false); setAiGeneratedData(null); setAiHistory([]); setAiFollowUp(""); setAiAllowUpdate(true); setAiPreviewKey(0); }}
                   className="p-1 rounded hover:bg-muted transition-colors"
                 >
                   <XIcon className="size-4 text-muted-foreground" />
@@ -697,52 +696,27 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                       <AiGeneratedPreview type={aiGenType} data={aiGeneratedData} prompt={aiPrompt} />
                     </div>
 
-                    {/* Options toggles for interactive messages */}
-                    {["confirmation", "vote", "choice", "form"].includes(aiGenType || "") && (
-                      <div className="flex flex-wrap gap-x-5 gap-y-2 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5">
-                        {/* Allow Multiple — vote and choice only */}
-                        {["vote", "choice"].includes(aiGenType || "") && (
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <button
-                              type="button"
-                              role="switch"
-                              aria-checked={aiAllowMultiple}
-                              onClick={() => setAiAllowMultiple((v) => !v)}
-                              className={cn(
-                                "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
-                                aiAllowMultiple ? "bg-primary" : "bg-muted-foreground/25",
-                              )}
-                            >
-                              <span className={cn(
-                                "pointer-events-none block size-3.5 rounded-full bg-white shadow-sm transition-transform",
-                                aiAllowMultiple ? "translate-x-4" : "translate-x-0.5",
-                              )} />
-                            </button>
-                            <span className="text-xs text-muted-foreground">Multiple selections</span>
-                          </label>
-                        )}
-
-                        {/* Allow Update — confirmation, choice, form only (NOT vote) */}
-                        {["confirmation", "choice", "form"].includes(aiGenType || "") && (
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <button
-                              type="button"
-                              role="switch"
-                              aria-checked={aiAllowUpdate}
-                              onClick={() => setAiAllowUpdate((v) => !v)}
-                              className={cn(
-                                "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
-                                aiAllowUpdate ? "bg-primary" : "bg-muted-foreground/25",
-                              )}
-                            >
-                              <span className={cn(
-                                "pointer-events-none block size-3.5 rounded-full bg-white shadow-sm transition-transform",
-                                aiAllowUpdate ? "translate-x-4" : "translate-x-0.5",
-                              )} />
-                            </button>
-                            <span className="text-xs text-muted-foreground">Allow changing response</span>
-                          </label>
-                        )}
+                    {/* Options toggle for interactive messages — allow update (not vote, always editable) */}
+                    {["confirmation", "choice", "form"].includes(aiGenType || "") && (
+                      <div className="flex items-center gap-x-5 gap-y-2 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5">
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={aiAllowUpdate}
+                            onClick={() => setAiAllowUpdate((v) => !v)}
+                            className={cn(
+                              "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
+                              aiAllowUpdate ? "bg-primary" : "bg-muted-foreground/25",
+                            )}
+                          >
+                            <span className={cn(
+                              "pointer-events-none block size-3.5 rounded-full bg-white shadow-sm transition-transform",
+                              aiAllowUpdate ? "translate-x-4" : "translate-x-0.5",
+                            )} />
+                          </button>
+                          <span className="text-xs text-muted-foreground">Allow changing response</span>
+                        </label>
                       </div>
                     )}
 
@@ -802,7 +776,6 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                           setAiFollowUp("");
                           setAiPrompt("");
                           setAiAllowUpdate(true);
-                          setAiAllowMultiple(false);
                           setAiPreviewKey(0);
                         }}
                       >
@@ -826,11 +799,10 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                               metadata.status = "open";
                               metadata.responseSummary = { totalResponses: 0, responses: [] };
 
-                              // Vote: always updatable, only wire allowMultiple
+                              // Vote: always editable, simple responseSchema
                               if (aiGenType === "vote") {
-                                finalPayload.allowMultiple = aiAllowMultiple;
                                 if (Array.isArray(finalPayload.options)) {
-                                  metadata.responseSchema = { type: "enum", values: finalPayload.options, multiple: aiAllowMultiple };
+                                  metadata.responseSchema = { type: "enum", values: finalPayload.options };
                                 }
                               }
                               // Confirmation: wire allowUpdate
@@ -839,14 +811,13 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                                 metadata.allowUpdate = aiAllowUpdate;
                                 metadata.responseSchema = { type: "enum", values: ["confirmed", "rejected"] };
                               }
-                              // Choice: wire allowUpdate + allowMultiple
+                              // Choice: wire allowUpdate
                               else if (aiGenType === "choice") {
                                 finalPayload.allowUpdate = aiAllowUpdate;
-                                finalPayload.allowMultiple = aiAllowMultiple;
                                 metadata.allowUpdate = aiAllowUpdate;
                                 if (Array.isArray(finalPayload.options)) {
                                   const vals = (finalPayload.options as Array<{ value?: string }>).map((o) => o.value || "");
-                                  metadata.responseSchema = { type: "enum", values: vals, multiple: aiAllowMultiple };
+                                  metadata.responseSchema = { type: "enum", values: vals };
                                 }
                               }
                               // Form: wire allowUpdate
@@ -863,7 +834,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                           } finally {
                             setSending(false);
                             setAiGenType(null); setAiPrompt(""); setAiGenerated(false); setAiGeneratedData(null);
-                            setAiHistory([]); setAiFollowUp(""); setAiAllowUpdate(true); setAiAllowMultiple(false); setAiPreviewKey(0);
+                            setAiHistory([]); setAiFollowUp(""); setAiAllowUpdate(true); setAiPreviewKey(0);
                             setReplyingTo(null);
                           }
                         }}

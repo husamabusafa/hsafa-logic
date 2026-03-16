@@ -222,10 +222,6 @@ export const TOOLS = [
           },
           description: "The options to choose from: [{label, value}, ...]",
         },
-        allowMultiple: {
-          type: "boolean",
-          description: "Allow selecting multiple options (default: false).",
-        },
         allowUpdate: {
           type: "boolean",
           description: "Allow users to change their response after submitting (default: true).",
@@ -254,10 +250,6 @@ export const TOOLS = [
           type: "array",
           items: { type: "string" },
           description: "The options to vote on: [\"Pizza\", \"Sushi\", \"Tacos\"]",
-        },
-        allowMultiple: {
-          type: "boolean",
-          description: "Allow selecting multiple options (default: false).",
         },
         replyTo: {
           type: "string",
