@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { UsersIcon, ChevronDownIcon, CheckCircleIcon, XCircleIcon } from "lucide-react";
+import { UsersIcon, ChevronDownIcon } from "lucide-react";
 import type { ResponseSummary } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 
@@ -30,10 +30,10 @@ export function ResponsesDrawer({ responseSummary, formatValue }: ResponsesDrawe
       <button
         onClick={() => setOpen(!open)}
         className={cn(
-          "flex items-center gap-1.5 text-[11px] transition-colors rounded-md px-1.5 py-0.5 -ml-1.5",
+          "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition-colors",
           total > 0
-            ? "text-primary/80 hover:text-primary hover:bg-primary/5"
-            : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30",
+            ? "border-primary/15 bg-primary/5 text-primary/80 hover:bg-primary/10 hover:text-primary"
+            : "border-border/60 bg-background/60 text-muted-foreground/70 hover:bg-muted/40 hover:text-foreground",
         )}
       >
         <UsersIcon className="size-3" />
@@ -48,11 +48,11 @@ export function ResponsesDrawer({ responseSummary, formatValue }: ResponsesDrawe
       </button>
 
       {open && total > 0 && (
-        <div className="mt-1.5 space-y-1 max-h-40 overflow-y-auto rounded-lg bg-background/50 border border-border/30 p-2">
+        <div className="mt-2 max-h-40 space-y-1.5 overflow-y-auto rounded-2xl border border-border/40 bg-background/80 p-2.5 shadow-sm">
           {responses.map((r) => (
             <div
               key={r.entityId}
-              className="flex items-start gap-2 text-[11px] py-0.5"
+              className="flex items-start gap-2 rounded-xl bg-muted/35 px-2 py-1 text-[11px]"
             >
               <div
                 className={cn(
@@ -63,10 +63,10 @@ export function ResponsesDrawer({ responseSummary, formatValue }: ResponsesDrawe
                 {r.entityName.charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
-                <span className="font-medium">{r.entityName}</span>
-                <span className="ml-1.5 opacity-60">{fmt(r.value)}</span>
+                <span className="font-medium text-foreground">{r.entityName}</span>
+                <span className="ml-1.5 text-muted-foreground">{fmt(r.value)}</span>
               </div>
-              <span className="text-[9px] opacity-40 shrink-0 tabular-nums">
+              <span className="shrink-0 tabular-nums text-[9px] text-muted-foreground/70">
                 {new Date(r.respondedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
               </span>
             </div>

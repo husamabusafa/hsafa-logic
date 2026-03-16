@@ -49,6 +49,7 @@ export function MessageRenderer({
     return <SystemMessage message={message} />;
   }
 
+  const isComponentMessage = ["confirmation", "vote", "choice", "form", "card", "chart"].includes(message.type);
   const seenByOthers = message.seenBy.filter((eid) => eid !== currentEntityId);
   const allSeen = seenByOthers.length >= otherMemberCount;
   const time = new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -64,6 +65,11 @@ export function MessageRenderer({
   const seenIndicator = isOwn ? seenIcon : null;
 
   const content = renderContent(message);
+  const contentNode = isComponentMessage ? (
+    <div className="rounded-[18px] border border-border/50 bg-background/80 px-3 py-3 shadow-sm backdrop-blur-sm">
+      {content}
+    </div>
+  ) : content;
 
   const handleCopy = () => {
     const text = message.content || message.title || message.formTitle || message.cardTitle || message.imageCaption || message.fileName || "";
@@ -76,7 +82,7 @@ export function MessageRenderer({
     <>
       {showMoreMenu && <div className="fixed inset-0 z-30" onClick={() => setShowMoreMenu(false)} />}
       <div className={cn(
-        "absolute top-0 z-40 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-card border border-border rounded-lg shadow-sm px-0.5 py-0.5",
+        "absolute top-0 z-40 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-background/95 backdrop-blur-sm border border-border/70 rounded-xl shadow-md px-0.5 py-0.5",
         isOwn ? "right-full mr-1.5" : "left-full ml-1.5",
       )}>
         <button
@@ -152,12 +158,15 @@ export function MessageRenderer({
         <div className="max-w-[75%] group relative" onDoubleClick={() => onReply(message.id)}>
           {actionButtons}
           <div className={cn(
-            "px-3.5 py-2 overflow-hidden bg-primary text-primary-foreground",
+            "overflow-hidden shadow-sm",
+            isComponentMessage
+              ? "border border-primary/15 bg-primary/10 text-foreground backdrop-blur-sm p-1.5"
+              : "bg-primary text-primary-foreground px-3.5 py-2.5",
             showSender ? "rounded-2xl rounded-br-md" : "rounded-2xl"
           )}>
-            {content}
+            {contentNode}
             <div className="flex items-center justify-end gap-1 mt-1">
-              <span className="text-[10px] opacity-70">{time}</span>
+              <span className={cn("text-[10px]", isComponentMessage ? "text-muted-foreground" : "opacity-70")}>{time}</span>
               {seenIndicator}
             </div>
           </div>
@@ -188,10 +197,13 @@ export function MessageRenderer({
         <div className="group relative" onDoubleClick={() => onReply(message.id)}>
           {actionButtons}
           <div className={cn(
-            "px-3.5 py-2 overflow-hidden bg-muted",
+            "overflow-hidden border shadow-sm backdrop-blur-sm",
+            isComponentMessage
+              ? "bg-card/70 border-border/50 p-1.5"
+              : "bg-card border-border/60 px-3.5 py-2.5",
             showSender ? "rounded-2xl rounded-bl-md" : "rounded-2xl"
           )}>
-            {content}
+            {contentNode}
             <div className="flex items-center justify-end mt-1">
               <span className="text-[10px] text-muted-foreground">{time}</span>
             </div>

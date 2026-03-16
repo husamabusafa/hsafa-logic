@@ -31,22 +31,106 @@ export function AiGeneratedPreview({ type, data, prompt }: AiGeneratedPreviewPro
 
 function ChartPreview({ data }: { data: Record<string, unknown> }) {
   const title = data.title as string || "Chart";
-  const chartData = data.data as { labels?: string[]; datasets?: Array<{ label?: string; data?: number[] }> } | undefined;
-  const labels = chartData?.labels ?? [];
-  const values = chartData?.datasets?.[0]?.data ?? [];
-  const max = Math.max(...values, 1);
+  const chartType = data.chartType as string || "bar";
 
+  // Normalize: AI may return flat array [{label, value}] or Chart.js {labels, datasets}
+  let labels: string[] = [];
+  let values: number[] = [];
+  const rawData = data.data;
+  if (Array.isArray(rawData)) {
+    labels = rawData.map((d: Record<string, unknown>) => (d.label as string) || "");
+    values = rawData.map((d: Record<string, unknown>) => (d.value as number) || 0);
+  } else if (rawData && typeof rawData === "object") {
+    const obj = rawData as { labels?: string[]; datasets?: Array<{ data?: number[] }> };
+    labels = obj.labels ?? [];
+    values = obj.datasets?.[0]?.data ?? [];
+  }
+  const max = Math.max(...values, 1);
+  const total = values.reduce((a, b) => a + b, 0);
+  const defaultColors = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444", "#06b6d4", "#f97316", "#ec4899"];
+
+  if (!labels.length) {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="text-xs text-muted-foreground italic">No chart data</p>
+      </div>
+    );
+  }
+
+  if (chartType === "pie") {
+    let currentAngle = 0;
+    const segments = labels.map((label, i) => {
+      const pct = total > 0 ? (values[i] || 0) / total : 0;
+      const startAngle = currentAngle;
+      const endAngle = currentAngle + pct * 360;
+      currentAngle = endAngle;
+      return { label, value: values[i] || 0, pct, startAngle, endAngle, color: defaultColors[i % defaultColors.length] };
+    });
+
+    return (
+      <div className="space-y-2">
+        <p className="text-sm font-medium">{title}</p>
+        <div className="flex items-center gap-4">
+          <svg viewBox="0 0 100 100" className="size-16 shrink-0">
+            {segments.map((seg, i) => {
+              const startRad = ((seg.startAngle - 90) * Math.PI) / 180;
+              const endRad = ((seg.endAngle - 90) * Math.PI) / 180;
+              const largeArc = seg.endAngle - seg.startAngle > 180 ? 1 : 0;
+              const x1 = 50 + 45 * Math.cos(startRad);
+              const y1 = 50 + 45 * Math.sin(startRad);
+              const x2 = 50 + 45 * Math.cos(endRad);
+              const y2 = 50 + 45 * Math.sin(endRad);
+              const d = `M 50 50 L ${x1} ${y1} A 45 45 0 ${largeArc} 1 ${x2} ${y2} Z`;
+              return <path key={i} d={d} fill={seg.color} opacity={0.85} />;
+            })}
+          </svg>
+          <div className="space-y-0.5 min-w-0">
+            {segments.map((seg, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <div className="size-2 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
+                <span className="text-[10px] truncate">{seg.label}</span>
+                <span className="text-[9px] opacity-60 tabular-nums ml-auto">{Math.round(seg.pct * 100)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (chartType === "line") {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm font-medium">{title}</p>
+        <div className="h-20 flex items-end gap-1">
+          {labels.map((label, i) => {
+            const pct = (values[i] || 0) / max * 100;
+            return (
+              <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+                <div className="w-1.5 rounded-t-full bg-primary/70" style={{ height: `${Math.max(4, pct)}%` }} />
+                <span className="text-[8px] opacity-60 truncate max-w-full">{label}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // Default: bar
   return (
     <div className="space-y-2">
       <p className="text-sm font-medium">{title}</p>
-      <div className="flex items-end gap-2 h-24">
+      <div className="flex items-end gap-2 h-20">
         {labels.map((label, i) => (
-          <div key={label} className="flex-1 flex flex-col items-center gap-1">
+          <div key={i} className="flex-1 flex flex-col items-center gap-1">
+            <span className="text-[9px] tabular-nums text-muted-foreground">{values[i]}</span>
             <div
               className="w-full bg-primary/70 rounded-t"
-              style={{ height: `${((values[i] || 0) / max) * 80}px` }}
+              style={{ height: `${((values[i] || 0) / max) * 60}px`, minHeight: 4 }}
             />
-            <span className="text-[10px] text-muted-foreground truncate w-full text-center">{label}</span>
+            <span className="text-[9px] text-muted-foreground truncate w-full text-center">{label}</span>
           </div>
         ))}
       </div>
@@ -102,15 +186,18 @@ function ConfirmationPreview({ data }: { data: Record<string, unknown> }) {
 function ChoicePreview({ data }: { data: Record<string, unknown> }) {
   const text = data.text as string || "Select an option";
   const options = (data.options as Array<{ label?: string; value?: string; description?: string }>) ?? [];
+  const allowMultiple = !!data.allowMultiple;
 
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium">{text}</p>
-      <div className="space-y-1">
+      <div>
+        <p className="text-sm font-medium">{text}</p>
+        {allowMultiple && <p className="text-[10px] text-muted-foreground">Multiple selections allowed</p>}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
         {options.map((c, i) => (
-          <button key={i} className="w-full text-left px-3 py-2 rounded-lg bg-muted hover:bg-muted/80 text-sm transition-colors">
-            <span>{c.label || c.value}</span>
-            {c.description && <span className="text-[10px] text-muted-foreground ml-2">{c.description}</span>}
+          <button key={i} className="px-3 py-1.5 rounded-lg border border-border bg-muted/50 text-xs transition-colors">
+            {c.label || c.value}
           </button>
         ))}
       </div>

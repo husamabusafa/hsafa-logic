@@ -78,6 +78,7 @@ export interface MockMessage {
   status?: "open" | "resolved" | "closed";
   responseSummary?: ResponseSummary;
   resolution?: { outcome: string; resolvedBy: "auto" | "sender"; resolvedAt: string };
+  allowUpdate?: boolean;
 
   // Confirmation
   title?: string;

@@ -100,6 +100,7 @@ export function adaptMessage(
   if (meta.status) base.status = meta.status as "open" | "resolved" | "closed";
   if (meta.responseSummary) base.responseSummary = meta.responseSummary as MockMessage["responseSummary"];
   if (meta.resolution) base.resolution = meta.resolution as MockMessage["resolution"];
+  if (meta.allowUpdate !== undefined) base.allowUpdate = meta.allowUpdate as boolean;
 
   // Confirmation
   const payload = meta.payload as Record<string, unknown> | undefined;
@@ -108,6 +109,7 @@ export function adaptMessage(
     base.message = payload.message as string;
     base.confirmLabel = (payload.confirmLabel as string) || "Confirm";
     base.rejectLabel = (payload.rejectLabel as string) || "Cancel";
+    if (payload.allowUpdate !== undefined) base.allowUpdate = payload.allowUpdate as boolean;
   }
 
   // Vote
@@ -121,6 +123,8 @@ export function adaptMessage(
   if (msgType === "choice" && payload) {
     base.title = payload.text as string;
     base.choiceOptions = payload.options as MockMessage["choiceOptions"];
+    if (payload.allowUpdate !== undefined) base.allowUpdate = payload.allowUpdate as boolean;
+    if (payload.allowMultiple !== undefined) base.choiceAllowMultiple = payload.allowMultiple as boolean;
   }
 
   // Form
@@ -128,6 +132,7 @@ export function adaptMessage(
     base.formTitle = payload.title as string;
     base.formDescription = payload.description as string;
     base.formFields = payload.fields as MockMessage["formFields"];
+    if (payload.allowUpdate !== undefined) base.allowUpdate = payload.allowUpdate as boolean;
   }
 
   // Card

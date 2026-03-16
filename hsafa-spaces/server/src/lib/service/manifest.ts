@@ -186,6 +186,10 @@ export const TOOLS = [
           type: "string",
           description: "Label for the reject button (default: Cancel).",
         },
+        allowUpdate: {
+          type: "boolean",
+          description: "Allow users to change their response after submitting (default: true).",
+        },
         replyTo: {
           type: "string",
           description: "Optional message ID to reply to.",
@@ -218,6 +222,14 @@ export const TOOLS = [
           },
           description: "The options to choose from: [{label, value}, ...]",
         },
+        allowMultiple: {
+          type: "boolean",
+          description: "Allow selecting multiple options (default: false).",
+        },
+        allowUpdate: {
+          type: "boolean",
+          description: "Allow users to change their response after submitting (default: true).",
+        },
         replyTo: {
           type: "string",
           description: "Optional message ID to reply to.",
@@ -230,7 +242,7 @@ export const TOOLS = [
   {
     name: "send_vote",
     description:
-      "Send a vote/poll in your current space. All members can vote. Stays open forever (like WhatsApp polls). Returns immediately with {messageId}. You'll receive message_response events as people vote.",
+      "Send a vote/poll in your current space. All members can vote. Votes can always be changed. Stays open forever (like WhatsApp polls). Returns immediately with {messageId}. You'll receive message_response events as people vote.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -293,6 +305,10 @@ export const TOOLS = [
             required: ["name", "label", "type"],
           },
           description: "Form fields definition.",
+        },
+        allowUpdate: {
+          type: "boolean",
+          description: "Allow users to edit their submission after submitting (default: true).",
         },
         replyTo: {
           type: "string",

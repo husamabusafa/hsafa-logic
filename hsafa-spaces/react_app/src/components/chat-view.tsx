@@ -81,6 +81,9 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
   const [aiGeneratedData, setAiGeneratedData] = useState<Record<string, unknown> | null>(null);
   const [aiHistory, setAiHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [aiFollowUp, setAiFollowUp] = useState("");
+  const [aiAllowUpdate, setAiAllowUpdate] = useState(true);
+  const [aiAllowMultiple, setAiAllowMultiple] = useState(false);
+  const [aiPreviewKey, setAiPreviewKey] = useState(0);
   const [forwardMessageId, setForwardMessageId] = useState<string | null>(null);
   const [internalShowSearch, setInternalShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -624,7 +627,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                   </span>
                 </div>
                 <button
-                  onClick={() => { setAiGenType(null); setAiPrompt(""); setAiGenerated(false); setAiGenerating(false); setAiGeneratedData(null); setAiHistory([]); setAiFollowUp(""); }}
+                  onClick={() => { setAiGenType(null); setAiPrompt(""); setAiGenerated(false); setAiGenerating(false); setAiGeneratedData(null); setAiHistory([]); setAiFollowUp(""); setAiAllowUpdate(true); setAiAllowMultiple(false); setAiPreviewKey(0); }}
                   className="p-1 rounded hover:bg-muted transition-colors"
                 >
                   <XIcon className="size-4 text-muted-foreground" />
@@ -689,10 +692,59 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                 ) : (
                   <>
                     {/* Generated Component Preview */}
-                    <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
-                      <p className="text-xs font-medium text-primary mb-2">Generated Preview</p>
+                    <div key={aiPreviewKey} className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                      <p className="text-xs font-medium text-primary mb-2">Preview</p>
                       <AiGeneratedPreview type={aiGenType} data={aiGeneratedData} prompt={aiPrompt} />
                     </div>
+
+                    {/* Options toggles for interactive messages */}
+                    {["confirmation", "vote", "choice", "form"].includes(aiGenType || "") && (
+                      <div className="flex flex-wrap gap-x-5 gap-y-2 rounded-lg border border-border/50 bg-muted/20 px-3 py-2.5">
+                        {/* Allow Multiple — vote and choice only */}
+                        {["vote", "choice"].includes(aiGenType || "") && (
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={aiAllowMultiple}
+                              onClick={() => setAiAllowMultiple((v) => !v)}
+                              className={cn(
+                                "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
+                                aiAllowMultiple ? "bg-primary" : "bg-muted-foreground/25",
+                              )}
+                            >
+                              <span className={cn(
+                                "pointer-events-none block size-3.5 rounded-full bg-white shadow-sm transition-transform",
+                                aiAllowMultiple ? "translate-x-4" : "translate-x-0.5",
+                              )} />
+                            </button>
+                            <span className="text-xs text-muted-foreground">Multiple selections</span>
+                          </label>
+                        )}
+
+                        {/* Allow Update — confirmation, choice, form only (NOT vote) */}
+                        {["confirmation", "choice", "form"].includes(aiGenType || "") && (
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={aiAllowUpdate}
+                              onClick={() => setAiAllowUpdate((v) => !v)}
+                              className={cn(
+                                "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
+                                aiAllowUpdate ? "bg-primary" : "bg-muted-foreground/25",
+                              )}
+                            >
+                              <span className={cn(
+                                "pointer-events-none block size-3.5 rounded-full bg-white shadow-sm transition-transform",
+                                aiAllowUpdate ? "translate-x-4" : "translate-x-0.5",
+                              )} />
+                            </button>
+                            <span className="text-xs text-muted-foreground">Allow changing response</span>
+                          </label>
+                        )}
+                      </div>
+                    )}
 
                     {/* Follow-up prompt to refine */}
                     <div className="flex items-center gap-2">
@@ -708,6 +760,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                             aiApi.generateComponent(aiGenType, aiFollowUp.trim(), { history: aiHistory })
                               .then(({ component }) => {
                                 setAiGeneratedData(component);
+                                setAiPreviewKey((k) => k + 1);
                                 setAiHistory([...newHistory, { role: "assistant" as const, content: JSON.stringify(component) }]);
                                 setAiFollowUp("");
                               })
@@ -726,6 +779,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                           aiApi.generateComponent(aiGenType, aiFollowUp.trim(), { history: aiHistory })
                             .then(({ component }) => {
                               setAiGeneratedData(component);
+                              setAiPreviewKey((k) => k + 1);
                               setAiHistory([...newHistory, { role: "assistant" as const, content: JSON.stringify(component) }]);
                               setAiFollowUp("");
                             })
@@ -747,6 +801,9 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                           setAiHistory([]);
                           setAiFollowUp("");
                           setAiPrompt("");
+                          setAiAllowUpdate(true);
+                          setAiAllowMultiple(false);
+                          setAiPreviewKey(0);
                         }}
                       >
                         Start Over
@@ -758,34 +815,55 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                           if (!aiGenType || !aiGeneratedData) return;
                           setSending(true);
                           try {
+                            const finalPayload = { ...aiGeneratedData };
                             const metadata: Record<string, unknown> = {
                               type: aiGenType,
-                              payload: aiGeneratedData,
+                              payload: finalPayload,
                             };
                             // Interactive messages need audience + responseSchema
                             if (["confirmation", "vote", "choice", "form"].includes(aiGenType)) {
                               metadata.audience = "broadcast";
                               metadata.status = "open";
                               metadata.responseSummary = { totalResponses: 0, responses: [] };
-                              if (aiGenType === "confirmation") {
+
+                              // Vote: always updatable, only wire allowMultiple
+                              if (aiGenType === "vote") {
+                                finalPayload.allowMultiple = aiAllowMultiple;
+                                if (Array.isArray(finalPayload.options)) {
+                                  metadata.responseSchema = { type: "enum", values: finalPayload.options, multiple: aiAllowMultiple };
+                                }
+                              }
+                              // Confirmation: wire allowUpdate
+                              else if (aiGenType === "confirmation") {
+                                finalPayload.allowUpdate = aiAllowUpdate;
+                                metadata.allowUpdate = aiAllowUpdate;
                                 metadata.responseSchema = { type: "enum", values: ["confirmed", "rejected"] };
-                              } else if (aiGenType === "vote" && Array.isArray(aiGeneratedData.options)) {
-                                metadata.responseSchema = { type: "enum", values: aiGeneratedData.options };
-                              } else if (aiGenType === "choice" && Array.isArray(aiGeneratedData.options)) {
-                                const vals = (aiGeneratedData.options as Array<{ value?: string }>).map((o) => o.value || "");
-                                metadata.responseSchema = { type: "enum", values: vals };
-                              } else if (aiGenType === "form") {
+                              }
+                              // Choice: wire allowUpdate + allowMultiple
+                              else if (aiGenType === "choice") {
+                                finalPayload.allowUpdate = aiAllowUpdate;
+                                finalPayload.allowMultiple = aiAllowMultiple;
+                                metadata.allowUpdate = aiAllowUpdate;
+                                if (Array.isArray(finalPayload.options)) {
+                                  const vals = (finalPayload.options as Array<{ value?: string }>).map((o) => o.value || "");
+                                  metadata.responseSchema = { type: "enum", values: vals, multiple: aiAllowMultiple };
+                                }
+                              }
+                              // Form: wire allowUpdate
+                              else if (aiGenType === "form") {
+                                finalPayload.allowUpdate = aiAllowUpdate;
+                                metadata.allowUpdate = aiAllowUpdate;
                                 metadata.responseSchema = { type: "object" };
                               }
                             }
-                            const contentText = (aiGeneratedData.title as string) || (aiGeneratedData.text as string) || aiPrompt;
+                            const contentText = (finalPayload.title as string) || (finalPayload.text as string) || aiPrompt;
                             await onSendMessage(contentText, replyingTo ?? undefined, { type: aiGenType, metadata });
                           } catch (err) {
                             console.error("Failed to send component:", err);
                           } finally {
                             setSending(false);
                             setAiGenType(null); setAiPrompt(""); setAiGenerated(false); setAiGeneratedData(null);
-                            setAiHistory([]); setAiFollowUp("");
+                            setAiHistory([]); setAiFollowUp(""); setAiAllowUpdate(true); setAiAllowMultiple(false); setAiPreviewKey(0);
                             setReplyingTo(null);
                           }
                         }}

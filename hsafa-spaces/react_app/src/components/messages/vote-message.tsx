@@ -17,7 +17,7 @@ export function VoteMessage({ message }: VoteMessageProps) {
   const counts = message.responseSummary?.counts || {};
   const totalVotes = message.responseSummary?.totalResponses || 0;
   const myResponse = message.responseSummary?.responses?.find(
-    (r) => r.entityId === currentEntityId
+    (r) => r.entityId === currentEntityId,
   );
   const myVote = myResponse?.value as string | undefined;
   const isClosed = message.status === "closed";
@@ -34,13 +34,15 @@ export function VoteMessage({ message }: VoteMessageProps) {
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <BarChart3Icon className="size-4 text-primary shrink-0" />
-        <span className="text-sm font-semibold">{message.title}</span>
+        <div className="flex size-8 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <BarChart3Icon className="size-4 shrink-0" />
+        </div>
+        <span className="text-sm font-semibold text-foreground">{message.title}</span>
       </div>
 
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         {options.map((option) => {
           const count = counts[option] || 0;
           const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
@@ -52,30 +54,30 @@ export function VoteMessage({ message }: VoteMessageProps) {
               disabled={isClosed || submitting !== null}
               onClick={() => handleVote(option)}
               className={cn(
-                "w-full relative rounded-lg border px-2.5 py-1.5 text-left transition-all overflow-hidden",
+                "relative w-full overflow-hidden rounded-xl border bg-background/70 px-3 py-2 text-left transition-all",
                 isMyVote
-                  ? "border-primary/50 bg-primary/10"
-                  : "border-border/50 hover:border-primary/30",
-                isClosed && "opacity-70 cursor-default"
+                  ? "border-primary/35 bg-primary/10 shadow-sm"
+                  : "border-border/60 hover:border-primary/20 hover:bg-background/90",
+                isClosed && "cursor-default opacity-70",
               )}
             >
               <div
-                className={cn("absolute inset-0 rounded-lg", isMyVote ? "bg-primary/15" : "bg-muted/40")}
+                className={cn("absolute inset-0 rounded-xl", isMyVote ? "bg-primary/10" : "bg-muted/35")}
                 style={{ width: `${pct}%` }}
               />
               <div className="relative flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5">
-                  {isMyVote && <CheckIcon className="size-3 text-primary shrink-0" />}
-                  <span className={cn("text-xs", isMyVote ? "font-medium text-primary" : "")}>{option}</span>
+                  {isMyVote && <CheckIcon className="size-3 shrink-0 text-primary" />}
+                  <span className={cn("text-xs", isMyVote ? "font-medium text-primary" : "text-foreground/85")}>{option}</span>
                 </div>
-                <span className="text-[10px] opacity-70 tabular-nums shrink-0">{count} · {pct}%</span>
+                <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground">{count} · {pct}%</span>
               </div>
             </button>
           );
         })}
       </div>
 
-      <div className="flex items-center justify-between text-[10px] opacity-60">
+      <div className="flex items-center justify-between text-[10px] text-muted-foreground">
         <span>{totalVotes} {totalVotes === 1 ? "vote" : "votes"}</span>
         <span>{isClosed ? "Closed" : myVote ? "Tap to change" : "Tap to vote"}</span>
       </div>

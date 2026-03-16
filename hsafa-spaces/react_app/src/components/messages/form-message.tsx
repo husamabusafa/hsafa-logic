@@ -13,13 +13,13 @@ export function FormMessage({ message }: FormMessageProps) {
   const { respondToMessage, currentEntityId } = useInteractive();
   const fields = message.formFields || [];
   const isClosed = message.status === "closed";
+  const allowUpdate = message.allowUpdate !== false;
   const myResponse = message.responseSummary?.responses?.find(
     (r) => r.entityId === currentEntityId,
   );
   const hasResponded = !!myResponse;
 
   const [formData, setFormData] = useState<Record<string, string>>(() => {
-    // Pre-fill with previous response if updating
     if (myResponse && typeof myResponse.value === "object" && myResponse.value !== null) {
       const prev: Record<string, string> = {};
       for (const [k, v] of Object.entries(myResponse.value as Record<string, unknown>)) {
@@ -32,10 +32,9 @@ export function FormMessage({ message }: FormMessageProps) {
   const [submitting, setSubmitting] = useState(false);
   const [editing, setEditing] = useState(false);
 
-  const showForm = (!hasResponded || editing) && !isClosed;
+  const showForm = (!hasResponded || (editing && allowUpdate)) && !isClosed;
 
   const handleSubmit = async () => {
-    // Validate required fields
     for (const field of fields) {
       if (field.required && !formData[field.name]?.trim()) return;
     }
@@ -60,35 +59,37 @@ export function FormMessage({ message }: FormMessageProps) {
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <ClipboardListIcon className="size-4 text-primary shrink-0" />
-        <span className="text-sm font-semibold">{message.formTitle}</span>
+        <div className="flex size-8 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <ClipboardListIcon className="size-4 shrink-0" />
+        </div>
+        <span className="text-sm font-semibold text-foreground">{message.formTitle}</span>
       </div>
       {message.formDescription && (
-        <p className="text-xs opacity-70">{message.formDescription}</p>
+        <p className="text-xs text-muted-foreground">{message.formDescription}</p>
       )}
 
       {showForm && (
-        <div className="space-y-2 pt-1">
+        <div className="space-y-3 rounded-2xl border border-border/40 bg-muted/25 p-3">
           {fields.map((field) => (
             <div key={field.name}>
-              <label className="text-[11px] font-medium opacity-80 mb-0.5 block">
+              <label className="mb-1 block text-[11px] font-medium text-foreground/80">
                 {field.label}
-                {field.required && <span className="text-red-500 ml-0.5">*</span>}
+                {field.required && <span className="ml-0.5 text-red-500">*</span>}
               </label>
               {field.type === "textarea" ? (
                 <textarea
                   placeholder={field.placeholder}
                   value={formData[field.name] || ""}
                   onChange={(e) => setFormData((prev) => ({ ...prev, [field.name]: e.target.value }))}
-                  className="w-full rounded-lg border border-border/50 bg-background/50 px-2.5 py-1.5 text-xs resize-none h-12 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  className="h-20 w-full resize-none rounded-xl border border-border/60 bg-background/80 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
               ) : field.type === "select" ? (
                 <select
                   value={formData[field.name] || ""}
                   onChange={(e) => setFormData((prev) => ({ ...prev, [field.name]: e.target.value }))}
-                  className="w-full rounded-lg border border-border/50 bg-background/50 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  className="w-full rounded-xl border border-border/60 bg-background/80 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
                 >
                   <option value="">Select...</option>
                   {field.options?.map((opt) => (
@@ -101,34 +102,36 @@ export function FormMessage({ message }: FormMessageProps) {
                   placeholder={field.placeholder}
                   value={formData[field.name] || ""}
                   onChange={(e) => setFormData((prev) => ({ ...prev, [field.name]: e.target.value }))}
-                  className="w-full rounded-lg border border-border/50 bg-background/50 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  className="w-full rounded-xl border border-border/60 bg-background/80 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
               )}
             </div>
           ))}
-          <Button size="sm" className="w-full h-7 text-xs" disabled={submitting} onClick={handleSubmit}>
+          <Button size="sm" className="h-8 w-full rounded-xl text-xs shadow-sm" disabled={submitting} onClick={handleSubmit}>
             {submitting ? "Submitting..." : hasResponded ? "Update Response" : "Submit"}
           </Button>
         </div>
       )}
 
       {hasResponded && !editing && !isClosed && (
-        <div className="flex items-center gap-2 text-xs">
-          <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
+        <div className="flex items-center justify-between gap-2 rounded-2xl border border-emerald-500/15 bg-emerald-500/8 px-3 py-2 text-xs">
+          <div className="flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400">
             <CheckIcon className="size-3.5" />
             <span>You submitted your response</span>
           </div>
-          <button
-            onClick={() => setEditing(true)}
-            className="text-primary/70 hover:text-primary underline text-[11px]"
-          >
-            Edit
-          </button>
+          {allowUpdate && (
+            <button
+              onClick={() => setEditing(true)}
+              className="rounded-full border border-border/60 bg-background/70 px-2 py-1 text-[11px] text-foreground/80 hover:bg-background"
+            >
+              Edit
+            </button>
+          )}
         </div>
       )}
 
       {isClosed && !hasResponded && (
-        <div className="text-xs opacity-60">This form is closed.</div>
+        <div className="inline-flex rounded-full border border-border/60 bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">This form is closed.</div>
       )}
 
       <ResponsesDrawer responseSummary={message.responseSummary} formatValue={formatValue} />

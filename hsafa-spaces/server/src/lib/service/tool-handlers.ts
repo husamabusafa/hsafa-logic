@@ -258,6 +258,7 @@ export async function executeAction(
 
         const confirmLabel = (args.confirmLabel as string) || "Confirm";
         const rejectLabel = (args.rejectLabel as string) || "Cancel";
+        const allowUpdate = args.allowUpdate !== false;
         const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
 
         const result = await postSpaceMessage({
@@ -273,7 +274,7 @@ export async function executeAction(
             audience: "broadcast",
             status: "open",
             responseSchema: { type: "enum", values: ["confirmed", "rejected"] },
-            payload: { title, message, confirmLabel, rejectLabel },
+            payload: { title, message, confirmLabel, rejectLabel, allowUpdate },
             responseSummary: { totalResponses: 0, responses: [] },
           },
         });
@@ -302,6 +303,8 @@ export async function executeAction(
           return { error: "agentEntityId not resolved" };
 
         const values = options.map((o) => o.value);
+        const allowUpdate = args.allowUpdate !== false;
+        const allowMultiple = !!args.allowMultiple;
         const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
 
         const result = await postSpaceMessage({
@@ -316,8 +319,8 @@ export async function executeAction(
             actionId,
             audience: "broadcast",
             status: "open",
-            responseSchema: { type: "enum", values },
-            payload: { text, options },
+            responseSchema: { type: "enum", values, multiple: allowMultiple },
+            payload: { text, options, allowUpdate, allowMultiple },
             responseSummary: { totalResponses: 0, responses: [] },
           },
         });
@@ -392,6 +395,7 @@ export async function executeAction(
           return { error: "agentEntityId not resolved" };
 
         const description = args.description as string | undefined;
+        const allowUpdate = args.allowUpdate !== false;
 
         // Build a basic JSON schema from fields for validation
         const jsonSchema: Record<string, unknown> = {
@@ -427,7 +431,7 @@ export async function executeAction(
             audience: "broadcast",
             status: "open",
             responseSchema: { type: "json", schema: jsonSchema },
-            payload: { title, description, fields },
+            payload: { title, description, fields, allowUpdate },
             responseSummary: { totalResponses: 0, responses: [] },
           },
         });
