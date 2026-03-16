@@ -52,12 +52,13 @@ const TYPE_SCHEMAS: Record<string, string> = {
   ]
 }`,
   chart: `{
-  "chartType": "bar|line|pie|doughnut",
+  "chartType": "bar|line|pie",
   "title": "chart title",
-  "data": {
-    "labels": ["Label1", "Label2", "Label3"],
-    "datasets": [{ "label": "Series", "data": [10, 20, 30] }]
-  }
+  "data": [
+    { "label": "Label1", "value": 10, "color": "#3b82f6" },
+    { "label": "Label2", "value": 20, "color": "#10b981" },
+    { "label": "Label3", "value": 30, "color": "#f59e0b" }
+  ]
 }`,
 };
 

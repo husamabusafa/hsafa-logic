@@ -6,7 +6,18 @@ interface ChartMessageProps {
 }
 
 export function ChartMessage({ message }: ChartMessageProps) {
-  const data = message.chartData || [];
+  // Normalize: chartData may be a flat array or a Chart.js-style object
+  let data: { label: string; value: number; color?: string }[] = [];
+  const raw = message.chartData;
+  if (Array.isArray(raw)) {
+    data = raw;
+  } else if (raw && typeof raw === "object") {
+    // Chart.js format: {labels: [...], datasets: [{data: [...]}]}
+    const obj = raw as unknown as { labels?: string[]; datasets?: Array<{ data?: number[] }> };
+    const labels = obj.labels || [];
+    const values = obj.datasets?.[0]?.data || [];
+    data = labels.map((label, i) => ({ label, value: values[i] ?? 0 }));
+  }
   const maxValue = Math.max(...data.map((d) => d.value), 1);
   const chartType = message.chartType || "bar";
 

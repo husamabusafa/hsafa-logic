@@ -471,6 +471,44 @@ export const TOOLS = [
     mode: "sync" as const,
   },
   {
+    name: "send_chart",
+    description:
+      "Send a chart/data visualization to your current space. Supports bar, line, and pie charts. Returns {success:true, messageId}.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        title: {
+          type: "string",
+          description: "Chart title.",
+        },
+        chartType: {
+          type: "string",
+          enum: ["bar", "line", "pie"],
+          description: "Type of chart (default: bar).",
+        },
+        data: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string", description: "Data point label." },
+              value: { type: "number", description: "Data point value." },
+              color: { type: "string", description: "Optional color hex (e.g. #3b82f6)." },
+            },
+            required: ["label", "value"],
+          },
+          description: "Chart data points: [{label, value, color?}, ...]",
+        },
+        replyTo: {
+          type: "string",
+          description: "Optional message ID to reply to.",
+        },
+      },
+      required: ["title", "data"],
+    },
+    mode: "sync" as const,
+  },
+  {
     name: "send_card",
     description:
       "Send a rich card message to your current space. Cards have a title, body text, optional image, and optional action buttons. Action buttons are broadcast interactive (anyone can click). Returns {success:true, messageId}.",

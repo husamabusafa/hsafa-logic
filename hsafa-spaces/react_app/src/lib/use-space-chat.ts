@@ -168,11 +168,27 @@ export function adaptMessage(
     base.fileUrl = (payload.fileUrl ?? payload.url) as string;
   }
 
-  // Chart
+  // Chart — normalize AI format ({labels, datasets}) → flat array [{label, value}]
   if (msgType === "chart" && payload) {
     base.chartType = payload.chartType as MockMessage["chartType"];
     base.chartTitle = payload.title as string;
-    base.chartData = payload.data as MockMessage["chartData"];
+
+    const rawData = payload.data;
+    if (Array.isArray(rawData)) {
+      // Already flat array format: [{label, value, color?}]
+      base.chartData = rawData as MockMessage["chartData"];
+    } else if (rawData && typeof rawData === "object") {
+      // Chart.js-style format: {labels: [...], datasets: [{data: [...]}]}
+      const obj = rawData as { labels?: string[]; datasets?: Array<{ data?: number[]; label?: string }> };
+      const labels = obj.labels || [];
+      const values = obj.datasets?.[0]?.data || [];
+      base.chartData = labels.map((label, i) => ({
+        label,
+        value: values[i] ?? 0,
+      }));
+    } else {
+      base.chartData = [];
+    }
   }
 
   return base;

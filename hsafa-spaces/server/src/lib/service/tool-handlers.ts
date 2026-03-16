@@ -54,7 +54,7 @@ async function resolveReplyTo(
  *  since Core emits prefixed tool names in stream events. */
 const MESSAGE_TOOLS = new Set([
   "send_message", "send_confirmation", "send_choice", "send_vote", "send_form",
-  "send_image", "send_voice", "send_file", "send_card",
+  "send_image", "send_voice", "send_file", "send_chart", "send_card",
 ]);
 export function isMessageTool(toolName?: string): boolean {
   if (!toolName) return false;
@@ -721,6 +721,36 @@ export async function executeAction(
             toolName,
             actionId,
             payload: { fileUrl, fileName, fileMimeType, fileSize },
+          },
+        });
+
+        return { success: true, messageId: result.messageId, sentTo: conn!.activeSpace!.spaceName };
+      }
+
+      case "send_chart": {
+        const active = getActiveSpaceId(conn);
+        if ('error' in active) return active;
+        const spaceId = active.spaceId;
+
+        const title = args.title as string;
+        const chartData = args.data as Array<{ label: string; value: number; color?: string }>;
+        if (!title || !chartData) return { error: "title and data are required" };
+        if (!agentEntityId) return { error: "agentEntityId not resolved" };
+
+        const chartType = (args.chartType as string) || "bar";
+        const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
+
+        const result = await postSpaceMessage({
+          spaceId,
+          entityId: agentEntityId,
+          role: "assistant",
+          content: title,
+          messageType: "chart",
+          replyTo,
+          metadata: {
+            toolName,
+            actionId,
+            payload: { title, chartType, data: chartData },
           },
         });
 
