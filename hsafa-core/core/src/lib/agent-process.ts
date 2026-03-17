@@ -24,6 +24,7 @@ import {
 } from '../agent-builder/prompt-builder.js';
 import { processStream } from './stream-processor.js';
 import { HaseefConfigSchema } from '../agent-builder/types.js';
+import { stepCountIs } from 'ai';
 
 // =============================================================================
 // Agent Process (v5)
@@ -32,7 +33,6 @@ import { HaseefConfigSchema } from '../agent-builder/types.js';
 // Cycle: SLEEP → DRAIN → FETCH → BUILD → THINK → SAVE → repeat
 // =============================================================================
 
-const MAX_STEPS = 20;
 const DEFAULT_MAX_TOKENS = 200_000;
 
 interface StartOptions {
@@ -204,7 +204,7 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
         tools: built.tools as any,
         system: systemPrompt,
         messages: messagesForLLM as any,
-        maxSteps: MAX_STEPS,
+         stopWhen: stepCountIs(50),
         toolCallStreaming: true,
       } as any);
 

@@ -130,19 +130,11 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
       // in the trigger space. enter_space can override within the same cycle.
       conn.enteredSpace = null;
 
-      // Auto-set activeSpace to trigger space (haseef is "in" the conversation that triggered it)
+      // Get trigger space for broadcast purposes (NOT for auto-enter)
       const triggerSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
-      if (triggerSpaceId) {
-        // Quick name lookup — best effort, use spaceId as fallback
-        prisma.smartSpace.findUnique({ where: { id: triggerSpaceId }, select: { name: true } })
-          .then((s) => {
-            if (conn.activeSpace?.spaceId === triggerSpaceId) {
-              conn.activeSpace.spaceName = s?.name ?? triggerSpaceId;
-            }
-          })
-          .catch(() => {});
-        conn.activeSpace = { spaceId: triggerSpaceId, spaceName: triggerSpaceId };
-      }
+
+      // NOTE: We no longer auto-set activeSpace to trigger space.
+      // The haseef must explicitly call enter_space before interacting with any space.
 
       // Broadcast agent.active + online to trigger space
       const targetSpaces = triggerSpaceId ? [triggerSpaceId] : conn.spaceIds;

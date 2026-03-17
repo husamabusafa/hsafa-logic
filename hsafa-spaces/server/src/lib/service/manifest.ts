@@ -20,7 +20,7 @@ export const SCOPE_INSTRUCTIONS = `You interact with people through spaces — e
 
 HOW IT WORKS:
   Use spaces_send_message to reply. Your text output is internal thought — only tool calls reach people.
-  You are auto-placed in the space that triggered the event. Use spaces_enter_space to switch spaces.
+  You must call spaces_enter_space before interacting with any space — you are NOT automatically placed anywhere.
   Events show [YOU ARE: YourName], the space info, recent conversation, and the new message.
   In recent conversation, "You" = your past messages. Only respond to the NEW MESSAGE.
 
