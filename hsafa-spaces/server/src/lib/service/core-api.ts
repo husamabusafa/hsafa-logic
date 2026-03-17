@@ -64,6 +64,7 @@ export async function submitActionResult(
   result: unknown,
 ): Promise<void> {
   const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/actions/${actionId}/result`;
+  console.log(`[spaces-service] submitActionResult: POST ${url.replace(state.config!.coreUrl, '')} (actionId=${actionId.slice(0, 8)})`);
   const res = await fetch(url, {
     method: "POST",
     headers: coreHeaders(),
@@ -71,6 +72,9 @@ export async function submitActionResult(
   });
   if (!res.ok) {
     const text = await res.text();
-    console.error(`[spaces-service] submitActionResult failed: ${res.status} ${text}`);
+    const errMsg = `submitActionResult failed: ${res.status} ${text}`;
+    console.error(`[spaces-service] ${errMsg}`);
+    throw new Error(errMsg);
   }
+  console.log(`[spaces-service] submitActionResult: OK (actionId=${actionId.slice(0, 8)})`);
 }

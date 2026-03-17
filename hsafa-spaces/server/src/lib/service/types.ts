@@ -15,8 +15,10 @@ export interface ActiveConnection {
   spaceIds: string[];
   /** runId → triggerSpaceId — routes tool streaming events to the correct space */
   runSpaces: Map<string, string>;
-  /** The space this haseef is currently "in" (set by enter_space, auto-set on run.started, cleared on run.finished) */
+  /** Auto-set trigger space for the current run (set on run.started, cleared on run.finished) */
   activeSpace: { spaceId: string; spaceName: string } | null;
+  /** Explicitly entered space (set by enter_space tool, persists across cycles until changed) */
+  enteredSpace: { spaceId: string; spaceName: string } | null;
   /** Typing heartbeat interval — re-broadcasts typing every 3s to keep client indicator alive */
   typingHeartbeat: ReturnType<typeof setInterval> | null;
   /** Pending seen messages — flushed when run.started confirms events were consumed from inbox */

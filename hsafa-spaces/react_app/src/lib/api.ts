@@ -249,7 +249,7 @@ export const spacesApi = {
     return request<{ smartSpace: SmartSpace }>(`/smart-spaces/${id}`);
   },
 
-  create(data: { name: string; description?: string; memberEntityIds?: string[] }) {
+  create(data: { name: string; description?: string; memberEntityIds?: string[]; isGroup?: boolean }) {
     return request<{ smartSpace: { id: string; name: string } }>("/smart-spaces/create-for-user", {
       method: "POST",
       body: JSON.stringify(data),

@@ -40,6 +40,14 @@ export { pushMessageResponseEvent, pushMessageResolvedEvent } from "./sense-even
 // =============================================================================
 
 export async function bootstrapExtension(): Promise<void> {
+  console.log(`[spaces-service] Bootstrapping... (${new Date().toISOString()})`);
+
+  // Reset stale state from previous process (tsx watch restart)
+  state.actionListenerRunning = false;
+  state.actionConsumer = null;
+  state.sharedSubscriber = null;
+  state.connections.clear();
+
   const config = loadServiceConfig();
   if (!config) {
     console.warn("[spaces-service] Service disabled (missing config)");
@@ -155,6 +163,7 @@ async function setupHaseefConnection(haseef: {
     spaceIds,
     runSpaces: new Map(),
     activeSpace: null,
+    enteredSpace: null,
     typingHeartbeat: null,
     pendingSeenMessages: [],
   });

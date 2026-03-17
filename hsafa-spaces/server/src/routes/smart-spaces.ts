@@ -217,10 +217,11 @@ router.post("/create-for-user", async (req: Request, res: Response) => {
       return;
     }
 
-    const { name, description, memberEntityIds } = req.body as {
+    const { name, description, memberEntityIds, isGroup } = req.body as {
       name?: string;
       description?: string;
       memberEntityIds?: string[];
+      isGroup?: boolean;
     };
 
     // Use transaction to create space + all memberships atomically
@@ -229,6 +230,7 @@ router.post("/create-for-user", async (req: Request, res: Response) => {
         data: {
           name: name || `Chat ${new Date().toLocaleTimeString()}`,
           description: description || null,
+          metadata: isGroup === false ? { isDirect: true } : undefined,
         },
       });
 
@@ -292,12 +294,30 @@ router.get("/:smartSpaceId", async (req: Request, res: Response) => {
   try {
     const space = await prisma.smartSpace.findUnique({
       where: { id: smartSpaceId },
+      include: {
+        memberships: {
+          select: {
+            entityId: true,
+            role: true,
+            entity: { select: { id: true, displayName: true, type: true } },
+          },
+        },
+      },
     });
     if (!space) {
       res.status(404).json({ error: "Space not found" });
       return;
     }
-    res.json({ smartSpace: space });
+
+    // Format members like the list endpoint
+    const members = (space.memberships || []).map((mb: any) => ({
+      entityId: mb.entityId,
+      displayName: mb.entity?.displayName || null,
+      type: mb.entity?.type || "human",
+      role: mb.role,
+    }));
+
+    res.json({ smartSpace: { ...space, memberships: undefined, members } });
   } catch (error) {
     console.error("Get space error:", error);
     res.status(500).json({ error: "Failed to get space" });

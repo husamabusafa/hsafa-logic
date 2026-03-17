@@ -218,6 +218,8 @@ function buildInstructionsSection(ctx: PromptContext): string {
     '  If someone messages you and you want to reply, you MUST make a tool call.',
     '  NEVER generate a text response without also calling the appropriate send tool.',
     '  A cycle that ends with only text and no tool calls = your response was LOST.',
+    '  For SPACE events: your text/internal thoughts are NEVER delivered to the space.',
+    '  You MUST use spaces_send_message to reply. No exceptions.',
   ];
 
   // Scope instructions contributed by extensions

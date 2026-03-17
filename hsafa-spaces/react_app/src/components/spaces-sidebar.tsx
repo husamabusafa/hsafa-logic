@@ -97,9 +97,11 @@ export function SpacesSidebar({ spaces, selectedSpaceId, currentEntityId, onSele
 
 function SpaceItem({ space, currentEntityId, isSelected, onClick }: { space: SmartSpace; currentEntityId: string; isSelected: boolean; onClick: () => void }) {
   const members = space.members || [];
-  const isDirect = members.length <= 2 && members.every((m) => m.type === "human");
+  const isDirect = !!(space.metadata as any)?.isDirect || (members.length <= 2 && members.every((m) => m.type === "human"));
   const otherMember = isDirect ? members.find((m) => m.entityId !== currentEntityId) : null;
-  const displayName = isDirect && otherMember?.displayName ? otherMember.displayName : (space.name || "Unnamed Space");
+  const displayName = isDirect && otherMember
+    ? (otherMember.displayName || "Unknown")
+    : (space.name || "Unnamed Space");
   const isGroup = !isDirect;
 
   return (

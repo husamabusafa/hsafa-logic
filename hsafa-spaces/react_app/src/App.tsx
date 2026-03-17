@@ -45,10 +45,19 @@ function SpaceChatRoute({
   const [showInvite, setShowInvite] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [members, setMembers] = useState<SpaceMember[]>([]);
+  const [fetchedSpace, setFetchedSpace] = useState<SmartSpace | null>(null);
 
   const currentEntityId = user?.entityId ?? "";
 
-  const realSpace = spaces.find((s) => s.id === spaceId);
+  // Try sidebar list first, then fallback to fetched space
+  const sidebarSpace = spaces.find((s) => s.id === spaceId);
+  const realSpace = sidebarSpace ?? fetchedSpace;
+
+  // Fetch space from API if not in sidebar (e.g. owner viewing haseef space)
+  useEffect(() => {
+    if (sidebarSpace || !spaceId) return;
+    spacesApi.get(spaceId).then(({ smartSpace }) => setFetchedSpace(smartSpace)).catch(() => setFetchedSpace(null));
+  }, [spaceId, sidebarSpace]);
 
   // Fetch real members
   const fetchMembers = useCallback(async () => {
@@ -94,10 +103,12 @@ function SpaceChatRoute({
 
   if (!realSpace) return <ChatEmptyState />;
 
-  // Determine if this is a direct (1:1 human) space
-  const isDirect = mockMembers.length <= 2 && mockMembers.every((m) => m.type === "human");
+  // Determine if this is a direct space (metadata or fallback heuristic)
+  const isDirect = !!(realSpace.metadata as any)?.isDirect || (mockMembers.length <= 2 && mockMembers.every((m) => m.type === "human"));
   const otherMember = isDirect ? mockMembers.find((m) => m.entityId !== currentEntityId) : null;
-  const displayName = isDirect && otherMember ? otherMember.name : (realSpace.name || "Unnamed Space");
+  const displayName = isDirect && otherMember
+    ? (otherMember.name || "Unknown")
+    : (realSpace.name || "Unnamed Space");
 
   // MockSpace adapter
   const space = {
@@ -469,6 +480,7 @@ function AppContent() {
               name: data.name,
               description: data.description || undefined,
               memberEntityIds: data.memberEntityIds.length > 0 ? data.memberEntityIds : undefined,
+              isGroup: data.isGroup,
             });
             // Send email invitations for humans (fire-and-forget, non-blocking)
             if (data.inviteEmails && data.inviteEmails.length > 0) {

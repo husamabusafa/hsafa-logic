@@ -11,6 +11,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
 import { haseefsApi, spacesApi, type HaseefListItem, type Contact } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -33,6 +34,8 @@ interface CreateSpaceDialogProps {
 }
 
 export function CreateSpaceDialog({ open, onClose, onCreate }: CreateSpaceDialogProps) {
+  const { user } = useAuth();
+  const currentUserName = user?.name || "You";
   const [isGroup, setIsGroup] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,21 +144,24 @@ export function CreateSpaceDialog({ open, onClose, onCreate }: CreateSpaceDialog
           inviteEmails,
         });
       } else {
-        // Direct space
+        // Direct space — name format: "Member1 ↔ Member2" (stored in DB)
         const memberEntityIds: string[] = [];
         const emails: string[] = [];
-        let spaceName = "";
+        let targetName = "";
 
         if (directTarget!.kind === "contact") {
           memberEntityIds.push(directTarget!.entityId);
-          spaceName = directTarget!.displayName || "Direct";
+          targetName = directTarget!.displayName || "Unknown";
         } else if (directTarget!.kind === "haseef") {
           memberEntityIds.push(directTarget!.entityId);
-          spaceName = directTarget!.name;
+          targetName = directTarget!.name;
         } else {
           emails.push(directTarget!.email);
-          spaceName = directTarget!.email;
+          targetName = directTarget!.email;
         }
+
+        // Format: "CurrentUser ↔ TargetName"
+        const spaceName = `${currentUserName} ↔ ${targetName}`;
 
         await onCreate({
           name: spaceName,

@@ -374,12 +374,14 @@ export function formatInboxEvents(events: SenseEvent[]): string {
           `${spaceHeader}` +
           `  [recent conversation in ${spaceLabel}]:\n${contextLines.join('\n')}\n` +
           `  >>> NEW MESSAGE from ${senderLabel}:\n` +
-          `  ${senderName} (spaceId:${spaceId})${msgIdTag}${replyTag}: "${content}"`,
+          `  ${senderName} (spaceId:${spaceId})${msgIdTag}${replyTag}: "${content}"\n` +
+          `  [⚠ THIS IS A SPACE EVENT — reply with spaces_send_message tool. Your text output is INVISIBLE in the space.]`,
         );
       } else {
         blocks.push(
           `${spaceHeader}` +
-          `  >>> MESSAGE from ${senderLabel} in ${spaceLabel} (spaceId:${spaceId})${msgIdTag}${replyTag}: "${content}"`,
+          `  >>> MESSAGE from ${senderLabel} in ${spaceLabel} (spaceId:${spaceId})${msgIdTag}${replyTag}: "${content}"\n` +
+          `  [⚠ THIS IS A SPACE EVENT — reply with spaces_send_message tool. Your text output is INVISIBLE in the space.]`,
         );
       }
     } else {

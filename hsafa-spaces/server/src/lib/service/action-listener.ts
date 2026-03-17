@@ -91,13 +91,23 @@ export async function startActionListener(): Promise<void> {
             const toolName = data.name;
             const args = data.args ? JSON.parse(data.args) : {};
 
-            // Execute the tool
-            const result = await executeAction(haseefId, actionId, toolName, args);
+            // Per-action try-catch: ALWAYS submit a result back to Core
+            // to prevent Core from hanging indefinitely on sync actions.
+            try {
+              const result = await executeAction(haseefId, actionId, toolName, args);
+              await submitActionResult(haseefId, actionId, result);
+            } catch (actionErr: any) {
+              const errMsg = actionErr instanceof Error ? actionErr.message : String(actionErr);
+              console.error(`[spaces-service] Action failed (${toolName}/${actionId.slice(0, 8)}):`, errMsg);
+              // Submit error result so Core doesn't hang
+              try {
+                await submitActionResult(haseefId, actionId, { error: errMsg });
+              } catch (submitErr: any) {
+                console.error(`[spaces-service] Failed to submit error result:`, submitErr.message);
+              }
+            }
 
-            // Submit result back to Core
-            await submitActionResult(haseefId, actionId, result);
-
-            // ACK the message
+            // ACK the message regardless of success/failure
             await (consumer as any).xack(streamKey, consumerGroup, messageId);
           }
         }

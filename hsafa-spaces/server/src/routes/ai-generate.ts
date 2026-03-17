@@ -69,7 +69,7 @@ function resolveLLMProvider(): { url: string; apiKey: string; model: string; ext
     return {
       url: "https://openrouter.ai/api/v1/chat/completions",
       apiKey: orKey,
-      model: "google/gemini-2.0-flash-001",
+      model: "google/gemini-3.1-flash-lite-preview",
       extraHeaders: { "HTTP-Referer": "https://hsafa.com", "X-Title": "Hsafa Spaces" },
     };
   }

@@ -71,8 +71,10 @@ export function isMessageTool(toolName?: string): boolean {
 /** Get the active spaceId for a connection, with clear error if none set. */
 function getActiveSpaceId(conn: ActiveConnection | undefined): { spaceId: string } | { error: string } {
   if (!conn) return { error: "Haseef not connected" };
-  if (!conn.activeSpace) return { error: "No active space. Call enter_space first to open a chat." };
-  return { spaceId: conn.activeSpace.spaceId };
+  // Prefer explicitly entered space over auto-set trigger space
+  const space = conn.enteredSpace ?? conn.activeSpace;
+  if (!space) return { error: "No active space. Call enter_space first to open a chat." };
+  return { spaceId: space.spaceId };
 }
 
 // =============================================================================
@@ -90,8 +92,11 @@ export async function executeAction(
 
   console.log(`[spaces-service] [${haseefId.slice(0, 8)}] ${toolName} (${actionId.slice(0, 8)}) [activeSpace: ${conn?.activeSpace?.spaceName ?? 'none'}]`);
 
+  // Core prefixes tool names with scope: "spaces_get_spaces" → strip to "get_spaces"
+  const unprefixedToolName = toolName.replace(/^spaces_/, '');
+
   try {
-    switch (toolName) {
+    switch (unprefixedToolName) {
       case "enter_space": {
         const spaceId = args.spaceId as string;
         if (!spaceId) return { error: "spaceId is required" };
@@ -115,8 +120,9 @@ export async function executeAction(
 
         if (!space) return { error: "Space not found" };
 
-        // Set active space
+        // Set active space (both auto and explicit — explicit persists across cycles)
         conn.activeSpace = { spaceId: space.id, spaceName: space.name ?? spaceId };
+        conn.enteredSpace = { spaceId: space.id, spaceName: space.name ?? spaceId };
 
         // Mark online in this space
         void markOnline(spaceId, agentEntityId);
@@ -166,7 +172,8 @@ export async function executeAction(
           },
         });
 
-        return { success: true, messageId: result.messageId, sentTo: conn!.activeSpace!.spaceName };
+        const resolvedSpace = conn!.enteredSpace ?? conn!.activeSpace;
+        return { success: true, messageId: result.messageId, sentTo: resolvedSpace!.spaceName };
       }
 
       case "get_messages": {
@@ -219,8 +226,10 @@ export async function executeAction(
         if (!agentEntityId)
           return { error: "agentEntityId not resolved — is this haseef connected?" };
 
+        console.log(`[spaces-service] get_spaces: fetching memberships for entity ${agentEntityId.slice(0, 8)}`);
         const memberships = await getSpacesForEntity(agentEntityId);
         const spaceIds = memberships.map((m) => m.spaceId);
+        console.log(`[spaces-service] get_spaces: found ${memberships.length} memberships, spaceIds: [${spaceIds.map(id => id.slice(0, 8)).join(', ')}]`);
 
         if (spaceIds.length === 0) return { spaces: [] };
 
@@ -234,7 +243,7 @@ export async function executeAction(
           },
         });
 
-        return {
+        const result = {
           spaces: spaces.map((s: any) => ({
             id: s.id,
             name: s.name,
@@ -242,6 +251,8 @@ export async function executeAction(
             memberCount: s._count.memberships,
           })),
         };
+        console.log(`[spaces-service] get_spaces: returning ${result.spaces.length} spaces`);
+        return result;
       }
 
       case "send_confirmation": {
@@ -795,11 +806,11 @@ export async function executeAction(
       }
 
       default:
-        return { error: `Unknown tool: ${toolName}` };
+        return { error: `Unknown tool: ${unprefixedToolName}` };
     }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[spaces-service] Tool execution error (${toolName}):`, errMsg);
+    console.error(`[spaces-service] Tool execution error (${unprefixedToolName}):`, errMsg);
     return { error: errMsg };
   }
 }
