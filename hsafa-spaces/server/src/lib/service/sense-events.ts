@@ -87,6 +87,20 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
   // Extract replyTo from metadata if present
   const replyTo = metadata?.replyTo as Record<string, unknown> | undefined;
 
+  // Fetch space metadata for isDirect info
+  let spaceMeta: Record<string, unknown> = {};
+  try {
+    const spaceRow = await prisma.smartSpace.findUnique({
+      where: { id: spaceId },
+      select: { metadata: true },
+    });
+    spaceMeta = (spaceRow?.metadata ?? {}) as Record<string, unknown>;
+  } catch {
+    // Non-fatal
+  }
+  const isDirect = !!spaceMeta.isDirect;
+  const directType = (spaceMeta.directType as string) ?? null;
+
   // Fetch space members once (shared across connections)
   let memberRows: Array<{ entityId: string; displayName: string; type: string; role: string }> = [];
   try {
@@ -94,12 +108,13 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       where: { smartSpaceId: spaceId },
       include: { entity: { select: { id: true, displayName: true, type: true } } },
     });
-    memberRows = memberships.map((m: any) => ({
-      entityId: m.entityId,
-      displayName: m.entity?.displayName ?? "Unknown",
-      type: m.entity?.type ?? "unknown",
-      role: m.role ?? "member",
-    }));
+    memberRows = memberships
+      .map((m: any) => ({
+        entityId: m.entityId,
+        displayName: m.entity?.displayName ?? "Unknown",
+        type: m.entity?.type ?? "unknown",
+        role: m.role ?? "member",
+      }));
   } catch {
     // Non-fatal — proceed without member data
   }
@@ -146,7 +161,20 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       eventContent = buildMediaFallbackContent(messageType, content, payload, files);
     }
 
+    // For direct spaces, compute who this haseef is direct with
+    let directWith: { entityId: string; name: string; type: string } | undefined;
+    if (isDirect) {
+      const otherMember = memberRows.find((m) => m.entityId !== conn.agentEntityId);
+      if (otherMember) {
+        directWith = { entityId: otherMember.entityId, name: otherMember.displayName, type: otherMember.type };
+      }
+    }
+
     const eventData: Record<string, unknown> = {
+      // YOUR IDENTITY — so you always know who you are
+      yourEntityId: conn.agentEntityId,
+      yourName: conn.haseefName,
+      // MESSAGE INFO
       messageId,
       spaceId,
       spaceName,
@@ -157,6 +185,10 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       recentMessages,
       spaceMembers,
       isGroupSpace,
+      // DIRECT SPACE INFO
+      isDirect,
+      ...(directType ? { directType } : {}),
+      ...(directWith ? { directWith } : {}),
     };
     // Include message type info (§17.8)
     if (messageType && messageType !== "text") {

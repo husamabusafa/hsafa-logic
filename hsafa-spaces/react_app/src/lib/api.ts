@@ -155,7 +155,43 @@ export const haseefsApi = {
       method: "DELETE",
     });
   },
+
+  listSpaces(haseefId: string) {
+    return request<{ spaces: HaseefSpace[] }>(`/haseefs/${haseefId}/spaces`);
+  },
+
+  createSpace(haseefId: string, data: { name: string; description?: string }) {
+    return request<{ space: { id: string; name: string; description: string | null } }>(`/haseefs/${haseefId}/spaces`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  createDirectSpace(haseefId: string, data: { targetHaseefId?: string; targetEntityId?: string }) {
+    return request<{ space: { id: string; name: string; description: string | null; directType: string; members: Array<{ entityId: string; name: string; role: string }> } }>(
+      `/haseefs/${haseefId}/spaces/direct`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+  },
 };
+
+export interface HaseefSpace {
+  id: string;
+  name: string | null;
+  description: string | null;
+  role: string;
+  memberCount: number;
+  createdAt: string;
+  isDirect: boolean;
+  directType: "haseef-haseef" | "haseef-human" | null;
+  canView: boolean;
+  members: Array<{
+    entityId: string;
+    name: string;
+    type: string;
+    role: string;
+  }>;
+}
 
 // ── Space types ─────────────────────────────────────────────────────────────
 
@@ -178,7 +214,7 @@ export interface SmartSpace {
 export interface SpaceMember {
   smartSpaceId: string;
   entityId: string;
-  role: "owner" | "admin" | "member";
+  role: "owner" | "admin" | "member" | "viewer";
   joinedAt: string;
   lastSeenMessageId: string | null;
   entity: {

@@ -297,12 +297,16 @@ export function formatInboxEvents(events: SenseEvent[]): string {
     const data = e.data as Record<string, unknown>;
 
     const senderName = data.senderName as string | undefined;
+    const senderType = data.senderType as string | undefined;
     const content = data.content as string | undefined;
     const spaceId = data.spaceId as string | undefined;
     const spaceName = data.spaceName as string | undefined;
 
+    // Identity fields — so the haseef always knows who it is
+    const yourName = data.yourName as string | undefined;
+
     if (content && senderName) {
-      const spaceInfo = spaceName && spaceId ? ` in "${spaceName}" (spaceId:${spaceId})` : '';
+      const spaceLabel = spaceName ? `"${spaceName}"` : (spaceId ?? 'unknown');
 
       // Render conversation context once per space (if available)
       // The sender field is pre-labeled by the service ("You" for this haseef's own messages)
@@ -328,17 +332,33 @@ export function formatInboxEvents(events: SenseEvent[]): string {
         name: string; type: string; role: string; isYou: boolean;
       }> | undefined;
       const isGroupSpace = data.isGroupSpace as boolean | undefined;
+      const eventIsDirect = data.isDirect as boolean | undefined;
+      const directWith = data.directWith as { entityId: string; name: string; type: string } | undefined;
 
-      // Build space header (members + type) — rendered once per space
+      // Build space header with identity reminder + members — rendered once per space
       let spaceHeader = '';
-      if (spaceMembers && spaceMembers.length > 0 && spaceId && !spaceContextRendered.has(`members:${spaceId}`)) {
+      if (spaceId && !spaceContextRendered.has(`members:${spaceId}`)) {
         spaceContextRendered.add(`members:${spaceId}`);
-        const memberList = spaceMembers.map((m) =>
-          `${m.name}${m.isYou ? ' (You)' : ''} [${m.type}, ${m.role}]`
-        ).join(', ');
         const spaceType = isGroupSpace ? 'GROUP' : '1-on-1';
-        spaceHeader = `  [space: ${spaceType}, members: ${memberList}]\n`;
+        // Identity reminder at the top of each space block
+        if (yourName) {
+          spaceHeader += `  [YOU ARE: ${yourName}]\n`;
+        }
+        if (eventIsDirect && directWith) {
+          spaceHeader += `  [DIRECT SPACE with ${directWith.name} (${directWith.type})]\n`;
+        }
+        if (spaceMembers && spaceMembers.length > 0) {
+          const memberList = spaceMembers.map((m) =>
+            `${m.name}${m.isYou ? ' (You)' : ''} [${m.type}, ${m.role}]`
+          ).join(', ');
+          spaceHeader += `  [space: ${spaceLabel}, ${spaceType}, members: ${memberList}]\n`;
+        } else {
+          spaceHeader += `  [space: ${spaceLabel}, ${spaceType}]\n`;
+        }
       }
+
+      // Sender label with type for clarity
+      const senderLabel = senderType ? `${senderName} (${senderType})` : senderName;
 
       if (recentMessages && recentMessages.length > 0 && spaceId && !spaceContextRendered.has(spaceId)) {
         spaceContextRendered.add(spaceId);
@@ -352,12 +372,15 @@ export function formatInboxEvents(events: SenseEvent[]): string {
         });
         blocks.push(
           `${spaceHeader}` +
-          `  [recent conversation in "${spaceName}"]:\n${contextLines.join('\n')}\n` +
-          `  >>> NEW MESSAGE:\n` +
-          `  ${senderName}${spaceInfo}${msgIdTag}${replyTag}: "${content}"`,
+          `  [recent conversation in ${spaceLabel}]:\n${contextLines.join('\n')}\n` +
+          `  >>> NEW MESSAGE from ${senderLabel}:\n` +
+          `  ${senderName} (spaceId:${spaceId})${msgIdTag}${replyTag}: "${content}"`,
         );
       } else {
-        blocks.push(`${spaceHeader}[${e.scope}:${e.type}]${ts} ${senderName}${spaceInfo}${msgIdTag}${replyTag}: "${content}"`);
+        blocks.push(
+          `${spaceHeader}` +
+          `  >>> MESSAGE from ${senderLabel} in ${spaceLabel} (spaceId:${spaceId})${msgIdTag}${replyTag}: "${content}"`,
+        );
       }
     } else {
       // Generic format

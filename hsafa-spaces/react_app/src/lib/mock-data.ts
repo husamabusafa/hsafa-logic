@@ -37,7 +37,7 @@ export interface MockMember {
   entityId: string;
   name: string;
   type: "human" | "agent";
-  role: "owner" | "admin" | "member";
+  role: "owner" | "admin" | "member" | "viewer";
   avatarColor: string;
   avatarUrl?: string | null;
   isOnline: boolean;

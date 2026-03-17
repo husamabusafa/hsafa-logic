@@ -53,16 +53,10 @@ export async function bootstrapExtension(): Promise<void> {
   // Start the shared Redis subscriber for stream bridges
   await startSharedSubscriber();
 
-  // Auto-discover haseefs from Core (retry up to 5 times if Core isn't ready yet)
-  let haseefs: Awaited<ReturnType<typeof discoverHaseefs>> = [];
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    haseefs = await discoverHaseefs();
-    if (haseefs.length > 0) break;
-    console.warn(`[spaces-service] No haseefs found (attempt ${attempt}/5) — retrying in ${attempt * 2}s...`);
-    await new Promise((r) => setTimeout(r, attempt * 2000));
-  }
+  // Auto-discover haseefs from Core (single attempt — no retries)
+  const haseefs = await discoverHaseefs();
   if (haseefs.length === 0) {
-    console.warn("[spaces-service] No haseefs found in Core after retries — nothing to connect to");
+    console.warn("[spaces-service] No haseefs found in Core — nothing to connect to");
     return;
   }
 

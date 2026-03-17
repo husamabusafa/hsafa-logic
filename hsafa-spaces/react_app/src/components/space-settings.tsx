@@ -10,6 +10,7 @@ import {
   LogOutIcon,
   ChevronDownIcon,
   UserPlusIcon,
+  EyeIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
@@ -200,6 +201,7 @@ function MemberSettingsRow({
     owner: CrownIcon,
     admin: ShieldIcon,
     member: UsersIcon,
+    viewer: EyeIcon,
   }[member.role];
   const RoleIcon = roleIcon;
 

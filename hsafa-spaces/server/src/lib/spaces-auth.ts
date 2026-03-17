@@ -11,6 +11,8 @@ export interface AuthContext {
   method: "secret_key" | "public_key_jwt" | "user_jwt";
   entityId?: string;
   externalId?: string;
+  /** True when the user is not a direct member but owns a haseef that is */
+  isOwnerViewer?: boolean;
 }
 
 const SPACES_SECRET_KEY = process.env.SPACES_SECRET_KEY;
@@ -204,11 +206,23 @@ export async function requireAuthWithMembership(
   }
 
   const isMember = await checkMembership(smartSpaceId, auth.entityId);
-  if (!isMember) {
-    return { status: 403, error: "Entity is not a member of this SmartSpace" };
+  if (isMember) return auth;
+
+  // Fallback: check if user owns a haseef that IS a member of this space
+  const ownsHaseefInSpace = await prisma.haseefOwnership.findFirst({
+    where: {
+      userId: auth.externalId ?? "",
+      entity: {
+        smartSpaceMemberships: { some: { smartSpaceId } },
+      },
+    },
+    select: { entityId: true },
+  });
+  if (ownsHaseefInSpace) {
+    return { ...auth, isOwnerViewer: true };
   }
 
-  return auth;
+  return { status: 403, error: "Entity is not a member of this SmartSpace" };
 }
 
 /**

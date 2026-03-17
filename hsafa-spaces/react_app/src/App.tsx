@@ -112,6 +112,10 @@ function SpaceChatRoute({
     adminEntityId: "",
   };
 
+  // Owner is not a member — they access via haseef ownership.
+  // If currentEntityId is not in the members list, this is a read-only view.
+  const isReadOnly = !members.some((m) => m.entityId === currentEntityId);
+
   // Available haseefs = user's haseefs that are NOT already members
   const memberEntityIds = new Set(members.map((m) => m.entityId));
   const availableHaseefs = haseefs
@@ -198,6 +202,7 @@ function SpaceChatRoute({
             onlineUserIds={chat.onlineUserIds}
             seenWatermarks={chat.seenWatermarks}
             isLoading={chat.isLoading}
+            readOnly={isReadOnly}
             onSendMessage={chat.sendMessage}
             onSendMediaMessage={chat.sendMediaMessage}
             onTyping={chat.sendTyping}
@@ -430,7 +435,7 @@ function AppContent() {
             {/* Haseefs */}
             <Route path="/haseefs" element={<HaseefsGridPage haseefs={haseefs} isLoading={haseefsLoading} />} />
             <Route path="/haseefs/new" element={<HaseefCreatePage onCreated={fetchHaseefs} />} />
-            <Route path="/haseefs/:haseefId" element={<HaseefDetailPage onDeleted={fetchHaseefs} />} />
+            <Route path="/haseefs/:haseefId" element={<HaseefDetailPage onDeleted={fetchHaseefs} allHaseefs={haseefs} />} />
             <Route path="/haseefs/:haseefId/edit" element={<HaseefEditPage onSaved={fetchHaseefs} />} />
 
             {/* Invitations */}

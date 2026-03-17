@@ -323,7 +323,290 @@ router.delete("/:id", async (req: Request, res: Response) => {
 });
 
 // =============================================================================
-// POST /api/haseefs/:id/spaces/:spaceId — Add haseef to space (JWT, admin+ in space)
+// GET /api/haseefs/:id/spaces — List all spaces a haseef is in (JWT, owner only)
+// =============================================================================
+router.get("/:id/spaces", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  try {
+    const haseefId = req.params.id as string;
+
+    // Verify haseef ownership
+    const ownership = await prisma.haseefOwnership.findUnique({
+      where: { userId_haseefId: { userId: auth.userId, haseefId } },
+    });
+    if (!ownership) {
+      res.status(404).json({ error: "Haseef not found or not owned by you" });
+      return;
+    }
+
+    // Get all spaces this haseef is a member of
+    const memberships = await prisma.smartSpaceMembership.findMany({
+      where: { entityId: ownership.entityId },
+      include: {
+        smartSpace: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            createdAt: true,
+            metadata: true,
+            _count: { select: { memberships: true } },
+          },
+        },
+      },
+      orderBy: { joinedAt: "desc" },
+    });
+
+    // For each space, also get the member list + owner's role in the space
+    const spaces = await Promise.all(
+      memberships.map(async (m: any) => {
+        const members = await prisma.smartSpaceMembership.findMany({
+          where: { smartSpaceId: m.smartSpaceId },
+          include: {
+            entity: { select: { id: true, displayName: true, type: true } },
+          },
+        });
+
+        const meta = (m.smartSpace.metadata ?? {}) as Record<string, unknown>;
+        const directType = (meta.directType as string) ?? null;
+        // Owner can view all spaces EXCEPT haseef-human direct (private)
+        const canView = directType !== "haseef-human";
+
+        return {
+          id: m.smartSpace.id,
+          name: m.smartSpace.name,
+          description: m.smartSpace.description,
+          role: m.role,
+          memberCount: members.length,
+          createdAt: m.smartSpace.createdAt,
+          isDirect: meta.isDirect ?? false,
+          directType,
+          canView,
+          members: members
+            .map((mem: any) => ({
+              entityId: mem.entityId,
+              name: mem.entity?.displayName ?? "Unknown",
+              type: mem.entity?.type ?? "unknown",
+              role: mem.role,
+            })),
+        };
+      }),
+    );
+
+    res.json({ spaces });
+  } catch (error) {
+    console.error("List haseef spaces error:", error);
+    res.status(500).json({ error: "Failed to list haseef spaces" });
+  }
+});
+
+// =============================================================================
+// POST /api/haseefs/:id/spaces — Create a group space with the haseef as a member (JWT, owner)
+// Body: { name, description? }
+// Owner is NOT added as a member — they can view via haseef ownership.
+// NOTE: Must be registered before /:id/spaces/:spaceId to avoid matching 'direct' as spaceId
+// =============================================================================
+router.post("/:id/spaces", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  try {
+    const haseefId = req.params.id as string;
+
+    const ownership = await prisma.haseefOwnership.findUnique({
+      where: { userId_haseefId: { userId: auth.userId, haseefId } },
+    });
+    if (!ownership) {
+      res.status(404).json({ error: "Haseef not found or not owned by you" });
+      return;
+    }
+
+    const { name, description } = req.body;
+    if (!name) {
+      res.status(400).json({ error: "name is required" });
+      return;
+    }
+
+    // Create the group space
+    const space = await prisma.smartSpace.create({
+      data: {
+        name,
+        description: description || null,
+        metadata: { isDirect: false } as any,
+      },
+    });
+
+    // Add haseef as member (owner is NOT added — views via ownership)
+    await prisma.smartSpaceMembership.create({
+      data: { smartSpaceId: space.id, entityId: ownership.entityId, role: "member" },
+    });
+
+    invalidateSpace(space.id);
+    handleMembershipChanged(ownership.entityId, space.id, "added");
+
+    res.status(201).json({
+      space: {
+        id: space.id,
+        name: space.name,
+        description: space.description,
+      },
+    });
+  } catch (error) {
+    console.error("Create haseef space error:", error);
+    res.status(500).json({ error: "Failed to create space" });
+  }
+});
+
+// =============================================================================
+// POST /api/haseefs/:id/spaces/direct — Create a direct space for a haseef
+// Body: { targetHaseefId } OR { targetEntityId }
+//   targetHaseefId → haseef-to-haseef direct: owner can view via ownership
+//   targetEntityId → haseef-to-human direct: owner can see in list but can't open
+// NOTE: Must be registered before /:id/spaces/:spaceId to avoid matching 'direct' as spaceId
+// =============================================================================
+router.post("/:id/spaces/direct", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  try {
+    const haseefId = req.params.id as string;
+    const { targetHaseefId, targetEntityId } = req.body;
+
+    if (!targetHaseefId && !targetEntityId) {
+      res.status(400).json({ error: "targetHaseefId or targetEntityId is required" });
+      return;
+    }
+
+    // Verify ownership of the source haseef
+    const ownership = await prisma.haseefOwnership.findUnique({
+      where: { userId_haseefId: { userId: auth.userId, haseefId } },
+      include: { entity: { select: { displayName: true } } },
+    });
+    if (!ownership) {
+      res.status(404).json({ error: "Haseef not found or not owned by you" });
+      return;
+    }
+
+    const haseefName = ownership.entity.displayName ?? "Haseef";
+
+    // ── Case A: haseef-to-haseef ──
+    if (targetHaseefId) {
+      if (haseefId === targetHaseefId) {
+        res.status(400).json({ error: "Cannot create a direct space with the same haseef" });
+        return;
+      }
+
+      const targetOwnership = await prisma.haseefOwnership.findFirst({
+        where: { haseefId: targetHaseefId },
+        include: { entity: { select: { id: true, displayName: true } } },
+      });
+      if (!targetOwnership) {
+        res.status(404).json({ error: "Target haseef not found" });
+        return;
+      }
+
+      const targetName = targetOwnership.entity.displayName ?? "Haseef";
+      const spaceName = `${haseefName} ↔ ${targetName}`;
+
+      const space = await prisma.smartSpace.create({
+        data: {
+          name: spaceName,
+          description: `Direct space between ${haseefName} and ${targetName}`,
+          metadata: { isDirect: true, directType: "haseef-haseef" } as any,
+        },
+      });
+
+      // Add both haseefs as members (owner is NOT added — views via ownership)
+      await prisma.smartSpaceMembership.createMany({
+        data: [
+          { smartSpaceId: space.id, entityId: ownership.entityId, role: "member" },
+          { smartSpaceId: space.id, entityId: targetOwnership.entityId, role: "member" },
+        ],
+      });
+
+      invalidateSpace(space.id);
+      handleMembershipChanged(ownership.entityId, space.id, "added");
+      handleMembershipChanged(targetOwnership.entityId, space.id, "added");
+
+      res.status(201).json({
+        space: {
+          id: space.id,
+          name: space.name,
+          description: space.description,
+          directType: "haseef-haseef",
+          members: [
+            { entityId: ownership.entityId, name: haseefName, role: "member" },
+            { entityId: targetOwnership.entityId, name: targetName, role: "member" },
+          ],
+        },
+      });
+      return;
+    }
+
+    // ── Case B: haseef-to-human ──
+    const targetEntity = await prisma.entity.findUnique({
+      where: { id: targetEntityId },
+      select: { id: true, displayName: true, type: true },
+    });
+    if (!targetEntity) {
+      res.status(404).json({ error: "Target entity not found" });
+      return;
+    }
+
+    const targetName = targetEntity.displayName ?? "User";
+    const spaceName = `${haseefName} ↔ ${targetName}`;
+
+    const space = await prisma.smartSpace.create({
+      data: {
+        name: spaceName,
+        description: `Direct space between ${haseefName} and ${targetName}`,
+        metadata: { isDirect: true, directType: "haseef-human" } as any,
+      },
+    });
+
+    // Add haseef + human as members — owner is NOT added
+    await prisma.smartSpaceMembership.createMany({
+      data: [
+        { smartSpaceId: space.id, entityId: ownership.entityId, role: "member" },
+        { smartSpaceId: space.id, entityId: targetEntity.id, role: "member" },
+      ],
+    });
+
+    invalidateSpace(space.id);
+    handleMembershipChanged(ownership.entityId, space.id, "added");
+    handleMembershipChanged(targetEntity.id, space.id, "added");
+
+    res.status(201).json({
+      space: {
+        id: space.id,
+        name: space.name,
+        description: space.description,
+        directType: "haseef-human",
+        members: [
+          { entityId: ownership.entityId, name: haseefName, role: "member" },
+          { entityId: targetEntity.id, name: targetName, role: "member" },
+        ],
+      },
+    });
+  } catch (error) {
+    console.error("Create direct haseef space error:", error);
+    res.status(500).json({ error: "Failed to create direct space" });
+  }
+});
+
+// =============================================================================
+// POST /api/haseefs/:id/spaces/:spaceId — Add haseef to existing space (JWT, admin+ in space)
 // =============================================================================
 router.post("/:id/spaces/:spaceId", async (req: Request, res: Response) => {
   const auth = await requireJwtUser(req);

@@ -291,85 +291,16 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
           },
         });
 
-        // 14. DETECT & RETRY silent cycles — LLM processed a spaces message but didn't
-        // call any send_message tool. Text stays in consciousness, user gets nothing.
-        // Fix: inject a correction message and re-stream ONCE so the response is delivered.
+        // Log if LLM produced text without calling send_message (silent cycle)
         if (triggerScope === 'spaces' && triggerType === 'message') {
           const sentMessage = streamResult.toolCalls.some(
             (tc) => tc.toolName === 'spaces_send_message' || tc.toolName.endsWith('_send_message'),
           );
           if (!sentMessage && streamResult.text) {
-            const textPreview = streamResult.text.slice(0, 200);
             console.warn(
-              `[process] ⚠️ ${haseefName} cycle #${newCycleCount} produced text without sending — retrying with correction`,
+              `[process] ⚠️ ${haseefName} cycle #${newCycleCount} produced text without sending — ` +
+              `text: "${streamResult.text.slice(0, 100)}"`,
             );
-
-            // Inject a correction into consciousness so the model knows to use the tool
-            consciousness.messages.push({
-              role: 'user',
-              content:
-                '[SYSTEM] Your previous response was text-only and was NOT delivered. ' +
-                'Nobody saw it. You MUST call spaces_send_message to deliver your reply. ' +
-                'Call spaces_send_message now with your response.',
-            } as ModelMessage);
-
-            // Re-stream with the correction
-            const { streamText: streamText2 } = await import('ai');
-            const retryMessages = consciousness.messages.filter((m) => m.role !== 'system');
-            const retryResult = streamText2({
-              model: built.model as any,
-              tools: built.tools as any,
-              system: systemPrompt,
-              messages: retryMessages as any,
-              maxSteps: 3,
-              toolCallStreaming: true,
-            } as any);
-
-            const retryStreamResult = await processStream(retryResult.fullStream, {
-              runId: run.id,
-              haseefId,
-            });
-
-            // Append retry response messages to consciousness
-            const retryResponseMessages = await retryResult.response;
-            if (retryResponseMessages?.messages) {
-              for (const msg of retryResponseMessages.messages) {
-                consciousness.messages.push(msg as unknown as ModelMessage);
-              }
-            }
-
-            // Update step count
-            cycleToolCount += retryStreamResult.toolCalls.length;
-
-            const retrySent = retryStreamResult.toolCalls.some(
-              (tc) => tc.toolName === 'spaces_send_message' || tc.toolName.endsWith('_send_message'),
-            );
-            if (retrySent) {
-              console.log(`[process] ✅ ${haseefName} retry succeeded — message delivered`);
-            } else {
-              console.warn(
-                `[process] ❌ ${haseefName} retry also failed to send — text: "${retryStreamResult.text?.slice(0, 100) || textPreview}"`,
-              );
-            }
-
-            // Re-save consciousness with the retry messages included
-            consciousness.messages = await pruneConsciousness(
-              haseefId,
-              consciousness.messages,
-              newCycleCount,
-              config.consciousness?.maxTokens ?? DEFAULT_MAX_TOKENS,
-            );
-            await saveConsciousness(haseefId, consciousness.messages, newCycleCount);
-
-            // Update run with new step count
-            const durationMs2 = Date.now() - cycleStart;
-            await prisma.run.update({
-              where: { id: run.id },
-              data: {
-                stepCount: cycleToolCount,
-                durationMs: durationMs2,
-              },
-            }).catch(() => {});
           }
         }
 
@@ -423,23 +354,11 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`[process] ${haseefName} error (${consecutiveErrors}):`, errMsg);
 
-      // Exponential backoff: 2s, 4s, 8s, 16s, 32s, max 60s
-      const backoffMs = Math.min(2000 * Math.pow(2, consecutiveErrors - 1), 60_000);
+      // Mark stuck events as failed so they don't block the next cycle
+      await recoverStuckEvents(haseefId).catch(() => 0);
 
-      // For quota/billing errors, rest for 5 minutes; rate limits rest for 60s
-      const isQuotaError = errMsg.includes('quota') || errMsg.includes('billing');
-      const isRateLimitError = errMsg.includes('rate limit') || errMsg.includes('rate_limit');
-      const waitMs = isQuotaError ? 300_000 : isRateLimitError ? 60_000 : backoffMs;
-
-      console.log(`[process] ${haseefName} waiting ${waitMs / 1000}s before retry...`);
-      await new Promise((r) => setTimeout(r, waitMs));
-
-      // Recover events stuck in "processing" from the failed cycle — re-push
-      // them to Redis so they get retried in the next cycle instead of being lost.
-      const reRecovered = await recoverStuckEvents(haseefId).catch(() => 0);
-      if (reRecovered && reRecovered > 0) {
-        console.log(`[process] ${haseefName} recovered ${reRecovered} stuck events after failed cycle`);
-      }
+      // Brief pause to avoid tight error loops (2s flat, no exponential backoff)
+      await new Promise((r) => setTimeout(r, 2000));
 
       // After 10 consecutive errors, give up
       if (consecutiveErrors >= 10) {

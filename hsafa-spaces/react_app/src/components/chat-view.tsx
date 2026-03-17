@@ -20,6 +20,7 @@ import {
   LoaderIcon,
   SearchIcon,
   PaperclipIcon,
+  EyeIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
@@ -47,6 +48,7 @@ interface ChatViewProps {
   onlineUserIds: string[];
   seenWatermarks: Record<string, string>;
   isLoading?: boolean;
+  readOnly?: boolean;
   onSendMessage: (text: string, replyToId?: string, opts?: { type?: string; metadata?: Record<string, unknown> }) => Promise<void>;
   onSendMediaMessage?: (data: MediaMessageData) => Promise<void>;
   onTyping?: (typing?: boolean) => void;
@@ -68,7 +70,7 @@ const COMPONENT_TYPES: { type: ComponentType; icon: typeof CheckCircleIcon; labe
   { type: "chart", icon: PieChartIcon, label: "Chart", description: "Visualize data as a chart" },
 ];
 
-export function ChatView({ space, messages, currentEntityId, typingUsers, activeAgents, onlineUserIds, seenWatermarks, isLoading, onSendMessage, onSendMediaMessage, onTyping, onMarkSeen, onToggleDetails, onBack, showSearch: externalShowSearch, onSearchClose }: ChatViewProps) {
+export function ChatView({ space, messages, currentEntityId, typingUsers, activeAgents, onlineUserIds, seenWatermarks, isLoading, readOnly, onSendMessage, onSendMediaMessage, onTyping, onMarkSeen, onToggleDetails, onBack, showSearch: externalShowSearch, onSearchClose }: ChatViewProps) {
   const [inputValue, setInputValue] = useState("");
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -612,8 +614,18 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
       </div>
       </InteractiveProvider>
 
+      {/* Read-only banner (replaces composer when readOnly) */}
+      {readOnly && (
+        <div className="shrink-0 border-t border-border">
+          <div className="flex items-center justify-center gap-2 px-4 py-3 text-muted-foreground bg-muted/30">
+            <EyeIcon className="size-4" />
+            <span className="text-sm">You are viewing this space in read-only mode</span>
+          </div>
+        </div>
+      )}
+
       {/* AI Generation Popup - positioned above composer */}
-      {aiGenType && (
+      {!readOnly && aiGenType && (
         <div className="shrink-0 relative z-50">
           <div className="absolute bottom-full left-0 right-0 mb-2 px-4">
             <div className="max-w-3xl mx-auto bg-popover border border-border rounded-xl shadow-lg overflow-hidden">
@@ -850,8 +862,8 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
         </div>
       )}
 
-      {/* Composer */}
-      <div className="shrink-0 border-t border-border">
+      {/* Composer (hidden in read-only mode) */}
+      {!readOnly && <div className="shrink-0 border-t border-border">
         {/* Reply banner */}
         {replyMessage && (
           <div className="flex items-center gap-2 px-4 py-2 bg-muted/30 border-b border-border/50">
@@ -1103,7 +1115,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
             )}
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Forward Dialog */}
       {forwardMessageId && (
