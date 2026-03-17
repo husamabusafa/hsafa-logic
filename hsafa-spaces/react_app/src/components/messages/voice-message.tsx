@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { type MockMessage } from "@/lib/mock-data";
 import { MicIcon, PlayIcon, PauseIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
@@ -9,17 +9,55 @@ interface VoiceMessageProps {
 export function VoiceMessage({ message }: VoiceMessageProps) {
   const [playing, setPlaying] = useState(false);
   const [showTranscription, setShowTranscription] = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const duration = message.audioDuration || 0;
   const mins = Math.floor(duration / 60);
   const secs = duration % 60;
 
+  const handlePlayPause = () => {
+    if (!audioRef.current) return;
+    
+    if (playing) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play().catch(err => {
+        console.error("Audio playback failed:", err);
+      });
+    }
+  };
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handlePlay = () => setPlaying(true);
+    const handlePause = () => setPlaying(false);
+    const handleEnded = () => setPlaying(false);
+
+    audio.addEventListener("play", handlePlay);
+    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("ended", handleEnded);
+
+    return () => {
+      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("ended", handleEnded);
+    };
+  }, []);
+
   return (
     <div className="space-y-1.5">
+      {/* Hidden audio element */}
+      {message.audioUrl && (
+        <audio ref={audioRef} src={message.audioUrl} preload="metadata" />
+      )}
+
       {/* Player */}
       <div className="flex items-center gap-3">
         <button
-          onClick={() => setPlaying(!playing)}
-          className="size-9 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 hover:bg-primary/20 transition-colors"
+          onClick={handlePlayPause}
+          disabled={!message.audioUrl}
+          className="size-9 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 hover:bg-primary/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {playing ? <PauseIcon className="size-4" /> : <PlayIcon className="size-4 ml-0.5" />}
         </button>

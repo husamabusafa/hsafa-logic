@@ -11,6 +11,7 @@
 
 import fs from "fs/promises";
 import path from "path";
+import https from "https";
 import { ensureStorageDirs } from "./media-storage.js";
 
 const CARTESIA_API_KEY = process.env.CARTESIA_API_KEY || "";
@@ -43,34 +44,57 @@ export async function textToSpeech(
 
   await ensureStorageDirs();
 
-  const response = await fetch(CARTESIA_TTS_URL, {
-    method: "POST",
-    headers: {
-      "Cartesia-Version": "2024-06-10",
-      "X-API-Key": CARTESIA_API_KEY,
-      "Content-Type": "application/json",
+  const postData = JSON.stringify({
+    model_id: DEFAULT_MODEL_ID,
+    transcript: text,
+    voice: {
+      mode: "id",
+      id: voiceId || DEFAULT_VOICE_ID,
     },
-    body: JSON.stringify({
-      model_id: DEFAULT_MODEL_ID,
-      transcript: text,
-      voice: {
-        mode: "id",
-        id: voiceId || DEFAULT_VOICE_ID,
-      },
-      output_format: {
-        container: "mp3",
-        bit_rate: 128000,
-        sample_rate: 44100,
-      },
-    }),
+    output_format: {
+      container: "mp3",
+      sample_rate: 44100,
+    },
   });
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => "Unknown error");
-    throw new Error(`Cartesia TTS failed (${response.status}): ${errorText}`);
-  }
+  const audioBuffer = await new Promise<Buffer>((resolve, reject) => {
+    const req = https.request(
+      CARTESIA_TTS_URL,
+      {
+        method: "POST",
+        headers: {
+          "Cartesia-Version": "2024-06-10",
+          "X-API-Key": CARTESIA_API_KEY,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(postData),
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
 
-  const audioBuffer = Buffer.from(await response.arrayBuffer());
+        res.on("data", (chunk) => chunks.push(chunk));
+
+        res.on("end", () => {
+          const buffer = Buffer.concat(chunks);
+          
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(buffer);
+          } else {
+            const errorText = buffer.toString("utf-8");
+            reject(new Error(`Cartesia TTS failed (${res.statusCode}): ${errorText}`));
+          }
+        });
+      }
+    );
+
+    req.on("error", (err) => {
+      console.error("[cartesia] HTTPS request error:", err.message);
+      reject(new Error(`TTS request failed: ${err.message}`));
+    });
+
+    req.write(postData);
+    req.end();
+  });
 
   // Save to disk
   const filename = `voice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
