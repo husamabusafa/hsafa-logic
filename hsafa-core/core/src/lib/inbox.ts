@@ -280,113 +280,26 @@ function eventPriority(e: SenseEvent): number {
  * This becomes the injected user message in consciousness.
  * Events are sorted by priority before formatting.
  *
- * If a message event includes `recentMessages` (conversation context),
- * it is rendered as a compact thread so the Haseef always knows what
- * the conversation was about and what it already said.
+ * Core is generic — it does NOT interpret event data fields.
+ * Each service (spaces, whatsapp, etc.) populates event.data with a
+ * human-readable `formattedContext` string. If present, we use it.
+ * Otherwise we fall back to JSON.
  */
 export function formatInboxEvents(events: SenseEvent[]): string {
   const now = new Date();
   const sorted = prioritizeEvents(events);
-
-  // Group events by spaceId so we render context once per space
-  const spaceContextRendered = new Set<string>();
   const blocks: string[] = [];
 
   for (const e of sorted) {
     const ts = e.timestamp ? ` (${relativeTime(e.timestamp, now)})` : '';
     const data = e.data as Record<string, unknown>;
 
-    const senderName = data.senderName as string | undefined;
-    const senderType = data.senderType as string | undefined;
-    const content = data.content as string | undefined;
-    const spaceId = data.spaceId as string | undefined;
-    const spaceName = data.spaceName as string | undefined;
-
-    // Identity fields — so the haseef always knows who it is
-    const yourName = data.yourName as string | undefined;
-
-    if (content && senderName) {
-      const spaceLabel = spaceName ? `"${spaceName}"` : (spaceId ?? 'unknown');
-
-      // Render conversation context once per space (if available)
-      // The sender field is pre-labeled by the service ("You" for this haseef's own messages)
-      const recentMessages = data.recentMessages as Array<{
-        messageId: string;
-        sender: string;
-        content: string;
-        createdAt: string;
-        replyTo?: { messageId: string; senderName: string; snippet: string };
-      }> | undefined;
-
-      const messageId = data.messageId as string | undefined;
-      const msgIdTag = messageId ? ` [messageId:${messageId}]` : '';
-
-      // Format replyTo info for the trigger message
-      const replyTo = data.replyTo as { messageId?: string; senderName?: string; snippet?: string } | undefined;
-      const replyTag = replyTo?.messageId
-        ? ` (replying to ${replyTo.senderName ?? 'someone'}: "${(replyTo.snippet ?? '').slice(0, 60)}")`
-        : '';
-
-      // Space members and context
-      const spaceMembers = data.spaceMembers as Array<{
-        name: string; type: string; role: string; isYou: boolean;
-      }> | undefined;
-      const isGroupSpace = data.isGroupSpace as boolean | undefined;
-      const eventIsDirect = data.isDirect as boolean | undefined;
-      const directWith = data.directWith as { entityId: string; name: string; type: string } | undefined;
-
-      // Build space header with identity reminder + members — rendered once per space
-      let spaceHeader = '';
-      if (spaceId && !spaceContextRendered.has(`members:${spaceId}`)) {
-        spaceContextRendered.add(`members:${spaceId}`);
-        const spaceType = isGroupSpace ? 'GROUP' : '1-on-1';
-        // Identity reminder at the top of each space block
-        if (yourName) {
-          spaceHeader += `  [YOU ARE: ${yourName}]\n`;
-        }
-        if (eventIsDirect && directWith) {
-          spaceHeader += `  [DIRECT SPACE with ${directWith.name} (${directWith.type})]\n`;
-        }
-        if (spaceMembers && spaceMembers.length > 0) {
-          const memberList = spaceMembers.map((m) =>
-            `${m.name}${m.isYou ? ' (You)' : ''} [${m.type}, ${m.role}]`
-          ).join(', ');
-          spaceHeader += `  [space: ${spaceLabel}, ${spaceType}, members: ${memberList}]\n`;
-        } else {
-          spaceHeader += `  [space: ${spaceLabel}, ${spaceType}]\n`;
-        }
-      }
-
-      // Sender label with type for clarity
-      const senderLabel = senderType ? `${senderName} (${senderType})` : senderName;
-
-      if (recentMessages && recentMessages.length > 0 && spaceId && !spaceContextRendered.has(spaceId)) {
-        spaceContextRendered.add(spaceId);
-        const contextLines = recentMessages.map((m) => {
-          const age = relativeTime(m.createdAt, now);
-          const idTag = m.messageId ? ` [messageId:${m.messageId}]` : '';
-          const mReplyTag = m.replyTo?.messageId
-            ? ` (replying to ${m.replyTo.senderName}: "${(m.replyTo.snippet ?? '').slice(0, 40)}")`
-            : '';
-          return `    ${m.sender} (${age})${idTag}${mReplyTag}: "${m.content}"`;
-        });
-        blocks.push(
-          `${spaceHeader}` +
-          `  [recent conversation in ${spaceLabel}]:\n${contextLines.join('\n')}\n` +
-          `  >>> NEW MESSAGE from ${senderLabel}:\n` +
-          `  ${senderName} (spaceId:${spaceId})${msgIdTag}${replyTag}: "${content}"\n` +
-          `  [⚠ THIS IS A SPACE EVENT — reply with spaces_send_message tool. Your text output is INVISIBLE in the space.]`,
-        );
-      } else {
-        blocks.push(
-          `${spaceHeader}` +
-          `  >>> MESSAGE from ${senderLabel} in ${spaceLabel} (spaceId:${spaceId})${msgIdTag}${replyTag}: "${content}"\n` +
-          `  [⚠ THIS IS A SPACE EVENT — reply with spaces_send_message tool. Your text output is INVISIBLE in the space.]`,
-        );
-      }
+    // Services can provide a pre-formatted context string
+    const formatted = data.formattedContext as string | undefined;
+    if (formatted) {
+      blocks.push(formatted);
     } else {
-      // Generic format
-      blocks.push(`[${e.scope}:${e.type}]${ts} ${JSON.stringify(e.data)}`);
+      blocks.push(`[${e.scope}:${e.type}]${ts} ${JSON.stringify(data)}`);
     }
   }
 

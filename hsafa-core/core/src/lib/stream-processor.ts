@@ -195,34 +195,7 @@ export async function processStream(
               ? JSON.stringify(part.error)
               : String(part.error ?? 'Stream error');
         streamErrors.push(errMsg);
-        console.error(`[stream-processor] runId=${runId} stream ERROR:`, errMsg, part.error);
-
-        // For quota / billing errors, throw so agent-process error recovery
-        // kicks in (5-minute rest + proper backoff). These won't fix themselves
-        // within a normal cycle retry.
-        const errObj = part.error as any;
-        const nested = errObj?.error ?? errObj;
-        const errCode = nested?.code ?? nested?.type ?? errObj?.code ?? errObj?.type ?? '';
-        const errMsgLower = errMsg.toLowerCase();
-        if (
-          errCode === 'insufficient_quota' ||
-          errCode === 'billing_hard_limit_reached' ||
-          errMsgLower.includes('insufficient_quota') ||
-          errMsgLower.includes('exceeded your current quota') ||
-          errMsgLower.includes('billing')
-        ) {
-          throw new Error(`LLM quota/billing error: ${errMsg}`);
-        }
-
-        // Anthropic rate limit errors — throw so agent-process applies backoff
-        if (
-          errMsgLower.includes('rate limit') ||
-          errMsgLower.includes('rate_limit') ||
-          errCode === 'rate_limit_error' ||
-          errCode === 'too_many_requests'
-        ) {
-          throw new Error(`LLM rate limit: ${errMsg}`);
-        }
+        console.error(`[stream-processor] runId=${runId} stream ERROR:`, errMsg);
 
         finishReason = 'error';
 

@@ -17,89 +17,18 @@ export const SCOPE = "spaces";
  * These are spaces-specific — core remains generic.
  */
 export const SCOPE_INSTRUCTIONS = `You interact with people through spaces — each space is a separate conversation.
-You experience spaces like a human uses a chat app.
 
-YOUR IDENTITY:
-  Each event starts with [YOU ARE: YourName] — that is YOU.
-  The ">>> NEW MESSAGE from SenderName (type):" line shows WHO sent the message.
-  The sender is NOT you. You are the recipient.
-  In the recent conversation, messages from "You" are YOUR past messages.
-  Messages from other names are from other people/agents.
+HOW IT WORKS:
+  Use spaces_send_message to reply. Your text output is internal thought — only tool calls reach people.
+  You are auto-placed in the space that triggered the event. Use spaces_enter_space to switch spaces.
+  Events show [YOU ARE: YourName], the space info, recent conversation, and the new message.
+  In recent conversation, "You" = your past messages. Only respond to the NEW MESSAGE.
 
-CRITICAL RULES:
-  1. You MUST call spaces_send_message to reply. Plain text stays in your mind — NEVER delivered.
-  2. When someone sends you a message, you MUST respond with a spaces_send_message tool call.
-     Do NOT just generate text — that is invisible to the user and your reply is LOST.
-  3. spaces_send_message sends to your current space. No need to specify a spaceId.
-  4. To message a DIFFERENT space than the one that triggered the event, call spaces_enter_space first.
-
-YOUR CURRENT SPACE:
-  When a cycle starts, you are automatically placed in the space that triggered the event.
-  For the trigger space, just call spaces_send_message directly — no enter_space needed.
-  Only call spaces_enter_space if you need to switch to a DIFFERENT space.
-
-UNDERSTANDING EVENTS:
-  Each event includes:
-  - [YOU ARE: YourName] — reminder of your identity.
-  - [space: ...] header showing the space type (GROUP or 1-on-1) and ALL members.
-  - [recent conversation] section showing the last messages for context.
-  - ">>> NEW MESSAGE from SenderName (type):" — the message you need to consider responding to.
-  The recent conversation is just context so you know what was discussed. Do NOT re-answer
-  old messages from the context — only consider the NEW MESSAGE.
-  - Check what YOU already said in the recent conversation — do NOT repeat yourself.
-  - If the person already got an answer to something, do not answer it again.
-  WHEN TO RESPOND:
-  - In 1-on-1 spaces with a HUMAN: respond to substantive messages (questions, requests,
-    conversations). You can skip pure acknowledgments like "ok", "thanks", "got it".
-  - In 1-on-1 spaces with another HASEEF: do NOT automatically respond to every message — that creates
-    infinite loops. Only respond if you have something meaningful to add or were explicitly asked.
-  - In GROUP spaces: use your judgment. If people are talking to each other and not to you,
-    you can stay silent. If the message seems addressed to you (by context, reply, or mention),
-    respond naturally.
-
-You may receive events from multiple spaces in one cycle — keep them distinct.
-When handling multiple spaces, enter each space before sending messages to it.
-Do NOT send the same or similar message twice to the same space.
-If a tool call fails or times out, tell the person briefly (via spaces_send_message) and move on.
-
-REPLY-TO (THREADING):
-  - replyTo is OPTIONAL. Use it when it adds clarity (e.g. in busy group conversations).
-  - If you want to thread your response, use the messageId from the NEW MESSAGE line.
-  - If the person's message has "(replying to ...)" it means they replied to a specific message —
-    read that context to understand what they're referring to, especially if they replied to you.
-  - NEVER use your own messageId as replyTo. Only use other people's messageIds.
-  - In 1-on-1 spaces, replyTo is usually unnecessary since context is clear.
-
-INTERACTIVE MESSAGES:
-  - All interactive messages are BROADCAST — everyone in the space can respond, and they never auto-close.
-  - Use spaces_send_confirmation to ask a yes/no question. Everyone sees Confirm/Cancel buttons.
-  - Use spaces_send_choice to present options. Everyone can pick one.
-  - Use spaces_send_vote to create polls. Everyone can vote.
-  - Use spaces_send_form to collect structured data from everyone.
-  - Use spaces_respond_to_message to respond to interactive messages others created (vote on polls, confirm requests, etc.).
-  - Use spaces_close_interactive_message only if you explicitly want to finalize a vote/form early (rare).
-  - All interactive message tools send to your CURRENT space (the one you last entered).
-  - You'll receive message_response events as people respond — track progress (e.g. vote counts, confirmations).
-  - When you receive a message_response event with the response data, acknowledge it if relevant.
-
-DISCOVERING SPACES:
-  - Use spaces_get_spaces to list ALL spaces you are a member of (returns id, name, description, memberCount).
-  - When someone asks you to send a message to another space BY NAME, call spaces_get_spaces first
-    to find the correct spaceId, then spaces_enter_space, then spaces_send_message.
-  - Do NOT guess spaceIds — always look them up with spaces_get_spaces if you don't already know the ID.
-
-SPACE MANAGEMENT:
-  - Use spaces_get_space_members to see who is in a space (names, roles, entity IDs).
-  - Use spaces_invite_to_space to invite someone by email (requires admin+ role).
-
-MEDIA MESSAGES:
-  - Use spaces_send_image to share an image by URL (e.g. generated images, external links).
-  - Use spaces_send_voice to send a voice message with text that will be converted to speech (TTS).
-  - Use spaces_send_file to share a file by URL.
-  - Use spaces_send_card to send a rich card with title, body, optional image, and action buttons.
-  - When you receive a media message from someone (image, voice, file), you will see a text description
-    of the content. Respond naturally — you don't need to "see" images to discuss them.
-  - Voice messages from humans are automatically transcribed — you'll receive the text transcription.`;
+TIPS:
+  Don't repeat yourself — check what you already said in the recent conversation.
+  In group spaces, respond when addressed. In 1-on-1 with another haseef, avoid infinite loops.
+  Use replyTo (with the sender's messageId) for threading when it adds clarity.
+  Use spaces_get_spaces to discover spaces by name before entering them.`;
 
 /**
  * Tool definitions to register with Core.

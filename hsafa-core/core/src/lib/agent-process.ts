@@ -16,7 +16,6 @@ import {
   markEventsProcessed,
   recoverStuckEvents,
   formatInboxEvents,
-  inboxSize,
 } from './inbox.js';
 import {
   buildSystemPrompt,
@@ -65,7 +64,6 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
   let config = HaseefConfigSchema.parse(haseef.configJson);
   let cachedConfigHash = haseef.configHash;
   let consciousness = await loadConsciousness(haseefId);
-  let consecutiveErrors = 0;
 
   console.log(`[process] ${haseefName} ready (cycle ${consciousness.cycleCount}, ${estimateTokens(consciousness.messages)} tokens)`);
 
@@ -208,19 +206,6 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
         messages: messagesForLLM as any,
         maxSteps: MAX_STEPS,
         toolCallStreaming: true,
-        // Mid-cycle inbox awareness: check for new events between steps
-        prepareStep: async ({ stepNumber }: { stepNumber: number }) => {
-          if (stepNumber === 0) return {};
-          const pending = await inboxSize(haseefId).catch(() => 0);
-          if (pending > 0) {
-            return {
-              system: systemPrompt +
-                `\n\nNOTICE: ${pending} new event(s) arrived in your inbox while you were thinking. ` +
-                `Call peek_inbox to pull them into this cycle if they seem relevant.`,
-            };
-          }
-          return {};
-        },
       } as any);
 
       // 10. PROCESS stream — wrapped in try/finally to ALWAYS emit run.finished
@@ -291,20 +276,6 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
           },
         });
 
-        // Log if LLM produced text without calling send_message (silent cycle)
-        if (triggerScope === 'spaces' && triggerType === 'message') {
-          const sentMessage = streamResult.toolCalls.some(
-            (tc) => tc.toolName === 'spaces_send_message' || tc.toolName.endsWith('_send_message'),
-          );
-          if (!sentMessage && streamResult.text) {
-            console.warn(
-              `[process] ⚠️ ${haseefName} cycle #${newCycleCount} produced text without sending — ` +
-              `text: "${streamResult.text.slice(0, 100)}"`,
-            );
-          }
-        }
-
-        consecutiveErrors = 0;
       } catch (innerErr) {
         // Roll back consciousness to pre-cycle state — prevents stacking
         // user messages on repeated failures
@@ -350,21 +321,14 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
       }
 
     } catch (err) {
-      consecutiveErrors++;
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[process] ${haseefName} error (${consecutiveErrors}):`, errMsg);
+      console.error(`[process] ${haseefName} cycle error:`, errMsg);
 
       // Mark stuck events as failed so they don't block the next cycle
       await recoverStuckEvents(haseefId).catch(() => 0);
 
-      // Brief pause to avoid tight error loops (2s flat, no exponential backoff)
+      // Brief pause to avoid tight error loops
       await new Promise((r) => setTimeout(r, 2000));
-
-      // After 10 consecutive errors, give up
-      if (consecutiveErrors >= 10) {
-        console.error(`[process] ${haseefName} too many consecutive errors — stopping`);
-        break;
-      }
     }
   }
 

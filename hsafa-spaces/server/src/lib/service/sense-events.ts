@@ -170,11 +170,29 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       }
     }
 
+    // Build formattedContext — the human-readable representation core injects
+    // into consciousness. Core is generic and does not interpret our fields.
+    const formattedContext = buildFormattedContext({
+      yourName: conn.haseefName,
+      spaceId,
+      spaceName: spaceName ?? spaceId,
+      spaceMembers,
+      isGroupSpace,
+      isDirect,
+      directWith,
+      recentMessages,
+      senderName,
+      senderType: senderType ?? "unknown",
+      content: eventContent ?? "",
+      messageId,
+      replyTo: replyTo as { messageId?: string; senderName?: string; snippet?: string } | undefined,
+    });
+
     const eventData: Record<string, unknown> = {
-      // YOUR IDENTITY — so you always know who you are
+      formattedContext,
+      // Structured fields for programmatic use (SDKs, stream bridge, etc.)
       yourEntityId: conn.agentEntityId,
       yourName: conn.haseefName,
-      // MESSAGE INFO
       messageId,
       spaceId,
       spaceName,
@@ -182,35 +200,23 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       senderName,
       senderType,
       content: eventContent,
-      recentMessages,
-      spaceMembers,
       isGroupSpace,
-      // DIRECT SPACE INFO
       isDirect,
       ...(directType ? { directType } : {}),
       ...(directWith ? { directWith } : {}),
     };
-    // Include message type info (§17.8)
     if (messageType && messageType !== "text") {
       eventData.messageType = messageType;
     }
     if (metadata?.payload) {
       eventData.payload = metadata.payload;
     }
-    // Include file attachments so Core can see them (multimodal)
     if (metadata?.files && Array.isArray(metadata.files)) {
       eventData.files = metadata.files;
     }
     if (replyTo) {
       eventData.replyTo = replyTo;
     }
-
-    console.log(`[spaces-service] Sense event data for ${conn.haseefName}:`, JSON.stringify({
-      triggerMessageId: messageId,
-      recentMessageIds: recentMessages.map((m: any) => `${m.messageId?.slice(0,8)}...(${m.sender})`),
-      hasReplyTo: !!replyTo,
-      isGroupSpace,
-    }));
 
     await pushSenseEvent(conn.haseefId, {
       eventId: messageId,
@@ -482,4 +488,80 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// =============================================================================
+// Formatted Context Builder
+//
+// Produces a human-readable string for core to inject into consciousness.
+// Core is generic — it just uses data.formattedContext if present.
+// All spaces-specific formatting lives here.
+// =============================================================================
+
+interface FormattedContextParams {
+  yourName: string;
+  spaceId: string;
+  spaceName: string;
+  spaceMembers: Array<{ name: string; type: string; role: string; isYou: boolean }>;
+  isGroupSpace: boolean;
+  isDirect: boolean;
+  directWith?: { entityId: string; name: string; type: string };
+  recentMessages: Array<{
+    messageId: string;
+    sender: string;
+    content: string;
+    createdAt: string;
+    replyTo?: { messageId: string; senderName: string; snippet: string };
+  }>;
+  senderName: string;
+  senderType: string;
+  content: string;
+  messageId: string;
+  replyTo?: { messageId?: string; senderName?: string; snippet?: string };
+}
+
+function buildFormattedContext(p: FormattedContextParams): string {
+  const lines: string[] = [];
+
+  // Space header
+  const spaceType = p.isGroupSpace ? "GROUP" : "1-on-1";
+  const spaceLabel = `"${p.spaceName}"`;
+
+  lines.push(`[YOU ARE: ${p.yourName}]`);
+
+  if (p.isDirect && p.directWith) {
+    lines.push(`[DIRECT SPACE with ${p.directWith.name} (${p.directWith.type})]`);
+  }
+
+  if (p.spaceMembers.length > 0) {
+    const memberList = p.spaceMembers
+      .map((m) => `${m.name}${m.isYou ? " (You)" : ""} [${m.type}]`)
+      .join(", ");
+    lines.push(`[space: ${spaceLabel}, ${spaceType}, members: ${memberList}]`);
+  } else {
+    lines.push(`[space: ${spaceLabel}, ${spaceType}]`);
+  }
+
+  // Recent conversation context
+  if (p.recentMessages.length > 0) {
+    lines.push(`[recent conversation in ${spaceLabel}]:`);
+    for (const m of p.recentMessages) {
+      const idTag = m.messageId ? ` [messageId:${m.messageId}]` : "";
+      const replyTag = m.replyTo?.messageId
+        ? ` (replying to ${m.replyTo.senderName}: "${(m.replyTo.snippet ?? "").slice(0, 40)}")`
+        : "";
+      lines.push(`  ${m.sender}${idTag}${replyTag}: "${m.content}"`);
+    }
+  }
+
+  // The new message
+  const msgIdTag = p.messageId ? ` [messageId:${p.messageId}]` : "";
+  const replyTag = p.replyTo?.messageId
+    ? ` (replying to ${p.replyTo.senderName ?? "someone"}: "${(p.replyTo.snippet ?? "").slice(0, 60)}")`
+    : "";
+  const senderLabel = `${p.senderName} (${p.senderType})`;
+
+  lines.push(`>>> NEW MESSAGE from ${senderLabel} in ${spaceLabel} (spaceId:${p.spaceId})${msgIdTag}${replyTag}: "${p.content}"`);
+
+  return lines.join("\n");
 }

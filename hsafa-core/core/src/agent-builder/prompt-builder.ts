@@ -208,18 +208,9 @@ function buildInstructionsSection(ctx: PromptContext): string {
     '  Use recall_memories to search for specific information not in your prompt.',
     '',
     '  BEHAVIOR:',
-    '  Each cycle you receive SENSE EVENTS. Read any conversation context carefully.',
-    '  Check what you already said — do NOT repeat yourself.',
-    '  Be natural and concise — talk like a real person, not an AI assistant.',
-    '',
-    '  CRITICAL — TOOL CALLS REQUIRED:',
-    '  Your text output is INTERNAL THOUGHT ONLY — nobody can see it.',
-    '  To communicate with people, you MUST call a tool (e.g. spaces_send_message).',
-    '  If someone messages you and you want to reply, you MUST make a tool call.',
-    '  NEVER generate a text response without also calling the appropriate send tool.',
-    '  A cycle that ends with only text and no tool calls = your response was LOST.',
-    '  For SPACE events: your text/internal thoughts are NEVER delivered to the space.',
-    '  You MUST use spaces_send_message to reply. No exceptions.',
+    '  Each cycle you receive SENSE EVENTS — read them carefully.',
+    '  Use your tools to take action. Your text output is internal thought only.',
+    '  Be natural and concise.',
   ];
 
   // Scope instructions contributed by extensions
