@@ -9,10 +9,16 @@ interface VoiceMessageProps {
 export function VoiceMessage({ message }: VoiceMessageProps) {
   const [playing, setPlaying] = useState(false);
   const [showTranscription, setShowTranscription] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(message.audioDuration || 0);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const duration = message.audioDuration || 0;
-  const mins = Math.floor(duration / 60);
-  const secs = duration % 60;
+  const waveformRef = useRef<HTMLDivElement>(null);
+
+  const currentMins = Math.floor(currentTime / 60);
+  const currentSecs = Math.floor(currentTime % 60);
+  const totalMins = Math.floor(duration / 60);
+  const totalSecs = Math.floor(duration % 60);
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   const handlePlayPause = () => {
     if (!audioRef.current) return;
@@ -26,6 +32,18 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
     }
   };
 
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!audioRef.current || !waveformRef.current) return;
+    
+    const rect = waveformRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, x / rect.width));
+    const newTime = percentage * duration;
+    
+    audioRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
+  };
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -33,15 +51,21 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
     const handlePlay = () => setPlaying(true);
     const handlePause = () => setPlaying(false);
     const handleEnded = () => setPlaying(false);
+    const handleTimeUpdate = () => setCurrentTime(audio.currentTime);
+    const handleLoadedMetadata = () => setDuration(audio.duration);
 
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
     audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
 
     return () => {
       audio.removeEventListener("play", handlePlay);
       audio.removeEventListener("pause", handlePause);
       audio.removeEventListener("ended", handleEnded);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
     };
   }, []);
 
@@ -62,14 +86,22 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
           {playing ? <PauseIcon className="size-4" /> : <PlayIcon className="size-4 ml-0.5" />}
         </button>
 
-        {/* Waveform visualization (simulated) */}
-        <div className="flex-1 flex items-center gap-[2px] h-6">
+        {/* Waveform visualization with progress */}
+        <div 
+          ref={waveformRef}
+          onClick={handleSeek}
+          className="flex-1 flex items-center gap-[2px] h-6 cursor-pointer relative"
+        >
           {Array.from({ length: 28 }).map((_, i) => {
             const height = 4 + Math.sin(i * 0.8) * 12 + Math.random() * 8;
+            const barProgress = (i / 28) * 100;
+            const isPlayed = barProgress <= progress;
             return (
               <div
                 key={i}
-                className="w-[3px] rounded-full bg-primary/40"
+                className={`w-[3px] rounded-full transition-colors ${
+                  isPlayed ? "bg-primary" : "bg-primary/30"
+                }`}
                 style={{ height: `${Math.max(4, Math.min(24, height))}px` }}
               />
             );
@@ -79,7 +111,7 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
         <div className="flex items-center gap-1.5 shrink-0">
           <MicIcon className="size-3 text-muted-foreground" />
           <span className="text-xs text-muted-foreground tabular-nums">
-            {mins}:{secs.toString().padStart(2, "0")}
+            {currentMins}:{currentSecs.toString().padStart(2, "0")} / {totalMins}:{totalSecs.toString().padStart(2, "0")}
           </span>
         </div>
       </div>
