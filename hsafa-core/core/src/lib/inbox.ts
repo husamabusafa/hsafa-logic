@@ -286,12 +286,10 @@ function eventPriority(e: SenseEvent): number {
  * Otherwise we fall back to JSON.
  */
 export function formatInboxEvents(events: SenseEvent[]): string {
-  const now = new Date();
   const sorted = prioritizeEvents(events);
   const blocks: string[] = [];
 
   for (const e of sorted) {
-    const ts = e.timestamp ? ` (${relativeTime(e.timestamp, now)})` : '';
     const data = e.data as Record<string, unknown>;
 
     // Services can provide a pre-formatted context string
@@ -299,11 +297,13 @@ export function formatInboxEvents(events: SenseEvent[]): string {
     if (formatted) {
       blocks.push(formatted);
     } else {
-      blocks.push(`[${e.scope}:${e.type}]${ts} ${JSON.stringify(data)}`);
+      blocks.push(`[${e.scope}:${e.type}] ${JSON.stringify(data)}`);
     }
   }
 
-  return `SENSE EVENTS (${events.length}, now=${now.toISOString()}):\n${blocks.join('\n')}`;
+  // Natural framing — no mechanical header, just the events
+  // The instructions already explain that sense events wake the Haseef
+  return blocks.join('\n\n');
 }
 
 /**

@@ -146,17 +146,12 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
       const built = await buildHaseef(haseef.configJson, context, dbTools);
 
       // 7. BUILD SYSTEM PROMPT
-      const toolsByScope = new Map<string, Array<{ name: string; description: string; inputSchema: unknown }>>();
-      for (const t of dbTools) {
-        const list = toolsByScope.get(t.scope) ?? [];
-        list.push({ name: t.name, description: t.description, inputSchema: t.inputSchema });
-        toolsByScope.set(t.scope, list);
-      }
-
       const consciousnessRecord = await prisma.haseefConsciousness.findUnique({
         where: { haseefId },
         select: { lastCycleAt: true },
       });
+
+      const connectedScopes = dbScopes.map((s) => s.scope);
 
       const systemPrompt = buildSystemPrompt({
         haseefId,
@@ -169,7 +164,7 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
         memories,
         totalMemoryCount,
         relevantPast,
-        toolsByScope,
+        connectedScopes,
         scopeInstructions,
       });
 

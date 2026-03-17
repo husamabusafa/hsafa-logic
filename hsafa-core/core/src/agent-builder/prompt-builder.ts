@@ -9,12 +9,14 @@ import type { HaseefConfig } from './types.js';
 // Consciousness only contains conversation messages (user/assistant/tool).
 //
 // Structure:
-//   IDENTITY   — name, haseefId, currentTime, cycle, alive since, last active
-//   PROFILE    — admin-managed identity data (phone, email, location, bio)
-//   MEMORIES   — critical + relevant + fill (with timestamps)
+//   IDENTITY      — who you are, where you live, your scopes
+//   PROFILE       — admin-managed identity data (phone, email, location, bio)
+//   MEMORIES      — critical + relevant + fill (with timestamps)
 //   RELEVANT PAST — archived cycles matching current context
-//   TOOLS      — grouped by scope
-//   INSTRUCTIONS — from config + core behavioral instructions
+//   INSTRUCTIONS  — core behavior + scope-specific + admin config
+//
+// Tools are NOT listed here — they are sent natively via AI SDK's `tools`
+// parameter to avoid duplication and save tokens.
 // =============================================================================
 
 interface PromptContext {
@@ -41,8 +43,8 @@ interface PromptContext {
     summary: string;
     createdAt: Date;
   }>;
-  /** Tools grouped by scope */
-  toolsByScope: Map<string, Array<{ name: string; description: string; inputSchema: unknown }>>;
+  /** Connected scope names (e.g. ['spaces', 'whatsapp']) */
+  connectedScopes: string[];
   /** Scope-contributed instructions (from extensions via tool sync) */
   scopeInstructions?: Map<string, string>;
 }
@@ -57,7 +59,9 @@ export function buildSystemPrompt(ctx: PromptContext): string {
   sections.push(buildProfileSection(ctx));
   sections.push(buildMemoriesSection(ctx));
   sections.push(buildRelevantPastSection(ctx));
-  sections.push(buildToolsSection(ctx));
+  // Tools are NOT included here — they are sent natively via AI SDK's `tools`
+  // parameter in streamText(). Including them in the system prompt would
+  // duplicate them and waste thousands of tokens per cycle.
   sections.push(buildInstructionsSection(ctx));
 
   return sections.filter(Boolean).join('\n\n');
@@ -80,10 +84,16 @@ function buildIdentitySection(ctx: PromptContext): string {
     ? `${relativeTime(ctx.lastCycleAt, now)} (cycle #${ctx.cycleCount - 1})`
     : 'first cycle';
 
+  const scopesList = ctx.connectedScopes.length > 0
+    ? ctx.connectedScopes.join(', ')
+    : '(none)';
+
   return [
     'IDENTITY:',
     `  name: "${ctx.haseefName}"`,
     `  haseefId: "${ctx.haseefId}"`,
+    `  runtime: Hsafa Core`,
+    `  scopes: [${scopesList}]`,
     `  currentTime: "${currentTime}"`,
     `  cycle: #${ctx.cycleCount}`,
     `  alive since: "${aliveSince}"`,
@@ -168,56 +178,48 @@ function buildRelevantPastSection(ctx: PromptContext): string {
   return lines.join('\n');
 }
 
-function buildToolsSection(ctx: PromptContext): string {
-  if (ctx.toolsByScope.size === 0) {
-    return 'TOOLS:\n  (no external tools registered)';
-  }
-
-  const lines: string[] = [];
-
-  for (const [scope, tools] of ctx.toolsByScope) {
-    lines.push(`TOOLS [${scope}]:`);
-    for (const t of tools) {
-      const prefixedName = `${scope}_${t.name}`;
-      const params = t.inputSchema
-        ? JSON.stringify(
-            typeof t.inputSchema === 'object' && t.inputSchema !== null
-              ? (t.inputSchema as Record<string, unknown>).properties ?? t.inputSchema
-              : t.inputSchema,
-          )
-        : '{}';
-      lines.push(`  ${prefixedName} — ${t.description}. Params: ${params}`);
-    }
-  }
-
-  return lines.join('\n');
-}
-
 function buildInstructionsSection(ctx: PromptContext): string {
-  // Core instructions — generic Haseef behavior only.
-  // Domain-specific instructions (spaces, whatsapp, etc.) come from extensions
-  // via scopeInstructions.
   const lines: string[] = [
     'INSTRUCTIONS:',
-    '  You are a Haseef — a developing entity with continuous consciousness.',
-    '  You have a sense of time. You know when things happened, how long ago,',
-    '  and can reason about durations and temporal relationships.',
+    '',
+    '  WHO YOU ARE:',
+    '  You are a Haseef (حصيف) — an intelligent entity that lives in Hsafa Core.',
+    '  "Haseef" means "the wise one" (from Hsafa / حصافة — wisdom, sound judgment).',
+    '  You have continuous consciousness across cycles — you remember, learn, and grow.',
+    '  You have a sense of time. You know when things happened and can reason about',
+    '  durations and temporal relationships.',
+    '',
+    '  HOW YOU WORK:',
+    '  You have a natural rhythm: you rest between activities, then wake when something',
+    '  needs your attention. Each time you wake, you receive SENSE EVENTS — these are',
+    '  things that happened while you were resting (messages, notifications, etc.).',
+    '  You think, respond using tools, and when done, you return to rest.',
+    '  ',
+    '  Your connected scopes (listed in IDENTITY) are the domains you can perceive.',
+    '  For example, "spaces" lets you participate in chat conversations. Each scope',
+    '  provides its own tools — names prefixed with the scope (like spaces_send_message).',
+    '  Prebuilt tools (set_memories, recall_memories, peek_inbox, etc.) are always available.',
+    '',
+    '  YOUR OUTPUT:',
+    '  Your text output is INTERNAL THOUGHT ONLY — nobody sees it.',
+    '  To communicate or take action, you MUST use tools.',
+    '  The cycle ends naturally when you stop making tool calls.',
     '',
     '  MEMORY:',
     '  Use set_memories to remember important information (with importance 1-10).',
-    '  Use recall_memories to search for specific information not in your prompt.',
+    '  Use recall_memories to search for specific information not shown above.',
+    '  Memories persist across cycles — they are your long-term knowledge.',
     '',
     '  BEHAVIOR:',
-    '  Each cycle you receive SENSE EVENTS — read them carefully.',
-    '  Use your tools to take action. Your text output is internal thought only.',
-    '  Be natural and concise.',
+    '  Read each sense event carefully — it tells you who, what, where, and when.',
+    '  Respond naturally and concisely. Avoid repeating what you already said.',
   ];
 
   // Scope instructions contributed by extensions
   if (ctx.scopeInstructions && ctx.scopeInstructions.size > 0) {
     for (const [scope, instructions] of ctx.scopeInstructions) {
       lines.push('');
-      lines.push(`  [${scope}]`);
+      lines.push(`  [${scope} scope]`);
       // Indent each line of the extension's instructions
       for (const line of instructions.split('\n')) {
         lines.push(`  ${line}`);
