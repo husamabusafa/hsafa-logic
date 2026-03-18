@@ -6,7 +6,7 @@
 
 import { prisma } from "../db.js";
 import { state } from "./types.js";
-import { SCOPE, SCOPE_INSTRUCTIONS, TOOLS } from "./manifest.js";
+import { SCOPE, SCOPE_INSTRUCTIONS, TOOLS, SCHEDULER_SCOPE, SCHEDULER_TOOLS } from "./manifest.js";
 import { getActiveSchedules } from "./schedule-service.js";
 
 export function coreHeaders(): Record<string, string> {
@@ -18,7 +18,13 @@ export function coreHeaders(): Record<string, string> {
 
 /** PUT /api/haseefs/:id/scopes/:scope/tools — Sync all tools + scope instructions */
 export async function syncTools(haseefId: string): Promise<void> {
-  const instructions = await buildDynamicInstructions(haseefId);
+  await syncSpacesTools(haseefId);
+  await syncSchedulerTools(haseefId);
+}
+
+/** Sync spaces scope tools */
+async function syncSpacesTools(haseefId: string): Promise<void> {
+  const instructions = await buildSpacesInstructions(haseefId);
   const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/scopes/${SCOPE}/tools`;
   const res = await fetch(url, {
     method: "PUT",
@@ -27,15 +33,29 @@ export async function syncTools(haseefId: string): Promise<void> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`syncTools failed for ${haseefId}: ${res.status} ${text}`);
+    throw new Error(`syncSpacesTools failed for ${haseefId}: ${res.status} ${text}`);
+  }
+}
+
+/** Sync scheduler scope tools */
+async function syncSchedulerTools(haseefId: string): Promise<void> {
+  const instructions = buildSchedulerInstructions();
+  const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/scopes/${SCHEDULER_SCOPE}/tools`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: coreHeaders(),
+    body: JSON.stringify({ tools: SCHEDULER_TOOLS, instructions }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`syncSchedulerTools failed for ${haseefId}: ${res.status} ${text}`);
   }
 }
 
 /**
- * Build per-haseef scope instructions that include spaces + schedules.
- * Static SCOPE_INSTRUCTIONS + dynamic YOUR SPACES + YOUR SCHEDULES sections.
+ * Build spaces scope instructions — static SCOPE_INSTRUCTIONS + YOUR SPACES.
  */
-async function buildDynamicInstructions(haseefId: string): Promise<string> {
+async function buildSpacesInstructions(haseefId: string): Promise<string> {
   const conn = state.connections.get(haseefId);
   const sections: string[] = [SCOPE_INSTRUCTIONS];
 
@@ -77,20 +97,21 @@ async function buildDynamicInstructions(haseefId: string): Promise<string> {
     sections.push('YOUR SPACES:\n' + spaceLines.join('\n'));
   }
 
-  // ── YOUR SCHEDULES ───────────────────────────────────────────────────
-  const schedules = await getActiveSchedules(haseefId);
-  if (schedules.length === 0) {
-    sections.push('YOUR SCHEDULES:\n  (no active schedules)');
-  } else {
-    const scheduleLines = schedules.map((s) => {
-      const typeLabel = s.type === 'recurring'
-        ? `recurring: ${s.cronExpression}`
-        : `one-time: ${s.scheduledAt?.toISOString() ?? 'unknown'}`;
-      const nextRun = s.nextRunAt.toISOString();
-      return `  - "${s.description}" (id: ${s.id}, ${typeLabel}, tz: ${s.timezone}, next: ${nextRun})`;
-    });
-    sections.push('YOUR SCHEDULES:\n' + scheduleLines.join('\n'));
-  }
+  return sections.join('\n\n');
+}
+
+/**
+ * Build scheduler scope instructions — YOUR SCHEDULES section.
+ */
+function buildSchedulerInstructions(): string {
+  const sections: string[] = [
+    `You can create scheduled plans that trigger you as sense events.
+
+HOW IT WORKS:
+  Use scheduler_create_schedule to set up recurring or one-time schedules.
+  When the time comes, you will receive a scheduled_plan sense event.
+  Respond to these events like any other — use spaces tools to take action.`,
+  ];
 
   return sections.join('\n\n');
 }

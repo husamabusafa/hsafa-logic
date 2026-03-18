@@ -93,8 +93,9 @@ export async function executeAction(
 
   console.log(`[spaces-service] [${haseefId.slice(0, 8)}] ${toolName} (${actionId.slice(0, 8)}) [activeSpace: ${conn?.activeSpace?.spaceName ?? 'none'}]`);
 
-  // Core prefixes tool names with scope: "spaces_send_message" → strip to "send_message"
-  const unprefixedToolName = toolName.replace(/^spaces_/, '');
+  // Core prefixes tool names with scope: "spaces_send_message" or "scheduler_create_schedule"
+  // Strip the scope prefix to get the original tool name
+  const unprefixedToolName = toolName.replace(/^(spaces|scheduler)_/, '');
 
   try {
     switch (unprefixedToolName) {
