@@ -7,8 +7,10 @@ import { redis } from './redis.js';
 //   1. Collects tool calls for the process loop
 //   2. Tracks tool durations
 //   3. Publishes real-time events to haseef:{haseefId}:stream (Redis Pub/Sub)
-//   4. Streams text deltas (usable by services for TTS, display, etc.)
-//   5. Handles errors
+//   4. Handles errors
+//
+// With toolChoice: 'required', the model cannot produce bare text — every
+// step must contain a tool call. Text deltas are accumulated but not broadcast.
 // =============================================================================
 
 // =============================================================================
@@ -34,7 +36,7 @@ export interface StreamResult {
   toolCalls: CollectedToolCall[];
   /** LLM finish reason */
   finishReason: string;
-  /** Haseef's text output — also streamed as text.delta events for services */
+  /** Accumulated text output (vestigial with toolChoice: 'required') */
   text: string;
   /** Stream errors collected during processing (from LLM provider) */
   streamErrors: string[];
@@ -78,19 +80,12 @@ export async function processStream(
   for await (const part of fullStream) {
     switch (part.type as string) {
 
-      // ── Text output — streamed to services (TTS, display, etc.) ────────
+      // ── Text output — with toolChoice: 'required', the model cannot
+      // produce bare text. Any text here is incidental (e.g. model bug).
+      // We still accumulate it for the StreamResult but don't broadcast.
       case 'text-delta': {
         const delta = (part.text as string) ?? '';
         text += delta;
-        if (delta) {
-          // Fire-and-forget: never block the AI stream for per-token events
-          void emit({
-            type: 'text.delta',
-            runId,
-            haseefId,
-            text: delta,
-          });
-        }
         break;
       }
 

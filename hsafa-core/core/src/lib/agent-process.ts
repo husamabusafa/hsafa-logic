@@ -24,7 +24,7 @@ import {
 } from '../agent-builder/prompt-builder.js';
 import { processStream } from './stream-processor.js';
 import { HaseefConfigSchema } from '../agent-builder/types.js';
-import { stepCountIs } from 'ai';
+import { stepCountIs, hasToolCall } from 'ai';
 
 // =============================================================================
 // Agent Process (v5)
@@ -199,7 +199,8 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
         tools: built.tools as any,
         system: systemPrompt,
         messages: messagesForLLM as any,
-         stopWhen: stepCountIs(50),
+        toolChoice: 'required' as any,
+        stopWhen: [hasToolCall('done'), stepCountIs(50)] as any,
         toolCallStreaming: true,
       } as any);
 

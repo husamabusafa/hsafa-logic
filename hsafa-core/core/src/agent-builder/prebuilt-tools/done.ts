@@ -19,12 +19,12 @@ import { z } from 'zod';
 export function createDoneTool() {
   return tool({
     description:
-      'Call this when you are finished with this cycle. If you accomplished something, provide a summary that captures what happened, what you decided, and anything you learned about yourself or others. If there was nothing to do, just call done without a summary.',
+      'Call this when you are finished with this cycle. If you accomplished something, provide a brief summary — ONE SHORT SENTENCE ONLY (10 words max). Examples: "Sent reply to Sarah." or "No action needed." If nothing to do, If there was nothing to do, just call done without a summary.',
     inputSchema: z.object({
       summary: z
         .string()
         .optional()
-        .describe('Brief summary of what you did. Good summaries include: actions taken, decisions made, and any self-knowledge or person-model insights gained. Omit if nothing to do.'),
+        .describe('One short sentence (10 words max). Examples: "Sent reply to Sarah." "No action needed." Omit if nothing to do.'),
     }),
     execute: async ({ summary }) => {
       return { done: true, ...(summary ? { summary } : {}) };

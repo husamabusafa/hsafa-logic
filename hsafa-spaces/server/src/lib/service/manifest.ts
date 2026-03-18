@@ -12,6 +12,9 @@
 /** V5 scope name for this service */
 export const SCOPE = "spaces";
 
+/** Scheduler scope for schedule-related tools */
+export const SCHEDULER_SCOPE = "scheduler";
+
 /**
  * Scope-level instructions synced to core and injected into the Haseef's prompt.
  * These are spaces-specific — core remains generic.
@@ -469,6 +472,13 @@ export const TOOLS = [
     },
     mode: "sync" as const,
   },
+];
+
+/**
+ * Scheduler scope tools — separate from spaces.
+ * These handle cron-based and one-time scheduled plans.
+ */
+export const SCHEDULER_TOOLS = [
   {
     name: "create_schedule",
     description:
