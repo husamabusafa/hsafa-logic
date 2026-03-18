@@ -21,6 +21,8 @@ import { markOnline } from "../smartspace-events.js";
 import { state, type ActiveConnection } from "./types.js";
 import { pushInteractiveMessageEvent, emitEntityChannelEvent } from "./sense-events.js";
 import { textToSpeech } from "../cartesia.js";
+import { createSchedule, deleteSchedule } from "./schedule-service.js";
+import { syncTools } from "./core-api.js";
 
 // =============================================================================
 // Reply-To Resolution — resolves a message ID into ReplyToMetadata
@@ -769,6 +771,61 @@ export async function executeAction(
         }
 
         return { success: true, messageId: result.messageId, sentTo: conn!.activeSpace!.spaceName };
+      }
+
+      case "create_schedule": {
+        if (!conn) return { error: "Haseef not connected" };
+        if (!agentEntityId) return { error: "agentEntityId not resolved" };
+
+        const description = args.description as string;
+        const scheduleType = args.type as "recurring" | "one_time";
+        if (!description || !scheduleType) return { error: "description and type are required" };
+
+        const schedule = await createSchedule({
+          haseefId: conn.haseefId,
+          agentEntityId,
+          description,
+          type: scheduleType,
+          cronExpression: args.cronExpression as string | undefined,
+          scheduledAt: args.scheduledAt as string | undefined,
+          timezone: args.timezone as string | undefined,
+        });
+
+        // Re-sync tools so the prompt shows the new schedule
+        syncTools(conn.haseefId).catch((err) => {
+          console.error(`[spaces-service] Failed to re-sync after schedule create:`, err);
+        });
+
+        console.log(`[spaces-service] Created schedule "${description}" (${schedule.id.slice(0, 8)}) for ${conn.haseefName}`);
+        return {
+          success: true,
+          schedule: {
+            id: schedule.id,
+            description: schedule.description,
+            type: schedule.type,
+            cronExpression: schedule.cronExpression,
+            timezone: schedule.timezone,
+            nextRunAt: schedule.nextRunAt.toISOString(),
+          },
+        };
+      }
+
+      case "delete_schedule": {
+        if (!conn) return { error: "Haseef not connected" };
+
+        const scheduleId = args.scheduleId as string;
+        if (!scheduleId) return { error: "scheduleId is required" };
+
+        const result = await deleteSchedule(scheduleId, conn.haseefId);
+        if (!result.success) return { error: result.error };
+
+        // Re-sync tools so the prompt removes the deleted schedule
+        syncTools(conn.haseefId).catch((err) => {
+          console.error(`[spaces-service] Failed to re-sync after schedule delete:`, err);
+        });
+
+        console.log(`[spaces-service] Deleted schedule ${scheduleId.slice(0, 8)} for ${conn.haseefName}`);
+        return { success: true };
       }
 
       default:

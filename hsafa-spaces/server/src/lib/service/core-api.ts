@@ -7,6 +7,7 @@
 import { prisma } from "../db.js";
 import { state } from "./types.js";
 import { SCOPE, SCOPE_INSTRUCTIONS, TOOLS } from "./manifest.js";
+import { getActiveSchedules } from "./schedule-service.js";
 
 export function coreHeaders(): Record<string, string> {
   return {
@@ -31,51 +32,67 @@ export async function syncTools(haseefId: string): Promise<void> {
 }
 
 /**
- * Build per-haseef scope instructions that include the spaces list with members.
- * Static SCOPE_INSTRUCTIONS + dynamic YOUR SPACES section.
+ * Build per-haseef scope instructions that include spaces + schedules.
+ * Static SCOPE_INSTRUCTIONS + dynamic YOUR SPACES + YOUR SCHEDULES sections.
  */
 async function buildDynamicInstructions(haseefId: string): Promise<string> {
   const conn = state.connections.get(haseefId);
+  const sections: string[] = [SCOPE_INSTRUCTIONS];
+
+  // ── YOUR SPACES ──────────────────────────────────────────────────────
   if (!conn || conn.spaceIds.length === 0) {
-    return SCOPE_INSTRUCTIONS + '\n\nYOUR SPACES:\n  (no spaces yet)';
+    sections.push('YOUR SPACES:\n  (no spaces yet)');
+  } else {
+    const spaces = await prisma.smartSpace.findMany({
+      where: { id: { in: conn.spaceIds } },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        _count: { select: { memberships: true } },
+      },
+    });
+
+    const membersBySpace = await Promise.all(
+      spaces.map(async (space: any) => {
+        const members = await prisma.smartSpaceMembership.findMany({
+          where: { smartSpaceId: space.id },
+          include: { entity: { select: { displayName: true } } },
+        });
+        return {
+          spaceId: space.id,
+          memberNames: members.map((m: any) => m.entity?.displayName ?? 'Unknown'),
+        };
+      })
+    );
+    const membersMap = new Map(membersBySpace.map(m => [m.spaceId, m.memberNames]));
+
+    const spaceLines = spaces.map((s: any) => {
+      const desc = s.description ? ` — ${s.description}` : '';
+      const memberNames = membersMap.get(s.id) ?? [];
+      const membersList = memberNames.join(', ') || 'empty';
+      return `  - "${s.name ?? 'Unnamed'}" (spaceId: ${s.id}, ${s._count.memberships} members: ${membersList}${desc})`;
+    });
+
+    sections.push('YOUR SPACES:\n' + spaceLines.join('\n'));
   }
 
-  // Fetch space details with member counts
-  const spaces = await prisma.smartSpace.findMany({
-    where: { id: { in: conn.spaceIds } },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      _count: { select: { memberships: true } },
-    },
-  });
+  // ── YOUR SCHEDULES ───────────────────────────────────────────────────
+  const schedules = await getActiveSchedules(haseefId);
+  if (schedules.length === 0) {
+    sections.push('YOUR SCHEDULES:\n  (no active schedules)');
+  } else {
+    const scheduleLines = schedules.map((s) => {
+      const typeLabel = s.type === 'recurring'
+        ? `recurring: ${s.cronExpression}`
+        : `one-time: ${s.scheduledAt?.toISOString() ?? 'unknown'}`;
+      const nextRun = s.nextRunAt.toISOString();
+      return `  - "${s.description}" (id: ${s.id}, ${typeLabel}, tz: ${s.timezone}, next: ${nextRun})`;
+    });
+    sections.push('YOUR SCHEDULES:\n' + scheduleLines.join('\n'));
+  }
 
-  // Fetch members for all spaces in parallel
-  const membersBySpace = await Promise.all(
-    spaces.map(async (space: any) => {
-      const members = await prisma.smartSpaceMembership.findMany({
-        where: { smartSpaceId: space.id },
-        include: {
-          entity: { select: { displayName: true } },
-        },
-      });
-      return {
-        spaceId: space.id,
-        memberNames: members.map((m: any) => m.entity?.displayName ?? 'Unknown'),
-      };
-    })
-  );
-  const membersMap = new Map(membersBySpace.map(m => [m.spaceId, m.memberNames]));
-
-  const lines = spaces.map((s: any) => {
-    const desc = s.description ? ` — ${s.description}` : '';
-    const memberNames = membersMap.get(s.id) ?? [];
-    const membersList = memberNames.join(', ') || 'empty';
-    return `  - "${s.name ?? 'Unnamed'}" (spaceId: ${s.id}, ${s._count.memberships} members: ${membersList}${desc})`;
-  });
-
-  return SCOPE_INSTRUCTIONS + '\n\nYOUR SPACES:\n' + lines.join('\n');
+  return sections.join('\n\n');
 }
 
 /** POST /api/haseefs/:id/events — Push V5 sense events */

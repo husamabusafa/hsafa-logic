@@ -241,6 +241,29 @@ model MediaAsset {
 // HASEEF OWNERSHIP — Links Users to Haseefs (in Core) and Entities (in Spaces)
 // =============================================================================
 
+// =============================================================================
+// HASEEF SCHEDULE — Scheduled plans (recurring cron or one-time)
+// =============================================================================
+
+model HaseefSchedule {
+  id              String    @id @default(uuid()) @db.Uuid
+  haseefId        String    @map("haseef_id")       // Core haseef UUID (not FK — lives in Core DB)
+  agentEntityId   String    @map("agent_entity_id") @db.Uuid
+  description     String                             // What this schedule is for
+  type            String                             // "recurring" | "one_time"
+  cronExpression  String?   @map("cron_expression")  // e.g. "0 6 * * *" for recurring
+  scheduledAt     DateTime? @map("scheduled_at") @db.Timestamptz(6) // For one_time
+  timezone        String    @default("UTC")          // e.g. "Asia/Riyadh"
+  nextRunAt       DateTime  @map("next_run_at") @db.Timestamptz(6)
+  lastRunAt       DateTime? @map("last_run_at") @db.Timestamptz(6)
+  active          Boolean   @default(true)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([haseefId, active])
+  @@index([nextRunAt, active])
+  @@map("haseef_schedules")
+}
+
 model HaseefOwnership {
   id        String   @id @default(uuid()) @db.Uuid
   userId    String   @map("user_id")
