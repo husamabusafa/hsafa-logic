@@ -134,3 +134,7 @@ export function invalidateSpace(spaceId: string): void {
   spaceNameCache.delete(spaceId);
   entitySpacesCache.clear();
 }
+
+export function invalidateEntitySpacesCache(entityId: string): void {
+  entitySpacesCache.delete(entityId);
+}

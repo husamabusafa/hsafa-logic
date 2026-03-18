@@ -4,6 +4,7 @@
 // HTTP calls to hsafa-core for tool sync, sense events, and action results.
 // =============================================================================
 
+import { prisma } from "../db.js";
 import { state } from "./types.js";
 import { SCOPE, SCOPE_INSTRUCTIONS, TOOLS } from "./manifest.js";
 
@@ -16,16 +17,65 @@ export function coreHeaders(): Record<string, string> {
 
 /** PUT /api/haseefs/:id/scopes/:scope/tools — Sync all tools + scope instructions */
 export async function syncTools(haseefId: string): Promise<void> {
+  const instructions = await buildDynamicInstructions(haseefId);
   const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/scopes/${SCOPE}/tools`;
   const res = await fetch(url, {
     method: "PUT",
     headers: coreHeaders(),
-    body: JSON.stringify({ tools: TOOLS, instructions: SCOPE_INSTRUCTIONS }),
+    body: JSON.stringify({ tools: TOOLS, instructions }),
   });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`syncTools failed for ${haseefId}: ${res.status} ${text}`);
   }
+}
+
+/**
+ * Build per-haseef scope instructions that include the spaces list with members.
+ * Static SCOPE_INSTRUCTIONS + dynamic YOUR SPACES section.
+ */
+async function buildDynamicInstructions(haseefId: string): Promise<string> {
+  const conn = state.connections.get(haseefId);
+  if (!conn || conn.spaceIds.length === 0) {
+    return SCOPE_INSTRUCTIONS + '\n\nYOUR SPACES:\n  (no spaces yet)';
+  }
+
+  // Fetch space details with member counts
+  const spaces = await prisma.smartSpace.findMany({
+    where: { id: { in: conn.spaceIds } },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      _count: { select: { memberships: true } },
+    },
+  });
+
+  // Fetch members for all spaces in parallel
+  const membersBySpace = await Promise.all(
+    spaces.map(async (space: any) => {
+      const members = await prisma.smartSpaceMembership.findMany({
+        where: { smartSpaceId: space.id },
+        include: {
+          entity: { select: { displayName: true } },
+        },
+      });
+      return {
+        spaceId: space.id,
+        memberNames: members.map((m: any) => m.entity?.displayName ?? 'Unknown'),
+      };
+    })
+  );
+  const membersMap = new Map(membersBySpace.map(m => [m.spaceId, m.memberNames]));
+
+  const lines = spaces.map((s: any) => {
+    const desc = s.description ? ` — ${s.description}` : '';
+    const memberNames = membersMap.get(s.id) ?? [];
+    const membersList = memberNames.join(', ') || 'empty';
+    return `  - "${s.name ?? 'Unnamed'}" (spaceId: ${s.id}, ${s._count.memberships} members: ${membersList}${desc})`;
+  });
+
+  return SCOPE_INSTRUCTIONS + '\n\nYOUR SPACES:\n' + lines.join('\n');
 }
 
 /** POST /api/haseefs/:id/events — Push V5 sense events */

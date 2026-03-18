@@ -15,7 +15,7 @@ import {
   isAuthError,
 } from "../lib/spaces-auth.js";
 import { invalidateSpace } from "../lib/membership-service.js";
-import { handleMembershipChanged } from "../lib/service/index.js";
+import { handleMembershipChanged, reSyncAllHaseefsInSpace } from "../lib/service/index.js";
 import { verifyToken } from "../lib/auth.js";
 import { requireRole } from "../lib/role-auth.js";
 import spaceMessagesRouter from "./space-messages.js";
@@ -350,6 +350,10 @@ router.patch("/:smartSpaceId", async (req: Request, res: Response) => {
         ...(metadata !== undefined && { metadata }),
       },
     });
+
+    // Re-sync all haseefs in this space so their prompts show fresh metadata
+    reSyncAllHaseefsInSpace(smartSpaceId);
+
     res.json({ smartSpace: space });
   } catch (error: any) {
     if (error?.status) {

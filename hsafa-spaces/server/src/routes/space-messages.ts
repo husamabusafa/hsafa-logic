@@ -277,10 +277,16 @@ router.post("/:smartSpaceId/seen", async (req: Request, res: Response) => {
       }
     }
 
-    // Update the watermark
-    await prisma.smartSpaceMembership.update({
+    // Update the watermark (upsert in case membership doesn't exist yet)
+    await prisma.smartSpaceMembership.upsert({
       where: { smartSpaceId_entityId: { smartSpaceId, entityId: auth.entityId } },
-      data: { lastSeenMessageId: messageId },
+      update: { lastSeenMessageId: messageId },
+      create: {
+        smartSpaceId,
+        entityId: auth.entityId,
+        role: 'member',
+        lastSeenMessageId: messageId,
+      },
     });
 
     // Broadcast seen event

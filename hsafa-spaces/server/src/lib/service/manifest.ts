@@ -28,7 +28,7 @@ TIPS:
   Don't repeat yourself — check what you already said in the recent conversation.
   In group spaces, respond when addressed. In 1-on-1 with another haseef, avoid infinite loops.
   Use replyTo (with the sender's messageId) for threading when it adds clarity.
-  Use spaces_get_spaces to discover spaces by name before entering them.`;
+  Your spaces are listed below — use their spaceId with spaces_enter_space to join one.`;
 
 /**
  * Tool definitions to register with Core.
@@ -87,16 +87,6 @@ export const TOOLS = [
           description: "Number of messages to read (default 20, max 100).",
         },
       },
-    },
-    mode: "sync" as const,
-  },
-  {
-    name: "get_spaces",
-    description:
-      "List all spaces you are a member of. Returns [{id, name, description, memberCount}].",
-    inputSchema: {
-      type: "object" as const,
-      properties: {},
     },
     mode: "sync" as const,
   },

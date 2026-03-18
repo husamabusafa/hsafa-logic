@@ -18,7 +18,7 @@ import {
   isAuthError,
 } from "../lib/spaces-auth.js";
 import { invalidateSpace } from "../lib/membership-service.js";
-import { handleMembershipChanged } from "../lib/service/index.js";
+import { handleMembershipChanged, reSyncAllHaseefsInSpace } from "../lib/service/index.js";
 import { requireRole } from "../lib/role-auth.js";
 
 const router = Router();
@@ -228,6 +228,9 @@ router.patch(
         data: { role },
       });
 
+      // Re-sync all haseefs in this space so their prompts show fresh role info
+      reSyncAllHaseefsInSpace(smartSpaceId);
+
       res.json({ membership: updated });
     } catch (error: any) {
       if (error?.status) {
@@ -293,6 +296,9 @@ router.post(
           data: { role: "owner" },
         }),
       ]);
+
+      // Re-sync all haseefs in this space so their prompts show fresh ownership
+      reSyncAllHaseefsInSpace(smartSpaceId);
 
       res.json({ success: true });
     } catch (error: any) {

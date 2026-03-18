@@ -3,7 +3,7 @@
 //
 // The spaces-app acts as a V5 service. This module handles:
 //   1. Bootstrap: register tools with Core, resolve entities, start listeners
-//   2. Tool execution: send_message, get_messages, get_spaces, send_confirmation,
+//   2. Tool execution: send_message, get_messages, send_confirmation,
 //      send_choice, send_vote, send_form, respond_to_message, etc.
 //   3. Action listener: consumes Redis Streams for tool dispatch from Core
 //   4. Stream bridge: forwards Core run events to space SSE channels
@@ -27,6 +27,7 @@ import { SCOPE } from "./manifest.js";
 import { setInboxHandler } from "./inbox.js";
 import { state } from "./types.js";
 import { coreHeaders, syncTools } from "./core-api.js";
+import { invalidateEntitySpacesCache } from "../membership-service.js";
 import { startSharedSubscriber } from "./stream-bridge.js";
 import { startActionListener } from "./action-listener.js";
 import { handleInboxMessage } from "./sense-events.js";
@@ -220,6 +221,7 @@ export async function connectNewHaseef(haseef: {
 //
 // When an entity is added to or removed from a space, update the connection's
 // spaceIds so the haseef automatically sees new spaces without reconnecting.
+// Also re-sync ALL haseefs in that space so their member lists stay fresh.
 // =============================================================================
 
 export function handleMembershipChanged(
@@ -227,6 +229,7 @@ export function handleMembershipChanged(
   spaceId: string,
   action: "added" | "removed",
 ): void {
+  // 1. Update the affected entity's connection (if it's a haseef)
   for (const conn of state.connections.values()) {
     if (conn.agentEntityId !== entityId) continue;
 
@@ -241,5 +244,49 @@ export function handleMembershipChanged(
         `[spaces-service] ${conn.haseefName} removed from space ${spaceId}`,
       );
     }
+
+    // Invalidate cache + re-sync tools so the prompt includes the updated spaces list
+    invalidateEntitySpacesCache(entityId);
+    syncTools(conn.haseefId).catch((err) => {
+      console.error(`[spaces-service] Failed to re-sync tools after membership change:`, err);
+    });
+  }
+
+  // 2. Re-sync ALL other haseefs in this space so their member lists stay fresh
+  reSyncHaseefsInSpace(spaceId, entityId);
+}
+
+/**
+ * Re-sync tools for all haseefs in a space (excluding the trigger entity).
+ * Called when any membership changes so all haseefs see fresh member lists.
+ */
+function reSyncHaseefsInSpace(spaceId: string, excludeEntityId: string): void {
+  for (const conn of state.connections.values()) {
+    // Skip if not in this space or is the entity that triggered the change
+    if (!conn.spaceIds.includes(spaceId)) continue;
+    if (conn.agentEntityId === excludeEntityId) continue;
+
+    console.log(`[spaces-service] Re-syncing ${conn.haseefName} for updated member list in ${spaceId.slice(0, 8)}`);
+    syncTools(conn.haseefId).catch((err) => {
+      console.error(`[spaces-service] Failed to re-sync tools for space member update:`, err);
+    });
   }
 }
+
+// =============================================================================
+// Re-sync all haseefs in a space (for space metadata changes)
+// =============================================================================
+
+export function reSyncAllHaseefsInSpace(spaceId: string): void {
+  for (const conn of state.connections.values()) {
+    if (!conn.spaceIds.includes(spaceId)) continue;
+
+    console.log(`[spaces-service] Re-syncing ${conn.haseefName} for space metadata update in ${spaceId.slice(0, 8)}`);
+    syncTools(conn.haseefId).catch((err) => {
+      console.error(`[spaces-service] Failed to re-sync tools for space update:`, err);
+    });
+  }
+}
+
+// Export syncTools for external use
+export { syncTools } from "./core-api.js";

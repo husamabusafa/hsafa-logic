@@ -2,7 +2,7 @@
 // Spaces Service — Tool Handlers
 //
 // Executes tool actions dispatched by Core: enter_space, send_message,
-// get_messages, get_spaces, send_confirmation, send_choice, send_vote,
+// get_messages, send_confirmation, send_choice, send_vote,
 // send_form, respond_to_message, close_interactive_message, invite_to_space,
 // get_space_members.
 //
@@ -12,7 +12,6 @@
 
 import { prisma } from "../db.js";
 import { postSpaceMessage } from "../space-service.js";
-import { getSpacesForEntity } from "../membership-service.js";
 import type { ReplyToMetadata } from "../message-types.js";
 import {
   respondToMessage,
@@ -92,7 +91,7 @@ export async function executeAction(
 
   console.log(`[spaces-service] [${haseefId.slice(0, 8)}] ${toolName} (${actionId.slice(0, 8)}) [activeSpace: ${conn?.activeSpace?.spaceName ?? 'none'}]`);
 
-  // Core prefixes tool names with scope: "spaces_get_spaces" → strip to "get_spaces"
+  // Core prefixes tool names with scope: "spaces_send_message" → strip to "send_message"
   const unprefixedToolName = toolName.replace(/^spaces_/, '');
 
   try {
@@ -220,39 +219,6 @@ export async function executeAction(
             return result;
           }),
         };
-      }
-
-      case "get_spaces": {
-        if (!agentEntityId)
-          return { error: "agentEntityId not resolved — is this haseef connected?" };
-
-        console.log(`[spaces-service] get_spaces: fetching memberships for entity ${agentEntityId.slice(0, 8)}`);
-        const memberships = await getSpacesForEntity(agentEntityId);
-        const spaceIds = memberships.map((m) => m.spaceId);
-        console.log(`[spaces-service] get_spaces: found ${memberships.length} memberships, spaceIds: [${spaceIds.map(id => id.slice(0, 8)).join(', ')}]`);
-
-        if (spaceIds.length === 0) return { spaces: [] };
-
-        const spaces = await prisma.smartSpace.findMany({
-          where: { id: { in: spaceIds } },
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            _count: { select: { memberships: true } },
-          },
-        });
-
-        const result = {
-          spaces: spaces.map((s: any) => ({
-            id: s.id,
-            name: s.name,
-            description: s.description,
-            memberCount: s._count.memberships,
-          })),
-        };
-        console.log(`[spaces-service] get_spaces: returning ${result.spaces.length} spaces`);
-        return result;
       }
 
       case "send_confirmation": {
