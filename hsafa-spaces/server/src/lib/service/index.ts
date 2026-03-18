@@ -33,6 +33,7 @@ import { startActionListener } from "./action-listener.js";
 import { handleInboxMessage } from "./sense-events.js";
 import { startScheduler } from "./scheduler.js";
 import { syncSchedulesToRedis } from "./schedule-service.js";
+import { startPresenceCleanup, stopPresenceCleanup } from "../smartspace-events.js";
 
 // Re-export public API so existing imports from "./service/index.js" keep working
 export { getConnectionsForSpace, getConnectionForHaseef } from "./types.js";
@@ -89,7 +90,14 @@ export async function bootstrapExtension(): Promise<void> {
   await syncSchedulesToRedis();
   startScheduler();
 
-  // NOTE: No presence heartbeat for haseefs — they only go online during active runs.
+  // Start presence cleanup job — removes stale online SET entries after crashes
+  startPresenceCleanup(() => {
+    const allSpaceIds = new Set<string>();
+    for (const conn of state.connections.values()) {
+      for (const sid of conn.spaceIds) allSpaceIds.add(sid);
+    }
+    return [...allSpaceIds];
+  });
 
   // Re-sync all connected haseefs to ensure they have the latest tools + prompt
   // (important after deploying new tools like create_schedule / delete_schedule)

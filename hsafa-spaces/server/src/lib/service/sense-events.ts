@@ -19,6 +19,35 @@ import { SCOPE } from "./manifest.js";
 import type { InboxMessageParams } from "./inbox.js";
 
 // =============================================================================
+// Loop Prevention — cooldown per haseef per space
+//
+// After a haseef is triggered in a space, impose a cooldown before it can
+// be triggered again. This prevents infinite ping-pong between haseefs
+// and exponential cascades in group spaces with 3+ agents.
+// =============================================================================
+
+const HASEEF_COOLDOWN_MS = 15_000; // 15 seconds
+const lastTriggered = new Map<string, number>(); // key: `${haseefId}:${spaceId}`
+
+function isOnCooldown(haseefId: string, spaceId: string): boolean {
+  const key = `${haseefId}:${spaceId}`;
+  const last = lastTriggered.get(key) ?? 0;
+  return Date.now() - last < HASEEF_COOLDOWN_MS;
+}
+
+function markTriggered(haseefId: string, spaceId: string): void {
+  const key = `${haseefId}:${spaceId}`;
+  lastTriggered.set(key, Date.now());
+  // Prevent unbounded map growth — clean up entries older than 5 minutes
+  if (lastTriggered.size > 500) {
+    const cutoff = Date.now() - 300_000;
+    for (const [k, ts] of lastTriggered) {
+      if (ts < cutoff) lastTriggered.delete(k);
+    }
+  }
+}
+
+// =============================================================================
 // Inbox Handler — V5 Sense Events
 //
 // Called by space-service.ts after persisting a message.
@@ -133,6 +162,24 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       continue;
     }
 
+    // Loop prevention: cooldown per haseef per space
+    if (isOnCooldown(conn.haseefId, spaceId)) {
+      console.log(`[spaces-service]   COOLDOWN ${conn.haseefName} in ${spaceId.slice(0, 8)} — skipping (${HASEEF_COOLDOWN_MS}ms)`);
+      continue;
+    }
+
+    // Loop prevention: in group spaces, only trigger haseefs when the sender
+    // is human OR when the agent message mentions this haseef by name.
+    // This prevents exponential cascades with 3+ agents.
+    if (isGroupSpace && senderType === "agent") {
+      const lowerContent = (content ?? "").toLowerCase();
+      const lowerName = conn.haseefName.toLowerCase();
+      if (!lowerContent.includes(lowerName)) {
+        console.log(`[spaces-service]   SKIP ${conn.haseefName} — agent sender in group, not mentioned`);
+        continue;
+      }
+    }
+
     console.log(`[spaces-service]   TRIGGER ${conn.haseefName} — pushing sense event`);
 
     // Label per-haseef: "You" for this haseef's own messages, display name for everyone else
@@ -224,6 +271,9 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       type: "message",
       data: eventData,
     });
+
+    // Mark triggered for cooldown tracking
+    markTriggered(conn.haseefId, spaceId);
 
     // Track message as pending-seen — will be flushed when run.started confirms
     // the events were actually consumed from the inbox (not while haseef is mid-cycle)

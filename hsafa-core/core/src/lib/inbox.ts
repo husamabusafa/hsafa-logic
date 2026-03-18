@@ -301,9 +301,10 @@ export function formatInboxEvents(events: SenseEvent[]): string {
     }
   }
 
-  // Natural framing — no mechanical header, just the events
-  // The instructions already explain that sense events wake the Haseef
-  return blocks.join('\n\n');
+  // Header is required — consciousness.ts isCycleStart() uses this prefix
+  // to detect cycle boundaries for pruning and archival.
+  const header = `SENSE EVENTS (${sorted.length} event${sorted.length !== 1 ? 's' : ''})`;
+  return [header, ...blocks].join('\n\n');
 }
 
 /**

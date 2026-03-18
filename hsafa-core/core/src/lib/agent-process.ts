@@ -260,6 +260,23 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
         // Mark events as processed
         await markEventsProcessed(haseefId, eventIds);
 
+        // Extract token usage from the stream result (AI SDK provides usage on response)
+        let promptTokens = 0;
+        let completionTokens = 0;
+        try {
+          const usage = (responseMessages as any)?.usage;
+          if (usage) {
+            promptTokens = typeof usage.inputTokens === 'object'
+              ? usage.inputTokens?.total ?? 0
+              : usage.inputTokens ?? usage.promptTokens ?? 0;
+            completionTokens = typeof usage.outputTokens === 'object'
+              ? usage.outputTokens?.total ?? 0
+              : usage.outputTokens ?? usage.completionTokens ?? 0;
+          }
+        } catch {
+          // Non-fatal — usage tracking is best-effort
+        }
+
         // Update run record
         const durationMs = Date.now() - cycleStart;
         await prisma.run.update({
@@ -269,6 +286,8 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
             completedAt: new Date(),
             stepCount: streamResult.toolCalls.length,
             durationMs,
+            promptTokens,
+            completionTokens,
           },
         });
 

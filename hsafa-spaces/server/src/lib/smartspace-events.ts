@@ -112,6 +112,50 @@ export async function listOnlineEntities(
 }
 
 // =============================================================================
+// Presence Cleanup — remove stale entries from online SETs
+//
+// The online SET has no TTL, only cleaned by markOffline(). If a process
+// crashes without calling markOffline(), the entity stays in the SET forever.
+// The per-entity presence key has a 120s TTL. This cleanup job compares
+// the two and removes stale entries.
+// =============================================================================
+
+let cleanupInterval: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start periodic presence cleanup. Call once at server startup.
+ * Scans all tracked spaces and removes entities whose presence key expired.
+ */
+export function startPresenceCleanup(getTrackedSpaceIds: () => string[]): void {
+  if (cleanupInterval) return;
+  cleanupInterval = setInterval(async () => {
+    try {
+      const spaceIds = getTrackedSpaceIds();
+      for (const spaceId of spaceIds) {
+        const onlineEntities = await redis.smembers(ONLINE_SET_KEY(spaceId));
+        for (const entityId of onlineEntities) {
+          const alive = await redis.exists(PRESENCE_KEY(spaceId, entityId));
+          if (!alive) {
+            await redis.srem(ONLINE_SET_KEY(spaceId), entityId);
+            await emitSmartSpaceEvent(spaceId, { type: "user.offline", entityId });
+            console.log(`[presence-cleanup] Removed stale entity ${entityId.slice(0, 8)} from space ${spaceId.slice(0, 8)}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[presence-cleanup] Error:", err);
+    }
+  }, 60_000); // Run every 60 seconds
+}
+
+export function stopPresenceCleanup(): void {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
+  }
+}
+
+// =============================================================================
 // Typing Indicator — ephemeral event via Redis pub/sub (no persistence)
 // =============================================================================
 
