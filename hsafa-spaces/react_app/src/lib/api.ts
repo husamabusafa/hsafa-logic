@@ -127,7 +127,7 @@ export const haseefsApi = {
     return request<{ haseef: Haseef }>(`/haseefs/${id}`);
   },
 
-  create(data: { name: string; description?: string; model?: string; provider?: string; instructions?: string; avatarUrl?: string; persona?: { id: string; name: string; description: string; style?: string; traits?: string[] }; profile?: Record<string, string>; voiceGender?: "male" | "female" }) {
+  create(data: { name: string; description?: string; model?: string; provider?: string; instructions?: string; avatarUrl?: string; persona?: { id: string; name: string; description: string; style?: string; traits?: string[] }; profile?: Record<string, string>; voiceGender?: "male" | "female"; voiceId?: string }) {
     return request<{ haseef: Haseef }>("/haseefs", {
       method: "POST",
       body: JSON.stringify(data),
@@ -336,10 +336,10 @@ export const spacesApi = {
   },
 
   // Typing & Seen
-  sendTyping(spaceId: string, typing: boolean = true) {
+  sendTyping(spaceId: string, typing: boolean = true, activity: "typing" | "recording" = "typing") {
     return request<{ success: boolean }>(`/smart-spaces/${spaceId}/typing`, {
       method: "POST",
-      body: JSON.stringify({ typing }),
+      body: JSON.stringify({ typing, activity }),
     });
   },
 

@@ -54,7 +54,7 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
-    const { name, description, configJson, instructions, model, provider, persona, profile, voiceGender } = req.body;
+    const { name, description, configJson, instructions, model, provider, persona, profile, voiceGender, voiceId } = req.body;
     if (!name) {
       res.status(400).json({ error: "name is required" });
       return;
@@ -92,8 +92,11 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     // Inject voice config if provided
-    if (voiceGender === "male" || voiceGender === "female") {
-      config = { ...config, voice: { gender: voiceGender } };
+    if (voiceGender === "male" || voiceGender === "female" || voiceId) {
+      config = { ...config, voice: { 
+        ...(voiceGender ? { gender: voiceGender } : {}),
+        ...(voiceId ? { voiceId } : {}),
+      }};
     }
 
     // Create entity in Spaces for this agent

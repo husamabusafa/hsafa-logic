@@ -1,9 +1,26 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { type MockMessage } from "@/lib/mock-data";
 import { MicIcon, PlayIcon, PauseIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
 interface VoiceMessageProps {
   message: MockMessage;
+}
+
+// Generate a stable pseudo-random waveform from a seed string (messageId)
+function generateWaveform(seed: string, bars: number): number[] {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+  }
+  const result: number[] = [];
+  for (let i = 0; i < bars; i++) {
+    hash = ((hash << 5) - hash + i * 7 + 13) | 0;
+    const val = ((hash >>> 0) % 100) / 100;
+    // Shape: center-heavy with some variation
+    const centerBias = 1 - Math.abs((i / bars) * 2 - 1) * 0.4;
+    result.push(0.15 + val * 0.65 * centerBias);
+  }
+  return result;
 }
 
 export function VoiceMessage({ message }: VoiceMessageProps) {
@@ -14,15 +31,19 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const waveformRef = useRef<HTMLDivElement>(null);
 
-  const currentMins = Math.floor(currentTime / 60);
-  const currentSecs = Math.floor(currentTime % 60);
-  const totalMins = Math.floor(duration / 60);
-  const totalSecs = Math.floor(duration % 60);
+  const BAR_COUNT = 36;
+  const waveform = useMemo(() => generateWaveform(message.id, BAR_COUNT), [message.id]);
+
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  const formatTime = (t: number) => {
+    const mins = Math.floor(t / 60);
+    const secs = Math.floor(t % 60);
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
 
   const handlePlayPause = () => {
     if (!audioRef.current) return;
-    
     if (playing) {
       audioRef.current.pause();
     } else {
@@ -34,12 +55,10 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!audioRef.current || !waveformRef.current) return;
-    
     const rect = waveformRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percentage = Math.max(0, Math.min(1, x / rect.width));
     const newTime = percentage * duration;
-    
     audioRef.current.currentTime = newTime;
     setCurrentTime(newTime);
   };
@@ -50,9 +69,11 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
 
     const handlePlay = () => setPlaying(true);
     const handlePause = () => setPlaying(false);
-    const handleEnded = () => setPlaying(false);
+    const handleEnded = () => { setPlaying(false); setCurrentTime(0); };
     const handleTimeUpdate = () => setCurrentTime(audio.currentTime);
-    const handleLoadedMetadata = () => setDuration(audio.duration);
+    const handleLoadedMetadata = () => {
+      if (audio.duration && isFinite(audio.duration)) setDuration(audio.duration);
+    };
 
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
@@ -70,14 +91,14 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
   }, []);
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       {/* Hidden audio element */}
       {message.audioUrl && (
         <audio ref={audioRef} src={message.audioUrl} preload="metadata" />
       )}
 
       {/* Player */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2.5">
         <button
           onClick={handlePlayPause}
           disabled={!message.audioUrl}
@@ -86,51 +107,60 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
           {playing ? <PauseIcon className="size-4" /> : <PlayIcon className="size-4 ml-0.5" />}
         </button>
 
-        {/* Waveform visualization with progress */}
-        <div 
-          ref={waveformRef}
-          onClick={handleSeek}
-          className="flex-1 flex items-center gap-[2px] h-6 cursor-pointer relative"
-        >
-          {Array.from({ length: 28 }).map((_, i) => {
-            const height = 4 + Math.sin(i * 0.8) * 12 + Math.random() * 8;
-            const barProgress = (i / 28) * 100;
-            const isPlayed = barProgress <= progress;
-            return (
-              <div
-                key={i}
-                className={`w-[3px] rounded-full transition-colors ${
-                  isPlayed ? "bg-primary" : "bg-primary/30"
-                }`}
-                style={{ height: `${Math.max(4, Math.min(24, height))}px` }}
-              />
-            );
-          })}
-        </div>
+        {/* Waveform visualization with progress + seek */}
+        <div className="flex-1 min-w-0">
+          <div
+            ref={waveformRef}
+            onClick={handleSeek}
+            className="flex items-center gap-[1.5px] h-7 cursor-pointer"
+          >
+            {waveform.map((level, i) => {
+              const barPct = (i / BAR_COUNT) * 100;
+              const isPlayed = barPct <= progress;
+              return (
+                <div
+                  key={i}
+                  className={`w-[2.5px] rounded-full transition-colors ${
+                    isPlayed ? "bg-primary" : "bg-primary/25"
+                  }`}
+                  style={{ height: `${Math.max(3, level * 24)}px` }}
+                />
+              );
+            })}
+          </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
-          <MicIcon className="size-3 text-muted-foreground" />
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {currentMins}:{currentSecs.toString().padStart(2, "0")} / {totalMins}:{totalSecs.toString().padStart(2, "0")}
-          </span>
+          {/* Time row */}
+          <div className="flex items-center justify-between mt-0.5">
+            <span className="text-[10px] text-muted-foreground tabular-nums">
+              {playing || currentTime > 0 ? formatTime(currentTime) : formatTime(duration)}
+            </span>
+            <div className="flex items-center gap-1">
+              <MicIcon className="size-2.5 text-muted-foreground/60" />
+              <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+                {formatTime(duration)}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Transcription toggle */}
+      {/* Transcription — collapsible */}
       {message.transcription && (
-        <button
-          onClick={() => setShowTranscription(!showTranscription)}
-          className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-        >
-          {showTranscription ? <ChevronUpIcon className="size-3" /> : <ChevronDownIcon className="size-3" />}
-          <span>{showTranscription ? "Hide" : "Show"} transcription</span>
-        </button>
-      )}
+        <>
+          <button
+            onClick={() => setShowTranscription(!showTranscription)}
+            className="flex items-center gap-1 text-[11px] text-muted-foreground/70 hover:text-muted-foreground transition-colors mt-0.5"
+          >
+            {showTranscription ? <ChevronUpIcon className="size-3" /> : <ChevronDownIcon className="size-3" />}
+            <span>{showTranscription ? "Hide" : "Show"} transcription</span>
+          </button>
 
-      {showTranscription && message.transcription && (
-        <p className="text-xs text-muted-foreground leading-relaxed italic border-l-2 border-border pl-2">
-          {message.transcription}
-        </p>
+          {showTranscription && (
+            <p className="text-xs text-muted-foreground leading-relaxed italic border-l-2 border-primary/20 pl-2 mt-1">
+              {message.transcription}
+            </p>
+          )}
+        </>
       )}
     </div>
   );

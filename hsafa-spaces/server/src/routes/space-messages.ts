@@ -206,6 +206,7 @@ router.post("/:smartSpaceId/typing", async (req: Request, res: Response) => {
   }
 
   const typing = req.body.typing !== false; // default true
+  const activity = req.body.activity === "recording" ? "recording" : "typing";
 
   try {
     // Look up entity name for the broadcast
@@ -219,6 +220,7 @@ router.post("/:smartSpaceId/typing", async (req: Request, res: Response) => {
       auth.entityId,
       entity?.displayName ?? "Unknown",
       typing,
+      activity,
     );
     res.json({ success: true });
   } catch (error) {

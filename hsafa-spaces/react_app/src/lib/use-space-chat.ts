@@ -722,12 +722,12 @@ export function useSpaceChat(
 
   // ── Typing indicator (throttled) ──
   const sendTyping = useCallback(
-    (typing: boolean = true) => {
+    (typing: boolean = true, activity: "typing" | "recording" = "typing") => {
       if (!spaceId) return;
       const now = Date.now();
       if (typing && now - typingThrottleRef.current < 3000) return;
       typingThrottleRef.current = now;
-      spacesApi.sendTyping(spaceId, typing).catch(() => {});
+      spacesApi.sendTyping(spaceId, typing, activity).catch(() => {});
     },
     [spaceId],
   );

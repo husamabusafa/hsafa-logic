@@ -21,6 +21,9 @@ import {
   SearchIcon,
   PaperclipIcon,
   EyeIcon,
+  TrashIcon,
+  PlayIcon,
+  PauseIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
@@ -51,7 +54,7 @@ interface ChatViewProps {
   readOnly?: boolean;
   onSendMessage: (text: string, replyToId?: string, opts?: { type?: string; metadata?: Record<string, unknown> }) => Promise<void>;
   onSendMediaMessage?: (data: MediaMessageData) => Promise<void>;
-  onTyping?: (typing?: boolean) => void;
+  onTyping?: (typing?: boolean, activity?: "typing" | "recording") => void;
   onMarkSeen?: (messageId: string) => void;
   onToggleDetails: () => void;
   onBack?: () => void;
@@ -94,7 +97,12 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
   const [pendingFiles, setPendingFiles] = useState<Array<{ file: File; previewUrl?: string; type: "image" | "file" | "video" }>>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [audioLevels, setAudioLevels] = useState<number[]>([]);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [previewTime, setPreviewTime] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -104,6 +112,11 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
   const dragCounterRef = useRef(0);
 
   // Use external search state if provided, otherwise internal
@@ -339,63 +352,117 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
   }, [handleFileSelect]);
 
   // ── Voice Recording ──
+  const cleanupAudioAnalyser = useCallback(() => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+  }, []);
+
+  const cleanupPreviewAudio = useCallback(() => {
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current = null;
+    }
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    setPreviewPlaying(false);
+    setPreviewTime(0);
+  }, []);
+
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
       audioChunksRef.current = [];
 
+      // Set up audio analyser for live waveform
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.7;
+      source.connect(analyser);
+      audioContextRef.current = audioCtx;
+      analyserRef.current = analyser;
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const sampleWaveform = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteFrequencyData(dataArray);
+        // Sample ~24 bars from the frequency data
+        const bars = 24;
+        const step = Math.floor(dataArray.length / bars);
+        const levels: number[] = [];
+        for (let i = 0; i < bars; i++) {
+          const val = dataArray[i * step] / 255;
+          levels.push(val);
+        }
+        setAudioLevels((prev) => {
+          // Keep a rolling window of levels for the waveform visualization
+          const next = [...prev, ...levels];
+          return next.slice(-72); // keep last ~3 snapshots worth
+        });
+        animFrameRef.current = requestAnimationFrame(sampleWaveform);
+      };
+      sampleWaveform();
+
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) audioChunksRef.current.push(e.data);
       };
 
-      recorder.onstop = async () => {
+      recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
+        cleanupAudioAnalyser();
         if (recordingTimerRef.current) {
           clearInterval(recordingTimerRef.current);
           recordingTimerRef.current = null;
         }
 
         const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        if (blob.size === 0) return;
-
-        if (!onSendMediaMessage) return;
-        setUploading(true);
-        try {
-          const result = await mediaApi.uploadVoice(blob);
-          await onSendMediaMessage({
-            type: "voice",
-            url: result.url,
-            audioDuration: recordingDuration,
-            transcription: result.transcription,
-            replyToId: replyingTo ?? undefined,
-          });
-          setReplyingTo(null);
-        } catch (err) {
-          console.error("Failed to send voice:", err);
-        } finally {
-          setUploading(false);
-          setRecordingDuration(0);
+        if (blob.size > 0) {
+          setRecordedBlob(blob);
+          setIsPreviewMode(true);
+          // Create preview audio element
+          const url = URL.createObjectURL(blob);
+          previewUrlRef.current = url;
+          const audio = new Audio(url);
+          audio.addEventListener("timeupdate", () => setPreviewTime(audio.currentTime));
+          audio.addEventListener("ended", () => { setPreviewPlaying(false); setPreviewTime(0); });
+          previewAudioRef.current = audio;
         }
+        setIsRecording(false);
       };
 
       mediaRecorderRef.current = recorder;
       recorder.start(250);
       setIsRecording(true);
       setRecordingDuration(0);
+      setRecordedBlob(null);
+      setIsPreviewMode(false);
+      setAudioLevels([]);
+      cleanupPreviewAudio();
       recordingTimerRef.current = setInterval(() => {
         setRecordingDuration((d) => d + 1);
       }, 1000);
+      // Emit recording activity to other users
+      onTyping?.(true, "recording");
     } catch (err) {
       console.error("Microphone access denied:", err);
     }
-  }, [onSendMediaMessage, replyingTo, recordingDuration]);
+  }, [cleanupAudioAnalyser, cleanupPreviewAudio, onTyping]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
-    setIsRecording(false);
   }, []);
 
   const cancelRecording = useCallback(() => {
@@ -405,14 +472,64 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
     }
+    cleanupAudioAnalyser();
+    cleanupPreviewAudio();
     if (recordingTimerRef.current) {
       clearInterval(recordingTimerRef.current);
       recordingTimerRef.current = null;
     }
     audioChunksRef.current = [];
     setIsRecording(false);
+    setIsPreviewMode(false);
+    setRecordedBlob(null);
     setRecordingDuration(0);
-  }, []);
+    setAudioLevels([]);
+  }, [cleanupAudioAnalyser, cleanupPreviewAudio]);
+
+  const discardRecording = useCallback(() => {
+    cleanupPreviewAudio();
+    setRecordedBlob(null);
+    setIsPreviewMode(false);
+    setRecordingDuration(0);
+    setAudioLevels([]);
+  }, [cleanupPreviewAudio]);
+
+  const togglePreviewPlayback = useCallback(() => {
+    if (!previewAudioRef.current) return;
+    if (previewPlaying) {
+      previewAudioRef.current.pause();
+      setPreviewPlaying(false);
+    } else {
+      previewAudioRef.current.play().catch(() => {});
+      setPreviewPlaying(true);
+    }
+  }, [previewPlaying]);
+
+  const sendRecording = useCallback(async () => {
+    if (!recordedBlob || !onSendMediaMessage) return;
+    
+    cleanupPreviewAudio();
+    setUploading(true);
+    try {
+      const result = await mediaApi.uploadVoice(recordedBlob);
+      await onSendMediaMessage({
+        type: "voice",
+        url: result.url,
+        audioDuration: recordingDuration,
+        transcription: result.transcription,
+        replyToId: replyingTo ?? undefined,
+      });
+      setReplyingTo(null);
+      setRecordedBlob(null);
+      setIsPreviewMode(false);
+      setRecordingDuration(0);
+      setAudioLevels([]);
+    } catch (err) {
+      console.error("Failed to send voice:", err);
+    } finally {
+      setUploading(false);
+    }
+  }, [recordedBlob, recordingDuration, onSendMediaMessage, replyingTo, cleanupPreviewAudio]);
 
   // ── Auto-resize textarea ──
   const autoResize = useCallback(() => {
@@ -948,30 +1065,142 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
         <div className="p-3">
           <div className="flex items-end gap-2 max-w-3xl mx-auto">
             {/* Voice recording UI */}
-            {isRecording ? (
+            {isRecording || isPreviewMode ? (
               <>
+                {/* Cancel/Delete button */}
                 <button
-                  onClick={cancelRecording}
-                  className="size-10 rounded-full bg-muted flex items-center justify-center shrink-0 hover:bg-muted/80 transition-colors"
-                  title="Cancel recording"
+                  onClick={isPreviewMode ? discardRecording : cancelRecording}
+                  className="size-10 rounded-full bg-destructive/10 flex items-center justify-center shrink-0 hover:bg-destructive/20 transition-colors group"
+                  title={isPreviewMode ? "Delete recording" : "Cancel recording"}
                 >
-                  <XIcon className="size-4 text-muted-foreground" />
+                  <TrashIcon className="size-4 text-destructive/70 group-hover:text-destructive transition-colors" />
                 </button>
-                <div className="flex-1 flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-red-500/10 border border-red-500/20">
-                  <span className="size-2.5 rounded-full bg-red-500 animate-pulse" />
-                  <span className="text-sm font-medium text-red-600 tabular-nums">
-                    {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, "0")}
-                  </span>
-                  <span className="text-xs text-muted-foreground">Recording...</span>
+
+                {/* Recording / Preview container */}
+                <div className={cn(
+                  "flex-1 flex items-center gap-2.5 px-3 py-2 rounded-2xl border transition-colors min-w-0",
+                  isRecording
+                    ? "bg-red-500/5 border-red-500/20"
+                    : uploading
+                      ? "bg-primary/5 border-primary/20"
+                      : "bg-muted/50 border-border"
+                )}>
+                  {isRecording ? (
+                    <>
+                      {/* Pulsing record dot */}
+                      <span className="size-2 rounded-full bg-red-500 animate-pulse shrink-0" />
+
+                      {/* Live waveform bars */}
+                      <div className="flex-1 flex items-center gap-[1.5px] h-8 overflow-hidden min-w-0">
+                        {(() => {
+                          const bars = audioLevels.slice(-40);
+                          const pad = Math.max(0, 40 - bars.length);
+                          return (
+                            <>
+                              {Array.from({ length: pad }).map((_, i) => (
+                                <div key={`p${i}`} className="w-[2.5px] rounded-full bg-red-500/15 shrink-0" style={{ height: "3px" }} />
+                              ))}
+                              {bars.map((level, i) => (
+                                <div
+                                  key={i}
+                                  className="w-[2.5px] rounded-full bg-red-500/70 shrink-0 transition-all duration-75"
+                                  style={{ height: `${Math.max(3, level * 28)}px` }}
+                                />
+                              ))}
+                            </>
+                          );
+                        })()}
+                      </div>
+
+                      {/* Duration */}
+                      <span className="text-xs font-medium text-red-600 tabular-nums shrink-0">
+                        {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, "0")}
+                      </span>
+                    </>
+                  ) : uploading ? (
+                    <>
+                      {/* Uploading + transcribing state */}
+                      <LoaderIcon className="size-4 text-primary animate-spin shrink-0" />
+                      <span className="text-xs text-primary font-medium">Transcribing...</span>
+                      <span className="text-xs text-muted-foreground tabular-nums ml-auto shrink-0">
+                        {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, "0")}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      {/* Preview: play/pause + waveform + time */}
+                      <button
+                        onClick={togglePreviewPlayback}
+                        className="size-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0 hover:bg-primary/20 transition-colors"
+                      >
+                        {previewPlaying
+                          ? <PauseIcon className="size-3.5 text-primary" />
+                          : <PlayIcon className="size-3.5 text-primary ml-0.5" />
+                        }
+                      </button>
+
+                      {/* Static waveform with progress overlay */}
+                      <div className="flex-1 flex items-center gap-[1.5px] h-7 overflow-hidden min-w-0">
+                        {(() => {
+                          const bars = audioLevels.length > 0 ? audioLevels : Array.from({ length: 40 }, () => 0.15 + Math.random() * 0.3);
+                          const totalBars = 40;
+                          const displayBars = bars.length > totalBars
+                            ? bars.filter((_, i) => i % Math.ceil(bars.length / totalBars) === 0).slice(0, totalBars)
+                            : bars;
+                          const progress = recordingDuration > 0 ? (previewTime / recordingDuration) * 100 : 0;
+                          return displayBars.map((level, i) => {
+                            const barPct = (i / displayBars.length) * 100;
+                            const isPlayed = barPct <= progress;
+                            return (
+                              <div
+                                key={i}
+                                className={cn(
+                                  "w-[2.5px] rounded-full shrink-0 transition-colors",
+                                  isPlayed ? "bg-primary" : "bg-primary/25"
+                                )}
+                                style={{ height: `${Math.max(3, level * 24)}px` }}
+                              />
+                            );
+                          });
+                        })()}
+                      </div>
+
+                      {/* Time */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <MicIcon className="size-3 text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          {Math.floor(previewTime / 60)}:{Math.floor(previewTime % 60).toString().padStart(2, "0")} / {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, "0")}
+                        </span>
+                      </div>
+                    </>
+                  )}
                 </div>
-                <Button
-                  size="icon"
-                  className="size-10 rounded-full shrink-0 bg-red-500 hover:bg-red-600"
-                  onClick={stopRecording}
-                  title="Stop & send"
-                >
-                  <ArrowUpIcon className="size-4" />
-                </Button>
+
+                {/* Stop or Send button */}
+                {isRecording ? (
+                  <Button
+                    size="icon"
+                    className="size-10 rounded-full shrink-0 bg-red-500 hover:bg-red-600 shadow-sm"
+                    onClick={stopRecording}
+                    title="Stop recording"
+                  >
+                    <div className="size-3.5 bg-white rounded-sm" />
+                  </Button>
+                ) : (
+                  <Button
+                    size="icon"
+                    className="size-10 rounded-full shrink-0 shadow-sm"
+                    onClick={sendRecording}
+                    disabled={uploading}
+                    title="Send voice message"
+                  >
+                    {uploading ? (
+                      <LoaderIcon className="size-4 animate-spin" />
+                    ) : (
+                      <ArrowUpIcon className="size-4" />
+                    )}
+                  </Button>
+                )}
               </>
             ) : (
               <>
@@ -1065,10 +1294,10 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                 <div className="shrink-0 pb-1">
                   <button
                     onClick={startRecording}
-                    className="size-8 rounded-lg hover:bg-muted flex items-center justify-center transition-colors"
+                    className="size-8 rounded-lg hover:bg-red-500/10 flex items-center justify-center transition-colors group"
                     title="Voice message"
                   >
-                    <MicIcon className="size-4 text-muted-foreground" />
+                    <MicIcon className="size-4 text-muted-foreground group-hover:text-red-500 transition-colors" />
                   </button>
                 </div>
 

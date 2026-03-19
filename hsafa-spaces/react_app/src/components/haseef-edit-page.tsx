@@ -47,6 +47,8 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
   const [customPersonaDesc, setCustomPersonaDesc] = useState("");
   const [isCustomPersona, setIsCustomPersona] = useState(false);
   const [voiceGender, setVoiceGender] = useState<"male" | "female">("male");
+  const [customVoiceId, setCustomVoiceId] = useState("");
+  const [useCustomVoiceId, setUseCustomVoiceId] = useState(false);
   // Dynamic profile fields (user-defined key-value pairs)
   const [profileFields, setProfileFields] = useState<Array<{ id: string; key: string; value: string }>>([]);
   const [newKey, setNewKey] = useState("");
@@ -127,9 +129,11 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
         }
 
         // Extract voice config
-        const voiceConfig = h.configJson?.voice as { gender?: string } | undefined;
+        const voiceConfig = h.configJson?.voice as { gender?: string; voiceId?: string } | undefined;
         if (voiceConfig?.gender === "female") setVoiceGender("female");
         else setVoiceGender("male");
+        setCustomVoiceId(voiceConfig?.voiceId || "");
+        setUseCustomVoiceId(!!voiceConfig?.voiceId);
 
         // Extract model info
         const modelConfig = h.configJson?.model;
@@ -274,7 +278,10 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
       }
 
       // Update voice config
-      configJson.voice = { gender: voiceGender };
+      configJson.voice = { 
+        gender: voiceGender,
+        ...(customVoiceId.trim() ? { voiceId: customVoiceId.trim() } : {}),
+      };
       
       // Update model if changed
       if (resolvedModel) {
@@ -600,6 +607,56 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
                 Female
               </button>
             </div>
+
+            {/* Custom Voice ID Toggle */}
+            <label className="flex items-center gap-3 pt-2 cursor-pointer group">
+              <div className={cn(
+                "relative size-5 rounded-md border-2 transition-all duration-150 flex items-center justify-center",
+                useCustomVoiceId
+                  ? "bg-primary border-primary"
+                  : "bg-background border-border group-hover:border-primary/50"
+              )}>
+                <input
+                  type="checkbox"
+                  id="use-custom-voice"
+                  checked={useCustomVoiceId}
+                  onChange={(e) => {
+                    setUseCustomVoiceId(e.target.checked);
+                    if (!e.target.checked) setCustomVoiceId("");
+                  }}
+                  className="sr-only"
+                />
+                <svg
+                  className={cn(
+                    "size-3.5 text-primary-foreground transition-transform duration-150",
+                    useCustomVoiceId ? "scale-100" : "scale-0"
+                  )}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={3}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <span className="text-sm text-foreground">Use custom ElevenLabs voice</span>
+            </label>
+
+            {/* Custom Voice ID Input */}
+            {useCustomVoiceId && (
+              <div className="pt-1 pl-6">
+                <input
+                  type="text"
+                  placeholder="e.g. pNInz6obpgDQGcFmaJgB"
+                  value={customVoiceId}
+                  onChange={(e) => setCustomVoiceId(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Find voice IDs in your ElevenLabs dashboard.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Editable Profile Fields */}
