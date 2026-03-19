@@ -23,7 +23,6 @@ import {
   markOffline,
   broadcastTyping,
 } from "../smartspace-events.js";
-import { prisma } from "../db.js";
 import { state, type ActiveConnection } from "./types.js";
 import { isMessageTool, getMessageToolActivity } from "./tool-handlers.js";
 import { markHaseefSeen } from "./sense-events.js";
@@ -129,11 +128,12 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
       // Track current run ID for fallback space resolution
       conn.currentRunId = runId ?? null;
 
-      // NOTE: We no longer auto-set activeSpace to trigger space.
-      // The haseef must explicitly call enter_space before interacting with any space.
-
-      // Get trigger space for broadcast purposes (NOT for auto-enter)
+      // Auto-set activeSpace to trigger space so the haseef can reply without calling enter_space.
+      // enteredSpace (explicit enter_space) still takes priority in getActiveSpaceId().
       const triggerSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
+      if (triggerSpaceId) {
+        conn.activeSpace = { spaceId: triggerSpaceId, spaceName: triggerSpaceId };
+      }
 
       // Broadcast agent.active + online to trigger space
       const targetSpaces = triggerSpaceId ? [triggerSpaceId] : conn.spaceIds;

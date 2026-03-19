@@ -472,7 +472,15 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
             <h3 className="text-sm font-semibold text-foreground truncate">{space.name}</h3>
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               {typingText ? (
-                <span className="text-primary">{typingText}</span>
+                <span className={cn(
+                  typingMembers.some((m) => m.activity === "recording") ? "text-red-500" : "text-primary",
+                  "flex items-center gap-1"
+                )}>
+                  {typingMembers.some((m) => m.activity === "recording") && (
+                    <MicIcon className="size-3 inline" />
+                  )}
+                  {typingText}
+                </span>
               ) : (
                 <>
                   <span>{space.members.length} members</span>
@@ -588,8 +596,10 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
           />
         )}
 
-        {/* Typing indicator — always show avatars */}
-        {typingMembers.length > 0 && (
+        {/* Typing / Recording indicator — always show avatars */}
+        {typingMembers.length > 0 && (() => {
+          const hasRecording = typingMembers.some((m) => m.activity === "recording");
+          return (
           <div className="flex items-center gap-2 mt-2 ml-2">
             <div className="flex -space-x-1.5">
               {typingMembers.slice(0, 4).map((m) => (
@@ -604,14 +614,22 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                 </div>
               ))}
             </div>
-            <div className="rounded-full bg-muted px-3 py-1.5 flex items-center gap-1">
-              <span className="size-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0ms]" />
-              <span className="size-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:150ms]" />
-              <span className="size-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:300ms]" />
-            </div>
+            {hasRecording ? (
+              <div className="rounded-full bg-red-500/10 border border-red-500/20 px-3 py-1.5 flex items-center gap-1.5">
+                <span className="size-2 rounded-full bg-red-500 animate-pulse" />
+                <MicIcon className="size-3.5 text-red-500" />
+              </div>
+            ) : (
+              <div className="rounded-full bg-muted px-3 py-1.5 flex items-center gap-1">
+                <span className="size-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0ms]" />
+                <span className="size-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:150ms]" />
+                <span className="size-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:300ms]" />
+              </div>
+            )}
             <span className="text-[11px] text-muted-foreground">{typingText}</span>
           </div>
-        )}
+          );
+        })()}
 
 
         <div ref={bottomRef} />

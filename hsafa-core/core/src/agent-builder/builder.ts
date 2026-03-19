@@ -99,10 +99,7 @@ export async function buildHaseef(
 ): Promise<BuiltHaseef> {
   const config = HaseefConfigSchema.parse(rawConfig);
 
-  const model = resolveModel(config.model, {
-    temperature: config.model.temperature,
-    maxOutputTokens: config.model.maxTokens,
-  });
+  const model = resolveModel(config.model);
 
   // Build prebuilt tools (done, set_memories, delete_memories, recall_memories, peek_inbox)
   const prebuilt = buildPrebuiltTools(context);

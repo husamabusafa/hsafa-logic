@@ -86,23 +86,3 @@ export function getHaseefUsage(haseefId: string) {
   return haseefTokenUsage.get(haseefId) ?? { input: 0, output: 0, calls: 0 };
 }
 
-/**
- * Default settings middleware — applies temperature and maxOutputTokens
- * from agent config so they don't need to be passed on every call.
- */
-export function createDefaultSettingsMiddleware(settings: {
-  temperature?: number;
-  maxOutputTokens?: number;
-}) {
-  return {
-    specificationVersion: 'v3' as const,
-
-    transformParams: async ({ params }: any) => {
-      return {
-        ...params,
-        temperature: params.temperature ?? settings.temperature,
-        maxOutputTokens: params.maxOutputTokens ?? settings.maxOutputTokens,
-      };
-    },
-  };
-}

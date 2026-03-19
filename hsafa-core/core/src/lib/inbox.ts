@@ -251,6 +251,32 @@ export async function recoverStuckEvents(haseefId: string): Promise<number> {
   return stuck.length;
 }
 
+/**
+ * Discard stuck events — mark 'processing' and 'pending' as 'failed' and
+ * flush the Redis queue. Called on cycle errors so the haseef moves on
+ * instead of retrying the same failing events.
+ */
+export async function discardStuckEvents(haseefId: string): Promise<number> {
+  const key = `${INBOX_PREFIX}${haseefId}`;
+
+  // Count stuck events
+  const result = await prisma.inboxEvent.updateMany({
+    where: {
+      haseefId,
+      status: { in: ['processing', 'pending'] },
+    },
+    data: {
+      status: 'failed',
+      processedAt: new Date(),
+    },
+  });
+
+  // Flush the Redis queue so the same events don't re-trigger
+  await redis.del(key);
+
+  return result.count;
+}
+
 // =============================================================================
 // Format — Convert inbox events to content for consciousness injection
 // =============================================================================

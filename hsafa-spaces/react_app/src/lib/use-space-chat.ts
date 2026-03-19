@@ -357,7 +357,12 @@ export function useSpaceChat(
 
           if (typing) {
             setTypingUsers((prev) => {
-              if (prev.some((t) => t.entityId === entityId)) return prev;
+              const existing = prev.find((t) => t.entityId === entityId);
+              if (existing) {
+                // Update activity if changed (e.g. typing → recording)
+                if (existing.activity === activity) return prev;
+                return prev.map((t) => t.entityId === entityId ? { ...t, activity } : t);
+              }
               return [...prev, { entityId, entityName, activity }];
             });
             // Auto-remove after 5s if no new typing event

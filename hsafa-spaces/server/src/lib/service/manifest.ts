@@ -23,7 +23,8 @@ export const SCOPE_INSTRUCTIONS = `You interact with people through spaces — e
 
 HOW IT WORKS:
   Use spaces_send_message to reply. Your text output is internal thought — only tool calls reach people.
-  You must call spaces_enter_space before interacting with any space — you are NOT automatically placed anywhere.
+  When a message triggers you, you are automatically placed in that space — just send your reply.
+  Use spaces_enter_space only when you need to switch to a DIFFERENT space than the one that triggered you.
   Events show [YOU ARE: YourName], the space info, recent conversation, and the new message.
   In recent conversation, "You" = your past messages. Only respond to the NEW MESSAGE.
 
@@ -31,7 +32,7 @@ TIPS:
   Don't repeat yourself — check what you already said in the recent conversation.
   In group spaces, respond when addressed. In 1-on-1 with another haseef, avoid infinite loops.
   Use replyTo (with the sender's messageId) for threading when it adds clarity.
-  Your spaces are listed below — use their spaceId with spaces_enter_space to join one.
+  Your spaces are listed below — use their spaceId with spaces_enter_space to switch to one.
 
 VOICE MESSAGES:
   Mix voice and text — don't always use text. Use send_voice for friendly, casual, or emotional replies.

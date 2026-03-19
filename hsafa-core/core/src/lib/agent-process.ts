@@ -15,6 +15,7 @@ import {
   markEventsProcessing,
   markEventsProcessed,
   recoverStuckEvents,
+  discardStuckEvents,
   formatInboxEvents,
 } from './inbox.js';
 import {
@@ -313,7 +314,7 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
           },
         }).catch(() => {});
 
-        // Re-throw so the outer catch handles backoff/retry
+        // Re-throw so the outer catch discards events and moves on
         throw innerErr;
       } finally {
         // ALWAYS emit run.finished — prevents permanent "thinking" indicator
@@ -340,11 +341,14 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`[process] ${haseefName} cycle error:`, errMsg);
 
-      // Mark stuck events as failed so they don't block the next cycle
-      await recoverStuckEvents(haseefId).catch(() => 0);
+      // Discard failed events and move on — no retries
+      const discarded = await discardStuckEvents(haseefId).catch(() => 0);
+      if (discarded > 0) {
+        console.log(`[process] ${haseefName} discarded ${discarded} failed events`);
+      }
 
-      // Brief pause to avoid tight error loops
-      await new Promise((r) => setTimeout(r, 2000));
+      // Brief pause before next cycle
+      await new Promise((r) => setTimeout(r, 3000));
     }
   }
 

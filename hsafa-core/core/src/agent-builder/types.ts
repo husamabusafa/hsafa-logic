@@ -17,8 +17,6 @@ export const ModelConfigSchema = z.object({
   provider: z.string(),
   /** Model name as the provider expects it (e.g. 'claude-sonnet-4-20250514') */
   model: z.string(),
-  temperature: z.number().optional(),
-  maxTokens: z.number().optional(),
   /** Optional per-user API key override (injected by spaces server, never exposed to clients) */
   apiKey: z.string().optional(),
   /** Enable reasoning/thinking for supported models */

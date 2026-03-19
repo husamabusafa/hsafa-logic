@@ -4,7 +4,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createXai } from '@ai-sdk/xai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { loggingMiddleware, costTrackingMiddleware, createDefaultSettingsMiddleware } from './model-middleware.js';
+import { loggingMiddleware, costTrackingMiddleware } from './model-middleware.js';
 
 // =============================================================================
 // Model Registry (Ship #6)
@@ -71,21 +71,16 @@ function resolveBaseModel(
 }
 
 /**
- * Resolve a model and wrap it with middleware (logging + cost tracking + defaults).
- * Supports legacy { provider, model } config → registry.languageModel('provider:model').
+ * Resolve a model and wrap it with middleware (logging + cost tracking).
  * If config.apiKey is provided, creates a one-off provider with the user's key.
  */
 export function resolveModel(
   config: { provider: string; model: string; apiKey?: string },
-  defaults?: { temperature?: number; maxOutputTokens?: number },
 ) {
   const baseModel = resolveBaseModel(config.provider, config.model, config.apiKey);
 
   // Build middleware stack
   const middleware: any[] = [loggingMiddleware, costTrackingMiddleware];
-  if (defaults?.temperature !== undefined || defaults?.maxOutputTokens !== undefined) {
-    middleware.push(createDefaultSettingsMiddleware(defaults));
-  }
 
   return wrapLanguageModel({
     model: baseModel,
