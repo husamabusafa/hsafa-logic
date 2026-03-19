@@ -10,6 +10,7 @@ import { VoiceMessage } from "./voice-message";
 import { VideoMessage } from "./video-message";
 import { FileMessage } from "./file-message";
 import { ChartMessage } from "./chart-message";
+import { AttachmentsRenderer } from "./attachments-renderer";
 import { SystemMessage } from "./system-message";
 import { ReplyBanner } from "./reply-banner";
 import { Avatar } from "@/components/ui/avatar";
@@ -215,6 +216,11 @@ export function MessageRenderer({
 }
 
 function renderContent(message: MockMessage) {
+  // If message has multi-file attachments, render them with the combined text+attachments view
+  if (message.attachments && message.attachments.length > 0) {
+    return <AttachmentsRenderer message={message} />;
+  }
+
   switch (message.type) {
     case "text":
       return <TextMessage message={message} />;

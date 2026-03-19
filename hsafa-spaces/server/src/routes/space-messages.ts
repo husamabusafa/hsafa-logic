@@ -53,10 +53,14 @@ router.post("/:smartSpaceId/messages", async (req: Request, res: Response) => {
       entityId = auth.entityId;
     }
 
-    if (!entityId || !content) {
-      res.status(400).json({ error: "entityId and content are required" });
+    // Allow empty content if there are file attachments in metadata
+    const hasAttachments = metadata?.files && Array.isArray(metadata.files) && metadata.files.length > 0;
+    if (!entityId || (!content && !hasAttachments)) {
+      res.status(400).json({ error: "entityId and content (or attachments) are required" });
       return;
     }
+    // Normalize content to empty string if attachments-only
+    if (!content) content = "";
 
     // Resolve replyTo: if messageId provided, populate snippet/senderName/messageType
     let resolvedReplyTo = undefined;

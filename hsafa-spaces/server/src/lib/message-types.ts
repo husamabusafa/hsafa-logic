@@ -125,6 +125,15 @@ export function generateSnippet(
   maxLength = 100,
 ): string {
   const type = metadata?.type || "text";
+  const files = metadata?.files as Array<Record<string, unknown>> | undefined;
+  const hasText = content && content.trim();
+
+  // Multi-file attachments with text
+  if (files && Array.isArray(files) && files.length > 0) {
+    const count = files.length;
+    const label = count === 1 ? "📎 1 attachment" : `📎 ${count} attachments`;
+    return hasText ? `${truncate(content, maxLength - label.length - 3)} · ${label}` : label;
+  }
 
   switch (type) {
     case "text":
@@ -151,16 +160,17 @@ export function generateSnippet(
     }
 
     case "image":
-      return "🖼️ Image";
+      return hasText ? `🖼️ ${truncate(content, maxLength - 3)}` : "🖼️ Image";
 
     case "voice":
       return "🎤 Voice message";
 
     case "video":
-      return "🎬 Video";
+      return hasText ? `🎬 ${truncate(content, maxLength - 3)}` : "🎬 Video";
 
     case "file": {
       const fileName = metadata?.payload?.fileName as string | undefined;
+      if (hasText) return `📎 ${truncate(content, maxLength - 3)}`;
       return fileName ? `📎 ${truncate(fileName, maxLength - 2)}` : "📎 File";
     }
 

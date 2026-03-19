@@ -173,6 +173,19 @@ export function adaptMessage(
     base.fileUrl = (payload.fileUrl ?? payload.url) as string;
   }
 
+  // Multi-file attachments (from metadata.files array)
+  const filesArr = meta.files as Array<Record<string, unknown>> | undefined;
+  if (filesArr && Array.isArray(filesArr) && filesArr.length > 0) {
+    base.attachments = filesArr.map((f) => ({
+      url: (f.url as string) || "",
+      fileName: (f.fileName as string) || "file",
+      fileSize: (f.fileSize as number) || 0,
+      fileMimeType: (f.fileMimeType as string) || "application/octet-stream",
+      thumbnailUrl: f.thumbnailUrl as string | undefined,
+      type: (f.type as "image" | "file" | "video") || "file",
+    }));
+  }
+
   // Chart — normalize AI format ({labels, datasets}) → flat array [{label, value}]
   if (msgType === "chart" && payload) {
     base.chartType = payload.chartType as MockMessage["chartType"];
@@ -646,6 +659,18 @@ export function useSpaceChat(
         ...(msgType === "voice" ? { audioUrl: data.url, audioDuration: data.audioDuration, transcription: data.transcription } : {}),
         ...(msgType === "file" && data.url ? { fileUrl: data.url, fileName: data.fileName, fileSize: data.fileSize, fileMimeType: data.fileMimeType } : {}),
       };
+
+      // Populate attachments for multi-file uploads
+      if (data.files && data.files.length > 0) {
+        optimistic.attachments = data.files.map((f) => ({
+          url: f.url,
+          fileName: f.fileName,
+          fileSize: f.fileSize,
+          fileMimeType: f.fileMimeType,
+          thumbnailUrl: f.thumbnailUrl,
+          type: f.type,
+        }));
+      }
 
       if (data.replyToId) {
         const replyMsg = messagesRef.current.find((m) => m.id === data.replyToId);

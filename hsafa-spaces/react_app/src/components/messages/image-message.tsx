@@ -9,9 +9,17 @@ interface ImageMessageProps {
 export function ImageMessage({ message }: ImageMessageProps) {
   const [lightbox, setLightbox] = useState(false);
 
+  // Show content text if present and different from caption
+  const hasText = message.content && message.content.trim() && message.content !== message.imageCaption;
+
   return (
     <>
       <div className="space-y-1">
+        {hasText && (
+          <p className="text-sm whitespace-pre-wrap leading-relaxed break-words mb-1.5">
+            {message.content}
+          </p>
+        )}
         <button
           onClick={() => setLightbox(true)}
           className="block rounded-lg overflow-hidden max-w-sm cursor-zoom-in"
@@ -23,7 +31,7 @@ export function ImageMessage({ message }: ImageMessageProps) {
             loading="lazy"
           />
         </button>
-        {message.imageCaption && (
+        {message.imageCaption && !hasText && (
           <p className="text-sm leading-relaxed">{message.imageCaption}</p>
         )}
       </div>

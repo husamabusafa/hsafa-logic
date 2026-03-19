@@ -130,6 +130,16 @@ export interface MockMessage {
   chartType?: "bar" | "line" | "pie";
   chartTitle?: string;
   chartData?: { label: string; value: number; color?: string }[];
+
+  // Attachments (multi-file support on any message)
+  attachments?: Array<{
+    url: string;
+    fileName: string;
+    fileSize: number;
+    fileMimeType: string;
+    thumbnailUrl?: string;
+    type: "image" | "file" | "video";
+  }>;
 }
 
 export interface MockSpace {

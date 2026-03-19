@@ -33,21 +33,32 @@ function getFileColor(mimeType?: string): string {
 export function FileMessage({ message }: FileMessageProps) {
   const Icon = getFileIcon(message.fileMimeType);
   const color = getFileColor(message.fileMimeType);
+  const hasText = message.content && message.content.trim();
 
   return (
-    <div className="flex items-center gap-3 p-1">
-      <div className="size-10 rounded-lg bg-muted/80 flex items-center justify-center shrink-0">
-        <Icon className={`size-5 ${color}`} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{message.fileName || "file"}</p>
-        <p className="text-[11px] text-muted-foreground">
-          {message.fileSize ? formatFileSize(message.fileSize) : "Unknown size"}
+    <div className="space-y-1.5">
+      {hasText && (
+        <p className="text-sm whitespace-pre-wrap leading-relaxed break-words">
+          {message.content}
         </p>
-      </div>
-      <button className="size-8 rounded-lg hover:bg-muted/80 flex items-center justify-center shrink-0 transition-colors">
-        <DownloadIcon className="size-4 text-muted-foreground" />
-      </button>
+      )}
+      <a
+        href={message.fileUrl || "#"}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-3 p-2 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
+      >
+        <div className="size-10 rounded-lg bg-muted/80 flex items-center justify-center shrink-0">
+          <Icon className={`size-5 ${color}`} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate">{message.fileName || "file"}</p>
+          <p className="text-[11px] text-muted-foreground">
+            {message.fileSize ? formatFileSize(message.fileSize) : "Unknown size"}
+          </p>
+        </div>
+        <DownloadIcon className="size-4 text-muted-foreground shrink-0" />
+      </a>
     </div>
   );
 }
