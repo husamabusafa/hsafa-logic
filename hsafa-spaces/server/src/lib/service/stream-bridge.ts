@@ -126,15 +126,11 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
         conn.runSpaces.set(runId, event.triggerSource);
       }
 
-      // Clear explicitly entered space from previous cycle — each run starts fresh
-      // in the trigger space. enter_space can override within the same cycle.
-      conn.enteredSpace = null;
+      // NOTE: We no longer auto-set activeSpace to trigger space.
+      // The haseef must explicitly call enter_space before interacting with any space.
 
       // Get trigger space for broadcast purposes (NOT for auto-enter)
       const triggerSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
-
-      // NOTE: We no longer auto-set activeSpace to trigger space.
-      // The haseef must explicitly call enter_space before interacting with any space.
 
       // Broadcast agent.active + online to trigger space
       const targetSpaces = triggerSpaceId ? [triggerSpaceId] : conn.spaceIds;

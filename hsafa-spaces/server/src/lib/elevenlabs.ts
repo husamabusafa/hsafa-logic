@@ -24,8 +24,9 @@ const TTS_MODEL = "eleven_multilingual_v2";
 const STT_MODEL = "scribe_v1";
 
 // Default voice IDs (ElevenLabs multilingual voices)
-const DEFAULT_MALE_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb";   // George
-const DEFAULT_FEMALE_VOICE_ID = "EXAVITQu4vr4xnSDxMaL"; // Sarah
+// Adam = clear male voice, Rachel = clear female voice
+const DEFAULT_MALE_VOICE_ID = "pNInz6obpgDQGcFmaJgB";   // Adam
+const DEFAULT_FEMALE_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // Rachel
 
 export type VoiceGender = "male" | "female";
 

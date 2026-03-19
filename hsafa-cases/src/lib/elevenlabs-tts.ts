@@ -18,8 +18,8 @@ export interface ElevenLabsTTSOptions {
 }
 
 // Default voice IDs
-const DEFAULT_MALE_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'   // George
-const DEFAULT_FEMALE_VOICE_ID = 'EXAVITQu4vr4xnSDxMaL' // Sarah
+export const DEFAULT_MALE_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb'   // George
+export const DEFAULT_FEMALE_VOICE_ID = 'albaa6OioIhKtKdCEkQw' // Sarah
 
 export class ElevenLabsTTS {
   private ws: WebSocket | null = null
