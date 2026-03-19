@@ -31,7 +31,11 @@ TIPS:
   Don't repeat yourself — check what you already said in the recent conversation.
   In group spaces, respond when addressed. In 1-on-1 with another haseef, avoid infinite loops.
   Use replyTo (with the sender's messageId) for threading when it adds clarity.
-  Your spaces are listed below — use their spaceId with spaces_enter_space to join one.`;
+  Your spaces are listed below — use their spaceId with spaces_enter_space to join one.
+
+VOICE MESSAGES:
+  Mix voice and text — don't always use text. Use send_voice for friendly, casual, or emotional replies.
+  Use text for detailed explanations, code, lists, or when precision matters. Vary your style naturally.`;
 
 /**
  * Tool definitions to register with Core.

@@ -25,7 +25,7 @@ import {
 } from "../smartspace-events.js";
 import { prisma } from "../db.js";
 import { state, type ActiveConnection } from "./types.js";
-import { isMessageTool } from "./tool-handlers.js";
+import { isMessageTool, getMessageToolActivity } from "./tool-handlers.js";
 import { markHaseefSeen } from "./sense-events.js";
 import { SCOPE } from "./manifest.js";
 
@@ -176,10 +176,11 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           agentEntityId: conn.agentEntityId,
           runId,
         });
-        // For message tools: start heartbeat + broadcast typing
+        // For message tools: start heartbeat + broadcast typing with activity type
         if (isMessageTool(event.toolName)) {
           startTypingHeartbeat(conn);
-          void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
+          const activity = getMessageToolActivity(event.toolName);
+          void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true, activity);
         }
       }
     } else if (event.type === "tool.done") {

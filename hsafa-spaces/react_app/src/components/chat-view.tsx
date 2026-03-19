@@ -153,17 +153,21 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
+  // Preserve activity info from typingUsers while mapping to member info
   const typingMembers = typingUsers
     .filter((t) => t.entityId !== currentEntityId)
     .map((t) => {
       const member = space.members.find((m) => m.entityId === t.entityId);
-      return member || {
-        entityId: t.entityId,
-        name: t.entityName,
-        type: "agent" as const,
-        role: "member" as const,
-        avatarColor: "bg-emerald-500",
-        isOnline: true,
+      return {
+        ...(member || {
+          entityId: t.entityId,
+          name: t.entityName,
+          type: "agent" as const,
+          role: "member" as const,
+          avatarColor: "bg-emerald-500",
+          isOnline: true,
+        }),
+        activity: t.activity,
       };
     });
 
@@ -418,7 +422,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, []);
 
-  // Format typing text for multiple entities
+  // Format typing text for multiple entities (with activity support)
   const typingText = formatTypingText(typingMembers);
 
   return (
@@ -1133,11 +1137,19 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
 
 // ─── Typing text formatter ──────────────────────────────────────────────────
 
-function formatTypingText(members: MockMember[]): string {
+interface TypingMember extends MockMember {
+  activity?: "typing" | "recording";
+}
+
+function formatTypingText(members: TypingMember[]): string {
   if (members.length === 0) return "";
-  if (members.length === 1) return `${members[0].name} is typing...`;
-  if (members.length === 2) return `${members[0].name} and ${members[1].name} are typing...`;
-  return `${members[0].name} and ${members.length - 1} others are typing...`;
+  // Check if any member is recording
+  const hasRecording = members.some((m) => m.activity === "recording");
+  const verb = hasRecording ? "recording voice" : "typing";
+  
+  if (members.length === 1) return `${members[0].name} is ${verb}...`;
+  if (members.length === 2) return `${members[0].name} and ${members[1].name} are ${verb}...`;
+  return `${members[0].name} and ${members.length - 1} others are ${verb}...`;
 }
 
 

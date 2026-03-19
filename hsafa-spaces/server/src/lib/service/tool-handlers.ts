@@ -57,12 +57,21 @@ const MESSAGE_TOOLS = new Set([
   "send_message", "send_confirmation", "send_choice", "send_vote", "send_form",
   "send_image", "send_voice", "send_file", "send_chart", "send_card",
 ]);
+const VOICE_TOOLS = new Set(["send_voice"]);
+
 export function isMessageTool(toolName?: string): boolean {
   if (!toolName) return false;
   if (MESSAGE_TOOLS.has(toolName)) return true;
   // Core prefixes tool names with scope: "spaces_send_message" → strip prefix and check
   const unprefixed = toolName.replace(/^spaces_/, '');
   return MESSAGE_TOOLS.has(unprefixed);
+}
+
+/** Get the activity type for a message tool: 'typing' or 'recording' */
+export function getMessageToolActivity(toolName?: string): "typing" | "recording" {
+  if (!toolName) return "typing";
+  const unprefixed = toolName.replace(/^spaces_/, '');
+  return VOICE_TOOLS.has(unprefixed) ? "recording" : "typing";
 }
 
 // =============================================================================

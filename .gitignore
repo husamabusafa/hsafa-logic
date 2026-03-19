@@ -48,3 +48,9 @@ dist/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# media uploads (TTS audio files)
+uploads/
+*.mp3
+*.wav
+*.ogg

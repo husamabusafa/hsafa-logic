@@ -19,6 +19,7 @@ export interface AgentActivity {
 export interface TypingUser {
   entityId: string;
   entityName: string;
+  activity?: "typing" | "recording";
 }
 
 export interface MediaMessageData {
@@ -337,13 +338,14 @@ export function useSpaceChat(
           const entityId = data.entityId as string;
           const entityName = data.entityName as string;
           const typing = data.typing as boolean;
+          const activity = (data.activity as "typing" | "recording") || "typing";
 
           if (entityId === myEntityId) break;
 
           if (typing) {
             setTypingUsers((prev) => {
               if (prev.some((t) => t.entityId === entityId)) return prev;
-              return [...prev, { entityId, entityName }];
+              return [...prev, { entityId, entityName, activity }];
             });
             // Auto-remove after 5s if no new typing event
             const existing = typingTimersRef.current.get(entityId);

@@ -161,18 +161,21 @@ export function stopPresenceCleanup(): void {
 
 /**
  * Broadcast a typing indicator event to a space.
+ * activity: 'typing' | 'recording' — 'recording' is used for voice messages
  */
 export async function broadcastTyping(
   spaceId: string,
   entityId: string,
   entityName: string,
   typing: boolean,
+  activity: "typing" | "recording" = "typing",
 ): Promise<void> {
   await emitSmartSpaceEvent(spaceId, {
     type: "user.typing",
     entityId,
     entityName,
     typing,
+    activity,
   });
 }
 
