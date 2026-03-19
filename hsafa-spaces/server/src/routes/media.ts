@@ -7,7 +7,7 @@ import {
   isAuthError,
 } from "../lib/spaces-auth.js";
 import { storeFile, ensureStorageDirs, getStoragePath } from "../lib/media-storage.js";
-import { speechToText } from "../lib/cartesia.js";
+import { speechToText } from "../lib/elevenlabs.js";
 import express from "express";
 
 const router = Router();
@@ -141,7 +141,7 @@ router.post("/upload-voice", upload.single("file"), async (req: Request, res: Re
       baseUrl,
     });
 
-    // Run STT transcription via Cartesia
+    // Run STT transcription via ElevenLabs
     let transcription = "";
     try {
       const sttResult = await speechToText(file.buffer, file.mimetype);

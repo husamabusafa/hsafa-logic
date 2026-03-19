@@ -20,7 +20,7 @@ import {
 import { markOnline } from "../smartspace-events.js";
 import { state, type ActiveConnection } from "./types.js";
 import { pushInteractiveMessageEvent, emitEntityChannelEvent } from "./sense-events.js";
-import { textToSpeech } from "../cartesia.js";
+import { textToSpeech, type VoiceGender } from "../elevenlabs.js";
 import { createSchedule, deleteSchedule } from "./schedule-service.js";
 import { syncTools } from "./core-api.js";
 
@@ -635,13 +635,13 @@ export async function executeAction(
 
         const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
 
-        // Generate TTS audio via Cartesia
+        // Generate TTS audio via ElevenLabs
         let audioUrl: string;
         let audioDuration: number;
         try {
           const protocol = "http";
           const baseUrl = `${protocol}://localhost:${process.env.PORT || 3005}`;
-          const ttsResult = await textToSpeech(text, baseUrl);
+          const ttsResult = await textToSpeech(text, baseUrl, conn?.voiceId, conn?.voiceGender);
           audioUrl = ttsResult.audioUrl;
           audioDuration = ttsResult.audioDuration;
         } catch (err) {

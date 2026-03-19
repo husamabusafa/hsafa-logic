@@ -1,14 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Mic, Send, Power, PowerOff, Trash2, Keyboard, Volume2, VolumeX } from 'lucide-react'
 import { useConfig } from '../lib/config-context'
-import { CartesiaTTS } from '../lib/cartesia-tts'
-import { DeepgramSTT } from '../lib/deepgram-stt'
+import { ElevenLabsTTS } from '../lib/elevenlabs-tts'
+import { ElevenLabsSTT } from '../lib/elevenlabs-stt'
 import type { StreamEvent } from '../lib/core-client'
 
 const NOVA_ID = import.meta.env.VITE_SPEAKER_HASEEF_ID ?? ''
-const CARTESIA_KEY = import.meta.env.VITE_CARTESIA_API_KEY ?? ''
-const CARTESIA_VOICE = import.meta.env.VITE_CARTESIA_VOICE_ID ?? ''
-const DEEPGRAM_KEY = import.meta.env.VITE_DEEPGRAM_API_KEY ?? ''
+const ELEVENLABS_KEY = import.meta.env.VITE_ELEVENLABS_API_KEY ?? ''
+const ELEVENLABS_VOICE = import.meta.env.VITE_ELEVENLABS_VOICE_ID ?? ''
 const SCOPE = 'speaker'
 
 type OrbState = 'offline' | 'idle' | 'listening' | 'thinking' | 'speaking'
@@ -30,7 +29,7 @@ export default function SpeakerPage() {
   // Voice state
   const [orbState, setOrbState] = useState<OrbState>('offline')
   const [audioLevel, setAudioLevel] = useState(0)
-  const [ttsEnabled, setTtsEnabled] = useState(!!CARTESIA_KEY)
+  const [ttsEnabled, setTtsEnabled] = useState(!!ELEVENLABS_KEY)
   const [interimText, setInterimText] = useState('')
 
   // Transcript
@@ -41,8 +40,8 @@ export default function SpeakerPage() {
 
   // Refs
   const abortRef = useRef<AbortController | null>(null)
-  const ttsRef = useRef<CartesiaTTS | null>(null)
-  const sttRef = useRef<DeepgramSTT | null>(null)
+  const ttsRef = useRef<ElevenLabsTTS | null>(null)
+  const sttRef = useRef<ElevenLabsSTT | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const idRef = useRef(0)
   const streamingIdRef = useRef<number | null>(null)
@@ -70,11 +69,11 @@ export default function SpeakerPage() {
   // ── TTS setup ────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!CARTESIA_KEY) return
+    if (!ELEVENLABS_KEY) return
 
-    const tts = new CartesiaTTS({
-      apiKey: CARTESIA_KEY,
-      voiceId: CARTESIA_VOICE || undefined,
+    const tts = new ElevenLabsTTS({
+      apiKey: ELEVENLABS_KEY,
+      voiceId: ELEVENLABS_VOICE || undefined,
       onStateChange: (state) => {
         if (state === 'speaking') setOrbState('speaking')
         else if (state === 'idle' && streamingIdRef.current === null) setOrbState('idle')
@@ -89,10 +88,10 @@ export default function SpeakerPage() {
   // ── STT setup ────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!DEEPGRAM_KEY) return
+    if (!ELEVENLABS_KEY) return
 
-    const stt = new DeepgramSTT({
-      apiKey: DEEPGRAM_KEY,
+    const stt = new ElevenLabsSTT({
+      apiKey: ELEVENLABS_KEY,
       onTranscript: (text, isFinal) => {
         if (isFinal && text.trim()) {
           setInterimText('')
@@ -103,8 +102,9 @@ export default function SpeakerPage() {
       },
       onStateChange: (state) => {
         if (state === 'listening') setOrbState('listening')
+        else if (state === 'transcribing') setOrbState('thinking')
         else if (state === 'idle') {
-          if (orbState === 'listening') setOrbState('idle')
+          if (orbState === 'listening' || orbState === 'thinking') setOrbState('idle')
         }
       },
       onAudioLevel: setAudioLevel,
@@ -412,7 +412,7 @@ export default function SpeakerPage() {
           {/* Main orb */}
           <button
             onClick={novaRunning ? toggleMic : toggleNova}
-            disabled={!DEEPGRAM_KEY && novaRunning}
+            disabled={!ELEVENLABS_KEY && novaRunning}
             className={`
               relative w-40 h-40 rounded-full cursor-pointer
               bg-gradient-to-br ${orbGradient} ${orbGlow}
@@ -462,7 +462,7 @@ export default function SpeakerPage() {
         {entries.length === 0 && !interimText ? (
           <p className="text-center text-zinc-700 text-xs mt-4">
             {novaRunning
-              ? DEEPGRAM_KEY
+              ? ELEVENLABS_KEY
                 ? 'Tap the orb to start speaking'
                 : 'Use the text input to talk to Nova'
               : 'Start Nova to begin'}
@@ -518,7 +518,7 @@ export default function SpeakerPage() {
       )}
 
       {/* ── Bottom mic hint ──────────────────────────────────────────── */}
-      {novaRunning && !showTextInput && DEEPGRAM_KEY && orbState !== 'listening' && (
+      {novaRunning && !showTextInput && ELEVENLABS_KEY && orbState !== 'listening' && (
         <p className="mt-4 text-[11px] text-zinc-600">
           Tap the orb to speak · <button onClick={() => setShowTextInput(true)} className="text-zinc-500 hover:text-zinc-400 underline underline-offset-2">or type</button>
         </p>

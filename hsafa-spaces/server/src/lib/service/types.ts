@@ -23,6 +23,10 @@ export interface ActiveConnection {
   typingHeartbeat: ReturnType<typeof setInterval> | null;
   /** Pending seen messages — flushed when run.started confirms events were consumed from inbox */
   pendingSeenMessages: Array<{ spaceId: string; messageId: string }>;
+  /** Voice gender for TTS — "male" or "female" (read from haseef configJson.voice.gender) */
+  voiceGender?: "male" | "female";
+  /** Custom ElevenLabs voice ID override (read from haseef configJson.voice.voiceId) */
+  voiceId?: string;
 }
 
 export interface ServiceState {

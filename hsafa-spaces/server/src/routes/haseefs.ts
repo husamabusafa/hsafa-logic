@@ -54,7 +54,7 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
-    const { name, description, configJson, instructions, model, provider, persona, profile } = req.body;
+    const { name, description, configJson, instructions, model, provider, persona, profile, voiceGender } = req.body;
     if (!name) {
       res.status(400).json({ error: "name is required" });
       return;
@@ -89,6 +89,11 @@ router.post("/", async (req: Request, res: Response) => {
     // Inject persona if provided
     if (persona && persona.id && persona.name && persona.description) {
       config = { ...config, persona };
+    }
+
+    // Inject voice config if provided
+    if (voiceGender === "male" || voiceGender === "female") {
+      config = { ...config, voice: { gender: voiceGender } };
     }
 
     // Create entity in Spaces for this agent
@@ -136,6 +141,7 @@ router.post("/", async (req: Request, res: Response) => {
         id: coreHaseef.id,
         name: coreHaseef.name,
         profileJson,
+        configJson: config,
       });
     } catch (err) {
       console.warn("[haseefs] Failed to auto-connect new haseef:", err);

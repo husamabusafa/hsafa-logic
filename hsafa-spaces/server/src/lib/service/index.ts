@@ -112,7 +112,7 @@ export async function bootstrapExtension(): Promise<void> {
 
 /** Discover all haseefs from Core via GET /api/haseefs */
 async function discoverHaseefs(): Promise<
-  Array<{ id: string; name: string; profileJson?: Record<string, unknown> }>
+  Array<{ id: string; name: string; profileJson?: Record<string, unknown>; configJson?: Record<string, unknown> }>
 > {
   try {
     const url = `${state.config!.coreUrl}/api/haseefs`;
@@ -136,6 +136,7 @@ async function setupHaseefConnection(haseef: {
   id: string;
   name: string;
   profileJson?: Record<string, unknown>;
+  configJson?: Record<string, unknown>;
 }): Promise<void> {
   const haseefId = haseef.id;
   const haseefName = haseef.name;
@@ -178,6 +179,11 @@ async function setupHaseefConnection(haseef: {
   const spaceIds = [...new Set(spaces.map((s) => s.spaceId))];
   console.log(`[spaces-service] ${haseefName} has ${spaceIds.length} space(s)`);
 
+  // Extract voice config from haseef configJson
+  const voiceConfig = haseef.configJson?.voice as { gender?: string; voiceId?: string } | undefined;
+  const voiceGender = (voiceConfig?.gender === "female" ? "female" : voiceConfig?.gender === "male" ? "male" : undefined) as "male" | "female" | undefined;
+  const voiceId = voiceConfig?.voiceId || undefined;
+
   // Store connection
   state.connections.set(haseefId, {
     haseefId,
@@ -189,6 +195,8 @@ async function setupHaseefConnection(haseef: {
     enteredSpace: null,
     typingHeartbeat: null,
     pendingSeenMessages: [],
+    voiceGender,
+    voiceId,
   });
 
   // Sync tools to Core
@@ -208,6 +216,7 @@ export async function connectNewHaseef(haseef: {
   id: string;
   name: string;
   profileJson?: Record<string, unknown>;
+  configJson?: Record<string, unknown>;
 }): Promise<void> {
   if (!state.config) {
     console.warn("[spaces-service] Cannot connect haseef — service not bootstrapped");

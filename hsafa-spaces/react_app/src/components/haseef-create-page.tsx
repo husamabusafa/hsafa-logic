@@ -11,6 +11,7 @@ import {
   PenIcon,
   TrashIcon,
   PlusIcon,
+  MicIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -39,6 +40,7 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
   const [customPersonaName, setCustomPersonaName] = useState("");
   const [customPersonaDesc, setCustomPersonaDesc] = useState("");
   const [isCustomPersona, setIsCustomPersona] = useState(false);
+  const [voiceGender, setVoiceGender] = useState<"male" | "female">("male");
   // Dynamic profile fields (user-defined key-value pairs)
   const [profileFields, setProfileFields] = useState<Array<{ id: string; key: string; value: string }>>([]);
   const [newKey, setNewKey] = useState("");
@@ -157,6 +159,7 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
         model: resolvedModel || undefined,
         provider: getProvider(),
         instructions: instructions.trim() || undefined,
+        voiceGender,
         ...(avatarUrl ? { avatarUrl } : {}),
         ...(persona ? { persona } : {}),
         ...(profile ? { profile } : {}),
@@ -388,6 +391,43 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
                 />
               </div>
             )}
+          </div>
+
+          {/* Voice Gender */}
+          <div className="space-y-3 border-t border-border pt-4">
+            <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+              <MicIcon className="size-4" />
+              Voice
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Choose the voice gender for text-to-speech (powered by ElevenLabs, supports Arabic &amp; English).
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setVoiceGender("male")}
+                className={cn(
+                  "rounded-xl border-2 px-3 py-2.5 text-sm text-left transition-all",
+                  voiceGender === "male"
+                    ? "border-primary bg-primary/5 text-primary font-medium shadow-sm"
+                    : "border-border hover:border-primary/30 text-foreground",
+                )}
+              >
+                Male
+              </button>
+              <button
+                type="button"
+                onClick={() => setVoiceGender("female")}
+                className={cn(
+                  "rounded-xl border-2 px-3 py-2.5 text-sm text-left transition-all",
+                  voiceGender === "female"
+                    ? "border-primary bg-primary/5 text-primary font-medium shadow-sm"
+                    : "border-border hover:border-primary/30 text-foreground",
+                )}
+              >
+                Female
+              </button>
+            </div>
           </div>
 
           {/* Dynamic Profile section */}
