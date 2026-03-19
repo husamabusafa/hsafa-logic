@@ -1371,9 +1371,9 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
       {/* Forward Dialog */}
       {forwardMessageId && (
         <ForwardDialog
-          messageId={forwardMessageId}
+          message={messages.find((m) => m.id === forwardMessageId)!}
           currentSpaceId={space.id}
-          messages={messages}
+          currentEntityId={currentEntityId}
           onClose={() => setForwardMessageId(null)}
         />
       )}
