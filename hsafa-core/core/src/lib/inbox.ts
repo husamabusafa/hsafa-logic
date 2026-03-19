@@ -2,6 +2,7 @@ import { redis } from './redis.js';
 import { prisma } from './db.js';
 import { relativeTime } from './time-utils.js';
 import type { SenseEvent } from '../agent-builder/types.js';
+import type { UserContentPart } from './consciousness.js';
 
 // =============================================================================
 // Inbox System (v5)
@@ -276,16 +277,16 @@ function eventPriority(e: SenseEvent): number {
 }
 
 /**
- * Format drained inbox events into a single user-message string.
- * This becomes the injected user message in consciousness.
- * Events are sorted by priority before formatting.
+ * Format drained inbox events into a user-message content.
+ * Returns plain string when no images are present, or a multimodal
+ * UserContentPart[] array (text + image parts) when events carry image attachments.
  *
  * Core is generic — it does NOT interpret event data fields.
  * Each service (spaces, whatsapp, etc.) populates event.data with a
  * human-readable `formattedContext` string. If present, we use it.
  * Otherwise we fall back to JSON.
  */
-export function formatInboxEvents(events: SenseEvent[]): string {
+export function formatInboxEvents(events: SenseEvent[]): string | UserContentPart[] {
   const sorted = prioritizeEvents(events);
   const blocks: string[] = [];
 
@@ -304,7 +305,29 @@ export function formatInboxEvents(events: SenseEvent[]): string {
   // Header is required — consciousness.ts isCycleStart() uses this prefix
   // to detect cycle boundaries for pruning and archival.
   const header = `SENSE EVENTS (${sorted.length} event${sorted.length !== 1 ? 's' : ''})`;
-  return [header, ...blocks].join('\n\n');
+  const textContent = [header, ...blocks].join('\n\n');
+
+  // Collect image attachments from all events
+  const imageParts: UserContentPart[] = [];
+  for (const e of sorted) {
+    if (e.attachments) {
+      for (const att of e.attachments) {
+        if (att.type === 'image' && att.url) {
+          imageParts.push({ type: 'image', image: att.url, mimeType: att.mimeType });
+        }
+      }
+    }
+  }
+
+  // If there are image attachments, return multimodal content
+  if (imageParts.length > 0) {
+    return [
+      { type: 'text', text: textContent },
+      ...imageParts,
+    ];
+  }
+
+  return textContent;
 }
 
 /**

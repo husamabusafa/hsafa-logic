@@ -21,9 +21,13 @@ import { prisma } from './db.js';
  */
 export type ModelMessage =
   | { role: 'system'; content: string }
-  | { role: 'user'; content: string }
+  | { role: 'user'; content: string | UserContentPart[] }
   | { role: 'assistant'; content: string | AssistantContentPart[] }
   | { role: 'tool'; content: ToolResultPart[] };
+
+export type UserContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; image: string; mimeType?: string };
 
 export interface AssistantContentPart {
   type: 'text' | 'tool-call';
@@ -65,6 +69,10 @@ export function estimateTokens(messages: ModelMessage[]): number {
       for (const part of msg.content) {
         if ('text' in part && typeof part.text === 'string') {
           totalChars += part.text.length;
+        }
+        if ('type' in part && part.type === 'image') {
+          // Images cost ~1600 tokens for a typical image
+          totalChars += 1600 * CHARS_PER_TOKEN;
         }
         if ('args' in part) {
           totalChars += JSON.stringify(part.args).length;
@@ -147,9 +155,13 @@ interface Cycle {
 /**
  * Determine if a user message represents the start of a real cycle.
  * Real cycles start with "SENSE EVENTS (" (from formatInboxEvents).
+ * Supports both plain string and multimodal content (check first text part).
  */
-function isCycleStart(content: string): boolean {
-  return content.startsWith('SENSE EVENTS (');
+function isCycleStart(content: string | UserContentPart[]): boolean {
+  if (typeof content === 'string') return content.startsWith('SENSE EVENTS (');
+  // For multimodal content, check the first text part
+  const firstText = content.find((p): p is { type: 'text'; text: string } => p.type === 'text');
+  return !!firstText && firstText.text.startsWith('SENSE EVENTS (');
 }
 
 function extractCycles(messages: ModelMessage[]): Cycle[] {
@@ -160,7 +172,7 @@ function extractCycles(messages: ModelMessage[]): Cycle[] {
     const msg = messages[i];
     if (i === 0 && msg.role === 'system') continue;
 
-    if (msg.role === 'user' && typeof msg.content === 'string' && isCycleStart(msg.content)) {
+    if (msg.role === 'user' && isCycleStart(msg.content)) {
       if (currentStart >= 0) {
         cycles.push({
           startIndex: currentStart,

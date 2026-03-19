@@ -265,11 +265,39 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       eventData.replyTo = replyTo;
     }
 
+    // Extract image attachments for multimodal LLM support
+    const imageAttachments: Array<{ type: "image" | "audio" | "file"; mimeType: string; url?: string; name?: string }> = [];
+    if (metadata?.files && Array.isArray(metadata.files)) {
+      for (const f of metadata.files as Array<Record<string, unknown>>) {
+        if (f.type === "image" && f.url) {
+          imageAttachments.push({
+            type: "image",
+            mimeType: (f.fileMimeType as string) || "image/png",
+            url: f.url as string,
+            name: f.fileName as string | undefined,
+          });
+        }
+      }
+    }
+    // Also handle single image from payload (agent-sent images)
+    if (!imageAttachments.length && messageType === "image" && metadata?.payload) {
+      const p = metadata.payload as Record<string, unknown>;
+      const imgUrl = (p.imageUrl ?? p.url) as string | undefined;
+      if (imgUrl) {
+        imageAttachments.push({
+          type: "image",
+          mimeType: "image/png",
+          url: imgUrl,
+        });
+      }
+    }
+
     await pushSenseEvent(conn.haseefId, {
       eventId: messageId,
       scope: SCOPE,
       type: "message",
       data: eventData,
+      ...(imageAttachments.length > 0 ? { attachments: imageAttachments } : {}),
     });
 
     // Mark triggered for cooldown tracking

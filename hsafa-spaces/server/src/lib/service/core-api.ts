@@ -124,20 +124,25 @@ export async function pushSenseEvent(
     scope: string;
     type: string;
     data: Record<string, unknown>;
+    attachments?: Array<{ type: "image" | "audio" | "file"; mimeType: string; url?: string; name?: string }>;
     timestamp?: string;
   },
 ): Promise<void> {
   const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/events`;
+  const body: Record<string, unknown> = {
+    eventId: event.eventId,
+    scope: event.scope,
+    type: event.type,
+    data: event.data,
+    timestamp: event.timestamp ?? new Date().toISOString(),
+  };
+  if (event.attachments && event.attachments.length > 0) {
+    body.attachments = event.attachments;
+  }
   const res = await fetch(url, {
     method: "POST",
     headers: coreHeaders(),
-    body: JSON.stringify({
-      eventId: event.eventId,
-      scope: event.scope,
-      type: event.type,
-      data: event.data,
-      timestamp: event.timestamp ?? new Date().toISOString(),
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const text = await res.text();
