@@ -126,6 +126,9 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
         conn.runSpaces.set(runId, event.triggerSource);
       }
 
+      // Track current run ID for fallback space resolution
+      conn.currentRunId = runId ?? null;
+
       // NOTE: We no longer auto-set activeSpace to trigger space.
       // The haseef must explicitly call enter_space before interacting with any space.
 
@@ -260,6 +263,7 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
       // a haseef that called enter_space in a previous cycle can still send
       // messages to that space in subsequent cycles.
       conn.activeSpace = null;
+      conn.currentRunId = null;
     }
   } catch {}
 }

@@ -24,16 +24,15 @@ const TTS_MODEL = "eleven_multilingual_v2";
 const STT_MODEL = "scribe_v1";
 
 // Default voice IDs (ElevenLabs multilingual voices)
-// Adam = clear male voice, Rachel = clear female voice
 const DEFAULT_MALE_VOICE_ID = "pNInz6obpgDQGcFmaJgB";   // Adam
-const DEFAULT_FEMALE_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // Rachel
+const DEFAULT_FEMALE_VOICE_ID = "albaa6OioIhKtKdCEkQw"; // Sarah
 
 export type VoiceGender = "male" | "female";
 
 /** Resolve a voice ID from gender or explicit voiceId override */
 export function resolveVoiceId(gender?: VoiceGender, voiceId?: string): string {
   if (voiceId) return voiceId;
-  return gender === "female" ? DEFAULT_FEMALE_VOICE_ID : DEFAULT_MALE_VOICE_ID;
+  return gender === "male" ? DEFAULT_MALE_VOICE_ID : DEFAULT_FEMALE_VOICE_ID;
 }
 
 // =============================================================================

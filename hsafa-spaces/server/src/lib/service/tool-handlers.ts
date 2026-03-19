@@ -74,8 +74,19 @@ function getActiveSpaceId(conn: ActiveConnection | undefined): { spaceId: string
   if (!conn) return { error: "Haseef not connected" };
   // Prefer explicitly entered space over auto-set trigger space
   const space = conn.enteredSpace ?? conn.activeSpace;
-  if (!space) return { error: "No active space. Call enter_space first to open a chat." };
-  return { spaceId: space.spaceId };
+  if (space) return { spaceId: space.spaceId };
+
+  // Fallback: use the trigger space from the current run (handles race conditions
+  // where enter_space state was lost between tool calls, e.g. due to server restart)
+  if (conn.currentRunId) {
+    const triggerSpaceId = conn.runSpaces.get(conn.currentRunId);
+    if (triggerSpaceId) {
+      console.warn(`[spaces-service] [${conn.haseefName}] Using trigger space fallback for run ${conn.currentRunId.slice(0, 8)} (enteredSpace and activeSpace were null)`);
+      return { spaceId: triggerSpaceId };
+    }
+  }
+
+  return { error: "No active space. Call enter_space first to open a chat." };
 }
 
 // =============================================================================
@@ -663,7 +674,8 @@ export async function executeAction(
           },
         });
 
-        return { success: true, messageId: result.messageId, audioUrl, sentTo: conn!.activeSpace!.spaceName };
+        const resolvedSpace = conn!.enteredSpace ?? conn!.activeSpace;
+        return { success: true, messageId: result.messageId, audioUrl, sentTo: resolvedSpace?.spaceName ?? spaceId };
       }
 
       case "send_file": {

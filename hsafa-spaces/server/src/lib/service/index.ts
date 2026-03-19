@@ -193,6 +193,7 @@ async function setupHaseefConnection(haseef: {
     runSpaces: new Map(),
     activeSpace: null,
     enteredSpace: null,
+    currentRunId: null,
     typingHeartbeat: null,
     pendingSeenMessages: [],
     voiceGender,
