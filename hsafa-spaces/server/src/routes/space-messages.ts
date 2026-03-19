@@ -53,9 +53,10 @@ router.post("/:smartSpaceId/messages", async (req: Request, res: Response) => {
       entityId = auth.entityId;
     }
 
-    // Allow empty content if there are file attachments in metadata
+    // Allow empty content if there are file attachments or voice payload in metadata
     const hasAttachments = metadata?.files && Array.isArray(metadata.files) && metadata.files.length > 0;
-    if (!entityId || (!content && !hasAttachments)) {
+    const isVoiceMessage = messageType === "voice" || metadata?.type === "voice";
+    if (!entityId || (!content && !hasAttachments && !isVoiceMessage)) {
       res.status(400).json({ error: "entityId and content (or attachments) are required" });
       return;
     }

@@ -65,7 +65,7 @@ export function MessageRenderer({
 
   const seenIndicator = isOwn ? seenIcon : null;
 
-  const content = renderContent(message);
+  const content = renderContent(message, isOwn);
   const contentNode = isComponentMessage ? (
     <div className="rounded-[18px] border border-border/50 bg-background/80 px-3 py-3 shadow-sm backdrop-blur-sm">
       {content}
@@ -215,7 +215,7 @@ export function MessageRenderer({
   );
 }
 
-function renderContent(message: MockMessage) {
+function renderContent(message: MockMessage, isOwn = false) {
   // If message has multi-file attachments, render them with the combined text+attachments view
   if (message.attachments && message.attachments.length > 0) {
     return <AttachmentsRenderer message={message} />;
@@ -237,7 +237,7 @@ function renderContent(message: MockMessage) {
     case "image":
       return <ImageMessage message={message} />;
     case "voice":
-      return <VoiceMessage message={message} />;
+      return <VoiceMessage message={message} isOwn={isOwn} />;
     case "video":
       return <VideoMessage message={message} />;
     case "file":

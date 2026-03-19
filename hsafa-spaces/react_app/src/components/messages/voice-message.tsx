@@ -4,6 +4,7 @@ import { MicIcon, PlayIcon, PauseIcon, ChevronDownIcon, ChevronUpIcon } from "lu
 
 interface VoiceMessageProps {
   message: MockMessage;
+  isOwn?: boolean;
 }
 
 // Generate a stable pseudo-random waveform from a seed string (messageId)
@@ -23,7 +24,7 @@ function generateWaveform(seed: string, bars: number): number[] {
   return result;
 }
 
-export function VoiceMessage({ message }: VoiceMessageProps) {
+export function VoiceMessage({ message, isOwn = false }: VoiceMessageProps) {
   const [playing, setPlaying] = useState(false);
   const [showTranscription, setShowTranscription] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -102,7 +103,11 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
         <button
           onClick={handlePlayPause}
           disabled={!message.audioUrl}
-          className="size-9 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 hover:bg-primary/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className={`size-9 rounded-full flex items-center justify-center shrink-0 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+            isOwn
+              ? "bg-white/20 text-white hover:bg-white/30"
+              : "bg-primary/10 text-primary hover:bg-primary/20"
+          }`}
         >
           {playing ? <PauseIcon className="size-4" /> : <PlayIcon className="size-4 ml-0.5" />}
         </button>
@@ -121,7 +126,9 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
                 <div
                   key={i}
                   className={`w-[2.5px] rounded-full transition-colors ${
-                    isPlayed ? "bg-primary" : "bg-primary/25"
+                    isOwn
+                      ? (isPlayed ? "bg-white" : "bg-white/30")
+                      : (isPlayed ? "bg-primary" : "bg-primary/25")
                   }`}
                   style={{ height: `${Math.max(3, level * 24)}px` }}
                 />
@@ -131,12 +138,12 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
 
           {/* Time row */}
           <div className="flex items-center justify-between mt-0.5">
-            <span className="text-[10px] text-muted-foreground tabular-nums">
+            <span className={`text-[10px] tabular-nums ${isOwn ? "text-white/70" : "text-muted-foreground"}`}>
               {playing || currentTime > 0 ? formatTime(currentTime) : formatTime(duration)}
             </span>
             <div className="flex items-center gap-1">
-              <MicIcon className="size-2.5 text-muted-foreground/60" />
-              <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+              <MicIcon className={`size-2.5 ${isOwn ? "text-white/50" : "text-muted-foreground/60"}`} />
+              <span className={`text-[10px] tabular-nums ${isOwn ? "text-white/50" : "text-muted-foreground/60"}`}>
                 {formatTime(duration)}
               </span>
             </div>
@@ -149,14 +156,14 @@ export function VoiceMessage({ message }: VoiceMessageProps) {
         <>
           <button
             onClick={() => setShowTranscription(!showTranscription)}
-            className="flex items-center gap-1 text-[11px] text-muted-foreground/70 hover:text-muted-foreground transition-colors mt-0.5"
+            className={`flex items-center gap-1 text-[11px] transition-colors mt-0.5 ${isOwn ? "text-white/60 hover:text-white/80" : "text-muted-foreground/70 hover:text-muted-foreground"}`}
           >
             {showTranscription ? <ChevronUpIcon className="size-3" /> : <ChevronDownIcon className="size-3" />}
             <span>{showTranscription ? "Hide" : "Show"} transcription</span>
           </button>
 
           {showTranscription && (
-            <p className="text-xs text-muted-foreground leading-relaxed italic border-l-2 border-primary/20 pl-2 mt-1">
+            <p className={`text-xs leading-relaxed italic border-l-2 pl-2 mt-1 ${isOwn ? "text-white/80 border-white/30" : "text-muted-foreground border-primary/20"}`}>
               {message.transcription}
             </p>
           )}
