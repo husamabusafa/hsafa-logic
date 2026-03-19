@@ -36,15 +36,50 @@ export const registry = createProviderRegistry({
 });
 
 /**
+ * Create a one-off provider instance with a user-supplied API key.
+ * Falls back to the global registry if no apiKey is provided.
+ */
+function resolveBaseModel(
+  provider: string,
+  model: string,
+  apiKey?: string,
+) {
+  if (!apiKey) {
+    // Use the global registry (env var keys)
+    const id = `${provider}:${model}`;
+    return registry.languageModel(id as any);
+  }
+
+  // Create a one-off provider with the user's key
+  switch (provider) {
+    case 'openai':
+      return createOpenAI({ apiKey })(model);
+    case 'anthropic':
+      return createAnthropic({ apiKey })(model);
+    case 'google':
+      return createGoogleGenerativeAI({ apiKey })(model);
+    case 'xai':
+      return createXai({ apiKey })(model);
+    case 'openrouter':
+      return createOpenRouter({ apiKey })(model);
+    default: {
+      // Unknown provider — fall back to registry
+      const id = `${provider}:${model}`;
+      return registry.languageModel(id as any);
+    }
+  }
+}
+
+/**
  * Resolve a model and wrap it with middleware (logging + cost tracking + defaults).
  * Supports legacy { provider, model } config → registry.languageModel('provider:model').
+ * If config.apiKey is provided, creates a one-off provider with the user's key.
  */
 export function resolveModel(
-  config: { provider: string; model: string },
+  config: { provider: string; model: string; apiKey?: string },
   defaults?: { temperature?: number; maxOutputTokens?: number },
 ) {
-  const id = `${config.provider}:${config.model}`;
-  const baseModel = registry.languageModel(id as any);
+  const baseModel = resolveBaseModel(config.provider, config.model, config.apiKey);
 
   // Build middleware stack
   const middleware: any[] = [loggingMiddleware, costTrackingMiddleware];

@@ -19,6 +19,8 @@ export const ModelConfigSchema = z.object({
   model: z.string(),
   temperature: z.number().optional(),
   maxTokens: z.number().optional(),
+  /** Optional per-user API key override (injected by spaces server, never exposed to clients) */
+  apiKey: z.string().optional(),
   /** Enable reasoning/thinking for supported models */
   reasoning: z
     .object({
@@ -65,6 +67,22 @@ export const ConsciousnessConfigSchema = z.object({
 
 export type ConsciousnessConfig = z.infer<typeof ConsciousnessConfigSchema>;
 
+/** Persona config — defines how the Haseef communicates */
+export const PersonaConfigSchema = z.object({
+  /** Prebuilt persona ID (e.g. "the-professor", "the-comedian") or "custom" */
+  id: z.string(),
+  /** Display name of the persona */
+  name: z.string(),
+  /** Personality description injected into the system prompt */
+  description: z.string(),
+  /** Communication style guidelines */
+  style: z.string().optional(),
+  /** Example phrases or mannerisms */
+  traits: z.array(z.string()).optional(),
+});
+
+export type PersonaConfig = z.infer<typeof PersonaConfigSchema>;
+
 /** Full Haseef configJson shape */
 export const HaseefConfigSchema = z.object({
   /** LLM model config */
@@ -73,6 +91,8 @@ export const HaseefConfigSchema = z.object({
   embeddingModel: EmbeddingModelConfigSchema.optional(),
   /** Haseef's system instructions (freeform text, injected after context blocks) */
   instructions: z.string().optional(),
+  /** Persona — defines tone, style, and personality */
+  persona: PersonaConfigSchema.optional(),
   /** Consciousness settings */
   consciousness: ConsciousnessConfigSchema.optional(),
   /** Default timeout for sync action dispatch (ms) */

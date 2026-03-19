@@ -19,6 +19,7 @@ import {
 import { AuthPage } from "@/components/auth-page";
 import { VerifyEmailPage } from "@/components/verify-email-page";
 import { AuthCallback } from "@/components/auth-callback";
+import { ApiKeysPage } from "@/components/api-keys-page";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { haseefsApi, spacesApi, invitationsApi, type HaseefListItem, type SmartSpace, type SpaceMember } from "@/lib/api";
 import type { MockMember } from "@/lib/mock-data";
@@ -369,6 +370,7 @@ function AppContent() {
   const activePage: AppPage = useMemo(() => {
     if (location.pathname.startsWith("/haseefs")) return "haseefs";
     if (location.pathname.startsWith("/invitations")) return "invitations";
+    if (location.pathname.startsWith("/api-keys") || location.pathname.startsWith("/settings/api-keys")) return "api-keys";
     return "spaces";
   }, [location.pathname]);
 
@@ -388,6 +390,12 @@ function AppContent() {
     }
     if (page === "haseefs") {
       navigate("/haseefs");
+      setSidebarOpen(false);
+      setMobileSidebarOpen(false);
+      return;
+    }
+    if (page === "api-keys") {
+      navigate("/api-keys");
       setSidebarOpen(false);
       setMobileSidebarOpen(false);
       return;
@@ -451,6 +459,10 @@ function AppContent() {
 
             {/* Invitations */}
             <Route path="/invitations" element={<InvitationsPage />} />
+
+            {/* API Keys */}
+            <Route path="/api-keys" element={<ApiKeysPage />} />
+            <Route path="/settings/api-keys" element={<ApiKeysPage onBack={() => navigate(-1)} />} />
 
             {/* Catch-all */}
             <Route path="*" element={<Navigate to="/spaces" replace />} />

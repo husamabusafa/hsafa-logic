@@ -126,7 +126,7 @@ export const haseefsApi = {
     return request<{ haseef: Haseef }>(`/haseefs/${id}`);
   },
 
-  create(data: { name: string; description?: string; model?: string; provider?: string; instructions?: string; avatarUrl?: string }) {
+  create(data: { name: string; description?: string; model?: string; provider?: string; instructions?: string; avatarUrl?: string; persona?: { id: string; name: string; description: string; style?: string; traits?: string[] } }) {
     return request<{ haseef: Haseef }>("/haseefs", {
       method: "POST",
       body: JSON.stringify(data),
@@ -473,6 +473,35 @@ export const aiApi = {
     return request<{ component: Record<string, unknown>; type: string }>("/ai/generate-component", {
       method: "POST",
       body: JSON.stringify({ type, prompt, ...opts }),
+    });
+  },
+};
+
+// ── API Keys ──────────────────────────────────────────────────────────────
+
+export interface ApiKeyInfo {
+  id: string;
+  provider: string;
+  keyHint: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const apiKeysApi = {
+  list() {
+    return request<{ apiKeys: ApiKeyInfo[] }>("/api-keys");
+  },
+
+  set(provider: string, key: string) {
+    return request<{ apiKey: ApiKeyInfo }>(`/api-keys/${provider}`, {
+      method: "PUT",
+      body: JSON.stringify({ key }),
+    });
+  },
+
+  remove(provider: string) {
+    return request<{ success: boolean }>(`/api-keys/${provider}`, {
+      method: "DELETE",
     });
   },
 };

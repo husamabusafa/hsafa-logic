@@ -44,6 +44,7 @@ model User {
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   haseefOwnerships HaseefOwnership[]
+  apiKeys          ApiKey[]
 
   @@map("users")
 }
@@ -277,4 +278,24 @@ model HaseefOwnership {
   @@unique([userId, haseefId])
   @@index([userId])
   @@map("haseef_ownerships")
+}
+
+// =============================================================================
+// API KEY — Encrypted LLM provider API keys (per user)
+// =============================================================================
+
+model ApiKey {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id")
+  provider       String   // "openai" | "anthropic" | "openrouter"
+  encryptedKey   String   @map("encrypted_key") @db.Text // AES-256-GCM encrypted
+  keyHint        String   @map("key_hint") // last 4 chars for display (e.g. "...a1b2")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("api_keys")
 }

@@ -166,6 +166,7 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
         relevantPast,
         connectedScopes,
         scopeInstructions,
+        persona: config.persona,
       });
 
       // 8. INJECT events into consciousness

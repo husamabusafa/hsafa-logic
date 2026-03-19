@@ -11,6 +11,7 @@ import haseefsRoutes from "./routes/haseefs.js";
 import responsesRoutes from "./routes/responses.js";
 import mediaRoutes, { mountStaticServing } from "./routes/media.js";
 import aiGenerateRoutes from "./routes/ai-generate.js";
+import apiKeysRoutes from "./routes/api-keys.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3005", 10);
@@ -30,6 +31,7 @@ app.use("/api/haseefs", haseefsRoutes);
 app.use("/api/smart-spaces", responsesRoutes);
 app.use("/api/media", mediaRoutes);
 app.use("/api/ai", aiGenerateRoutes);
+app.use("/api/api-keys", apiKeysRoutes);
 
 // Health check
 app.get("/health", (_req, res) => {

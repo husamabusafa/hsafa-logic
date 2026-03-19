@@ -1,4 +1,5 @@
-import { X, Mail, Calendar, Shield, CheckCircle, AlertCircle, LogOut } from "lucide-react";
+import { X, Mail, Calendar, Shield, CheckCircle, AlertCircle, LogOut, KeyRound } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth-context";
@@ -8,6 +9,7 @@ interface UserProfileProps {
 }
 
 export function UserProfile({ onClose }: UserProfileProps) {
+  const navigate = useNavigate();
   const { user, logout } = useAuth();
 
   if (!user) return null;
@@ -90,11 +92,17 @@ export function UserProfile({ onClose }: UserProfileProps) {
 
         {/* Actions */}
         <div className="mt-6 space-y-2">
-          <Button variant="outline" className="w-full justify-start" size="sm">
-            Edit Profile
+          <Button
+            variant="outline"
+            className="w-full justify-start"
+            size="sm"
+            onClick={() => { onClose(); navigate("/settings/api-keys"); }}
+          >
+            <KeyRound className="size-4" />
+            API Keys
           </Button>
           <Button variant="outline" className="w-full justify-start" size="sm">
-            Notification Preferences
+            Edit Profile
           </Button>
           <Button
             variant="outline"

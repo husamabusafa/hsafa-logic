@@ -6,11 +6,12 @@ import {
   LogOutIcon,
   UserIcon,
   XIcon,
+  KeyRoundIcon,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
-export type AppPage = "spaces" | "haseefs" | "invitations";
+export type AppPage = "spaces" | "haseefs" | "invitations" | "api-keys";
 
 interface AppShellProps {
   activePage: AppPage;
@@ -29,6 +30,7 @@ const navItems: { page: AppPage; icon: typeof MessageSquareIcon; label: string }
   { page: "spaces", icon: MessageSquareIcon, label: "Spaces" },
   { page: "haseefs", icon: BotIcon, label: "Haseefs" },
   { page: "invitations", icon: MailIcon, label: "Invites" },
+  { page: "api-keys", icon: KeyRoundIcon, label: "API Keys" },
 ];
 
 export function AppShell({

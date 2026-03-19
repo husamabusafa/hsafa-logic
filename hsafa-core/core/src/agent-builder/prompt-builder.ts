@@ -1,6 +1,6 @@
 import { prisma } from '../lib/db.js';
 import { relativeTime } from '../lib/time-utils.js';
-import type { HaseefConfig } from './types.js';
+import type { HaseefConfig, PersonaConfig } from './types.js';
 
 // =============================================================================
 // System Prompt Builder (v5)
@@ -47,6 +47,8 @@ interface PromptContext {
   connectedScopes: string[];
   /** Scope-contributed instructions (from extensions via tool sync) */
   scopeInstructions?: Map<string, string>;
+  /** Persona config (tone, style, personality) */
+  persona?: PersonaConfig;
 }
 
 /**
@@ -56,6 +58,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
   const sections: string[] = [];
 
   sections.push(buildIdentitySection(ctx));
+  sections.push(buildPersonaSection(ctx));
   sections.push(buildProfileSection(ctx));
   sections.push(buildMemoriesSection(ctx));
   sections.push(buildRelevantPastSection(ctx));
@@ -99,6 +102,37 @@ function buildIdentitySection(ctx: PromptContext): string {
     `  alive since: "${aliveSince}"`,
     `  last active: "${lastActive}"`,
   ].join('\n');
+}
+
+function buildPersonaSection(ctx: PromptContext): string {
+  if (!ctx.persona) {
+    return '';
+  }
+
+  const lines: string[] = [
+    'PERSONA:',
+    `  name: "${ctx.persona.name}"`,
+    `  personality: ${ctx.persona.description}`,
+  ];
+
+  if (ctx.persona.style) {
+    lines.push(`  communication style: ${ctx.persona.style}`);
+  }
+
+  if (ctx.persona.traits && ctx.persona.traits.length > 0) {
+    lines.push('  traits:');
+    for (const trait of ctx.persona.traits) {
+      lines.push(`    - ${trait}`);
+    }
+  }
+
+  lines.push('');
+  lines.push('  IMPORTANT: Your persona defines WHO you are and HOW you communicate.');
+  lines.push('  Stay in character at all times. Let your personality shine through in');
+  lines.push('  every message — your word choices, tone, humor, and mannerisms should');
+  lines.push('  consistently reflect your persona.');
+
+  return lines.join('\n');
 }
 
 function buildProfileSection(ctx: PromptContext): string {

@@ -12,6 +12,7 @@ import {
   updateHaseef as coreUpdateHaseef,
   deleteHaseef as coreDeleteHaseef,
 } from "../lib/core-proxy.js";
+import { getDecryptedApiKey } from "./api-keys.js";
 
 const router = Router();
 
@@ -53,7 +54,7 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
-    const { name, description, configJson, instructions, model, provider } = req.body;
+    const { name, description, configJson, instructions, model, provider, persona } = req.body;
     if (!name) {
       res.status(400).json({ error: "name is required" });
       return;
@@ -75,6 +76,19 @@ router.post("/", async (req: Request, res: Response) => {
         model: { provider: detectedProvider, model: modelId },
         ...(instructions ? { instructions } : {}),
       };
+    }
+
+    // Inject user's API key for the model provider if they have one stored
+    if (config.model?.provider) {
+      const userKey = await getDecryptedApiKey(auth.userId, config.model.provider);
+      if (userKey) {
+        config = { ...config, model: { ...config.model, apiKey: userKey } };
+      }
+    }
+
+    // Inject persona if provided
+    if (persona && persona.id && persona.name && persona.description) {
+      config = { ...config, persona };
     }
 
     // Create entity in Spaces for this agent
@@ -234,10 +248,20 @@ router.patch("/:id", async (req: Request, res: Response) => {
     }
 
     const { name, description, configJson, avatarUrl } = req.body;
+
+    // Inject user's API key for the model provider if they have one stored
+    let finalConfigJson = configJson;
+    if (configJson?.model?.provider) {
+      const userKey = await getDecryptedApiKey(auth.userId, configJson.model.provider);
+      if (userKey) {
+        finalConfigJson = { ...configJson, model: { ...configJson.model, apiKey: userKey } };
+      }
+    }
+
     const coreHaseef = await coreUpdateHaseef(haseefId, {
       name,
       description,
-      configJson,
+      configJson: finalConfigJson,
     });
 
     // Update entity display name and/or avatar

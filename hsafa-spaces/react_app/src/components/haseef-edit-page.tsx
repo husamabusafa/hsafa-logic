@@ -7,6 +7,8 @@ import {
   LoaderIcon,
   CameraIcon,
   ArrowLeftIcon,
+  UserIcon,
+  PenIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -14,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { haseefsApi, mediaApi, type Haseef } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
 import { PRESET_MODELS, PROVIDER_OPTIONS, getProviderForModel, isPresetModel } from "@/lib/models-config";
+import { PREBUILT_PERSONAS, getPersonaById, type Persona } from "@/lib/personas";
 
 // ─── Edit Page ───────────────────────────────────────────────────────────────
 
@@ -36,6 +39,10 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
   const [customModel, setCustomModel] = useState("");
   const [customProvider, setCustomProvider] = useState("openai");
   const [instructions, setInstructions] = useState("");
+  const [selectedPersona, setSelectedPersona] = useState<Persona | null>(null);
+  const [customPersonaName, setCustomPersonaName] = useState("");
+  const [customPersonaDesc, setCustomPersonaDesc] = useState("");
+  const [isCustomPersona, setIsCustomPersona] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,7 +65,23 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
         setDescription(h.description || "");
         setInstructions((h.configJson?.instructions as string) || "");
         setAvatarUrl(h.avatarUrl || null);
-        
+
+        // Extract persona info
+        const personaConfig = h.configJson?.persona as { id?: string; name?: string; description?: string } | undefined;
+        if (personaConfig?.id && personaConfig.id !== "custom") {
+          const prebuilt = getPersonaById(personaConfig.id);
+          if (prebuilt) setSelectedPersona(prebuilt);
+          else {
+            setIsCustomPersona(true);
+            setCustomPersonaName(personaConfig.name || "");
+            setCustomPersonaDesc(personaConfig.description || "");
+          }
+        } else if (personaConfig?.id === "custom") {
+          setIsCustomPersona(true);
+          setCustomPersonaName(personaConfig.name || "");
+          setCustomPersonaDesc(personaConfig.description || "");
+        }
+
         // Extract model info
         const modelConfig = h.configJson?.model;
         if (modelConfig && typeof modelConfig === "object") {
@@ -112,6 +135,26 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
     return getProviderForModel(model);
   };
 
+  const buildPersonaPayload = () => {
+    if (isCustomPersona && customPersonaName.trim() && customPersonaDesc.trim()) {
+      return {
+        id: "custom",
+        name: customPersonaName.trim(),
+        description: customPersonaDesc.trim(),
+      };
+    }
+    if (selectedPersona) {
+      return {
+        id: selectedPersona.id,
+        name: selectedPersona.name,
+        description: selectedPersona.description,
+        style: selectedPersona.style,
+        traits: selectedPersona.traits,
+      };
+    }
+    return undefined;
+  };
+
   const handleSave = async () => {
     if (!haseef || !name.trim() || isSaving) return;
     setIsSaving(true);
@@ -131,6 +174,14 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
           provider: getProvider(),
           model: resolvedModel,
         };
+      }
+
+      // Update persona
+      const persona = buildPersonaPayload();
+      if (persona) {
+        configJson.persona = persona;
+      } else {
+        delete configJson.persona;
       }
       
       await haseefsApi.update(haseef.id, {
@@ -312,10 +363,90 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
             )}
           </div>
 
+          {/* Persona selector */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                <UserIcon className="size-4" />
+                Persona
+              </label>
+              {(selectedPersona || isCustomPersona) && (
+                <button
+                  type="button"
+                  onClick={() => { setSelectedPersona(null); setIsCustomPersona(false); }}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground -mt-1">
+              Choose a personality that defines how your Haseef communicates.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {PREBUILT_PERSONAS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => { setSelectedPersona(p); setIsCustomPersona(false); }}
+                  className={cn(
+                    "rounded-xl border-2 px-3 py-2.5 text-left transition-all",
+                    selectedPersona?.id === p.id
+                      ? "border-primary bg-primary/5 shadow-sm"
+                      : "border-border hover:border-primary/30",
+                  )}
+                >
+                  <span className="text-lg">{p.emoji}</span>
+                  <span className="block text-xs font-medium mt-0.5">{p.name}</span>
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => { setSelectedPersona(null); setIsCustomPersona(true); }}
+                className={cn(
+                  "rounded-xl border-2 px-3 py-2.5 text-left transition-all",
+                  isCustomPersona
+                    ? "border-primary bg-primary/5 shadow-sm"
+                    : "border-border hover:border-primary/30",
+                )}
+              >
+                <PenIcon className="size-4 text-muted-foreground" />
+                <span className="block text-xs font-medium mt-0.5">Custom</span>
+              </button>
+            </div>
+
+            {selectedPersona && !isCustomPersona && (
+              <div className="rounded-lg bg-muted/50 p-3 text-xs space-y-1">
+                <p className="font-medium">{selectedPersona.name}</p>
+                <p className="text-muted-foreground">{selectedPersona.description}</p>
+                <p className="italic text-muted-foreground mt-1">"{selectedPersona.preview}"</p>
+              </div>
+            )}
+
+            {isCustomPersona && (
+              <div className="space-y-2 rounded-lg border border-border p-3">
+                <input
+                  type="text"
+                  placeholder="Persona name (e.g. The Scientist)"
+                  value={customPersonaName}
+                  onChange={(e) => setCustomPersonaName(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <textarea
+                  placeholder="Describe the personality, tone, and communication style..."
+                  value={customPersonaDesc}
+                  onChange={(e) => setCustomPersonaDesc(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
+                />
+              </div>
+            )}
+          </div>
+
           <Textarea
             label="Instructions"
             id="edit-haseef-instructions"
-            placeholder="Describe how this haseef should behave..."
+            placeholder="Additional instructions for your Haseef..."
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
             rows={5}
