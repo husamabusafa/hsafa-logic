@@ -23,6 +23,8 @@ export interface ActiveConnection {
   currentRunId: string | null;
   /** Typing heartbeat interval — re-broadcasts typing every 3s to keep client indicator alive */
   typingHeartbeat: ReturnType<typeof setInterval> | null;
+  /** Current typing activity — 'typing' or 'recording'. Used by heartbeat to broadcast the correct activity. */
+  typingActivity: "typing" | "recording";
   /** Pending seen messages — flushed when run.started confirms events were consumed from inbox */
   pendingSeenMessages: Array<{ spaceId: string; messageId: string }>;
   /** Voice gender for TTS — "male" or "female" (read from haseef configJson.voice.gender) */

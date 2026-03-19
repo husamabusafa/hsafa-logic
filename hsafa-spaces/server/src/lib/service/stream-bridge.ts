@@ -77,11 +77,12 @@ function resolvedSpaceId(conn: ActiveConnection): string | undefined {
 // =============================================================================
 
 function startTypingHeartbeat(conn: ActiveConnection): void {
-  stopTypingHeartbeat(conn);
+  // Don't restart if already running — just update activity via conn.typingActivity
+  if (conn.typingHeartbeat) return;
   conn.typingHeartbeat = setInterval(() => {
     const spaceId = resolvedSpaceId(conn);
     if (spaceId) {
-      void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
+      void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true, conn.typingActivity);
     }
   }, 3000);
 }
@@ -176,10 +177,11 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           agentEntityId: conn.agentEntityId,
           runId,
         });
-        // For message tools: start heartbeat + broadcast typing with activity type
+        // For message tools: update activity, start heartbeat, broadcast
         if (isMessageTool(event.toolName)) {
-          startTypingHeartbeat(conn);
           const activity = getMessageToolActivity(event.toolName);
+          conn.typingActivity = activity;
+          startTypingHeartbeat(conn);
           void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true, activity);
         }
       }
@@ -194,13 +196,10 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           agentEntityId: conn.agentEntityId,
           runId,
         });
-        // Stop typing heartbeat after a message tool completes — the message
-        // is already delivered, so showing "typing..." after it arrives is wrong.
-        // If the model sends another message later, tool.started will restart it.
-        if (isMessageTool(event.toolName)) {
-          stopTypingHeartbeat(conn);
-          void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, false);
-        }
+        // NOTE: Do NOT stop typing heartbeat here. The model may call another
+        // message tool immediately after this one (e.g. send_voice then send_message).
+        // Stopping and restarting causes visible flicker. The heartbeat keeps the
+        // indicator alive between tool calls. It will be stopped on run.finished.
       }
     } else if (event.type === "tool.error") {
       const spaceId = resolvedSpaceId(conn);
@@ -265,6 +264,7 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
       // messages to that space in subsequent cycles.
       conn.activeSpace = null;
       conn.currentRunId = null;
+      conn.typingActivity = "typing";
     }
   } catch {}
 }
