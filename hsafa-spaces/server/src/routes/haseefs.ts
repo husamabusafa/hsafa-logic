@@ -54,7 +54,7 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
-    const { name, description, configJson, instructions, model, provider, persona } = req.body;
+    const { name, description, configJson, instructions, model, provider, persona, profile } = req.body;
     if (!name) {
       res.status(400).json({ error: "name is required" });
       return;
@@ -103,12 +103,22 @@ router.post("/", async (req: Request, res: Response) => {
       },
     });
 
+    // Build profileJson from profile (editable fields) + entityId (system field)
+    const profileJson: Record<string, unknown> = { entityId: entity.id };
+    if (profile && typeof profile === "object") {
+      for (const [key, value] of Object.entries(profile)) {
+        if (typeof value === "string" && value.trim()) {
+          profileJson[key] = value.trim();
+        }
+      }
+    }
+
     // Create in Core with profileJson linking to the spaces entity
     const coreHaseef = await coreCreateHaseef({
       name,
       description,
       configJson: config,
-      profileJson: { entityId: entity.id },
+      profileJson,
     });
 
     // Create ownership record
@@ -125,7 +135,7 @@ router.post("/", async (req: Request, res: Response) => {
       await connectNewHaseef({
         id: coreHaseef.id,
         name: coreHaseef.name,
-        profileJson: { entityId: entity.id },
+        profileJson,
       });
     } catch (err) {
       console.warn("[haseefs] Failed to auto-connect new haseef:", err);
@@ -247,7 +257,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
       return;
     }
 
-    const { name, description, configJson, avatarUrl } = req.body;
+    const { name, description, configJson, avatarUrl, profile } = req.body;
 
     // Inject user's API key for the model provider if they have one stored
     let finalConfigJson = configJson;
@@ -262,6 +272,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
       name,
       description,
       configJson: finalConfigJson,
+      ...(profile ? { profileJson: profile } : {}),
     });
 
     // Update entity display name and/or avatar

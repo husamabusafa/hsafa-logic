@@ -3,12 +3,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   BotIcon,
   PencilIcon,
+  TrashIcon,
   CpuIcon,
   LoaderIcon,
   CameraIcon,
   ArrowLeftIcon,
   UserIcon,
   PenIcon,
+  PlusIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -43,6 +45,13 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
   const [customPersonaName, setCustomPersonaName] = useState("");
   const [customPersonaDesc, setCustomPersonaDesc] = useState("");
   const [isCustomPersona, setIsCustomPersona] = useState(false);
+  // Dynamic profile fields (user-defined key-value pairs)
+  const [profileFields, setProfileFields] = useState<Array<{ id: string; key: string; value: string }>>([]);
+  const [newKey, setNewKey] = useState("");
+  const [newValue, setNewValue] = useState("");
+  const [keyError, setKeyError] = useState<string | null>(null);
+  // System profile fields (view-only - created elsewhere)
+  const [systemProfileFields, setSystemProfileFields] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,6 +89,39 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
           setIsCustomPersona(true);
           setCustomPersonaName(personaConfig.name || "");
           setCustomPersonaDesc(personaConfig.description || "");
+        }
+
+        // Extract profile info - separate editable vs system fields
+        const profileData = h.profileJson as Record<string, unknown> | undefined;
+        if (profileData) {
+          // Get list of user-created fields from metadata
+          const userFieldKeysRaw = profileData._userFieldKeys as string | undefined;
+          let userFieldKeys: string[] = [];
+          if (userFieldKeysRaw) {
+            try {
+              userFieldKeys = JSON.parse(userFieldKeysRaw) as string[];
+            } catch { /* ignore parse error */ }
+          }
+          
+          const editable: Array<{ id: string; key: string; value: string }> = [];
+          const system: Record<string, string> = {};
+          
+          for (const [key, value] of Object.entries(profileData)) {
+            // Skip the metadata key itself
+            if (key === "_userFieldKeys") continue;
+            
+            if (typeof value === "string") {
+              // Check if this is a user-created field (created in haseef page)
+              const isUserCreated = userFieldKeys.includes(key);
+              if (isUserCreated) {
+                editable.push({ id: crypto.randomUUID(), key, value });
+              } else {
+                system[key] = value;
+              }
+            }
+          }
+          setProfileFields(editable);
+          setSystemProfileFields(system);
         }
 
         // Extract model info
@@ -155,6 +197,62 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
     return undefined;
   };
 
+  const isReservedField = (key: string): boolean => {
+    // Prevent users from creating fields with reserved names
+    const reserved = ["_userFieldKeys", "entityId"];
+    const lowerKey = key.toLowerCase().trim();
+    return reserved.some(r => r.toLowerCase() === lowerKey);
+  };
+
+  const addProfileField = () => {
+    const trimmedKey = newKey.trim();
+    const trimmedValue = newValue.trim();
+    
+    if (!trimmedKey || !trimmedValue) return;
+    
+    if (isReservedField(trimmedKey)) {
+      setKeyError(`"${trimmedKey}" is reserved and cannot be used`);
+      return;
+    }
+    
+    // Check if key already exists in editable fields
+    if (profileFields.some(f => f.key.toLowerCase() === trimmedKey.toLowerCase())) {
+      setKeyError(`"${trimmedKey}" already exists`);
+      return;
+    }
+    
+    // Check if key exists in system fields (can't override)
+    if (systemProfileFields[trimmedKey] !== undefined) {
+      setKeyError(`"${trimmedKey}" already exists as system data`);
+      return;
+    }
+    
+    setProfileFields([...profileFields, { id: crypto.randomUUID(), key: trimmedKey, value: trimmedValue }]);
+    setNewKey("");
+    setNewValue("");
+    setKeyError(null);
+  };
+
+  const removeProfileField = (id: string) => {
+    setProfileFields(profileFields.filter(f => f.id !== id));
+  };
+
+  const buildProfilePayload = () => {
+    const profile: Record<string, string> = {};
+    const userFieldKeys: string[] = [];
+    profileFields.forEach(({ key, value }) => {
+      if (key.trim() && value.trim()) {
+        profile[key.trim()] = value.trim();
+        userFieldKeys.push(key.trim());
+      }
+    });
+    // Update metadata to track user-created fields
+    if (userFieldKeys.length > 0) {
+      profile._userFieldKeys = JSON.stringify(userFieldKeys);
+    }
+    return profile;
+  };
+
   const handleSave = async () => {
     if (!haseef || !name.trim() || isSaving) return;
     setIsSaving(true);
@@ -183,11 +281,16 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
       } else {
         delete configJson.persona;
       }
+
+      // Update profile - merge editable fields with system fields
+      const editableProfile = buildProfilePayload();
+      const profile = { ...systemProfileFields, ...editableProfile };
       
       await haseefsApi.update(haseef.id, {
         name: name.trim(),
         description: description.trim() || undefined,
         configJson,
+        ...(Object.keys(profile).length > 0 ? { profile } : {}),
         ...(avatarChanged ? { avatarUrl: avatarUrl || undefined } : {}),
       });
       onSaved();
@@ -451,6 +554,125 @@ export function HaseefEditPage({ onSaved }: HaseefEditPageProps) {
             onChange={(e) => setInstructions(e.target.value)}
             rows={5}
           />
+
+          {/* Editable Profile Fields */}
+          <div className="space-y-3 border-t border-border pt-4">
+            <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+              <UserIcon className="size-4" />
+              Profile Info
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Custom details the Haseef knows about itself. Fields created here are editable; existing fields are view-only.
+            </p>
+            
+            {/* Existing fields */}
+            {profileFields.length > 0 && (
+              <div className="space-y-2">
+                {profileFields.map((field) => (
+                  <div key={field.id} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={field.key}
+                      readOnly
+                      className="w-1/3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground"
+                    />
+                    <input
+                      type="text"
+                      value={field.value}
+                      onChange={(e) => {
+                        const updated = profileFields.map(f => 
+                          f.id === field.id ? { ...f, value: e.target.value } : f
+                        );
+                        setProfileFields(updated);
+                      }}
+                      className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeProfileField(field.id)}
+                      className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    >
+                      <TrashIcon className="size-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {/* Add new field */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Field name (e.g. religion)"
+                  value={newKey}
+                  onChange={(e) => {
+                    setNewKey(e.target.value);
+                    setKeyError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addProfileField();
+                    }
+                  }}
+                  className={cn(
+                    "w-1/3 rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2",
+                    keyError 
+                      ? "border-destructive focus:ring-destructive/50" 
+                      : "border-border focus:ring-primary/50"
+                  )}
+                />
+                <input
+                  type="text"
+                  placeholder="Value (e.g. Islam)"
+                  value={newValue}
+                  onChange={(e) => setNewValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addProfileField();
+                    }
+                  }}
+                  className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <button
+                  type="button"
+                  onClick={addProfileField}
+                  disabled={!newKey.trim() || !newValue.trim()}
+                  className="p-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors"
+                >
+                  <PlusIcon className="size-4" />
+                </button>
+              </div>
+              {keyError && (
+                <p className="text-xs text-destructive">{keyError}</p>
+              )}
+            </div>
+          </div>
+
+          {/* System Profile Fields (View-Only) */}
+          {Object.keys(systemProfileFields).length > 0 && (
+            <div className="space-y-3 border-t border-border pt-4">
+              <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                <BotIcon className="size-4" />
+                System Data
+              </label>
+              <p className="text-xs text-muted-foreground">
+                Read-only data created automatically (view only).
+              </p>
+              <div className="space-y-2 rounded-lg bg-muted/50 p-3">
+                {Object.entries(systemProfileFields).map(([key, value]) => (
+                  <div key={key} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground capitalize">{key}:</span>
+                    <span className="font-mono text-xs bg-background px-2 py-1 rounded border">
+                      {value.length > 30 ? value.slice(0, 30) + "..." : value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">

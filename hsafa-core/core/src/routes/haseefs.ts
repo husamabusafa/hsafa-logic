@@ -101,7 +101,7 @@ haseefsRouter.get('/:id', async (req, res) => {
 // PATCH /api/haseefs/:id — Update config
 haseefsRouter.patch('/:id', async (req, res) => {
   try {
-    const { name, description, configJson } = req.body;
+    const { name, description, configJson, profileJson } = req.body;
     const data: Record<string, unknown> = {};
 
     if (name !== undefined) data.name = name;
@@ -113,6 +113,7 @@ haseefsRouter.patch('/:id', async (req, res) => {
         .update(JSON.stringify(configJson))
         .digest('hex');
     }
+    if (profileJson !== undefined) data.profileJson = profileJson;
 
     const haseef = await prisma.haseef.update({
       where: { id: req.params.id },

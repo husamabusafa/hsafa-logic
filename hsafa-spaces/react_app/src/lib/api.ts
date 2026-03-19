@@ -104,6 +104,7 @@ export interface Haseef {
   entityId: string;
   avatarUrl?: string | null;
   configJson?: Record<string, unknown>;
+  profileJson?: Record<string, unknown>;
   createdAt?: string;
 }
 
@@ -126,14 +127,14 @@ export const haseefsApi = {
     return request<{ haseef: Haseef }>(`/haseefs/${id}`);
   },
 
-  create(data: { name: string; description?: string; model?: string; provider?: string; instructions?: string; avatarUrl?: string; persona?: { id: string; name: string; description: string; style?: string; traits?: string[] } }) {
+  create(data: { name: string; description?: string; model?: string; provider?: string; instructions?: string; avatarUrl?: string; persona?: { id: string; name: string; description: string; style?: string; traits?: string[] }; profile?: Record<string, string> }) {
     return request<{ haseef: Haseef }>("/haseefs", {
       method: "POST",
       body: JSON.stringify(data),
     });
   },
 
-  update(id: string, data: { name?: string; description?: string; configJson?: Record<string, unknown>; avatarUrl?: string }) {
+  update(id: string, data: { name?: string; description?: string; configJson?: Record<string, unknown>; profile?: Record<string, unknown>; avatarUrl?: string }) {
     return request<{ haseef: Haseef }>(`/haseefs/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),

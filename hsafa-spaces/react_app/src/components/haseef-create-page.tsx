@@ -9,6 +9,8 @@ import {
   ArrowLeftIcon,
   UserIcon,
   PenIcon,
+  TrashIcon,
+  PlusIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -37,6 +39,11 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
   const [customPersonaName, setCustomPersonaName] = useState("");
   const [customPersonaDesc, setCustomPersonaDesc] = useState("");
   const [isCustomPersona, setIsCustomPersona] = useState(false);
+  // Dynamic profile fields (user-defined key-value pairs)
+  const [profileFields, setProfileFields] = useState<Array<{ id: string; key: string; value: string }>>([]);
+  const [newKey, setNewKey] = useState("");
+  const [newValue, setNewValue] = useState("");
+  const [keyError, setKeyError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,12 +93,64 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
     return undefined;
   };
 
+  // System fields that cannot be overridden (protected)
+  const SYSTEM_FIELDS = ["entityId", "haseefId", "createdAt", "updatedAt", "id"];
+
+  const isSystemField = (key: string): boolean => {
+    const lowerKey = key.toLowerCase().trim();
+    return SYSTEM_FIELDS.some(sf => sf.toLowerCase() === lowerKey);
+  };
+
+  const addProfileField = () => {
+    const trimmedKey = newKey.trim();
+    const trimmedValue = newValue.trim();
+    
+    if (!trimmedKey || !trimmedValue) return;
+    
+    if (isSystemField(trimmedKey)) {
+      setKeyError(`"${trimmedKey}" is reserved and cannot be used`);
+      return;
+    }
+    
+    // Check if key already exists
+    if (profileFields.some(f => f.key.toLowerCase() === trimmedKey.toLowerCase())) {
+      setKeyError(`"${trimmedKey}" already exists`);
+      return;
+    }
+    
+    setProfileFields([...profileFields, { id: crypto.randomUUID(), key: trimmedKey, value: trimmedValue }]);
+    setNewKey("");
+    setNewValue("");
+    setKeyError(null);
+  };
+
+  const removeProfileField = (id: string) => {
+    setProfileFields(profileFields.filter(f => f.id !== id));
+  };
+
+  const buildProfilePayload = () => {
+    const profile: Record<string, string> = {};
+    const userFieldKeys: string[] = [];
+    profileFields.forEach(({ key, value }) => {
+      if (key.trim() && value.trim()) {
+        profile[key.trim()] = value.trim();
+        userFieldKeys.push(key.trim());
+      }
+    });
+    // Add metadata to track which fields are user-created
+    if (userFieldKeys.length > 0) {
+      profile._userFieldKeys = JSON.stringify(userFieldKeys);
+    }
+    return Object.keys(profile).length > 0 ? profile : undefined;
+  };
+
   const handleCreate = async () => {
     if (!name.trim() || isCreating) return;
     setIsCreating(true);
     setError(null);
     try {
       const persona = buildPersonaPayload();
+      const profile = buildProfilePayload();
       const { haseef } = await haseefsApi.create({
         name: name.trim(),
         description: description.trim() || undefined,
@@ -100,6 +159,7 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
         instructions: instructions.trim() || undefined,
         ...(avatarUrl ? { avatarUrl } : {}),
         ...(persona ? { persona } : {}),
+        ...(profile ? { profile } : {}),
       });
       onCreated();
       toast("Haseef created", "success");
@@ -328,6 +388,102 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
                 />
               </div>
             )}
+          </div>
+
+          {/* Dynamic Profile section */}
+          <div className="space-y-3 border-t border-border pt-4">
+            <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+              <UserIcon className="size-4" />
+              Profile Info
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Add custom details the Haseef knows about itself. Reserved fields (entityId, id, etc.) are protected.
+            </p>
+            
+            {/* Existing fields */}
+            {profileFields.length > 0 && (
+              <div className="space-y-2">
+                {profileFields.map((field) => (
+                  <div key={field.id} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={field.key}
+                      readOnly
+                      className="w-1/3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground"
+                    />
+                    <input
+                      type="text"
+                      value={field.value}
+                      onChange={(e) => {
+                        const updated = profileFields.map(f => 
+                          f.id === field.id ? { ...f, value: e.target.value } : f
+                        );
+                        setProfileFields(updated);
+                      }}
+                      className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeProfileField(field.id)}
+                      className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    >
+                      <TrashIcon className="size-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {/* Add new field */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Field name (e.g. religion)"
+                  value={newKey}
+                  onChange={(e) => {
+                    setNewKey(e.target.value);
+                    setKeyError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addProfileField();
+                    }
+                  }}
+                  className={cn(
+                    "w-1/3 rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2",
+                    keyError 
+                      ? "border-destructive focus:ring-destructive/50" 
+                      : "border-border focus:ring-primary/50"
+                  )}
+                />
+                <input
+                  type="text"
+                  placeholder="Value (e.g. Islam)"
+                  value={newValue}
+                  onChange={(e) => setNewValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addProfileField();
+                    }
+                  }}
+                  className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <button
+                  type="button"
+                  onClick={addProfileField}
+                  disabled={!newKey.trim() || !newValue.trim()}
+                  className="p-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors"
+                >
+                  <PlusIcon className="size-4" />
+                </button>
+              </div>
+              {keyError && (
+                <p className="text-xs text-destructive">{keyError}</p>
+              )}
+            </div>
           </div>
 
           <Textarea

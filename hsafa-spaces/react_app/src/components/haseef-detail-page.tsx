@@ -23,6 +23,9 @@ import {
   UserIcon,
   LockIcon,
   XIcon,
+  SmileIcon,
+  MapPinIcon,
+  BookOpenIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +41,7 @@ import { haseefsApi, spacesApi, type Haseef, type HaseefListItem, type HaseefSpa
 import { useToast } from "@/components/ui/toast";
 import { Avatar } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
+import { getPersonaById } from "@/lib/personas";
 
 // ─── Detail Page ─────────────────────────────────────────────────────────────
 
@@ -365,6 +369,82 @@ export function HaseefDetailPage({ onDeleted, allHaseefs = [] }: HaseefDetailPag
           <p className="text-[10px] text-muted-foreground mt-2 text-center">
             Activity data will be available once the haseef starts processing messages
           </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Persona */}
+          <div className="rounded-2xl border border-border bg-card p-5">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1.5">
+              <SmileIcon className="size-3.5" />
+              Persona
+            </h3>
+            {(() => {
+              const persona = haseef.configJson?.persona as { id?: string; name?: string; description?: string; style?: string; traits?: string[] } | undefined;
+              if (!persona?.name) {
+                return (
+                  <p className="text-sm text-muted-foreground italic">
+                    No persona configured. Edit this haseef to add a personality.
+                  </p>
+                );
+              }
+              const prebuilt = persona.id && persona.id !== "custom" ? getPersonaById(persona.id) : null;
+              return (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">{prebuilt?.emoji || "🎭"}</span>
+                    <span className="font-medium text-foreground">{persona.name}</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    {persona.description}
+                  </p>
+                  {persona.traits && persona.traits.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {persona.traits.map((trait, i) => (
+                        <Badge key={i} variant="outline" className="text-[10px]">
+                          {trait}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Profile Info */}
+          <div className="rounded-2xl border border-border bg-card p-5">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1.5">
+              <BookOpenIcon className="size-3.5" />
+              Profile Info
+            </h3>
+            {(() => {
+              const profile = haseef.profileJson || {};
+              // Filter out system fields
+              const SYSTEM_FIELDS = ["entityId", "haseefId", "createdAt", "updatedAt", "id"];
+              const entries = Object.entries(profile).filter(([key, value]) => {
+                const isSystem = SYSTEM_FIELDS.some(sf => sf.toLowerCase() === key.toLowerCase());
+                return !isSystem && typeof value === "string" && value.trim();
+              }) as [string, string][];
+              
+              if (entries.length === 0) {
+                return (
+                  <p className="text-sm text-muted-foreground italic">
+                    No profile info configured. Edit this haseef to add custom details.
+                  </p>
+                );
+              }
+              return (
+                <div className="space-y-2">
+                  {entries.map(([key, value]) => (
+                    <div key={key} className="flex items-start gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0 w-24 capitalize">{key}:</span>
+                      <span className="text-sm text-foreground">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

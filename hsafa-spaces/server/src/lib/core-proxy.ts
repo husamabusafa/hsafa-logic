@@ -64,6 +64,7 @@ export async function updateHaseef(
     name?: string;
     description?: string;
     configJson?: Record<string, unknown>;
+    profileJson?: Record<string, unknown>;
   },
 ): Promise<CoreHaseef> {
   const res = await fetch(`${CORE_URL}/api/haseefs/${id}`, {
