@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -11,21 +11,23 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../lib/auth-context';
 import { resolveMediaUrl } from '../../lib/api';
-import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
+import { useTheme, spacing, fontSize, fontWeight, borderRadius, type ThemeMode } from '../../lib/theme';
 import type { SettingsStackParamList } from '../../lib/types';
 
 interface SettingsRowProps {
-  icon: string;
+  iconName: string;
   label: string;
   subtitle?: string;
   onPress: () => void;
   danger?: boolean;
+  rightElement?: React.ReactNode;
   colors: ReturnType<typeof useTheme>['colors'];
 }
 
-function SettingsRow({ icon, label, subtitle, onPress, danger, colors }: SettingsRowProps) {
+function SettingsRow({ iconName, label, subtitle, onPress, danger, rightElement, colors }: SettingsRowProps) {
   return (
     <TouchableOpacity
       style={[styles.row, { borderBottomColor: colors.borderLight }]}
@@ -33,7 +35,7 @@ function SettingsRow({ icon, label, subtitle, onPress, danger, colors }: Setting
       activeOpacity={0.6}
     >
       <View style={[styles.rowIcon, { backgroundColor: danger ? colors.errorLight : colors.primaryLight }]}>
-        <Text style={styles.rowIconText}>{icon}</Text>
+        <Ionicons name={iconName as any} size={18} color={danger ? colors.error : colors.primary} />
       </View>
       <View style={styles.rowContent}>
         <Text style={[styles.rowLabel, { color: danger ? colors.error : colors.text }]}>
@@ -43,16 +45,23 @@ function SettingsRow({ icon, label, subtitle, onPress, danger, colors }: Setting
           <Text style={[styles.rowSubtitle, { color: colors.textMuted }]}>{subtitle}</Text>
         )}
       </View>
-      <Text style={[styles.chevron, { color: colors.textMuted }]}>›</Text>
+      {rightElement || <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />}
     </TouchableOpacity>
   );
 }
 
+const THEME_OPTIONS: { mode: ThemeMode; label: string; icon: string }[] = [
+  { mode: 'light', label: 'Light', icon: 'sunny-outline' },
+  { mode: 'dark', label: 'Dark', icon: 'moon-outline' },
+  { mode: 'system', label: 'System', icon: 'phone-portrait-outline' },
+];
+
 export function SettingsScreen() {
-  const { colors, dark } = useTheme();
+  const { colors, dark, mode, setMode } = useTheme();
   const { user, logout } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<SettingsStackParamList>>();
   const avatarUrl = resolveMediaUrl(user?.avatarUrl ?? null);
+  const [showThemePicker, setShowThemePicker] = useState(false);
 
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -60,6 +69,8 @@ export function SettingsScreen() {
       { text: 'Sign Out', style: 'destructive', onPress: logout },
     ]);
   };
+
+  const currentThemeLabel = THEME_OPTIONS.find((o) => o.mode === mode)?.label ?? 'System';
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
@@ -89,7 +100,8 @@ export function SettingsScreen() {
             </Text>
             {user?.emailVerified && (
               <View style={[styles.verifiedBadge, { backgroundColor: colors.successLight }]}>
-                <Text style={[styles.verifiedText, { color: colors.success }]}>✓ Verified</Text>
+                <Ionicons name="checkmark-circle" size={12} color={colors.success} />
+                <Text style={[styles.verifiedText, { color: colors.success }]}> Verified</Text>
               </View>
             )}
           </View>
@@ -99,21 +111,21 @@ export function SettingsScreen() {
         <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Account</Text>
         <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <SettingsRow
-            icon="👤"
+            iconName="person-outline"
             label="Edit Profile"
             subtitle="Name and avatar"
             onPress={() => navigation.navigate('Profile')}
             colors={colors}
           />
           <SettingsRow
-            icon="🔑"
+            iconName="key-outline"
             label="API Keys"
             subtitle="Manage your API keys"
             onPress={() => navigation.navigate('ApiKeys')}
             colors={colors}
           />
           <SettingsRow
-            icon="🔒"
+            iconName="lock-closed-outline"
             label="Change Password"
             onPress={() => {}}
             colors={colors}
@@ -124,26 +136,59 @@ export function SettingsScreen() {
         <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>App</Text>
         <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <SettingsRow
-            icon="🔔"
+            iconName="notifications-outline"
             label="Notifications"
             subtitle="Push notification settings"
             onPress={() => {}}
             colors={colors}
           />
           <SettingsRow
-            icon={dark ? '🌙' : '☀️'}
+            iconName={dark ? 'moon-outline' : 'sunny-outline'}
             label="Appearance"
-            subtitle={dark ? 'Dark mode' : 'Light mode'}
-            onPress={() => {}}
+            subtitle={currentThemeLabel}
+            onPress={() => setShowThemePicker(!showThemePicker)}
             colors={colors}
+            rightElement={
+              <Ionicons name={showThemePicker ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
+            }
           />
+          {showThemePicker && (
+            <View style={[styles.themePicker, { borderTopColor: colors.borderLight }]}>
+              {THEME_OPTIONS.map((opt) => {
+                const isActive = mode === opt.mode;
+                return (
+                  <TouchableOpacity
+                    key={opt.mode}
+                    style={[
+                      styles.themeOption,
+                      {
+                        backgroundColor: isActive ? colors.primary + '15' : colors.surface,
+                        borderColor: isActive ? colors.primary : colors.border,
+                      },
+                    ]}
+                    onPress={() => {
+                      setMode(opt.mode);
+                      setShowThemePicker(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name={opt.icon as any} size={18} color={isActive ? colors.primary : colors.textSecondary} />
+                    <Text style={[styles.themeOptionText, { color: isActive ? colors.primary : colors.text }]}>
+                      {opt.label}
+                    </Text>
+                    {isActive && <Ionicons name="checkmark" size={16} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
         </View>
 
         {/* Danger Zone */}
         <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Session</Text>
         <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <SettingsRow
-            icon="🚪"
+            iconName="log-out-outline"
             label="Sign Out"
             onPress={handleLogout}
             danger
@@ -198,7 +243,9 @@ const styles = StyleSheet.create({
   profileName: { fontSize: fontSize.lg, fontWeight: fontWeight.semibold, marginBottom: 2 },
   profileEmail: { fontSize: fontSize.sm, marginBottom: spacing.xs },
   verifiedBadge: {
+    flexDirection: 'row',
     alignSelf: 'flex-start',
+    alignItems: 'center',
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
     borderRadius: borderRadius.full,
@@ -234,11 +281,27 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: spacing.md,
   },
-  rowIconText: { fontSize: 18 },
   rowContent: { flex: 1 },
   rowLabel: { fontSize: fontSize.base, fontWeight: fontWeight.medium },
   rowSubtitle: { fontSize: fontSize.xs, marginTop: 1 },
-  chevron: { fontSize: 22, fontWeight: '300' },
+  themePicker: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  themeOption: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+  },
+  themeOptionText: { fontSize: fontSize.xs, fontWeight: fontWeight.medium },
   versionText: {
     textAlign: 'center',
     fontSize: fontSize.xs,

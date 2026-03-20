@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Clipboard from 'expo-clipboard';
+import { Ionicons } from '@expo/vector-icons';
 import { basesApi, type Base } from '../../lib/api';
 import { useAuth } from '../../lib/auth-context';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
@@ -90,10 +91,8 @@ export function BasesListScreen() {
     Alert.alert('Copied', 'Invite code copied to clipboard');
   };
 
-  const getRoleIcon = (role: string) => {
-    if (role === 'owner') return '👑';
-    if (role === 'admin') return '🛡️';
-    return '👤';
+  const getRoleLabel = (role: string) => {
+    return role;
   };
 
   const renderBase = ({ item }: { item: Base }) => (
@@ -104,7 +103,7 @@ export function BasesListScreen() {
     >
       <View style={styles.cardHeader}>
         <View style={[styles.baseIcon, { backgroundColor: colors.primaryLight }]}>
-          <Text style={styles.baseIconText}>👥</Text>
+          <Ionicons name="people" size={22} color={colors.primary} />
         </View>
         <View style={styles.cardInfo}>
           <Text style={[styles.baseName, { color: colors.text }]} numberOfLines={1}>
@@ -112,7 +111,7 @@ export function BasesListScreen() {
           </Text>
           <View style={styles.metaRow}>
             <Text style={[styles.roleBadge, { color: colors.primary }]}>
-              {getRoleIcon(item.myRole)} {item.myRole}
+              {getRoleLabel(item.myRole)}
             </Text>
             <Text style={[styles.memberCount, { color: colors.textMuted }]}>
               · {item.memberCount} member{item.memberCount !== 1 ? 's' : ''}
@@ -129,7 +128,7 @@ export function BasesListScreen() {
       >
         <Text style={[styles.codeLabel, { color: colors.textMuted }]}>Invite:</Text>
         <Text style={[styles.codeText, { color: colors.text }]}>{item.inviteCode}</Text>
-        <Text style={[styles.copyIcon, { color: colors.primary }]}>📋</Text>
+        <Ionicons name="copy-outline" size={14} color={colors.primary} />
       </TouchableOpacity>
     </TouchableOpacity>
   );
@@ -191,7 +190,7 @@ export function BasesListScreen() {
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={styles.headerLeft}>
           <View style={[styles.headerIcon, { backgroundColor: colors.primaryLight }]}>
-            <Text style={styles.headerIconText}>👥</Text>
+            <Ionicons name="people" size={20} color={colors.primary} />
           </View>
           <View>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Bases</Text>
@@ -234,7 +233,7 @@ export function BasesListScreen() {
           ListEmptyComponent={
             <View style={styles.empty}>
               <View style={[styles.emptyIcon, { backgroundColor: colors.primaryLight }]}>
-                <Text style={styles.emptyEmoji}>👥</Text>
+                <Ionicons name="people-outline" size={32} color={colors.primary} />
               </View>
               <Text style={[styles.emptyTitle, { color: colors.text }]}>No bases yet</Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
@@ -274,7 +273,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerIconText: { fontSize: 20 },
   headerTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold },
   headerSubtitle: { fontSize: fontSize.xs },
   actionRow: {
@@ -308,7 +306,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: spacing.md,
   },
-  baseIconText: { fontSize: 22 },
   cardInfo: { flex: 1 },
   baseName: { fontSize: fontSize.base, fontWeight: fontWeight.semibold, marginBottom: 2 },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
@@ -325,7 +322,6 @@ const styles = StyleSheet.create({
   },
   codeLabel: { fontSize: fontSize.xs },
   codeText: { fontSize: fontSize.sm, fontWeight: fontWeight.medium, flex: 1 },
-  copyIcon: { fontSize: 14 },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
   empty: { alignItems: 'center', paddingHorizontal: spacing['2xl'] },
   emptyIcon: {
@@ -336,7 +332,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: spacing.lg,
   },
-  emptyEmoji: { fontSize: 32 },
   emptyTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.semibold, marginBottom: spacing.xs },
   emptySubtitle: { fontSize: fontSize.sm, textAlign: 'center' },
   // Modal

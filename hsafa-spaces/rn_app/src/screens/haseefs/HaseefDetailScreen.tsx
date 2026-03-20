@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps, NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
 import { haseefsApi, resolveMediaUrl, type Haseef, type HaseefSpace } from '../../lib/api';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 import type { HaseefsStackParamList } from '../../lib/types';
@@ -151,7 +152,7 @@ export function HaseefDetailScreen({ route }: Props) {
             <Image source={{ uri: avatarUrl }} style={styles.avatar} />
           ) : (
             <View style={[styles.avatarPlaceholder, { backgroundColor: colors.primaryLight }]}>
-              <Text style={{ fontSize: 32 }}>🤖</Text>
+              <Ionicons name="sparkles" size={32} color={colors.primary} />
             </View>
           )}
           <View style={[styles.statusBadge, { backgroundColor: colors.successLight }]}>
@@ -227,7 +228,7 @@ export function HaseefDetailScreen({ route }: Props) {
             spaces.map((s) => (
               <View key={s.id} style={[styles.spaceRow, { borderBottomColor: colors.borderLight }]}>
                 <View style={[styles.spaceIcon, { backgroundColor: colors.primaryLight }]}>
-                  <Text style={{ fontSize: 14 }}>💬</Text>
+                  <Ionicons name="chatbubbles-outline" size={14} color={colors.primary} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.spaceName, { color: colors.text }]} numberOfLines={1}>

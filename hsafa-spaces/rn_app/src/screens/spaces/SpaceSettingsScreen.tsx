@@ -15,6 +15,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../../lib/auth-context';
 import { spacesApi, resolveMediaUrl, type SmartSpace, type SpaceMember } from '../../lib/api';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 import type { SpacesStackParamList } from '../../lib/types';
 
@@ -371,10 +372,7 @@ function MemberRow({
   const initial = (member.entity?.displayName || '?')[0].toUpperCase();
   const isAgent = member.entity?.type === 'agent';
 
-  const roleIcon =
-    member.role === 'owner' ? '👑' :
-    member.role === 'admin' ? '🛡️' :
-    member.role === 'viewer' ? '👁️' : '';
+  const roleLabel = member.role;
 
   return (
     <View style={[styles.memberRow, { borderBottomColor: colors.border }]}>
@@ -382,9 +380,13 @@ function MemberRow({
         <Image source={{ uri: avatarUrl }} style={styles.memberAvatar} />
       ) : (
         <View style={[styles.memberAvatarFallback, { backgroundColor: isAgent ? colors.successLight : colors.primaryLight }]}>
-          <Text style={{ fontSize: 14, fontWeight: '600', color: isAgent ? colors.success : colors.primary }}>
-            {isAgent ? '🤖' : initial}
-          </Text>
+          {isAgent ? (
+            <Ionicons name="sparkles" size={16} color={colors.success} />
+          ) : (
+            <Text style={{ fontSize: 14, fontWeight: '600', color: colors.primary }}>
+              {initial}
+            </Text>
+          )}
         </View>
       )}
       <View style={{ flex: 1 }}>
@@ -393,7 +395,7 @@ function MemberRow({
           {isMe ? ' (you)' : ''}
         </Text>
         <Text style={[styles.memberRole, { color: colors.textMuted }]}>
-          {roleIcon} {member.role}
+          {roleLabel}
         </Text>
       </View>
       {isAdmin && !isMe && !isMemberOwner && (

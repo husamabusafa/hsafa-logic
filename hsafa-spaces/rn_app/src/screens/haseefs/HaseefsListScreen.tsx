@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
 import { haseefsApi, type HaseefListItem, resolveMediaUrl } from '../../lib/api';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 import { ListSkeleton } from '../../components/Skeleton';
@@ -63,7 +64,7 @@ export function HaseefsListScreen() {
             <Image source={{ uri: avatarUrl }} style={styles.avatar} />
           ) : (
             <View style={[styles.avatarPlaceholder, { backgroundColor: colors.primaryLight }]}>
-              <Text style={[styles.avatarEmoji, { color: colors.primary }]}>🤖</Text>
+              <Ionicons name="sparkles" size={24} color={colors.primary} />
             </View>
           )}
           <View style={styles.cardInfo}>
@@ -86,7 +87,7 @@ export function HaseefsListScreen() {
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={styles.headerLeft}>
           <View style={[styles.headerIcon, { backgroundColor: colors.primaryLight }]}>
-            <Text style={styles.headerIconText}>🤖</Text>
+            <Ionicons name="sparkles" size={20} color={colors.primary} />
           </View>
           <View>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Haseefs</Text>
@@ -121,7 +122,7 @@ export function HaseefsListScreen() {
           ListEmptyComponent={
             <View style={styles.empty}>
               <View style={[styles.emptyIcon, { backgroundColor: colors.primaryLight }]}>
-                <Text style={styles.emptyEmoji}>🤖</Text>
+                <Ionicons name="sparkles-outline" size={32} color={colors.primary} />
               </View>
               <Text style={[styles.emptyTitle, { color: colors.text }]}>No haseefs yet</Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
@@ -165,7 +166,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerIconText: { fontSize: 20 },
   headerTitle: {
     fontSize: fontSize.lg,
     fontWeight: fontWeight.bold,
@@ -210,7 +210,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: spacing.md,
   },
-  avatarEmoji: { fontSize: 24 },
   cardInfo: { flex: 1 },
   haseefName: {
     fontSize: fontSize.base,
@@ -242,7 +241,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: spacing.lg,
   },
-  emptyEmoji: { fontSize: 32 },
   emptyTitle: {
     fontSize: fontSize.lg,
     fontWeight: fontWeight.semibold,

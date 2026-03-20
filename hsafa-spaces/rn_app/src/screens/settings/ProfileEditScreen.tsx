@@ -15,6 +15,7 @@ import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../lib/auth-context';
 import { mediaApi, resolveMediaUrl } from '../../lib/api';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 
 export function ProfileEditScreen() {
@@ -97,7 +98,7 @@ export function ProfileEditScreen() {
               {uploadingAvatar ? (
                 <ActivityIndicator size="small" color={colors.primary} />
               ) : (
-                <Text style={{ fontSize: 14 }}>📷</Text>
+                <Ionicons name="camera-outline" size={14} color={colors.primary} />
               )}
             </View>
           </TouchableOpacity>
@@ -120,7 +121,7 @@ export function ProfileEditScreen() {
             <Text style={[styles.readonlyText, { color: colors.textSecondary }]}>{user?.email || ''}</Text>
             {user?.emailVerified && (
               <View style={[styles.verifiedBadge, { backgroundColor: colors.successLight }]}>
-                <Text style={[styles.verifiedText, { color: colors.success }]}>✓ Verified</Text>
+                <Text style={[styles.verifiedText, { color: colors.success }]}>Verified</Text>
               </View>
             )}
           </View>

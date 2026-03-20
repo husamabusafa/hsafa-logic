@@ -18,6 +18,7 @@ import { useAuth } from '../../lib/auth-context';
 import { spacesApi, type SmartSpace } from '../../lib/api';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 import { haptic } from '../../lib/haptics';
+import { Ionicons } from '@expo/vector-icons';
 import { ListSkeleton } from '../../components/Skeleton';
 import type { SpacesStackParamList } from '../../lib/types';
 
@@ -135,7 +136,7 @@ export function SpacesListScreen() {
               {item.description ? ` · ${item.description}` : ''}
             </Text>
           </View>
-          <Text style={[styles.chevron, { color: colors.textMuted }]}>›</Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
         </View>
       </TouchableOpacity>
     );
@@ -200,7 +201,7 @@ export function SpacesListScreen() {
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={styles.headerLeft}>
           <View style={[styles.headerIcon, { backgroundColor: colors.primaryLight }]}>
-            <Text style={styles.headerIconText}>💬</Text>
+            <Ionicons name="chatbubbles" size={20} color={colors.primary} />
           </View>
           <View>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Spaces</Text>
@@ -246,7 +247,7 @@ export function SpacesListScreen() {
           ListEmptyComponent={
             <View style={styles.empty}>
               <View style={[styles.emptyIcon, { backgroundColor: colors.primaryLight }]}>
-                <Text style={styles.emptyEmoji}>💬</Text>
+                <Ionicons name="chatbubbles-outline" size={32} color={colors.primary} />
               </View>
               <Text style={[styles.emptyTitle, { color: colors.text }]}>No spaces yet</Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
@@ -286,7 +287,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerIconText: { fontSize: 20 },
   headerTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold },
   headerSubtitle: { fontSize: fontSize.xs },
   actionRow: {
@@ -345,7 +345,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: spacing.lg,
   },
-  emptyEmoji: { fontSize: 32 },
   emptyTitle: {
     fontSize: fontSize.lg,
     fontWeight: fontWeight.semibold,

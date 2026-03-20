@@ -8,6 +8,7 @@ import {
   ScrollView,
   Image,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { resolveMediaUrl } from '../lib/api';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../lib/theme';
 import type { Message, Member } from '../lib/types';
@@ -33,10 +34,10 @@ export function SeenInfoModal({ message, members, currentEntityId, onClose }: Pr
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           {/* Header */}
           <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <Text style={{ fontSize: 16 }}>👁️</Text>
+            <Ionicons name="eye-outline" size={18} color={colors.textSecondary} />
             <Text style={[styles.title, { color: colors.text }]}>Message Info</Text>
             <TouchableOpacity onPress={onClose} activeOpacity={0.7}>
-              <Text style={{ fontSize: 18, color: colors.textMuted }}>✕</Text>
+              <Ionicons name="close" size={20} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
 
@@ -55,11 +56,11 @@ export function SeenInfoModal({ message, members, currentEntityId, onClose }: Pr
                         <Image source={{ uri: avatarUrl }} style={styles.avatar} />
                       ) : (
                         <View style={[styles.avatarPlaceholder, { backgroundColor: m.type === 'agent' ? colors.successLight : colors.primaryLight }]}>
-                          <Text style={{ fontSize: 12 }}>{m.type === 'agent' ? '🤖' : '👤'}</Text>
+                          <Ionicons name={m.type === 'agent' ? 'sparkles' : 'person'} size={12} color={m.type === 'agent' ? colors.success : colors.primary} />
                         </View>
                       )}
                       <Text style={[styles.memberName, { color: colors.text }]}>{m.name}</Text>
-                      <Text style={[styles.checkmark, { color: '#3b82f6' }]}>✓✓</Text>
+                      <Ionicons name="checkmark-done" size={14} color="#3b82f6" />
                     </View>
                   );
                 })}
@@ -80,7 +81,7 @@ export function SeenInfoModal({ message, members, currentEntityId, onClose }: Pr
                         <Image source={{ uri: avatarUrl }} style={styles.avatar} />
                       ) : (
                         <View style={[styles.avatarPlaceholder, { backgroundColor: m.type === 'agent' ? colors.successLight : colors.primaryLight }]}>
-                          <Text style={{ fontSize: 12 }}>{m.type === 'agent' ? '🤖' : '👤'}</Text>
+                          <Ionicons name={m.type === 'agent' ? 'sparkles' : 'person'} size={12} color={m.type === 'agent' ? colors.success : colors.primary} />
                         </View>
                       )}
                       <Text style={[styles.memberName, { color: colors.textMuted }]}>{m.name}</Text>

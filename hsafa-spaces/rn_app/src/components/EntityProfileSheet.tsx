@@ -8,6 +8,7 @@ import {
   ScrollView,
   Image,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { resolveMediaUrl } from '../lib/api';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../lib/theme';
 import type { Member } from '../lib/types';
@@ -25,10 +26,7 @@ export function EntityProfileSheet({ member, currentEntityId, onClose }: Props) 
   const avatarUrl = resolveMediaUrl(member.avatarUrl ?? null);
 
   const getRoleLabel = (role: string) => {
-    if (role === 'owner') return '👑 Owner';
-    if (role === 'admin') return '🛡️ Admin';
-    if (role === 'viewer') return '👁️ Viewer';
-    return '👤 Member';
+    return role.charAt(0).toUpperCase() + role.slice(1);
   };
 
   return (
@@ -47,7 +45,7 @@ export function EntityProfileSheet({ member, currentEntityId, onClose }: Props) 
                 <Image source={{ uri: avatarUrl }} style={styles.avatar} />
               ) : (
                 <View style={[styles.avatarPlaceholder, { backgroundColor: isAgent ? colors.successLight : colors.primaryLight }]}>
-                  <Text style={{ fontSize: 28 }}>{isAgent ? '🤖' : '👤'}</Text>
+                  <Ionicons name={isAgent ? 'sparkles' : 'person'} size={28} color={isAgent ? colors.success : colors.primary} />
                 </View>
               )}
               <Text style={[styles.name, { color: colors.text }]}>
@@ -79,7 +77,7 @@ export function EntityProfileSheet({ member, currentEntityId, onClose }: Props) 
               <View style={styles.infoRow}>
                 <Text style={[styles.infoLabel, { color: colors.textMuted }]}>Type</Text>
                 <Text style={[styles.infoValue, { color: colors.text }]}>
-                  {isAgent ? '🤖 AI Agent' : '👤 Human'}
+                  {isAgent ? 'AI Agent' : 'Human'}
                 </Text>
               </View>
             </View>

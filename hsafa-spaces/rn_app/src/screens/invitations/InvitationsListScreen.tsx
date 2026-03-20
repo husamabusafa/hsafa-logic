@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { invitationsApi, type Invitation } from '../../lib/api';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 
@@ -83,7 +84,7 @@ export function InvitationsListScreen() {
       <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <View style={styles.cardTop}>
           <View style={[styles.inviteIcon, { backgroundColor: colors.primaryLight }]}>
-            <Text style={styles.inviteIconText}>✉️</Text>
+            <Ionicons name="mail-outline" size={22} color={colors.primary} />
           </View>
           <View style={styles.cardInfo}>
             <Text style={[styles.spaceName, { color: colors.text }]} numberOfLines={1}>
@@ -139,7 +140,7 @@ export function InvitationsListScreen() {
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={styles.headerLeft}>
           <View style={[styles.headerIcon, { backgroundColor: colors.primaryLight }]}>
-            <Text style={styles.headerIconText}>✉️</Text>
+            <Ionicons name="mail" size={20} color={colors.primary} />
           </View>
           <View>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Invitations</Text>
@@ -166,7 +167,7 @@ export function InvitationsListScreen() {
           ListEmptyComponent={
             <View style={styles.empty}>
               <View style={[styles.emptyIcon, { backgroundColor: colors.primaryLight }]}>
-                <Text style={styles.emptyEmoji}>✉️</Text>
+                <Ionicons name="mail-outline" size={32} color={colors.primary} />
               </View>
               <Text style={[styles.emptyTitle, { color: colors.text }]}>No invitations</Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
@@ -202,7 +203,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerIconText: { fontSize: 20 },
   headerTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold },
   headerSubtitle: { fontSize: fontSize.xs },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -224,7 +224,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: spacing.md,
   },
-  inviteIconText: { fontSize: 22 },
   cardInfo: { flex: 1 },
   spaceName: { fontSize: fontSize.base, fontWeight: fontWeight.semibold, marginBottom: 2 },
   inviterText: { fontSize: fontSize.xs },
@@ -268,7 +267,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: spacing.lg,
   },
-  emptyEmoji: { fontSize: 32 },
   emptyTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.semibold, marginBottom: spacing.xs },
   emptySubtitle: { fontSize: fontSize.sm, textAlign: 'center' },
 });

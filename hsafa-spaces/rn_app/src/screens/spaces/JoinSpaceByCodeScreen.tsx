@@ -11,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { spacesApi } from '../../lib/api';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 import type { RootStackParamList } from '../../lib/types';
 
@@ -90,7 +91,7 @@ export function JoinSpaceByCodeScreen({ route }: Props) {
         ) : (
           <View style={styles.center}>
             <View style={[styles.iconCircle, { backgroundColor: colors.primaryLight }]}>
-              <Text style={{ fontSize: 32 }}>💬</Text>
+              <Ionicons name="chatbubbles" size={32} color={colors.primary} />
             </View>
             <Text style={[styles.title, { color: colors.text }]}>{spaceName || 'Space'}</Text>
             {spaceDesc ? (

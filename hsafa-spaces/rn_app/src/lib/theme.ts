@@ -1,8 +1,10 @@
 import { useColorScheme } from 'react-native';
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // =============================================================================
-// Color Palette — matches the web app's design system
+// Color Palette — matches the web app's design system (warm coral primary)
+// Web app uses oklch(0.68 0.17 22) ≈ #CF5C36 for primary
 // =============================================================================
 
 const lightColors = {
@@ -19,10 +21,10 @@ const lightColors = {
   textMuted: '#94a3b8',
   textInverse: '#ffffff',
 
-  // Primary
-  primary: '#6366f1',
+  // Primary — warm coral to match react_app oklch(0.68 0.17 22)
+  primary: '#CF5C36',
   primaryForeground: '#ffffff',
-  primaryLight: '#e0e7ff',
+  primaryLight: '#FDF0EB',
 
   // Borders
   border: '#e2e8f0',
@@ -40,7 +42,7 @@ const lightColors = {
   infoLight: '#dbeafe',
 
   // Chat
-  messageMine: '#6366f1',
+  messageMine: '#CF5C36',
   messageMineFg: '#ffffff',
   messageOther: '#f1f5f9',
   messageOtherFg: '#0f172a',
@@ -70,10 +72,10 @@ const darkColors: typeof lightColors = {
   textMuted: '#64748b',
   textInverse: '#0f172a',
 
-  // Primary
-  primary: '#818cf8',
-  primaryForeground: '#0f172a',
-  primaryLight: '#312e81',
+  // Primary — warm coral for dark mode oklch(0.72 0.16 22)
+  primary: '#DC7454',
+  primaryForeground: '#ffffff',
+  primaryLight: '#3D1E12',
 
   // Borders
   border: '#334155',
@@ -91,7 +93,7 @@ const darkColors: typeof lightColors = {
   infoLight: '#172554',
 
   // Chat
-  messageMine: '#6366f1',
+  messageMine: '#CF5C36',
   messageMineFg: '#ffffff',
   messageOther: '#1e293b',
   messageOtherFg: '#f8fafc',
@@ -109,17 +111,43 @@ const darkColors: typeof lightColors = {
 
 export type ThemeColors = typeof lightColors;
 
+export type ThemeMode = 'light' | 'dark' | 'system';
+
+const THEME_STORAGE_KEY = 'hsafa-ui-theme';
+
 export interface Theme {
   dark: boolean;
   colors: ThemeColors;
+  mode: ThemeMode;
+  setMode: (mode: ThemeMode) => void;
 }
 
 export function useAppTheme(): Theme {
-  const scheme = useColorScheme();
-  const dark = scheme === 'dark';
+  const systemScheme = useColorScheme();
+  const [mode, setModeState] = useState<ThemeMode>('system');
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem(THEME_STORAGE_KEY).then((stored) => {
+      if (stored === 'light' || stored === 'dark' || stored === 'system') {
+        setModeState(stored);
+      }
+      setLoaded(true);
+    });
+  }, []);
+
+  const setMode = useCallback((newMode: ThemeMode) => {
+    setModeState(newMode);
+    AsyncStorage.setItem(THEME_STORAGE_KEY, newMode);
+  }, []);
+
+  const dark = mode === 'system' ? systemScheme === 'dark' : mode === 'dark';
+
   return {
     dark,
     colors: dark ? darkColors : lightColors,
+    mode,
+    setMode,
   };
 }
 
@@ -127,6 +155,8 @@ export function useAppTheme(): Theme {
 export const ThemeContext = createContext<Theme>({
   dark: false,
   colors: lightColors,
+  mode: 'system',
+  setMode: () => {},
 });
 
 export function useTheme(): Theme {

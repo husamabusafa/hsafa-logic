@@ -8,6 +8,7 @@ import {
   FlatList,
   Image,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { resolveMediaUrl } from '../lib/api';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../lib/theme';
 import type { Message, Member } from '../lib/types';
@@ -77,7 +78,7 @@ export function ChatSearchBar({ query, onQueryChange, messages, members, onSelec
                     <Image source={{ uri: avatarUrl }} style={styles.avatar} />
                   ) : (
                     <View style={[styles.avatarPlaceholder, { backgroundColor: item.senderType === 'agent' ? colors.successLight : colors.primaryLight }]}>
-                      <Text style={{ fontSize: 12 }}>{item.senderType === 'agent' ? '🤖' : '👤'}</Text>
+                      <Ionicons name={item.senderType === 'agent' ? 'sparkles' : 'person'} size={12} color={item.senderType === 'agent' ? colors.success : colors.primary} />
                     </View>
                   )}
                   <View style={{ flex: 1 }}>
@@ -95,7 +96,7 @@ export function ChatSearchBar({ query, onQueryChange, messages, members, onSelec
             contentContainerStyle={results.length === 0 ? styles.emptyContainer : undefined}
             ListEmptyComponent={
               <View style={styles.empty}>
-                <Text style={{ fontSize: 24 }}>🔍</Text>
+                <Ionicons name="search-outline" size={24} color={colors.textMuted} />
                 <Text style={[styles.emptyTitle, { color: colors.text }]}>No results found</Text>
                 <Text style={[styles.emptySub, { color: colors.textMuted }]}>Try a different search term</Text>
               </View>

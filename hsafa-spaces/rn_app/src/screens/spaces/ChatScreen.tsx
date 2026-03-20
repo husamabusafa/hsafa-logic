@@ -20,6 +20,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Clipboard from 'expo-clipboard';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../lib/auth-context';
 import { spacesApi, mediaApi, type SpaceMember } from '../../lib/api';
 import { useSpaceChat, type MediaMessageData } from '../../lib/use-space-chat';
@@ -300,7 +301,7 @@ export function ChatScreen({ route }: Props) {
               activeOpacity={0.7}
             >
               <Text style={[styles.senderName, { color: colors.textMuted }]}>
-                {item.senderType === 'agent' ? '🤖 ' : ''}{item.senderName}
+                {item.senderName}
               </Text>
             </TouchableOpacity>
           )}
@@ -350,7 +351,7 @@ export function ChatScreen({ route }: Props) {
                       ? (isInteractive ? '#3b82f6' : 'rgba(147,197,253,0.9)')
                       : (isInteractive ? colors.textMuted : 'rgba(255,255,255,0.5)'),
                   }]}>
-                    {seenByOthers.length > 0 ? '✓✓' : '✓'}
+                    {seenByOthers.length > 0 ? '✔✔' : '✔'}
                   </Text>
                 );
               })()}
@@ -366,7 +367,7 @@ export function ChatScreen({ route }: Props) {
   const statusLine = (() => {
     if (activeAgents.length > 0) {
       const names = activeAgents.map((a) => a.agentName || 'Haseef').join(', ');
-      return `🤖 ${names} is thinking...`;
+      return `${names} is thinking...`;
     }
     if (typingUsers.length > 0) {
       const names = typingUsers.map((t) => t.entityName).join(', ');
@@ -397,14 +398,14 @@ export function ChatScreen({ route }: Props) {
           activeOpacity={0.7}
           style={styles.settingsBtn}
         >
-          <Text style={{ fontSize: 16 }}>🔍</Text>
+          <Ionicons name="search-outline" size={20} color={colors.textSecondary} />
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => (navigation as any).navigate('SpaceSettings', { spaceId })}
           activeOpacity={0.7}
           style={styles.settingsBtn}
         >
-          <Text style={{ fontSize: 18 }}>⚙️</Text>
+          <Ionicons name="settings-outline" size={20} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
 
@@ -434,7 +435,7 @@ export function ChatScreen({ route }: Props) {
             ]}
             ListEmptyComponent={
               <View style={styles.emptyChat}>
-                <Text style={styles.emptyChatEmoji}>💬</Text>
+                <Ionicons name="chatbubbles-outline" size={40} color={colors.textMuted} />
                 <Text style={[styles.emptyChatText, { color: colors.textSecondary }]}>
                   No messages yet. Say hello!
                 </Text>
@@ -470,7 +471,7 @@ export function ChatScreen({ route }: Props) {
               </Text>
             </View>
             <TouchableOpacity onPress={() => setReplyingTo(null)} activeOpacity={0.7}>
-              <Text style={{ fontSize: 18, color: colors.textMuted }}>✕</Text>
+              <Ionicons name="close" size={20} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
         )}
@@ -490,7 +491,7 @@ export function ChatScreen({ route }: Props) {
             onPress={() => setShowPlusMenu(true)}
             activeOpacity={0.7}
           >
-            <Text style={{ color: colors.primary, fontSize: 20, fontWeight: '600' }}>+</Text>
+            <Ionicons name="add" size={22} color={colors.primary} />
           </TouchableOpacity>
           <TextInput
             ref={inputRef}
@@ -512,7 +513,7 @@ export function ChatScreen({ route }: Props) {
             {sending ? (
               <ActivityIndicator size="small" color={colors.primaryForeground} />
             ) : (
-              <Text style={{ color: inputText.trim() ? colors.primaryForeground : colors.textMuted, fontSize: 16, fontWeight: '700' }}>↑</Text>
+              <Ionicons name="arrow-up" size={18} color={inputText.trim() ? colors.primaryForeground : colors.textMuted} />
             )}
           </TouchableOpacity>
         </View>
@@ -525,7 +526,7 @@ export function ChatScreen({ route }: Props) {
           onPress={() => flatListRef.current?.scrollToEnd({ animated: true })}
           activeOpacity={0.7}
         >
-          <Text style={{ color: colors.primary, fontSize: 16 }}>↓</Text>
+          <Ionicons name="chevron-down" size={18} color={colors.primary} />
         </TouchableOpacity>
       )}
 
@@ -551,7 +552,7 @@ export function ChatScreen({ route }: Props) {
               activeOpacity={0.6}
             >
               <View style={[styles.plusMenuIcon, { backgroundColor: colors.primaryLight }]}>
-                <Text style={{ fontSize: 18 }}>↩️</Text>
+                <Ionicons name="arrow-undo-outline" size={20} color={colors.primary} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.plusMenuLabel, { color: colors.text }]}>Reply</Text>
@@ -574,7 +575,7 @@ export function ChatScreen({ route }: Props) {
               activeOpacity={0.6}
             >
               <View style={[styles.plusMenuIcon, { backgroundColor: colors.surface }]}>
-                <Text style={{ fontSize: 18 }}>📋</Text>
+                <Ionicons name="copy-outline" size={20} color={colors.textSecondary} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.plusMenuLabel, { color: colors.text }]}>Copy Text</Text>
@@ -591,7 +592,7 @@ export function ChatScreen({ route }: Props) {
               activeOpacity={0.6}
             >
               <View style={[styles.plusMenuIcon, { backgroundColor: colors.successLight }]}>
-                <Text style={{ fontSize: 18 }}>↗️</Text>
+                <Ionicons name="share-outline" size={20} color={colors.success} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.plusMenuLabel, { color: colors.text }]}>Forward</Text>
@@ -609,7 +610,7 @@ export function ChatScreen({ route }: Props) {
                 activeOpacity={0.6}
               >
                 <View style={[styles.plusMenuIcon, { backgroundColor: colors.warningLight }]}>
-                  <Text style={{ fontSize: 18 }}>👁️</Text>
+                  <Ionicons name="eye-outline" size={20} color={colors.warning} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.plusMenuLabel, { color: colors.text }]}>Info</Text>
@@ -631,21 +632,21 @@ export function ChatScreen({ route }: Props) {
           <View style={[styles.plusMenuCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.plusMenuTitle, { color: colors.text }]}>Send Media</Text>
             <TouchableOpacity style={[styles.plusMenuRow, { borderBottomColor: colors.borderLight }]} onPress={handlePickImage} activeOpacity={0.6}>
-              <View style={[styles.plusMenuIcon, { backgroundColor: colors.primaryLight }]}><Text style={{ fontSize: 18 }}>🖼️</Text></View>
+              <View style={[styles.plusMenuIcon, { backgroundColor: colors.primaryLight }]}><Ionicons name="image-outline" size={20} color={colors.primary} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.plusMenuLabel, { color: colors.text }]}>Photo Library</Text>
                 <Text style={[styles.plusMenuSub, { color: colors.textMuted }]}>Choose from gallery</Text>
               </View>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.plusMenuRow, { borderBottomColor: colors.borderLight }]} onPress={handleTakePhoto} activeOpacity={0.6}>
-              <View style={[styles.plusMenuIcon, { backgroundColor: colors.successLight }]}><Text style={{ fontSize: 18 }}>📷</Text></View>
+              <View style={[styles.plusMenuIcon, { backgroundColor: colors.successLight }]}><Ionicons name="camera-outline" size={20} color={colors.success} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.plusMenuLabel, { color: colors.text }]}>Camera</Text>
                 <Text style={[styles.plusMenuSub, { color: colors.textMuted }]}>Take a new photo</Text>
               </View>
             </TouchableOpacity>
             <TouchableOpacity style={styles.plusMenuRow} onPress={handlePickFile} activeOpacity={0.6}>
-              <View style={[styles.plusMenuIcon, { backgroundColor: colors.warningLight }]}><Text style={{ fontSize: 18 }}>📄</Text></View>
+              <View style={[styles.plusMenuIcon, { backgroundColor: colors.warningLight }]}><Ionicons name="document-outline" size={20} color={colors.warning} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.plusMenuLabel, { color: colors.text }]}>File</Text>
                 <Text style={[styles.plusMenuSub, { color: colors.textMuted }]}>Choose a document</Text>
@@ -730,7 +731,7 @@ const styles = StyleSheet.create({
   messagesList: { paddingHorizontal: spacing.md, paddingBottom: spacing.sm, paddingTop: spacing.sm },
   emptyList: { flexGrow: 1, justifyContent: 'center' },
   emptyChat: { alignItems: 'center' },
-  emptyChatEmoji: { fontSize: 40, marginBottom: spacing.sm },
+  emptyChatIcon: { marginBottom: spacing.sm },
   emptyChatText: { fontSize: fontSize.sm },
 
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },

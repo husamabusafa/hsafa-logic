@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as Clipboard from 'expo-clipboard';
+import { Ionicons } from '@expo/vector-icons';
 import { basesApi, resolveMediaUrl, type Base, type BaseMember } from '../../lib/api';
 import { useAuth } from '../../lib/auth-context';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
@@ -158,10 +159,8 @@ export function BaseDetailScreen({ route }: Props) {
     ]);
   };
 
-  const getRoleIcon = (role: string) => {
-    if (role === 'owner') return '👑';
-    if (role === 'admin') return '🛡️';
-    return '👤';
+  const getRoleLabel = (role: string) => {
+    return role;
   };
 
   if (loading) {
@@ -203,7 +202,7 @@ export function BaseDetailScreen({ route }: Props) {
         {/* Base icon + name */}
         <View style={styles.profileRow}>
           <View style={[styles.baseIcon, { backgroundColor: colors.primaryLight }]}>
-            <Text style={{ fontSize: 32 }}>👥</Text>
+            <Ionicons name="people" size={32} color={colors.primary} />
           </View>
         </View>
 
@@ -242,7 +241,7 @@ export function BaseDetailScreen({ route }: Props) {
 
           <Text style={[styles.label, { color: colors.textMuted, marginTop: spacing.md }]}>Your Role</Text>
           <Text style={[styles.readonlyValue, { color: colors.text }]}>
-            {getRoleIcon(base.myRole)} {base.myRole}
+            {getRoleLabel(base.myRole)}
           </Text>
         </View>
 
@@ -256,7 +255,7 @@ export function BaseDetailScreen({ route }: Props) {
             activeOpacity={0.7}
           >
             <Text style={[styles.codeText, { color: colors.text }]}>{base.inviteCode}</Text>
-            <Text style={[styles.copyLabel, { color: colors.primary }]}>📋 Copy</Text>
+            <Ionicons name="copy-outline" size={14} color={colors.primary} />
           </TouchableOpacity>
 
           <View style={styles.inviteRow}>
@@ -300,7 +299,7 @@ export function BaseDetailScreen({ route }: Props) {
                   <Image source={{ uri: avatarUrl }} style={styles.memberAvatar} />
                 ) : (
                   <View style={[styles.memberAvatarPlaceholder, { backgroundColor: m.type === 'agent' ? colors.primaryLight : colors.surface }]}>
-                    <Text style={{ fontSize: 14 }}>{m.type === 'agent' ? '🤖' : '👤'}</Text>
+                    <Ionicons name={m.type === 'agent' ? 'sparkles' : 'person'} size={16} color={m.type === 'agent' ? colors.primary : colors.textSecondary} />
                   </View>
                 )}
                 <View style={{ flex: 1 }}>
@@ -308,7 +307,7 @@ export function BaseDetailScreen({ route }: Props) {
                     {m.displayName}{isMe ? ' (you)' : ''}
                   </Text>
                   <Text style={[styles.memberRole, { color: colors.textMuted }]}>
-                    {getRoleIcon(m.role)} {m.role}
+                    {getRoleLabel(m.role)}
                   </Text>
                 </View>
                 {isOwnerOrAdmin && !isMe && m.role !== 'owner' && (
@@ -344,7 +343,7 @@ export function BaseDetailScreen({ route }: Props) {
                     <Image source={{ uri: avatarUrl }} style={styles.memberAvatar} />
                   ) : (
                     <View style={[styles.memberAvatarPlaceholder, { backgroundColor: colors.primaryLight }]}>
-                      <Text style={{ fontSize: 14 }}>🤖</Text>
+                      <Ionicons name="sparkles" size={16} color={colors.primary} />
                     </View>
                   )}
                   <Text style={[styles.memberName, { color: colors.text, flex: 1 }]} numberOfLines={1}>

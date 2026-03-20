@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { Audio } from 'expo-av';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 import { resolveMediaUrl } from '../../lib/api';
 import type { Message } from '../../lib/types';
@@ -337,26 +339,100 @@ function ImageContent({ message, isOwn }: { message: Message; isOwn: boolean }) 
 
 function VoiceContent({ message, isOwn }: { message: Message; isOwn: boolean }) {
   const { colors } = useTheme();
-  const duration = message.audioDuration ?? 0;
-  const mins = Math.floor(duration / 60);
-  const secs = Math.floor(duration % 60);
+  const totalDuration = message.audioDuration ?? 0;
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [currentPos, setCurrentPos] = useState(0);
+  const soundRef = useRef<Audio.Sound | null>(null);
+
+  // Stable waveform bars seeded from message id
+  const bars = useMemo(() => {
+    const result: number[] = [];
+    let seed = 0;
+    for (let i = 0; i < message.id.length; i++) seed = ((seed << 5) - seed + message.id.charCodeAt(i)) | 0;
+    for (let i = 0; i < 24; i++) {
+      seed = (seed * 16807 + 0) % 2147483647;
+      result.push(4 + (Math.abs(seed) % 15));
+    }
+    return result;
+  }, [message.id]);
+
+  useEffect(() => {
+    return () => {
+      soundRef.current?.unloadAsync().catch(() => {});
+    };
+  }, []);
+
+  const togglePlayback = useCallback(async () => {
+    const url = resolveMediaUrl(message.audioUrl);
+    if (!url) return;
+
+    try {
+      if (isPlaying && soundRef.current) {
+        await soundRef.current.pauseAsync();
+        setIsPlaying(false);
+        return;
+      }
+
+      if (soundRef.current) {
+        await soundRef.current.playAsync();
+        setIsPlaying(true);
+        return;
+      }
+
+      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: url },
+        { shouldPlay: true },
+        (status) => {
+          if (!status.isLoaded) return;
+          if (status.durationMillis && status.durationMillis > 0) {
+            setProgress(status.positionMillis / status.durationMillis);
+            setCurrentPos(status.positionMillis / 1000);
+          }
+          if (status.didJustFinish) {
+            setIsPlaying(false);
+            setProgress(0);
+            setCurrentPos(0);
+            soundRef.current?.setPositionAsync(0).catch(() => {});
+          }
+        },
+      );
+      soundRef.current = sound;
+      setIsPlaying(true);
+    } catch {
+      setIsPlaying(false);
+    }
+  }, [isPlaying, message.audioUrl]);
+
+  const displayDuration = isPlaying ? currentPos : totalDuration;
+  const mins = Math.floor(displayDuration / 60);
+  const secs = Math.floor(displayDuration % 60);
   const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+
+  const activeBarColor = isOwn ? 'rgba(255,255,255,0.85)' : colors.primary;
+  const inactiveBarColor = isOwn ? 'rgba(255,255,255,0.35)' : colors.primary + '40';
+  const activeBarIndex = Math.floor(progress * bars.length);
 
   return (
     <View>
       <View style={styles.voiceRow}>
-        <View style={[styles.voicePlayBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.2)' : colors.primaryLight }]}>
-          <Text style={{ color: isOwn ? colors.messageMineFg : colors.primary, fontSize: 14 }}>▶</Text>
-        </View>
+        <TouchableOpacity
+          onPress={togglePlayback}
+          activeOpacity={0.7}
+          style={[styles.voicePlayBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.2)' : colors.primaryLight }]}
+        >
+          <Ionicons name={isPlaying ? 'pause' : 'play'} size={14} color={isOwn ? colors.messageMineFg : colors.primary} />
+        </TouchableOpacity>
         <View style={styles.voiceWaveform}>
-          {Array.from({ length: 20 }).map((_, i) => (
+          {bars.map((h, i) => (
             <View
               key={i}
               style={[
                 styles.voiceBar,
                 {
-                  height: 4 + Math.random() * 14,
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.5)' : colors.primary + '60',
+                  height: h,
+                  backgroundColor: i <= activeBarIndex ? activeBarColor : inactiveBarColor,
                 },
               ]}
             />
@@ -384,7 +460,7 @@ function FileContent({ message, isOwn }: { message: Message; isOwn: boolean }) {
   return (
     <View style={[styles.fileRow, { backgroundColor: isOwn ? 'rgba(255,255,255,0.1)' : colors.surface, borderColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.border }]}>
       <View style={[styles.fileIcon, { backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.primaryLight }]}>
-        <Text style={{ fontSize: 16 }}>📄</Text>
+        <Ionicons name="document-outline" size={18} color={isOwn ? colors.messageMineFg : colors.primary} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ color: isOwn ? colors.messageMineFg : colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.medium }} numberOfLines={1}>
@@ -417,12 +493,12 @@ function VideoContent({ message, isOwn }: { message: Message; isOwn: boolean }) 
           <Image source={{ uri: thumbnailUrl }} style={styles.videoThumb} resizeMode="cover" />
         ) : (
           <View style={[styles.videoThumb, { backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' }]}>
-            <Text style={{ fontSize: 32 }}>🎬</Text>
+            <Ionicons name="videocam-outline" size={32} color={colors.textMuted} />
           </View>
         )}
         <View style={styles.videoPlayOverlay}>
           <View style={[styles.videoPlayBtn, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
-            <Text style={{ color: '#fff', fontSize: 18 }}>▶</Text>
+            <Ionicons name="play" size={20} color="#fff" />
           </View>
         </View>
         <View style={[styles.videoDuration, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
@@ -499,7 +575,7 @@ function AttachmentsContent({ message, isOwn }: { message: Message; isOwn: boole
         return (
           <View key={i} style={[styles.fileRow, { backgroundColor: isOwn ? 'rgba(255,255,255,0.1)' : colors.surface, borderColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.border, marginTop: spacing.xs }]}>
             <View style={[styles.fileIcon, { backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.primaryLight }]}>
-              <Text style={{ fontSize: 16 }}>📄</Text>
+              <Ionicons name="document-outline" size={18} color={isOwn ? colors.messageMineFg : colors.primary} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={{ color: isOwn ? colors.messageMineFg : colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.medium }} numberOfLines={1}>

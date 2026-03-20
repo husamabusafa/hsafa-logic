@@ -12,14 +12,15 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 import { apiKeysApi, type ApiKeyInfo } from '../../lib/api';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 
 const PROVIDERS = [
-  { id: 'openai', label: 'OpenAI', icon: '🧠' },
-  { id: 'anthropic', label: 'Anthropic', icon: '🔮' },
-  { id: 'google', label: 'Google AI', icon: '🌐' },
-  { id: 'groq', label: 'Groq', icon: '⚡' },
+  { id: 'openai', label: 'OpenAI', icon: 'cube-outline' as const },
+  { id: 'anthropic', label: 'Anthropic', icon: 'diamond-outline' as const },
+  { id: 'google', label: 'Google AI', icon: 'globe-outline' as const },
+  { id: 'groq', label: 'Groq', icon: 'flash-outline' as const },
 ];
 
 export function ApiKeysScreen() {
@@ -132,13 +133,13 @@ export function ApiKeysScreen() {
                 >
                   <View style={styles.providerHeader}>
                     <View style={[styles.providerIcon, { backgroundColor: colors.primaryLight }]}>
-                      <Text style={{ fontSize: 18 }}>{p.icon}</Text>
+                      <Ionicons name={p.icon} size={18} color={colors.primary} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.providerName, { color: colors.text }]}>{p.label}</Text>
                       {existing ? (
                         <Text style={[styles.providerHint, { color: colors.success }]}>
-                          ✓ {existing.keyHint}
+                          ✔ {existing.keyHint}
                         </Text>
                       ) : (
                         <Text style={[styles.providerHint, { color: colors.textMuted }]}>Not configured</Text>

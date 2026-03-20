@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../lib/auth-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 
 const CODE_LENGTH = 6;
@@ -90,7 +91,7 @@ export function VerifyEmailScreen() {
         <View style={styles.content}>
           <Animated.View style={{ transform: [{ scale: successScale }] }}>
             <View style={[styles.successIcon, { backgroundColor: colors.successLight }]}>
-              <Text style={styles.successEmoji}>✓</Text>
+              <Ionicons name="checkmark-circle" size={36} color="#22c55e" />
             </View>
           </Animated.View>
           <Text style={[styles.title, { color: colors.text }]}>Email verified!</Text>
@@ -108,7 +109,7 @@ export function VerifyEmailScreen() {
       <View style={styles.content}>
         {/* Header */}
         <View style={[styles.iconCircle, { backgroundColor: colors.primaryLight }]}>
-          <Text style={styles.iconEmoji}>✉️</Text>
+          <Ionicons name="mail-outline" size={30} color={colors.primary} />
         </View>
         <Text style={[styles.title, { color: colors.text }]}>Check your email</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>

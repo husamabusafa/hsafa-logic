@@ -11,6 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import { spacesApi, type SmartSpace } from '../lib/api';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../lib/auth-context';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../lib/theme';
 import { haptic } from '../lib/haptics';
@@ -172,7 +173,7 @@ export function ForwardMessageModal({ message, currentSpaceId, onClose, onForwar
                   activeOpacity={0.7}
                 >
                   <View style={[styles.spaceIcon, { backgroundColor: colors.primaryLight }]}>
-                    <Text style={{ fontSize: 16 }}>💬</Text>
+                    <Ionicons name="chatbubbles-outline" size={16} color={colors.primary} />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.spaceName, { color: colors.text }]} numberOfLines={1}>
@@ -184,7 +185,7 @@ export function ForwardMessageModal({ message, currentSpaceId, onClose, onForwar
                   </View>
                   {isSelected && (
                     <View style={[styles.checkCircle, { backgroundColor: colors.primary }]}>
-                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>✓</Text>
+                      <Ionicons name="checkmark" size={12} color="#fff" />
                     </View>
                   )}
                 </TouchableOpacity>

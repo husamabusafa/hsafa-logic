@@ -341,6 +341,7 @@ export const spacesApi = {
     description?: string;
     memberEntityIds?: string[];
     isGroup?: boolean;
+    inviteEmails?: string[];
   }) {
     return request<{ smartSpace: { id: string; name: string } }>(
       '/smart-spaces/create-for-user',

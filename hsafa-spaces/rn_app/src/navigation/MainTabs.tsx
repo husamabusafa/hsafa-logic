@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { View, Text, StyleSheet, Platform } from 'react-native';
+import { View, StyleSheet, Platform } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme, fontSize, fontWeight, spacing, borderRadius } from '../lib/theme';
 import { invitationsApi } from '../lib/api';
 import { SpacesStack } from './stacks/SpacesStack';
@@ -12,20 +13,20 @@ import type { MainTabParamList } from '../lib/types';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
-const TAB_ICONS: Record<string, string> = {
-  SpacesTab: '💬',
-  HaseefsTab: '🤖',
-  BasesTab: '👥',
-  InvitesTab: '✉️',
-  SettingsTab: '⚙️',
+const TAB_ICONS: Record<string, { focused: keyof typeof Ionicons.glyphMap; outline: keyof typeof Ionicons.glyphMap }> = {
+  SpacesTab: { focused: 'chatbubbles', outline: 'chatbubbles-outline' },
+  HaseefsTab: { focused: 'sparkles', outline: 'sparkles-outline' },
+  BasesTab: { focused: 'people', outline: 'people-outline' },
+  InvitesTab: { focused: 'mail', outline: 'mail-outline' },
+  SettingsTab: { focused: 'settings', outline: 'settings-outline' },
 };
 
 function TabIcon({ name, focused, color }: { name: string; focused: boolean; color: string }) {
+  const icons = TAB_ICONS[name] || { focused: 'ellipse', outline: 'ellipse-outline' };
+  const iconName = focused ? icons.focused : icons.outline;
   return (
     <View style={styles.tabIconContainer}>
-      <Text style={[styles.tabIconEmoji, focused && styles.tabIconFocused]}>
-        {TAB_ICONS[name] || '●'}
-      </Text>
+      <Ionicons name={iconName as any} size={focused ? 24 : 22} color={color} />
       {focused && (
         <View style={[styles.tabDot, { backgroundColor: color }]} />
       )}
@@ -132,14 +133,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     height: 28,
-  },
-  tabIconEmoji: {
-    fontSize: 20,
-    opacity: 0.55,
-  },
-  tabIconFocused: {
-    fontSize: 22,
-    opacity: 1,
   },
   tabDot: {
     width: 4,
