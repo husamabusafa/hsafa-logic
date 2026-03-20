@@ -79,21 +79,44 @@ router.get("/", async (req: Request, res: Response) => {
                 select: {
                   entityId: true,
                   role: true,
-                  entity: { select: { id: true, displayName: true, type: true } },
+                  entity: { select: { id: true, displayName: true, type: true, metadata: true } },
                 },
               },
             },
           },
         },
       });
+
+      // Collect all human entity IDs to look up avatarUrl from User table
+      const allEntityIds: string[] = [];
+      for (const m of memberships as any[]) {
+        for (const mb of m.smartSpace.memberships || []) {
+          if (mb.entity?.type === "human") allEntityIds.push(mb.entity.id);
+        }
+      }
+      const avatarMap: Record<string, string> = {};
+      if (allEntityIds.length > 0) {
+        const users = await prisma.user.findMany({
+          where: { hsafaEntityId: { in: [...new Set(allEntityIds)] } },
+          select: { hsafaEntityId: true, avatarUrl: true },
+        });
+        for (const u of users) {
+          if (u.hsafaEntityId && u.avatarUrl) avatarMap[u.hsafaEntityId] = u.avatarUrl;
+        }
+      }
+
       spaces = memberships.map((m: any) => {
         const s = m.smartSpace;
-        const members = (s.memberships || []).map((mb: any) => ({
-          entityId: mb.entityId,
-          displayName: mb.entity?.displayName || null,
-          type: mb.entity?.type || "human",
-          role: mb.role,
-        }));
+        const members = (s.memberships || []).map((mb: any) => {
+          const agentAvatar = (mb.entity?.metadata as any)?.avatarUrl;
+          return {
+            entityId: mb.entityId,
+            displayName: mb.entity?.displayName || null,
+            type: mb.entity?.type || "human",
+            role: mb.role,
+            avatarUrl: avatarMap[mb.entity?.id] || agentAvatar || null,
+          };
+        });
         return { ...s, memberships: undefined, members };
       });
     } else {

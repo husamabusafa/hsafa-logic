@@ -168,6 +168,10 @@ export type RootStackParamList = {
   Main: undefined;
   JoinByCode: { code: string };
   JoinSpaceByCode: { code: string };
+  Chat: { spaceId: string; spaceName?: string };
+  SpaceSettings: { spaceId: string };
+  InviteToSpace: { spaceId: string; spaceName: string };
+  CreateSpace: undefined;
 };
 
 export type MainTabParamList = {
@@ -180,12 +184,6 @@ export type MainTabParamList = {
 
 export type SpacesStackParamList = {
   SpacesList: undefined;
-  Chat: { spaceId: string; spaceName?: string };
-  SpaceDetails: { spaceId: string };
-  SpaceSettings: { spaceId: string };
-  CreateSpace: undefined;
-  JoinSpace: undefined;
-  InviteToSpace: { spaceId: string; spaceName: string };
 };
 
 export type HaseefsStackParamList = {

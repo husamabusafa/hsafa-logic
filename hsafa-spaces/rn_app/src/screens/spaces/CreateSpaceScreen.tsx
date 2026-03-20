@@ -17,9 +17,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { spacesApi, haseefsApi, basesApi, invitationsApi, type Contact, type HaseefListItem, resolveMediaUrl } from '../../lib/api';
 import { useAuth } from '../../lib/auth-context';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
-import type { SpacesStackParamList } from '../../lib/types';
+import type { RootStackParamList } from '../../lib/types';
 
-type Nav = NativeStackNavigationProp<SpacesStackParamList>;
+type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 type DirectTarget =
   | { kind: 'contact'; entityId: string; displayName: string; avatarUrl?: string | null }

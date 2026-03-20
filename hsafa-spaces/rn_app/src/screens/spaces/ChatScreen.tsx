@@ -6,6 +6,7 @@ import {
   FlatList,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
@@ -13,8 +14,10 @@ import {
   Animated,
   Modal,
   Image,
+  Keyboard,
+  InputAccessoryView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
@@ -34,9 +37,9 @@ import { TypingDots } from '../../components/TypingDots';
 import { SwipeableRow } from '../../components/SwipeableRow';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 import { haptic } from '../../lib/haptics';
-import type { SpacesStackParamList, Message, Member } from '../../lib/types';
+import type { RootStackParamList, Member, Message, MessageType } from '../../lib/types';
 
-type Props = NativeStackScreenProps<SpacesStackParamList, 'Chat'>;
+type Props = NativeStackScreenProps<RootStackParamList, 'Chat'>;
 
 function toMember(m: SpaceMember): Member {
   return {
@@ -152,6 +155,21 @@ export function ChatScreen({ route }: Props) {
     }
   }, [messages.length]);
 
+  // Track keyboard visibility for bottom padding toggle
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 250);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+    });
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
+
   // Mark last message as seen
   useEffect(() => {
     const last = messages[messages.length - 1];
@@ -170,6 +188,8 @@ export function ChatScreen({ route }: Props) {
     setReplyingTo(null);
     try {
       await sendMessage(text, replyId ?? undefined);
+      // Always scroll to bottom after sending
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
     } catch (err: any) {
       Alert.alert('Error', err.message || 'Failed to send message');
     } finally {
@@ -385,9 +405,20 @@ export function ChatScreen({ route }: Props) {
   const renderMessage = useCallback(({ item, index }: { item: Message; index: number }) => {
     const isOwn = item.entityId === currentEntityId;
     const prevMsg = index > 0 ? messages[index - 1] : null;
+    const nextMsg = index < messages.length - 1 ? messages[index + 1] : null;
+    
+    // Show sender name on first message in group
     const showSenderName = !isOwn && (
       !prevMsg || prevMsg.entityId !== item.entityId || item.type === 'system'
     );
+    
+    // Show avatar only on LAST message in consecutive group from same sender
+    const isLastInGroup = !nextMsg || nextMsg.entityId !== item.entityId || nextMsg.type === 'system';
+    const showAvatar = !isOwn && isLastInGroup;
+    
+    // Determine bubble position in group for corner radius styling
+    const isFirstInGroup = showSenderName;
+    const isMiddleInGroup = !isFirstInGroup && !isLastInGroup;
     const isInteractive = ['confirmation', 'vote', 'choice', 'form', 'card', 'chart'].includes(item.type);
 
     // Date separator
@@ -452,9 +483,9 @@ export function ChatScreen({ route }: Props) {
             showSenderName && { marginTop: spacing.md },
           ]}
         >
-        <View style={isOwn ? { maxWidth: '80%' } : styles.messageRowWithAvatar}>
+        <View style={isOwn ? { alignSelf: 'flex-end' } : styles.messageRowWithAvatar}>
           {/* Sender avatar */}
-          {!isOwn && showSenderName && (() => {
+          {showAvatar && (() => {
             const member = members.find((mem) => mem.entityId === item.entityId);
             const avatar = resolveMediaUrl(member?.avatarUrl ?? null);
             const isAgent = member?.type === 'agent' || item.senderType === 'agent';
@@ -480,8 +511,8 @@ export function ChatScreen({ route }: Props) {
               </TouchableOpacity>
             );
           })()}
-          {!isOwn && !showSenderName && <View style={styles.msgAvatarSpacer} />}
-        <View style={{ maxWidth: isOwn ? '100%' : undefined, flex: isOwn ? undefined : 1 }}>
+          {!isOwn && !showAvatar && <View style={styles.msgAvatarSpacer} />}
+        <View style={{ alignSelf: isOwn ? 'flex-end' : 'flex-start' }}>
           {/* Sender name */}
           {showSenderName && (
             <TouchableOpacity
@@ -548,6 +579,9 @@ export function ChatScreen({ route }: Props) {
                 : (isInteractive
                     ? [styles.bubbleOtherInteractive, { backgroundColor: colors.card, borderColor: colors.border }]
                     : [styles.bubbleOther, { backgroundColor: colors.messageOther, borderColor: colors.border }]),
+              // Dynamic corner radius: only last message in group has sharp corner, others have equal rounded corners
+              isOwn && !isLastInGroup ? { borderBottomRightRadius: borderRadius.lg, borderTopRightRadius: borderRadius.lg } : {},
+              !isOwn && !isLastInGroup ? { borderBottomLeftRadius: borderRadius.lg, borderTopLeftRadius: borderRadius.lg } : {},
             ]}
           >
             <MessageRenderer
@@ -586,19 +620,49 @@ export function ChatScreen({ route }: Props) {
     );
   }, [currentEntityId, messages, colors, handleRespond, members, highlightedMessageId, highlightAnim, flashHighlight, messageSeenMap]);
 
-  // Typing / agent activity indicator
-  const statusLine = (() => {
-    if (activeAgents.length > 0) {
-      const names = activeAgents.map((a) => a.agentName || 'Haseef').join(', ');
-      return `${names} is thinking...`;
+  // Merge active agents into typing list (agents show as "typing" like humans)
+  const allTyping = useMemo(() => {
+    const typing: Array<{ entityId: string; name: string; activity?: 'typing' | 'recording' }> = [];
+    // Human typing users
+    for (const t of typingUsers) {
+      if (t.entityId === currentEntityId) continue;
+      typing.push({ entityId: t.entityId, name: t.entityName, activity: t.activity });
     }
-    if (typingUsers.length > 0) {
-      const names = typingUsers.map((t) => t.entityName).join(', ');
-      const activity = typingUsers[0]?.activity === 'recording' ? 'recording' : 'typing';
-      return `${names} is ${activity}...`;
+    // Active agents as typing (only if not already in typingUsers)
+    for (const a of activeAgents) {
+      if (typing.some((t) => t.entityId === a.agentEntityId)) continue;
+      const member = members.find((m) => m.entityId === a.agentEntityId);
+      typing.push({ entityId: a.agentEntityId, name: member?.name || a.agentName || 'Haseef', activity: 'typing' });
     }
-    return null;
-  })();
+    return typing;
+  }, [typingUsers, activeAgents, currentEntityId, members]);
+
+  const statusLine = useMemo(() => {
+    if (allTyping.length === 0) return null;
+    const hasRecording = allTyping.some((t) => t.activity === 'recording');
+    const verb = hasRecording ? 'recording voice' : 'typing';
+    if (allTyping.length === 1) return `${allTyping[0].name} is ${verb}...`;
+    if (allTyping.length === 2) return `${allTyping[0].name} and ${allTyping[1].name} are ${verb}...`;
+    return `${allTyping[0].name} and ${allTyping.length - 1} others are ${verb}...`;
+  }, [allTyping]);
+
+  const isDirect = useMemo(() => {
+    const meta = route.params as Record<string, unknown>;
+    // Direct spaces have exactly 2 members
+    return members.length === 2;
+  }, [members.length]);
+
+  const otherMember = useMemo(() => {
+    if (!isDirect) return null;
+    return members.find((m) => m.entityId !== currentEntityId) ?? null;
+  }, [isDirect, members, currentEntityId]);
+
+  // Online count excluding self
+  const onlineOtherCount = useMemo(() => {
+    return onlineUserIds.filter((id) => id !== currentEntityId).length;
+  }, [onlineUserIds, currentEntityId]);
+
+  const insets = useSafeAreaInsets();
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
@@ -615,8 +679,7 @@ export function ChatScreen({ route }: Props) {
           <View style={styles.headerRow}>
             {/* Space avatar */}
             {(() => {
-              const isGroup = members.length > 2;
-              const otherMember = !isGroup ? members.find((m) => m.entityId !== currentEntityId) : null;
+              const isGroup = !isDirect;
               const otherAvatar = resolveMediaUrl(otherMember?.avatarUrl ?? null);
               const isAgent = otherMember?.type === 'agent';
 
@@ -646,10 +709,23 @@ export function ChatScreen({ route }: Props) {
               <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
                 {spaceName || 'Chat'}
               </Text>
-              <Text style={[styles.headerSubtitle, { color: colors.textMuted }]}>
-                {members.length} member{members.length !== 1 ? 's' : ''}
-                {onlineUserIds.length > 0 ? ` · ${onlineUserIds.length} online` : ''}
-              </Text>
+              {statusLine ? (
+                <Text style={[styles.headerSubtitle, { color: colors.primary }]} numberOfLines={1}>
+                  {statusLine}
+                </Text>
+              ) : isDirect ? (
+                otherMember?.isOnline ? (
+                  <Text style={[styles.headerSubtitle, { color: colors.success }]}>online</Text>
+                ) : null
+              ) : (
+                <Text style={[styles.headerSubtitle, { color: colors.textMuted }]}>
+                  {members.length} member{members.length !== 1 ? 's' : ''}
+                  {onlineOtherCount > 0 ? ` · ` : ''}
+                  {onlineOtherCount > 0 && (
+                    <Text style={{ color: colors.success }}>{onlineOtherCount} online</Text>
+                  )}
+                </Text>
+              )}
             </View>
           </View>
         </TouchableOpacity>
@@ -703,6 +779,9 @@ export function ChatScreen({ route }: Props) {
             }
             onEndReachedThreshold={0.1}
             showsVerticalScrollIndicator={false}
+            keyboardDismissMode="on-drag"
+            onScrollBeginDrag={() => Keyboard.dismiss()}
+            automaticallyAdjustKeyboardInsets={false}
             onScroll={(e) => {
               const offsetY = e.nativeEvent.contentOffset.y;
               const contentH = e.nativeEvent.contentSize.height;
@@ -714,7 +793,7 @@ export function ChatScreen({ route }: Props) {
         )}
 
         {/* Typing / agent activity */}
-        {statusLine && (
+        {allTyping.length > 0 && (
           <View style={[styles.statusBar, { backgroundColor: colors.surface }]}>
             <TypingDots color={colors.primary} size={5} />
             <Text style={[styles.statusText, { color: colors.textSecondary }]}>{statusLine}</Text>
@@ -745,8 +824,8 @@ export function ChatScreen({ route }: Props) {
           </View>
         )}
 
-        {/* Input bar */}
-        <View style={[styles.inputBar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+        {/* Input bar — bottom padding accounts for home indicator when keyboard is closed */}
+        <View style={[styles.inputBar, { backgroundColor: colors.card, borderTopColor: colors.border, paddingBottom: keyboardVisible ? spacing.sm : spacing.sm + insets.bottom }]}>
           {isRecording ? (
             /* ── Recording UI ── */
             <>
@@ -1080,7 +1159,7 @@ const styles = StyleSheet.create({
   settingsBtn: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
 
   // Messages list
-  messagesList: { paddingHorizontal: spacing.md, paddingBottom: spacing.sm, paddingTop: spacing.sm },
+  messagesList: { paddingHorizontal: spacing.md, paddingBottom: spacing['2xl'], paddingTop: spacing.sm },
   emptyList: { flexGrow: 1, justifyContent: 'center' },
   emptyChat: { alignItems: 'center' },
   emptyChatIcon: { marginBottom: spacing.sm },
@@ -1092,7 +1171,7 @@ const styles = StyleSheet.create({
   messageRow: { marginTop: spacing.xs },
   messageRowOwn: { alignItems: 'flex-end' },
   messageRowOther: { alignItems: 'flex-start' },
-  messageRowWithAvatar: { flexDirection: 'row', alignItems: 'flex-end', maxWidth: '80%', gap: spacing.xs },
+  messageRowWithAvatar: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.xs },
   msgAvatarWrap: { marginBottom: 2 },
   msgAvatar: { width: 28, height: 28, borderRadius: 14 },
   msgAvatarFallback: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
@@ -1101,7 +1180,7 @@ const styles = StyleSheet.create({
   senderName: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, marginBottom: 2, marginLeft: spacing.xs },
 
   // Bubble
-  bubble: { borderRadius: borderRadius.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, maxWidth: '100%' },
+  bubble: { borderRadius: borderRadius.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, alignSelf: 'flex-start' },
   bubbleOwn: { borderBottomRightRadius: borderRadius.sm },
   bubbleOther: { borderBottomLeftRadius: borderRadius.sm, borderWidth: StyleSheet.hairlineWidth },
   bubbleOwnInteractive: { borderRadius: borderRadius.lg, borderWidth: 1, paddingHorizontal: spacing.md, paddingVertical: spacing.md },

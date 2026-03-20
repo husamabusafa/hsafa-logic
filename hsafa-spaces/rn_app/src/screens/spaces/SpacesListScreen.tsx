@@ -10,19 +10,20 @@ import {
   Modal,
   TextInput,
   Alert,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../../lib/auth-context';
-import { spacesApi, type SmartSpace } from '../../lib/api';
+import { spacesApi, resolveMediaUrl, type SmartSpace } from '../../lib/api';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 import { haptic } from '../../lib/haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { ListSkeleton } from '../../components/Skeleton';
-import type { SpacesStackParamList } from '../../lib/types';
+import type { RootStackParamList } from '../../lib/types';
 
-type Nav = NativeStackNavigationProp<SpacesStackParamList, 'SpacesList'>;
+type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 export function SpacesListScreen() {
   const navigation = useNavigation<Nav>();
@@ -112,8 +113,13 @@ export function SpacesListScreen() {
   const renderSpace = ({ item }: { item: SmartSpace }) => {
     const name = getSpaceDisplayName(item);
     const meta = item.metadata as Record<string, unknown> | undefined;
-    const isDirect = !!meta?.isDirect;
+    const isDirect = !!meta?.isDirect || (item.members?.length === 2);
     const memberCount = item.members?.length ?? 0;
+    const otherMember = isDirect
+      ? item.members?.find((m) => m.entityId !== currentEntityId)
+      : null;
+    const otherAvatar = resolveMediaUrl(otherMember?.avatarUrl ?? null);
+    const isAgent = otherMember?.type === 'agent';
 
     return (
       <TouchableOpacity
@@ -122,19 +128,47 @@ export function SpacesListScreen() {
         activeOpacity={0.7}
       >
         <View style={styles.spaceRow}>
-          <View style={[styles.avatar, { backgroundColor: isDirect ? colors.primary : colors.primaryLight }]}>
-            <Text style={[styles.avatarText, { color: isDirect ? colors.primaryForeground : colors.primary }]}>
-              {isDirect ? name.charAt(0).toUpperCase() : '#'}
-            </Text>
-          </View>
+          {/* Avatar: show other entity's avatar for direct spaces */}
+          {isDirect && otherAvatar ? (
+            <Image
+              source={{ uri: otherAvatar }}
+              style={styles.avatarImage}
+            />
+          ) : (
+            <View style={[styles.avatar, {
+              backgroundColor: isDirect
+                ? (isAgent ? colors.successLight : colors.primaryLight)
+                : colors.primaryLight,
+            }]}>
+              {isDirect ? (
+                isAgent ? (
+                  <Ionicons name="sparkles" size={18} color={colors.success} />
+                ) : (
+                  <Text style={[styles.avatarText, { color: colors.primary }]}>
+                    {name.charAt(0).toUpperCase()}
+                  </Text>
+                )
+              ) : (
+                <Text style={[styles.avatarText, { color: colors.primary }]}>#</Text>
+              )}
+            </View>
+          )}
           <View style={styles.spaceInfo}>
             <Text style={[styles.spaceName, { color: colors.text }]} numberOfLines={1}>
               {name}
             </Text>
-            <Text style={[styles.spaceMeta, { color: colors.textMuted }]} numberOfLines={1}>
-              {memberCount} member{memberCount !== 1 ? 's' : ''}
-              {item.description ? ` · ${item.description}` : ''}
-            </Text>
+            {isDirect ? (
+              item.description ? (
+                <Text style={[styles.spaceMeta, { color: colors.textMuted }]} numberOfLines={1}>
+                  {item.description}
+                </Text>
+              ) : null
+            ) : (
+              <Text style={[styles.spaceMeta, { color: colors.textMuted }]} numberOfLines={1}>
+                {memberCount} member{memberCount !== 1 ? 's' : ''}
+                {item.description ? ` · ${item.description}` : ''}
+              </Text>
+            )}
           </View>
           <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
         </View>
@@ -318,9 +352,15 @@ const styles = StyleSheet.create({
   avatar: {
     width: 44,
     height: 44,
-    borderRadius: borderRadius.lg,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: spacing.md,
+  },
+  avatarImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     marginRight: spacing.md,
   },
   avatarText: {

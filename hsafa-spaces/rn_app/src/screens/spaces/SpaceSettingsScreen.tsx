@@ -19,9 +19,9 @@ import { spacesApi, haseefsApi, resolveMediaUrl, type SmartSpace, type SpaceMemb
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
-import type { SpacesStackParamList } from '../../lib/types';
+import type { RootStackParamList } from '../../lib/types';
 
-type Props = NativeStackScreenProps<SpacesStackParamList, 'SpaceSettings'>;
+type Props = NativeStackScreenProps<RootStackParamList, 'SpaceSettings'>;
 
 export function SpaceSettingsScreen({ route }: Props) {
   const { spaceId } = route.params;

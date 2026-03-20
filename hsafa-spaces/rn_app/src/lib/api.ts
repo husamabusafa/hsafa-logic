@@ -285,6 +285,7 @@ export interface SmartSpaceMemberSummary {
   displayName: string | null;
   type: 'human' | 'agent';
   role: 'owner' | 'admin' | 'member';
+  avatarUrl?: string | null;
 }
 
 export interface SmartSpace {

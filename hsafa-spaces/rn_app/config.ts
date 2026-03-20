@@ -6,8 +6,10 @@
 
 // Use production URL for TestFlight/App Store builds
 // Use local IP for development
-const IS_DEV = __DEV__;
-export const SERVER_URL = IS_DEV 
-  ? 'http://192.168.100.71:3005'
-  : 'https://acoustic-coordination-systematic-graphic.trycloudflare.com';
+
+// TEMPORARY: Force local IP for testing (remove this line for production)
+export const SERVER_URL = 'http://192.168.100.71:3005';
 export const API_BASE = `${SERVER_URL}/api`;
+
+// Debug logging
+console.log('[CONFIG] SERVER_URL:', SERVER_URL);

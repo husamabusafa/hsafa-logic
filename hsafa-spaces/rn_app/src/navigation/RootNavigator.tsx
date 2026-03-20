@@ -5,6 +5,10 @@ import { useTheme } from '../lib/theme';
 import { AuthScreen } from '../screens/auth/AuthScreen';
 import { VerifyEmailScreen } from '../screens/auth/VerifyEmailScreen';
 import { JoinSpaceByCodeScreen } from '../screens/spaces/JoinSpaceByCodeScreen';
+import { ChatScreen } from '../screens/spaces/ChatScreen';
+import { SpaceSettingsScreen } from '../screens/spaces/SpaceSettingsScreen';
+import { InviteToSpaceScreen } from '../screens/spaces/InviteToSpaceScreen';
+import { CreateSpaceScreen } from '../screens/spaces/CreateSpaceScreen';
 import { MainTabs } from './MainTabs';
 import { ActivityIndicator, View, Image } from 'react-native';
 import type { RootStackParamList } from '../lib/types';
@@ -49,6 +53,10 @@ export function RootNavigator() {
       ) : (
         <>
           <Stack.Screen name="Main" component={MainTabs} />
+          <Stack.Screen name="Chat" component={ChatScreen} />
+          <Stack.Screen name="SpaceSettings" component={SpaceSettingsScreen} />
+          <Stack.Screen name="InviteToSpace" component={InviteToSpaceScreen} />
+          <Stack.Screen name="CreateSpace" component={CreateSpaceScreen} />
           <Stack.Screen name="JoinSpaceByCode" component={JoinSpaceByCodeScreen} />
         </>
       )}

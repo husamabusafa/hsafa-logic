@@ -16,9 +16,9 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { invitationsApi, spacesApi, resolveMediaUrl, type Contact, type SpaceMember } from '../../lib/api';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
-import type { SpacesStackParamList } from '../../lib/types';
+import type { RootStackParamList } from '../../lib/types';
 
-type Props = NativeStackScreenProps<SpacesStackParamList, 'InviteToSpace'>;
+type Props = NativeStackScreenProps<RootStackParamList, 'InviteToSpace'>;
 
 export function InviteToSpaceScreen({ route }: Props) {
   const { spaceId, spaceName } = route.params;
