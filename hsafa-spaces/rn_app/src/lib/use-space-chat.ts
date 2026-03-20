@@ -275,6 +275,8 @@ export function useSpaceChat(
         const typing = data.typing !== false;
         const activity = data.activity as "typing" | "recording" | undefined;
         console.log(`[useSpaceChat] user.typing: ${entityId}, typing=${typing}`);
+        // Don't show own typing indicator
+        if (entityId === myEntityId) break;
         if (typing) {
           setTypingUsers((prev) => {
             const existing = prev.find((t) => t.entityId === entityId);
@@ -344,9 +346,11 @@ export function useSpaceChat(
 
       case 'message.seen': {
         const entityId = data.entityId as string;
-        const messageId = data.messageId as string;
-        console.log(`[useSpaceChat] message.seen: entity=${entityId}, msg=${messageId}`);
-        setSeenWatermarks((prev) => ({ ...prev, [entityId]: messageId }));
+        const lastSeenMessageId = data.lastSeenMessageId as string;
+        console.log(`[useSpaceChat] message.seen: entity=${entityId}, msg=${lastSeenMessageId}`);
+        if (entityId && lastSeenMessageId) {
+          setSeenWatermarks((prev) => ({ ...prev, [entityId]: lastSeenMessageId }));
+        }
         break;
       }
 
