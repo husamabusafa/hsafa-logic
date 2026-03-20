@@ -59,6 +59,52 @@ async function buildSpacesInstructions(haseefId: string): Promise<string> {
   const conn = state.connections.get(haseefId);
   const sections: string[] = [SCOPE_INSTRUCTIONS];
 
+  // ── YOUR BASES ──────────────────────────────────────────────────────
+  if (conn?.agentEntityId) {
+    const baseMembers = await prisma.baseMember.findMany({
+      where: { entityId: conn.agentEntityId },
+      select: { baseId: true },
+    });
+    const baseIds = baseMembers.map((b) => b.baseId);
+
+    if (baseIds.length === 0) {
+      sections.push('YOUR BASES:\n  (no bases yet)');
+    } else {
+      const bases = await prisma.base.findMany({
+        where: { id: { in: baseIds } },
+        select: { id: true, name: true },
+      });
+
+      const allMembers = await prisma.baseMember.findMany({
+        where: { baseId: { in: baseIds } },
+        include: {
+          entity: { select: { id: true, displayName: true, type: true } },
+        },
+      });
+
+      // Group members by baseId
+      const membersByBase = new Map<string, typeof allMembers>();
+      for (const m of allMembers) {
+        const arr = membersByBase.get(m.baseId) ?? [];
+        arr.push(m);
+        membersByBase.set(m.baseId, arr);
+      }
+
+      const baseLines = bases.map((b) => {
+        const members = membersByBase.get(b.id) ?? [];
+        const memberList = members.map((m: any) => {
+          const isYou = m.entity.id === conn.agentEntityId;
+          return `${m.entity.displayName}${isYou ? ' (You)' : ''} [${m.entity.type}, entityId: ${m.entity.id}]`;
+        }).join(', ');
+        return `  - "${b.name}" (baseId: ${b.id}, ${members.length} members): ${memberList}`;
+      });
+
+      sections.push('YOUR BASES:\n' + baseLines.join('\n'));
+    }
+  } else {
+    sections.push('YOUR BASES:\n  (no bases yet)');
+  }
+
   // ── YOUR SPACES ──────────────────────────────────────────────────────
   if (!conn || conn.spaceIds.length === 0) {
     sections.push('YOUR SPACES:\n  (no spaces yet)');

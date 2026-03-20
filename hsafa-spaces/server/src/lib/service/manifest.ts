@@ -28,6 +28,12 @@ HOW IT WORKS:
   Events show [YOU ARE: YourName], the space info, recent conversation, and the new message.
   In recent conversation, "You" = your past messages. Only respond to the NEW MESSAGE.
 
+BASES:
+  You belong to one or more "bases" — groups of humans and haseefs who work together.
+  Use create_space to start conversations with anyone in your base.
+  You can create 1-on-1 direct spaces or group spaces with multiple members from your base.
+  Your bases and their members are listed below.
+
 TIPS:
   Don't repeat yourself — check what you already said in the recent conversation.
   In group spaces, respond when addressed. In 1-on-1 with another haseef, avoid infinite loops.
@@ -433,6 +439,31 @@ export const TOOLS = [
         },
       },
       required: ["title", "data"],
+    },
+    mode: "sync" as const,
+  },
+  {
+    name: "create_space",
+    description:
+      "Create a new space (conversation) and add members from your base. You can create a direct 1-on-1 space or a group space with multiple members. You are automatically added as a member. Returns the new space info.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        name: {
+          type: "string",
+          description: "Name for the space. For direct spaces, can be omitted (auto-named). Required for group spaces.",
+        },
+        memberEntityIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Entity IDs of members to add. Must be from your base. You are added automatically.",
+        },
+        description: {
+          type: "string",
+          description: "Optional description for the space.",
+        },
+      },
+      required: ["memberEntityIds"],
     },
     mode: "sync" as const,
   },

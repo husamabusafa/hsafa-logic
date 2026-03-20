@@ -152,6 +152,8 @@ export interface MockSpace {
   lastMessage?: { content: string; senderName: string; time: string };
   unreadCount: number;
   isGroup: boolean;
+  inviteCode?: string | null;
+  inviteLinkActive?: boolean;
 }
 
 export interface MockInvitation {

@@ -12,6 +12,7 @@ import responsesRoutes from "./routes/responses.js";
 import mediaRoutes, { mountStaticServing } from "./routes/media.js";
 import aiGenerateRoutes from "./routes/ai-generate.js";
 import apiKeysRoutes from "./routes/api-keys.js";
+import basesRoutes from "./routes/bases.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3005", 10);
@@ -32,6 +33,7 @@ app.use("/api/smart-spaces", responsesRoutes);
 app.use("/api/media", mediaRoutes);
 app.use("/api/ai", aiGenerateRoutes);
 app.use("/api/api-keys", apiKeysRoutes);
+app.use("/api/bases", basesRoutes);
 
 // Health check
 app.get("/health", (_req, res) => {

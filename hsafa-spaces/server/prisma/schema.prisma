@@ -43,8 +43,11 @@ model User {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
+  defaultBaseId    String?  @map("default_base_id") @db.Uuid
+
   haseefOwnerships HaseefOwnership[]
   apiKeys          ApiKey[]
+  defaultBase      Base?    @relation("userDefaultBase", fields: [defaultBaseId], references: [id])
 
   @@map("users")
 }
@@ -70,6 +73,7 @@ model Entity {
   messageResponses      MessageResponse[]
   mediaAssets           MediaAsset[]
   haseefOwnerships      HaseefOwnership[]
+  baseMemberships       BaseMember[]
 
   @@index([type])
   @@index([externalId])
@@ -81,12 +85,14 @@ model Entity {
 // =============================================================================
 
 model SmartSpace {
-  id          String   @id @default(uuid()) @db.Uuid
-  name        String?
-  description String?
-  metadata    Json?    @db.JsonB
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id               String   @id @default(uuid()) @db.Uuid
+  name             String?
+  description      String?
+  metadata         Json?    @db.JsonB
+  inviteCode       String?  @unique @map("invite_code")
+  inviteLinkActive Boolean  @default(true) @map("invite_link_active")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   memberships      SmartSpaceMembership[]
   messages         SmartSpaceMessage[]
@@ -236,6 +242,44 @@ model MediaAsset {
 
   @@index([entityId])
   @@map("media_assets")
+}
+
+// =============================================================================
+// BASE — Groups humans + Haseefs together
+// =============================================================================
+
+model Base {
+  id               String   @id @default(uuid()) @db.Uuid
+  name             String
+  avatarUrl        String?  @map("avatar_url")
+  inviteCode       String   @unique @map("invite_code") // e.g. "FAMILY-7Q4K"
+  inviteLinkActive Boolean  @default(true) @map("invite_link_active")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  members     BaseMember[]
+  defaultUsers User[]  @relation("userDefaultBase")
+
+  @@map("bases")
+}
+
+// =============================================================================
+// BASE MEMBER — Entity (human or Haseef) belonging to a Base
+// =============================================================================
+
+model BaseMember {
+  id        String   @id @default(uuid()) @db.Uuid
+  baseId    String   @map("base_id") @db.Uuid
+  entityId  String   @map("entity_id") @db.Uuid
+  role      String   @default("member") // "owner" | "admin" | "member"
+  joinedAt  DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
+
+  base   Base   @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([baseId, entityId])
+  @@index([entityId])
+  @@map("base_members")
 }
 
 // =============================================================================

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PlusIcon, SearchIcon, LoaderIcon } from "lucide-react";
+import { PlusIcon, SearchIcon, LoaderIcon, LinkIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -11,10 +11,11 @@ interface SpacesSidebarProps {
   currentEntityId: string;
   onSelectSpace: (spaceId: string) => void;
   onCreateSpace: () => void;
+  onJoinSpace?: () => void;
   isLoading?: boolean;
 }
 
-export function SpacesSidebar({ spaces, selectedSpaceId, currentEntityId, onSelectSpace, onCreateSpace, isLoading }: SpacesSidebarProps) {
+export function SpacesSidebar({ spaces, selectedSpaceId, currentEntityId, onSelectSpace, onCreateSpace, onJoinSpace, isLoading }: SpacesSidebarProps) {
   const [search, setSearch] = useState("");
 
   const filtered = spaces.filter((s) => {
@@ -41,9 +42,16 @@ export function SpacesSidebar({ spaces, selectedSpaceId, currentEntityId, onSele
             className="h-7 w-auto hidden dark:block"
           />
         </div>
-        <Button variant="ghost" size="icon" onClick={onCreateSpace} title="Create space">
-          <PlusIcon className="size-5" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {onJoinSpace && (
+            <Button variant="ghost" size="icon" onClick={onJoinSpace} title="Join space by code">
+              <LinkIcon className="size-5" />
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" onClick={onCreateSpace} title="Create space">
+            <PlusIcon className="size-5" />
+          </Button>
+        </div>
       </div>
 
       {/* Search */}

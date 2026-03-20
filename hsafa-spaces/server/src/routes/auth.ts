@@ -18,6 +18,16 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5180";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Generate a short, readable invite code */
+function generateInviteCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 8; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
+
 async function createEntityAndSpace(name: string, email: string) {
   const entityId = crypto.randomUUID();
   const entity = await prisma.entity.create({
@@ -41,13 +51,27 @@ async function createEntityAndSpace(name: string, email: string) {
     },
   });
 
+  // Create default Base for the user
+  const base = await prisma.base.create({
+    data: {
+      name: `${name}'s Base`,
+      inviteCode: generateInviteCode(),
+      members: {
+        create: {
+          entityId: entity.id,
+          role: "owner",
+        },
+      },
+    },
+  });
+
   // Resolve pending invitations for this email
   await prisma.invitation.updateMany({
     where: { inviteeEmail: email, status: "pending", inviteeId: null },
     data: { inviteeId: entity.id },
   });
 
-  return { entity, smartSpace };
+  return { entity, smartSpace, base };
 }
 
 async function buildUserResponse(user: any) {
@@ -58,17 +82,33 @@ async function buildUserResponse(user: any) {
       })
     : [];
 
+  // Fetch user's bases
+  const baseMemberships = user.hsafaEntityId
+    ? await prisma.baseMember.findMany({
+        where: { entityId: user.hsafaEntityId },
+        include: { base: { select: { id: true, name: true, avatarUrl: true, inviteCode: true } } },
+      })
+    : [];
+
   return {
     id: user.id,
     email: user.email,
     name: user.name,
     entityId: user.hsafaEntityId,
     smartSpaceId: user.hsafaSpaceId,
+    defaultBaseId: user.defaultBaseId,
     avatarUrl: user.avatarUrl,
     emailVerified: user.emailVerified,
     spaces: spaces.map((s: any) => ({
       id: s.smartSpace.id,
       name: s.smartSpace.name,
+    })),
+    bases: baseMemberships.map((bm: any) => ({
+      id: bm.base.id,
+      name: bm.base.name,
+      avatarUrl: bm.base.avatarUrl,
+      inviteCode: bm.base.inviteCode,
+      role: bm.role,
     })),
   };
 }
@@ -98,7 +138,7 @@ router.post("/register", async (req, res) => {
     const code = generateVerificationCode();
     const codeExpiry = getCodeExpiry();
 
-    const { entity, smartSpace } = await createEntityAndSpace(name, email);
+    const { entity, smartSpace, base } = await createEntityAndSpace(name, email);
 
     const user = await prisma.user.create({
       data: {
@@ -107,6 +147,7 @@ router.post("/register", async (req, res) => {
         passwordHash,
         hsafaEntityId: entity.id,
         hsafaSpaceId: smartSpace.id,
+        defaultBaseId: base.id,
         emailVerified: false,
         verificationCode: code,
         verificationCodeExpiry: codeExpiry,
@@ -411,12 +452,13 @@ router.get("/auth/google/callback", async (req, res) => {
     if (user) {
       // Ensure entity and space exist (for legacy users or incomplete registrations)
       if (!user.hsafaEntityId) {
-        const { entity, smartSpace } = await createEntityAndSpace(user.name, user.email);
+        const { entity, smartSpace, base } = await createEntityAndSpace(user.name, user.email);
         user = await prisma.user.update({
           where: { id: user.id },
           data: {
             hsafaEntityId: entity.id,
             hsafaSpaceId: smartSpace.id,
+            defaultBaseId: base.id,
             googleId,
             avatarUrl: picture || user.avatarUrl,
             emailVerified: true,
@@ -445,7 +487,7 @@ router.get("/auth/google/callback", async (req, res) => {
     } else {
       // New user via Google
       const displayName = name || email.split("@")[0];
-      const { entity, smartSpace } = await createEntityAndSpace(displayName, email);
+      const { entity, smartSpace, base } = await createEntityAndSpace(displayName, email);
 
       user = await prisma.user.create({
         data: {
@@ -456,6 +498,7 @@ router.get("/auth/google/callback", async (req, res) => {
           emailVerified: true, // Google-verified email
           hsafaEntityId: entity.id,
           hsafaSpaceId: smartSpace.id,
+          defaultBaseId: base.id,
         },
       });
     }

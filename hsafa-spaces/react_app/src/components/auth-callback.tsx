@@ -20,7 +20,9 @@ export function AuthCallback() {
 
     loginWithToken(token)
       .then(() => {
-        navigate("/spaces", { replace: true });
+        const redirect = localStorage.getItem("hsafa_auth_redirect") || "/spaces";
+        localStorage.removeItem("hsafa_auth_redirect");
+        navigate(redirect, { replace: true });
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : "Failed to authenticate");

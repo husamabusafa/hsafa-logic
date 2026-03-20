@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
-import { Routes, Route, Navigate, useParams, useNavigate, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate, useParams, useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { LoaderIcon } from "lucide-react";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AppShell, type AppPage } from "@/components/app-shell";
@@ -8,7 +8,7 @@ import { ChatView, ChatEmptyState } from "@/components/chat-view";
 import { SpaceDetails } from "@/components/space-details";
 import { UserProfile } from "@/components/user-profile";
 import { CreateSpaceDialog } from "@/components/create-space-dialog";
-import { InviteDialog } from "@/components/invite-dialog";
+import { InviteDialog, JoinSpaceDialog } from "@/components/invite-dialog";
 import { InvitationsPage } from "@/components/invitations-page";
 import {
   HaseefsGridPage,
@@ -20,8 +20,9 @@ import { AuthPage } from "@/components/auth-page";
 import { VerifyEmailPage } from "@/components/verify-email-page";
 import { AuthCallback } from "@/components/auth-callback";
 import { ApiKeysPage } from "@/components/api-keys-page";
+import { BasesPage, JoinByLinkPage, JoinSpaceByLinkPage } from "@/components/bases-page";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
-import { haseefsApi, spacesApi, invitationsApi, type HaseefListItem, type SmartSpace, type SpaceMember } from "@/lib/api";
+import { haseefsApi, spacesApi, invitationsApi, basesApi, type HaseefListItem, type SmartSpace, type SpaceMember } from "@/lib/api";
 import type { MockMember } from "@/lib/mock-data";
 import { useSpaceChat } from "@/lib/use-space-chat";
 import { cn } from "@/lib/utils";
@@ -254,6 +255,8 @@ function SpaceChatRoute({
         memberEntityIds={memberEntityIds}
         availableHaseefs={availableHaseefs}
         onMembersChanged={fetchMembers}
+        initialInviteCode={realSpace.inviteCode}
+        initialInviteLinkActive={realSpace.inviteLinkActive}
       />
     </>
   );
@@ -287,6 +290,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
 function RequireUnauth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
+  const [searchParams] = useSearchParams();
 
   if (isLoading) {
     return (
@@ -297,7 +301,8 @@ function RequireUnauth({ children }: { children: React.ReactNode }) {
   }
 
   if (isAuthenticated) {
-    return <Navigate to="/spaces" replace />;
+    const redirect = searchParams.get("redirect") || "/spaces";
+    return <Navigate to={redirect} replace />;
   }
 
   return <>{children}</>;
@@ -314,6 +319,7 @@ function AppContent() {
   const [sidebarOpen, setSidebarOpen] = useState(() => !location.pathname.startsWith("/invitations"));
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showCreateSpace, setShowCreateSpace] = useState(false);
+  const [showJoinSpace, setShowJoinSpace] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
 
   // ── Haseefs state ──
@@ -323,14 +329,35 @@ function AppContent() {
   const fetchHaseefs = useCallback(async () => {
     setHaseefsLoading(true);
     try {
-      const { haseefs: list } = await haseefsApi.list();
-      setHaseefs(list);
+      const [{ haseefs: ownedList }, basesResult] = await Promise.all([
+        haseefsApi.list(),
+        basesApi.list().catch(() => ({ bases: [] as any[] })),
+      ]);
+
+      // Merge base haseefs so all base members' haseefs are visible
+      const haseefMap = new Map(ownedList.map((h) => [h.entityId, h]));
+      const myEntityId = user?.entityId;
+      for (const base of basesResult.bases) {
+        for (const member of base.members) {
+          if (member.entityId === myEntityId) continue;
+          if (member.type === "agent" && !haseefMap.has(member.entityId)) {
+            haseefMap.set(member.entityId, {
+              haseefId: member.entityId,
+              entityId: member.entityId,
+              name: member.displayName,
+              avatarUrl: member.avatarUrl,
+              createdAt: "",
+            });
+          }
+        }
+      }
+      setHaseefs(Array.from(haseefMap.values()));
     } catch (err) {
       console.error("Failed to fetch haseefs:", err);
     } finally {
       setHaseefsLoading(false);
     }
-  }, []);
+  }, [user?.entityId]);
 
   // ── Spaces state ──
   const [spaces, setSpaces] = useState<SmartSpace[]>([]);
@@ -369,6 +396,7 @@ function AppContent() {
   // Derive active page from URL
   const activePage: AppPage = useMemo(() => {
     if (location.pathname.startsWith("/haseefs")) return "haseefs";
+    if (location.pathname.startsWith("/bases")) return "bases";
     if (location.pathname.startsWith("/invitations")) return "invitations";
     if (location.pathname.startsWith("/api-keys") || location.pathname.startsWith("/settings/api-keys")) return "api-keys";
     return "spaces";
@@ -390,6 +418,12 @@ function AppContent() {
     }
     if (page === "haseefs") {
       navigate("/haseefs");
+      setSidebarOpen(false);
+      setMobileSidebarOpen(false);
+      return;
+    }
+    if (page === "bases") {
+      navigate("/bases");
       setSidebarOpen(false);
       setMobileSidebarOpen(false);
       return;
@@ -428,6 +462,7 @@ function AppContent() {
           setMobileSidebarOpen(false);
         }}
         onCreateSpace={() => setShowCreateSpace(true)}
+        onJoinSpace={() => setShowJoinSpace(true)}
         isLoading={spacesLoading}
       />
     ) : null;
@@ -456,6 +491,10 @@ function AppContent() {
             <Route path="/haseefs/new" element={<HaseefCreatePage onCreated={fetchHaseefs} />} />
             <Route path="/haseefs/:haseefId" element={<HaseefDetailPage onDeleted={fetchHaseefs} allHaseefs={haseefs} />} />
             <Route path="/haseefs/:haseefId/edit" element={<HaseefEditPage onSaved={fetchHaseefs} />} />
+
+            {/* Bases */}
+            <Route path="/bases" element={<BasesPage />} />
+            <Route path="/bases/:baseId" element={<BasesPage />} />
 
             {/* Invitations */}
             <Route path="/invitations" element={<InvitationsPage />} />
@@ -512,6 +551,17 @@ function AppContent() {
         }}
       />
 
+      <JoinSpaceDialog
+        open={showJoinSpace}
+        onClose={() => setShowJoinSpace(false)}
+        onJoined={(spaceId) => {
+          setShowJoinSpace(false);
+          fetchSpaces();
+          toast("Joined space!", "success");
+          navigate(`/spaces/${spaceId}`);
+        }}
+      />
+
     </>
   );
 }
@@ -528,6 +578,10 @@ export default function App() {
             <Route path="/auth" element={<RequireUnauth><AuthPage /></RequireUnauth>} />
             <Route path="/auth/verify" element={<VerifyEmailPage />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
+
+            {/* Join by invite link (works for both auth/unauth) */}
+            <Route path="/join/space/:code" element={<JoinSpaceByLinkPage />} />
+            <Route path="/join/:code" element={<JoinByLinkPage />} />
 
             {/* Protected routes */}
             <Route path="/*" element={<RequireAuth><AppContent /></RequireAuth>} />

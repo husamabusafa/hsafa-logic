@@ -61,6 +61,7 @@ export function SpaceSettingsPanel({
   const [isLeaving, setIsLeaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [addingHaseefId, setAddingHaseefId] = useState<string | null>(null);
+
   const [spaceImageUrl, setSpaceImageUrl] = useState<string | null>(
     (space as any).metadata?.imageUrl || null,
   );

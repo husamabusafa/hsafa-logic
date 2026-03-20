@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { SearchIcon, BotIcon, CheckIcon, MailIcon, ShieldIcon, UsersIcon, UserIcon, LoaderIcon } from "lucide-react";
+import { SearchIcon, BotIcon, CheckIcon, MailIcon, ShieldIcon, UsersIcon, UserIcon, LoaderIcon, LinkIcon, CopyIcon, QrCodeIcon, RefreshCwIcon } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
 import {
@@ -25,6 +26,8 @@ interface InviteDialogProps {
   memberEntityIds: Set<string>;
   availableHaseefs: AvailableHaseef[];
   onMembersChanged?: () => void;
+  initialInviteCode?: string | null;
+  initialInviteLinkActive?: boolean;
 }
 
 export function InviteDialog({
@@ -35,8 +38,10 @@ export function InviteDialog({
   memberEntityIds,
   availableHaseefs,
   onMembersChanged,
+  initialInviteCode,
+  initialInviteLinkActive,
 }: InviteDialogProps) {
-  const [tab, setTab] = useState<"people" | "haseefs" | "email">("people");
+  const [tab, setTab] = useState<"people" | "haseefs" | "email" | "link">("people");
   const [search, setSearch] = useState("");
   const [inviteRole, setInviteRole] = useState<"member" | "admin">("member");
   const [isSending, setIsSending] = useState(false);
@@ -54,6 +59,62 @@ export function InviteDialog({
   // Email invitation
   const [emailInput, setEmailInput] = useState("");
   const [emailList, setEmailList] = useState<string[]>([]);
+
+  // Link / code state
+  const [inviteCode, setInviteCode] = useState<string | null>(initialInviteCode ?? null);
+  const [inviteLinkActive, setInviteLinkActive] = useState(initialInviteLinkActive ?? true);
+  const [isGeneratingCode, setIsGeneratingCode] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [showQR, setShowQR] = useState(false);
+  const [isTogglingLink, setIsTogglingLink] = useState(false);
+
+  const inviteLink = inviteCode ? `${window.location.origin}/join/space/${inviteCode}` : null;
+
+  // Sync when props change (e.g. dialog re-opens after regenerate)
+  useEffect(() => {
+    setInviteCode(initialInviteCode ?? null);
+    setInviteLinkActive(initialInviteLinkActive ?? true);
+  }, [initialInviteCode, initialInviteLinkActive]);
+
+  const handleGenerateCode = async () => {
+    setIsGeneratingCode(true);
+    try {
+      const result = await spacesApi.regenerateCode(spaceId);
+      setInviteCode(result.inviteCode);
+      setInviteLinkActive(result.inviteLinkActive);
+    } catch (err) {
+      console.error("Generate invite code error:", err);
+    } finally {
+      setIsGeneratingCode(false);
+    }
+  };
+
+  const handleCopyLink = () => {
+    if (!inviteLink) return;
+    navigator.clipboard.writeText(inviteLink);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
+
+  const handleCopyCode = () => {
+    if (!inviteCode) return;
+    navigator.clipboard.writeText(inviteCode);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const handleToggleLink = async () => {
+    setIsTogglingLink(true);
+    try {
+      const result = await spacesApi.toggleInviteLink(spaceId, !inviteLinkActive);
+      setInviteLinkActive(result.inviteLinkActive);
+    } catch (err) {
+      console.error("Toggle invite link error:", err);
+    } finally {
+      setIsTogglingLink(false);
+    }
+  };
 
   // Fetch contacts when dialog opens
   useEffect(() => {
@@ -216,6 +277,18 @@ export function InviteDialog({
         >
           <MailIcon className="size-4 inline mr-1.5" />
           Email
+        </button>
+        <button
+          onClick={() => { setTab("link"); setSearch(""); }}
+          className={cn(
+            "flex-1 py-2 text-sm font-medium border-b-2 transition-colors",
+            tab === "link"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <LinkIcon className="size-4 inline mr-1.5" />
+          Link
         </button>
       </div>
 
@@ -420,6 +493,94 @@ export function InviteDialog({
         </>
       )}
 
+      {/* Link tab */}
+      {tab === "link" && (
+        <div className="space-y-3">
+          {!inviteCode ? (
+            <div className="text-center py-4">
+              <p className="text-sm text-muted-foreground mb-3">Generate an invite link so anyone can join this space</p>
+              <Button size="sm" onClick={handleGenerateCode} disabled={isGeneratingCode}>
+                {isGeneratingCode ? (
+                  <><LoaderIcon className="size-3.5 animate-spin mr-1.5" />Generating...</>
+                ) : (
+                  <><LinkIcon className="size-3.5 mr-1.5" />Generate Invite Link</>
+                )}
+              </Button>
+            </div>
+          ) : (
+            <>
+              {/* Invite Link */}
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">Invite Link</p>
+                <div className="flex items-center gap-2">
+                  <div className={cn(
+                    "flex-1 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs font-mono truncate",
+                    !inviteLinkActive && "opacity-50 line-through",
+                  )}>
+                    {inviteLink}
+                  </div>
+                  <Button size="sm" variant="outline" onClick={handleCopyLink} disabled={!inviteLinkActive}>
+                    {copiedLink ? <><CheckIcon className="size-3.5" /> Copied</> : <><CopyIcon className="size-3.5" /> Copy</>}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Code */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Code</p>
+                  <div className="flex items-center gap-2">
+                    <p className={cn("text-base font-mono font-bold tracking-wider text-foreground", !inviteLinkActive && "opacity-50 line-through")}>{inviteCode}</p>
+                    <button onClick={handleCopyCode} className="text-muted-foreground hover:text-foreground" disabled={!inviteLinkActive}>
+                      {copiedCode ? <CheckIcon className="size-3.5 text-emerald-500" /> : <CopyIcon className="size-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Controls */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button size="sm" variant="outline" onClick={handleGenerateCode} disabled={isGeneratingCode}>
+                  <RefreshCwIcon className="size-3.5" />
+                  {isGeneratingCode ? "..." : "Regenerate"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant={inviteLinkActive ? "outline" : "default"}
+                  onClick={handleToggleLink}
+                  disabled={isTogglingLink}
+                >
+                  {isTogglingLink ? "..." : inviteLinkActive ? "Deactivate" : "Activate"}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setShowQR(!showQR)}>
+                  <QrCodeIcon className="size-3.5 mr-1" />
+                  {showQR ? "Hide QR" : "QR Code"}
+                </Button>
+              </div>
+
+              {/* QR Code */}
+              {showQR && inviteLinkActive && inviteLink && (
+                <div className="flex justify-center p-4 bg-white rounded-lg border border-border">
+                  <QRCodeSVG value={inviteLink} size={180} level="M" />
+                </div>
+              )}
+
+              {!inviteLinkActive && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                  This invite link is currently deactivated. No one can join using it.
+                </p>
+              )}
+
+              {inviteLinkActive && (
+                <p className="text-xs text-muted-foreground">
+                  Share the link or code so others can join this space
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       {/* Error / Success */}
       {error && (
         <div className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive mt-2">
@@ -456,5 +617,110 @@ function EmptyList({ text }: { text: string }) {
     <div className="py-8 text-center">
       <p className="text-sm text-muted-foreground">{text}</p>
     </div>
+  );
+}
+
+// ─── Join Space Dialog ──────────────────────────────────────────────────────
+
+export function JoinSpaceDialog({
+  open,
+  onClose,
+  onJoined,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onJoined: (spaceId: string) => void;
+}) {
+  const [code, setCode] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [preview, setPreview] = useState<{ id: string; name: string | null; memberCount: number } | null>(null);
+  const [error, setError] = useState("");
+
+  const handleLookup = async () => {
+    if (!code.trim()) return;
+    setLoading(true);
+    setError("");
+    setPreview(null);
+    try {
+      const { space } = await spacesApi.resolveSpaceCode(code.trim());
+      setPreview(space);
+    } catch {
+      setError("Invalid invite code");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleJoin = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const { space } = await spacesApi.joinByCode(code.trim());
+      onJoined(space.id);
+    } catch (err: any) {
+      if (err.message?.includes("Already a member")) {
+        setError("You're already a member of this space");
+      } else {
+        setError(err.message || "Failed to join");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClose = () => {
+    setCode("");
+    setPreview(null);
+    setError("");
+    onClose();
+  };
+
+  if (!open) return null;
+
+  return (
+    <Dialog open={open} onClose={handleClose} className="max-w-md">
+      <DialogHeader onClose={handleClose}>
+        <DialogTitle>Join a Space</DialogTitle>
+        <DialogDescription>Enter an invite code to join an existing space</DialogDescription>
+      </DialogHeader>
+
+      <div className="space-y-3">
+        <div className="flex gap-2">
+          <input
+            autoFocus
+            value={code}
+            onChange={(e) => { setCode(e.target.value.toUpperCase()); setPreview(null); setError(""); }}
+            placeholder="e.g. ABCD1234"
+            className={cn(
+              "flex-1 h-10 rounded-lg bg-muted/60 px-3 text-sm font-mono tracking-wider uppercase",
+              "placeholder:text-muted-foreground/60",
+              "focus:outline-none focus:ring-2 focus:ring-ring/30",
+            )}
+          />
+          <Button onClick={handleLookup} disabled={!code.trim() || loading}>
+            {loading && !preview ? <LoaderIcon className="size-4 animate-spin" /> : "Lookup"}
+          </Button>
+        </div>
+
+        {error && <p className="text-sm text-red-500">{error}</p>}
+
+        {preview && (
+          <div className="p-4 rounded-xl border border-border bg-muted/30">
+            <div className="flex items-center gap-3">
+              <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                <UsersIcon className="size-5 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">{preview.name || "Unnamed Space"}</p>
+                <p className="text-xs text-muted-foreground">{preview.memberCount} member{preview.memberCount !== 1 ? "s" : ""}</p>
+              </div>
+            </div>
+            <Button className="w-full mt-3" onClick={handleJoin} disabled={loading}>
+              {loading ? <LoaderIcon className="size-4 animate-spin" /> : "Join Space"}
+            </Button>
+          </div>
+        )}
+      </div>
+    </Dialog>
   );
 }

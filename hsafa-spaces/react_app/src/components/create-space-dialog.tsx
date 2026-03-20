@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
-import { haseefsApi, spacesApi, type HaseefListItem, type Contact } from "@/lib/api";
+import { haseefsApi, spacesApi, basesApi, type HaseefListItem, type Contact } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ export function CreateSpaceDialog({ open, onClose, onCreate }: CreateSpaceDialog
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
 
-  // Fetch haseefs + contacts when dialog opens
+  // Fetch haseefs + contacts + base members when dialog opens
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -64,16 +64,46 @@ export function CreateSpaceDialog({ open, onClose, onCreate }: CreateSpaceDialog
     Promise.all([
       haseefsApi.list().then(({ haseefs: list }) => list).catch(() => [] as HaseefListItem[]),
       spacesApi.listContacts().then(({ contacts: list }) => list).catch(() => [] as Contact[]),
-    ]).then(([h, c]) => {
-      if (!cancelled) {
-        setHaseefs(h);
-        setContacts(c);
+      basesApi.list().then(({ bases }) => bases).catch(() => []),
+    ]).then(([h, c, bases]) => {
+      if (cancelled) return;
+
+      // Merge base members into contacts/haseefs so all base members are visible
+      const currentEntityId = user?.entityId;
+      const haseefMap = new Map(h.map((item) => [item.entityId, item]));
+      const contactMap = new Map(c.map((item) => [item.entityId, item]));
+
+      for (const base of bases) {
+        for (const member of base.members) {
+          if (member.entityId === currentEntityId) continue; // skip self
+          if (member.type === "agent" && !haseefMap.has(member.entityId)) {
+            // Add base haseef as a synthetic HaseefListItem
+            haseefMap.set(member.entityId, {
+              haseefId: member.entityId,
+              entityId: member.entityId,
+              name: member.displayName,
+              avatarUrl: member.avatarUrl,
+              createdAt: "",
+            });
+          } else if (member.type === "human" && !contactMap.has(member.entityId)) {
+            // Add base human as a contact
+            contactMap.set(member.entityId, {
+              entityId: member.entityId,
+              displayName: member.displayName,
+              type: "human",
+              avatarUrl: member.avatarUrl,
+            });
+          }
+        }
       }
+
+      setHaseefs(Array.from(haseefMap.values()));
+      setContacts(Array.from(contactMap.values()));
     }).finally(() => {
       if (!cancelled) setIsLoadingData(false);
     });
     return () => { cancelled = true; };
-  }, [open]);
+  }, [open, user?.entityId]);
 
   // ─── Group helpers ──────────────────────────────────────────────────
 

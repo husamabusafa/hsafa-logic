@@ -138,6 +138,23 @@ router.post("/", async (req: Request, res: Response) => {
       },
     });
 
+    // Add the Haseef entity to the user's default base (if they have one)
+    const user = await prisma.user.findUnique({
+      where: { id: auth.userId },
+      select: { defaultBaseId: true },
+    });
+    if (user?.defaultBaseId) {
+      await prisma.baseMember.create({
+        data: {
+          baseId: user.defaultBaseId,
+          entityId: entity.id,
+          role: "member",
+        },
+      }).catch((err) => {
+        console.warn("[haseefs] Failed to add haseef to base:", err);
+      });
+    }
+
     // Connect the new haseef to the spaces service (sync tools + start listening)
     try {
       await connectNewHaseef({

@@ -45,7 +45,8 @@ export function AuthPage() {
         if (verificationRequired) {
           navigate("/auth/verify");
         } else {
-          navigate("/spaces");
+          const redirect = searchParams.get("redirect") || "/spaces";
+          navigate(redirect);
         }
       } else {
         await register(name, email, password);
@@ -60,6 +61,10 @@ export function AuthPage() {
 
   const handleGoogleLogin = () => {
     setIsGoogleLoading(true);
+    const redirect = searchParams.get("redirect");
+    if (redirect) {
+      localStorage.setItem("hsafa_auth_redirect", redirect);
+    }
     window.location.href = "/api/auth/google";
   };
 

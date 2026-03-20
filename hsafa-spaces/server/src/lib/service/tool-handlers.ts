@@ -850,6 +850,102 @@ export async function executeAction(
         return { success: true };
       }
 
+      case "create_space": {
+        if (!conn) return { error: "Haseef not connected" };
+        if (!agentEntityId) return { error: "agentEntityId not resolved" };
+
+        const memberEntityIds = args.memberEntityIds as string[];
+        if (!Array.isArray(memberEntityIds) || memberEntityIds.length === 0) {
+          return { error: "memberEntityIds is required (array of entity IDs)" };
+        }
+
+        const spaceName = args.name as string | undefined;
+        const spaceDescription = args.description as string | undefined;
+
+        // Verify all members share a base with this haseef
+        const haseefBases = await prisma.baseMember.findMany({
+          where: { entityId: agentEntityId },
+          select: { baseId: true },
+        });
+        const haseefBaseIds = haseefBases.map((b) => b.baseId);
+
+        if (haseefBaseIds.length === 0) {
+          return { error: "You are not in any base. Cannot create a space." };
+        }
+
+        // Check each member is in at least one shared base
+        for (const memberId of memberEntityIds) {
+          const shared = await prisma.baseMember.findFirst({
+            where: { entityId: memberId, baseId: { in: haseefBaseIds } },
+          });
+          if (!shared) {
+            return { error: `Entity ${memberId} is not in any of your bases. You can only create spaces with base members.` };
+          }
+        }
+
+        // Resolve display names for auto-naming
+        const allMemberIds = [agentEntityId, ...memberEntityIds.filter((id) => id !== agentEntityId)];
+        const entities = await prisma.entity.findMany({
+          where: { id: { in: allMemberIds } },
+          select: { id: true, displayName: true, type: true },
+        });
+        const entityMap = new Map(entities.map((e) => [e.id, e]));
+
+        // Auto-name: for 1-on-1, use the other person's name; for groups, join names
+        const isGroup = memberEntityIds.length > 1;
+        const autoName = spaceName || (
+          isGroup
+            ? allMemberIds.map((id) => entityMap.get(id)?.displayName ?? "Unknown").join(", ")
+            : entityMap.get(memberEntityIds[0])?.displayName ?? "Direct Chat"
+        );
+
+        // Create the space
+        const space = await prisma.smartSpace.create({
+          data: {
+            name: autoName,
+            description: spaceDescription ?? null,
+            metadata: isGroup ? {} : { isDirect: true },
+          },
+        });
+
+        // Add all members (including the haseef itself)
+        const membershipData = allMemberIds.map((entityId) => ({
+          smartSpaceId: space.id,
+          entityId,
+          role: entityId === agentEntityId ? "admin" : "member",
+        }));
+
+        await prisma.smartSpaceMembership.createMany({ data: membershipData });
+
+        // Set as active space
+        conn.activeSpace = { spaceId: space.id, spaceName: autoName };
+        conn.enteredSpace = { spaceId: space.id, spaceName: autoName };
+
+        // Mark online
+        void markOnline(space.id, agentEntityId);
+
+        const members = allMemberIds.map((id) => ({
+          entityId: id,
+          name: entityMap.get(id)?.displayName ?? "Unknown",
+          type: entityMap.get(id)?.type ?? "unknown",
+          isYou: id === agentEntityId,
+        }));
+
+        console.log(`[spaces-service] [${conn.haseefName}] Created space "${autoName}" with ${allMemberIds.length} members`);
+
+        return {
+          success: true,
+          space: {
+            id: space.id,
+            name: autoName,
+            description: spaceDescription ?? null,
+            isGroup,
+          },
+          members,
+          message: `Space "${autoName}" created. You are now in this space — send a message to start the conversation.`,
+        };
+      }
+
       default:
         return { error: `Unknown tool: ${unprefixedToolName}` };
     }

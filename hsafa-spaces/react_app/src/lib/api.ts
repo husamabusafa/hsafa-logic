@@ -49,9 +49,11 @@ export interface AuthUser {
   name: string;
   entityId: string | null;
   smartSpaceId: string | null;
+  defaultBaseId: string | null;
   avatarUrl: string | null;
   emailVerified: boolean;
   spaces: Array<{ id: string; name: string }>;
+  bases: Array<{ id: string; name: string; avatarUrl: string | null; inviteCode: string; role: string }>;
 }
 
 export interface AuthResponse {
@@ -210,6 +212,8 @@ export interface SmartSpace {
   createdAt: string;
   metadata?: Record<string, unknown>;
   members?: SmartSpaceMemberSummary[];
+  inviteCode?: string | null;
+  inviteLinkActive?: boolean;
 }
 
 export interface SpaceMember {
@@ -347,6 +351,31 @@ export const spacesApi = {
     return request<{ success: boolean }>(`/smart-spaces/${spaceId}/seen`, {
       method: "POST",
       body: JSON.stringify({ messageId }),
+    });
+  },
+
+  // Invite link
+  regenerateCode(spaceId: string) {
+    return request<{ inviteCode: string; inviteLinkActive: boolean }>(`/smart-spaces/${spaceId}/regenerate-code`, {
+      method: "POST",
+    });
+  },
+
+  toggleInviteLink(spaceId: string, active: boolean) {
+    return request<{ inviteLinkActive: boolean }>(`/smart-spaces/${spaceId}/invite-link`, {
+      method: "PATCH",
+      body: JSON.stringify({ active }),
+    });
+  },
+
+  resolveSpaceCode(code: string) {
+    return request<{ space: { id: string; name: string | null; memberCount: number } }>(`/smart-spaces/resolve/${code}`);
+  },
+
+  joinByCode(code: string) {
+    return request<{ space: { id: string; name: string | null } }>("/smart-spaces/join", {
+      method: "POST",
+      body: JSON.stringify({ code }),
     });
   },
 };
@@ -504,6 +533,108 @@ export const apiKeysApi = {
     return request<{ success: boolean }>(`/api-keys/${provider}`, {
       method: "DELETE",
     });
+  },
+};
+
+// ── Base types ──────────────────────────────────────────────────────────────
+
+export interface BaseMember {
+  entityId: string;
+  type: "human" | "agent";
+  displayName: string;
+  avatarUrl: string | null;
+  role: string;
+  joinedAt?: string;
+}
+
+export interface Base {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  inviteCode: string;
+  inviteLinkActive: boolean;
+  myRole: string;
+  memberCount: number;
+  members: BaseMember[];
+  createdAt: string;
+}
+
+export interface BasePreview {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  memberCount: number;
+}
+
+// ── Bases API ──────────────────────────────────────────────────────────────
+
+export const basesApi = {
+  list() {
+    return request<{ bases: Base[] }>("/bases");
+  },
+
+  create(data: { name: string }) {
+    return request<{ base: Base }>("/bases", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  update(baseId: string, data: { name?: string; avatarUrl?: string | null }) {
+    return request<{ base: { id: string; name: string; avatarUrl: string | null } }>(`/bases/${baseId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  },
+
+  delete(baseId: string) {
+    return request<{ success: boolean }>(`/bases/${baseId}`, { method: "DELETE" });
+  },
+
+  regenerateCode(baseId: string) {
+    return request<{ inviteCode: string; inviteLinkActive: boolean }>(`/bases/${baseId}/regenerate-code`, { method: "POST" });
+  },
+
+  toggleInviteLink(baseId: string, active: boolean) {
+    return request<{ inviteLinkActive: boolean }>(`/bases/${baseId}/invite-link`, {
+      method: "PATCH",
+      body: JSON.stringify({ active }),
+    });
+  },
+
+  join(code: string) {
+    return request<{ base: Base }>("/bases/join", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    });
+  },
+
+  resolveCode(code: string) {
+    return request<{ base: BasePreview }>(`/bases/resolve/${encodeURIComponent(code)}`);
+  },
+
+  addMember(baseId: string, entityId: string) {
+    return request<{ member: BaseMember }>(`/bases/${baseId}/members`, {
+      method: "POST",
+      body: JSON.stringify({ entityId }),
+    });
+  },
+
+  updateMemberRole(baseId: string, entityId: string, role: string) {
+    return request<{ role: string }>(`/bases/${baseId}/members/${entityId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    });
+  },
+
+  removeMember(baseId: string, entityId: string) {
+    return request<{ success: boolean }>(`/bases/${baseId}/members/${entityId}`, { method: "DELETE" });
+  },
+
+  listHaseefs(baseId: string) {
+    return request<{ haseefs: Array<{ entityId: string; haseefId: string | null; displayName: string; avatarUrl: string | null; joinedAt: string }> }>(
+      `/bases/${baseId}/haseefs`,
+    );
   },
 };
 
