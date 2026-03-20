@@ -1010,7 +1010,21 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
             <div className="flex-1 min-w-0">
               <span className="text-[11px] font-medium text-primary">{replyMessage.senderName}</span>
               <p className="text-[11px] text-muted-foreground truncate">
-                {replyMessage.content || replyMessage.title || replyMessage.formTitle || replyMessage.cardTitle || replyMessage.imageCaption || replyMessage.fileName || "Message"}
+                {replyMessage.content || replyMessage.title || replyMessage.formTitle || replyMessage.cardTitle || replyMessage.imageCaption || replyMessage.fileName || (() => {
+                  switch (replyMessage.type) {
+                    case 'voice': return '🎤 Voice message';
+                    case 'image': return '📷 Photo';
+                    case 'video': return '🎬 Video';
+                    case 'file': return '📎 File';
+                    case 'confirmation': return '✓ Confirmation';
+                    case 'vote': return '📊 Poll';
+                    case 'choice': return '☰ Choice';
+                    case 'form': return '📝 Form';
+                    case 'card': return '🃏 Card';
+                    case 'chart': return '📈 Chart';
+                    default: return 'Message';
+                  }
+                })()}
               </p>
             </div>
             <button onClick={() => setReplyingTo(null)} className="shrink-0 p-0.5 rounded hover:bg-muted transition-colors">

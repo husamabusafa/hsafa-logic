@@ -23,6 +23,7 @@ interface AuthContextValue extends AuthState {
   verifyEmail: (code: string) => Promise<void>;
   resendCode: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  updateProfile: (data: { name: string }) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -113,6 +114,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const updateProfile = useCallback(async (data: { name: string }) => {
+    const { user } = await authApi.updateProfile(data);
+    setState((s) => ({ ...s, user }));
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
@@ -124,6 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         verifyEmail,
         resendCode,
         refreshUser,
+        updateProfile,
       }}
     >
       {children}

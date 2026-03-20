@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
-import { spacesApi, haseefsApi, type Contact, type HaseefListItem, resolveMediaUrl } from '../../lib/api';
+import { spacesApi, haseefsApi, basesApi, invitationsApi, type Contact, type HaseefListItem, resolveMediaUrl } from '../../lib/api';
 import { useAuth } from '../../lib/auth-context';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 import type { SpacesStackParamList } from '../../lib/types';
@@ -54,16 +54,45 @@ export function CreateSpaceScreen() {
   useEffect(() => {
     let cancelled = false;
     setLoadingData(true);
+    const currentEntityId = user?.entityId;
     Promise.all([
-      spacesApi.listContacts().then(({ contacts: c }) => c).catch(() => [] as Contact[]),
-      haseefsApi.list().then(({ haseefs: h }) => h).catch(() => [] as HaseefListItem[]),
-    ]).then(([c, h]) => {
+      haseefsApi.list().then(({ haseefs: list }) => list).catch(() => [] as HaseefListItem[]),
+      spacesApi.listContacts().then(({ contacts: list }) => list).catch(() => [] as Contact[]),
+      basesApi.list().then(({ bases }) => bases).catch(() => []),
+    ]).then(([h, c, bases]) => {
       if (cancelled) return;
-      setContacts(c);
-      setHaseefs(h);
+
+      // Merge base members into contacts/haseefs so all base members are visible
+      const haseefMap = new Map(h.map((item) => [item.entityId, item]));
+      const contactMap = new Map(c.map((item) => [item.entityId, item]));
+
+      for (const base of bases) {
+        for (const member of base.members) {
+          if (member.entityId === currentEntityId) continue;
+          if (member.type === 'agent' && !haseefMap.has(member.entityId)) {
+            haseefMap.set(member.entityId, {
+              haseefId: member.entityId,
+              entityId: member.entityId,
+              name: member.displayName,
+              avatarUrl: member.avatarUrl,
+              createdAt: '',
+            });
+          } else if (member.type === 'human' && !contactMap.has(member.entityId)) {
+            contactMap.set(member.entityId, {
+              entityId: member.entityId,
+              displayName: member.displayName,
+              type: 'human',
+              avatarUrl: member.avatarUrl,
+            });
+          }
+        }
+      }
+
+      setHaseefs(Array.from(haseefMap.values()));
+      setContacts(Array.from(contactMap.values()));
     }).finally(() => { if (!cancelled) setLoadingData(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [user?.entityId]);
 
   const toggleEntity = useCallback((entityId: string) => {
     setSelectedIds((prev) => {
@@ -114,8 +143,15 @@ export function CreateSpaceScreen() {
           description: description.trim() || undefined,
           isGroup: true,
           memberEntityIds: Array.from(selectedIds),
-          inviteEmails: inviteEmails.length > 0 ? inviteEmails : undefined,
         });
+        // Send email invitations (fire-and-forget)
+        if (inviteEmails.length > 0) {
+          for (const email of inviteEmails) {
+            invitationsApi.createForSpace(smartSpace.id, { email, role: 'member' }).catch((err) => {
+              console.warn('Failed to send invitation to', email, err);
+            });
+          }
+        }
         navigation.replace('Chat', { spaceId: smartSpace.id, spaceName: smartSpace.name });
       } else {
         const memberEntityIds: string[] = [];
@@ -139,8 +175,15 @@ export function CreateSpaceScreen() {
           description: '',
           isGroup: false,
           memberEntityIds,
-          inviteEmails: emails.length > 0 ? emails : undefined,
         });
+        // Send email invitations for direct mode (fire-and-forget)
+        if (emails.length > 0) {
+          for (const email of emails) {
+            invitationsApi.createForSpace(smartSpace.id, { email, role: 'member' }).catch((err) => {
+              console.warn('Failed to send invitation to', email, err);
+            });
+          }
+        }
         navigation.replace('Chat', { spaceId: smartSpace.id, spaceName: smartSpace.name });
       }
     } catch (err: any) {

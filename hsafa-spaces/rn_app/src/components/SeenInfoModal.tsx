@@ -17,12 +17,14 @@ interface Props {
   message: Message;
   members: Member[];
   currentEntityId: string;
+  seenByEntityIds?: string[];
   onClose: () => void;
 }
 
-export function SeenInfoModal({ message, members, currentEntityId, onClose }: Props) {
+export function SeenInfoModal({ message, members, currentEntityId, seenByEntityIds, onClose }: Props) {
   const { colors } = useTheme();
-  const seenSet = new Set(message.seenBy);
+  // Use real-time watermark data if provided, fall back to message.seenBy
+  const seenSet = new Set(seenByEntityIds ?? message.seenBy);
 
   const relevantMembers = members.filter((m) => m.entityId !== message.entityId);
   const seenMembers = relevantMembers.filter((m) => seenSet.has(m.entityId));

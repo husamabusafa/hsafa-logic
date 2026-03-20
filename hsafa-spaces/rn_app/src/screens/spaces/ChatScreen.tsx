@@ -20,6 +20,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Clipboard from 'expo-clipboard';
+import { Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../lib/auth-context';
 import { spacesApi, mediaApi, resolveMediaUrl, type SpaceMember } from '../../lib/api';
@@ -59,7 +60,12 @@ export function ChatScreen({ route }: Props) {
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showScrollFab, setShowScrollFab] = useState(false);
   const [actionMessage, setActionMessage] = useState<Message | null>(null);
   const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
@@ -102,17 +108,42 @@ export function ChatScreen({ route }: Props) {
     typingUsers,
     activeAgents,
     onlineUserIds,
+    seenWatermarks,
   } = useSpaceChat(spaceId, members);
 
-  // Update online status
+  // Compute per-message seenBy from seenWatermarks (matches Vite app logic)
+  const messageSeenMap = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    if (!messages.length) return map;
+    const idxMap = new Map<string, number>();
+    messages.forEach((m, i) => idxMap.set(m.id, i));
+    for (const msg of messages) {
+      const msgIdx = idxMap.get(msg.id) ?? 0;
+      const seenBy: string[] = [];
+      for (const [entityId, watermarkId] of Object.entries(seenWatermarks)) {
+        if (entityId === msg.entityId) continue;
+        const watermarkIdx = idxMap.get(watermarkId);
+        if (watermarkIdx !== undefined && watermarkIdx >= msgIdx) {
+          seenBy.push(entityId);
+        }
+      }
+      map[msg.id] = seenBy;
+    }
+    return map;
+  }, [messages, seenWatermarks]);
+
+  // Update online status: humans from onlineUserIds, agents from activeAgents
   useEffect(() => {
     setMembers((prev) =>
       prev.map((m) => ({
         ...m,
-        isOnline: onlineUserIds.includes(m.entityId),
+        isOnline:
+          m.type === 'agent'
+            ? activeAgents.some((a) => a.agentEntityId === m.entityId)
+            : onlineUserIds.includes(m.entityId),
       })),
     );
-  }, [onlineUserIds]);
+  }, [onlineUserIds, activeAgents]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -161,7 +192,6 @@ export function ChatScreen({ route }: Props) {
 
   // ── Media handlers ──
   const handlePickImage = useCallback(async () => {
-    setShowPlusMenu(false);
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 0.8,
@@ -188,7 +218,6 @@ export function ChatScreen({ route }: Props) {
   }, [sendMediaMessage]);
 
   const handleTakePhoto = useCallback(async () => {
-    setShowPlusMenu(false);
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
       Alert.alert('Permission needed', 'Camera access is required to take photos.');
@@ -215,7 +244,6 @@ export function ChatScreen({ route }: Props) {
   }, [sendMediaMessage]);
 
   const handlePickFile = useCallback(async () => {
-    setShowPlusMenu(false);
     try {
       const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
       if (result.canceled || !result.assets?.[0]) return;
@@ -236,6 +264,93 @@ export function ChatScreen({ route }: Props) {
     }
   }, [sendMediaMessage]);
 
+  // ── Voice recording handlers ──
+  const startRecording = useCallback(async () => {
+    try {
+      const perm = await Audio.requestPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Permission needed', 'Microphone access is required to record voice messages.');
+        return;
+      }
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY,
+      );
+      recordingRef.current = recording;
+      setIsRecording(true);
+      setRecordingDuration(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((d) => d + 1);
+      }, 1000);
+      // Notify others we're recording
+      spacesApi.sendTyping(spaceId, true, 'recording').catch(() => {});
+      haptic.light();
+    } catch (err) {
+      console.warn('[VoiceRecording] Failed to start:', err);
+      Alert.alert('Error', 'Failed to start recording');
+    }
+  }, [spaceId]);
+
+  const cancelRecording = useCallback(async () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    try {
+      await recordingRef.current?.stopAndUnloadAsync();
+    } catch {}
+    recordingRef.current = null;
+    setIsRecording(false);
+    setRecordingDuration(0);
+    await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+    spacesApi.sendTyping(spaceId, false).catch(() => {});
+  }, [spaceId]);
+
+  const stopAndSendRecording = useCallback(async () => {
+    if (!recordingRef.current) return;
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    haptic.light();
+    setIsRecording(false);
+    setUploading(true);
+    try {
+      await recordingRef.current.stopAndUnloadAsync();
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      const uri = recordingRef.current.getURI();
+      recordingRef.current = null;
+      if (!uri) throw new Error('No recording URI');
+      spacesApi.sendTyping(spaceId, false).catch(() => {});
+
+      const uploaded = await mediaApi.uploadVoice(uri, 'voice.m4a');
+      await sendMediaMessage({
+        type: 'voice',
+        url: uploaded.url,
+        duration: recordingDuration,
+        transcription: uploaded.transcription,
+      });
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to send voice message');
+    } finally {
+      setUploading(false);
+      setRecordingDuration(0);
+    }
+  }, [spaceId, sendMediaMessage, recordingDuration]);
+
+  // Cleanup recording on unmount
+  useEffect(() => {
+    return () => {
+      if (recordingRef.current) {
+        recordingRef.current.stopAndUnloadAsync().catch(() => {});
+      }
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    };
+  }, []);
+
   // ── Date separator helper ──
   const formatDateSeparator = (dateStr: string) => {
     const d = new Date(dateStr);
@@ -248,6 +363,24 @@ export function ChatScreen({ route }: Props) {
   };
 
   const replyMessage = replyingTo ? messages.find((m) => m.id === replyingTo) : null;
+
+  // Helper to get message type label for reply banners
+  const getMessageTypeLabel = (msg: Message): string => {
+    if (msg.content?.trim()) return msg.content;
+    switch (msg.type) {
+      case 'voice': return '🎤 Voice message';
+      case 'image': return '📷 Photo';
+      case 'video': return '🎬 Video';
+      case 'file': return `📎 ${msg.fileName || 'File'}`;
+      case 'confirmation': return `✓ ${msg.title || 'Confirmation'}`;
+      case 'vote': return '📊 Poll';
+      case 'choice': return '☰ Choice';
+      case 'form': return `📝 ${msg.formTitle || 'Form'}`;
+      case 'card': return `🃏 ${msg.cardTitle || 'Card'}`;
+      case 'chart': return '📈 Chart';
+      default: return msg.title || msg.formTitle || msg.cardTitle || '[Attachment]';
+    }
+  };
 
   const renderMessage = useCallback(({ item, index }: { item: Message; index: number }) => {
     const isOwn = item.entityId === currentEntityId;
@@ -287,7 +420,7 @@ export function ChatScreen({ route }: Props) {
       : 'transparent';
 
     return (
-      <Animated.View style={{ backgroundColor: highlightBg }}>
+      <Animated.View style={{ backgroundColor: highlightBg, borderRadius: 16, marginHorizontal: -4, paddingHorizontal: 4 }}>
         {showDate && (
           <View style={styles.dateSeparator}>
             <View style={[styles.dateLine, { backgroundColor: colors.border }]} />
@@ -364,10 +497,10 @@ export function ChatScreen({ route }: Props) {
             </TouchableOpacity>
           )}
 
-          {/* Reply banner */}
+          {/* Reply banner (above bubble, Vite app style) */}
           {item.replyTo && (
             <TouchableOpacity
-              style={[styles.replyBanner, { backgroundColor: colors.primaryLight, borderLeftColor: colors.primary }]}
+              style={styles.replyBannerAbove}
               onPress={() => {
                 const targetId = item.replyTo?.messageId;
                 if (!targetId) return;
@@ -379,13 +512,27 @@ export function ChatScreen({ route }: Props) {
               }}
               activeOpacity={0.7}
             >
-              <Text style={[styles.replyName, { color: colors.primary }]}>{item.replyTo.senderName}</Text>
-              <Text style={[styles.replySnippet, { color: colors.textSecondary }]} numberOfLines={1}>
-                {typeof item.replyTo.snippet === 'string'
-                  ? item.replyTo.snippet
-                  : typeof item.replyTo.snippet === 'object' && item.replyTo.snippet !== null
-                    ? '[Attachment]'
-                    : String(item.replyTo.snippet || '')}
+              <Ionicons name="arrow-undo" size={12} color={colors.textMuted} style={{ marginRight: 4 }} />
+              <Text style={[styles.replyBannerName, { color: colors.textMuted }]}>{item.replyTo.senderName}</Text>
+              <Text style={[styles.replyBannerSnippet, { color: colors.textMuted }]} numberOfLines={1}>
+                {(() => {
+                  const snippet = item.replyTo?.snippet;
+                  const msgType = item.replyTo?.messageType;
+                  if (snippet && snippet !== '[Attachment]') return snippet;
+                  switch (msgType) {
+                    case 'voice': return '🎤 Voice message';
+                    case 'image': return '📷 Photo';
+                    case 'video': return '🎬 Video';
+                    case 'file': return '📎 File';
+                    case 'confirmation': return '✓ Confirmation';
+                    case 'vote': return '📊 Poll';
+                    case 'choice': return '☰ Choice';
+                    case 'form': return '📝 Form';
+                    case 'card': return '🃏 Card';
+                    case 'chart': return '📈 Chart';
+                    default: return 'Message';
+                  }
+                })()}
               </Text>
             </TouchableOpacity>
           )}
@@ -416,24 +563,18 @@ export function ChatScreen({ route }: Props) {
                 {time}
               </Text>
               {isOwn && (() => {
-                const seenByOthers = item.seenBy.filter((eid) => eid !== currentEntityId);
+                const seenByOthers = (messageSeenMap[item.id] || []).filter((eid) => eid !== currentEntityId);
                 const otherCount = members.filter((m) => m.entityId !== currentEntityId).length;
                 const allSeen = seenByOthers.length >= otherCount && otherCount > 0;
-                const delivered = seenByOthers.length > 0;
-                // Match vite app: double check for all states, different colors
-                const iconColor = allSeen
-                  ? '#34b7f1'  // WhatsApp blue for all seen
-                  : delivered
-                    ? (isInteractive ? colors.textMuted : 'rgba(255,255,255,0.6)')
-                    : (isInteractive ? colors.textMuted : 'rgba(255,255,255,0.4)');
-                return (
-                  <Ionicons
-                    name="checkmark-done"
-                    size={15}
-                    color={iconColor}
-                    style={{ marginLeft: 3 }}
-                  />
-                );
+                const someSeen = seenByOthers.length > 0;
+                // Vite app: CheckCheckIcon blue = all seen, CheckCheckIcon muted = some seen, CheckIcon muted = sent
+                if (allSeen) {
+                  return <Ionicons name="checkmark-done" size={15} color="#60a5fa" style={{ marginLeft: 3 }} />;
+                }
+                if (someSeen) {
+                  return <Ionicons name="checkmark-done" size={15} color={isInteractive ? colors.textMuted : 'rgba(255,255,255,0.6)'} style={{ marginLeft: 3 }} />;
+                }
+                return <Ionicons name="checkmark" size={15} color={isInteractive ? colors.textMuted : 'rgba(255,255,255,0.6)'} style={{ marginLeft: 3 }} />;
               })()}
             </View>
           </View>
@@ -443,7 +584,7 @@ export function ChatScreen({ route }: Props) {
         </SwipeableRow>
       </Animated.View>
     );
-  }, [currentEntityId, messages, colors, handleRespond, members, highlightedMessageId, highlightAnim, flashHighlight]);
+  }, [currentEntityId, messages, colors, handleRespond, members, highlightedMessageId, highlightAnim, flashHighlight, messageSeenMap]);
 
   // Typing / agent activity indicator
   const statusLine = (() => {
@@ -471,13 +612,46 @@ export function ChatScreen({ route }: Props) {
           onPress={() => (navigation as any).navigate('SpaceSettings', { spaceId })}
           activeOpacity={0.7}
         >
-          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
-            {spaceName || 'Chat'}
-          </Text>
-          <Text style={[styles.headerSubtitle, { color: colors.textMuted }]}>
-            {members.length} member{members.length !== 1 ? 's' : ''}
-            {onlineUserIds.length > 0 ? ` · ${onlineUserIds.length} online` : ''}
-          </Text>
+          <View style={styles.headerRow}>
+            {/* Space avatar */}
+            {(() => {
+              const isGroup = members.length > 2;
+              const otherMember = !isGroup ? members.find((m) => m.entityId !== currentEntityId) : null;
+              const otherAvatar = resolveMediaUrl(otherMember?.avatarUrl ?? null);
+              const isAgent = otherMember?.type === 'agent';
+
+              if (!isGroup && otherAvatar) {
+                return (
+                  <View style={styles.headerAvatarWrap}>
+                    <Image source={{ uri: otherAvatar }} style={styles.headerAvatar} />
+                    {otherMember?.isOnline && <View style={[styles.headerOnlineDot, { backgroundColor: colors.success, borderColor: colors.card }]} />}
+                  </View>
+                );
+              }
+              return (
+                <View style={[styles.headerAvatarFallback, { backgroundColor: isGroup ? colors.primaryLight : (isAgent ? colors.successLight : colors.primaryLight) }]}>
+                  {isGroup ? (
+                    <Ionicons name="people" size={14} color={colors.primary} />
+                  ) : isAgent ? (
+                    <Ionicons name="sparkles" size={14} color={colors.success} />
+                  ) : (
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: colors.primary }}>
+                      {(otherMember?.name || spaceName || '?')[0].toUpperCase()}
+                    </Text>
+                  )}
+                </View>
+              );
+            })()}
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+                {spaceName || 'Chat'}
+              </Text>
+              <Text style={[styles.headerSubtitle, { color: colors.textMuted }]}>
+                {members.length} member{members.length !== 1 ? 's' : ''}
+                {onlineUserIds.length > 0 ? ` · ${onlineUserIds.length} online` : ''}
+              </Text>
+            </View>
+          </View>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => { setSearchMode(true); setSearchQuery(''); }}
@@ -549,19 +723,15 @@ export function ChatScreen({ route }: Props) {
 
         {/* Reply banner */}
         {replyMessage && (
-          <View style={[styles.replyBar, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+          <View style={[styles.replyBar, { backgroundColor: colors.surface, borderTopColor: colors.border, borderBottomWidth: 1, borderBottomColor: colors.border }]}>
             <View style={[styles.replyBarStrip, { backgroundColor: colors.primary }]} />
             <View style={{ flex: 1 }}>
-              <Text style={[styles.replyBarName, { color: colors.primary }]}>{replyMessage.senderName}</Text>
+              <Text style={[styles.replyBarName, { color: colors.primary }]}>Replying to {replyMessage.senderName}</Text>
               <Text style={[styles.replyBarText, { color: colors.textSecondary }]} numberOfLines={1}>
-                {typeof replyMessage.content === 'string'
-                  ? (replyMessage.content || replyMessage.title || replyMessage.formTitle || replyMessage.cardTitle || '')
-                  : typeof replyMessage.content === 'object' && replyMessage.content !== null
-                    ? '[Attachment]'
-                    : (replyMessage.title || replyMessage.formTitle || replyMessage.cardTitle || '')}
+                {getMessageTypeLabel(replyMessage)}
               </Text>
             </View>
-            <TouchableOpacity onPress={() => setReplyingTo(null)} activeOpacity={0.7}>
+            <TouchableOpacity onPress={() => setReplyingTo(null)} activeOpacity={0.7} style={{ padding: 4 }}>
               <Ionicons name="close" size={20} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
@@ -577,36 +747,83 @@ export function ChatScreen({ route }: Props) {
 
         {/* Input bar */}
         <View style={[styles.inputBar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
-          <TouchableOpacity
-            style={[styles.plusBtn, { backgroundColor: colors.surface }]}
-            onPress={() => setShowPlusMenu(true)}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="add" size={22} color={colors.primary} />
-          </TouchableOpacity>
-          <TextInput
-            ref={inputRef}
-            style={[styles.textInput, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-            placeholder="Message..."
-            placeholderTextColor={colors.textMuted}
-            value={inputText}
-            onChangeText={handleTextChange}
-            multiline
-            maxLength={4000}
-            returnKeyType="default"
-          />
-          <TouchableOpacity
-            style={[styles.sendBtn, { backgroundColor: inputText.trim() ? colors.primary : colors.surface }]}
-            onPress={handleSend}
-            disabled={!inputText.trim() || sending}
-            activeOpacity={0.7}
-          >
-            {sending ? (
-              <ActivityIndicator size="small" color={colors.primaryForeground} />
-            ) : (
-              <Ionicons name="arrow-up" size={18} color={inputText.trim() ? colors.primaryForeground : colors.textMuted} />
-            )}
-          </TouchableOpacity>
+          {isRecording ? (
+            /* ── Recording UI ── */
+            <>
+              <TouchableOpacity
+                style={[styles.plusBtn, { backgroundColor: 'rgba(239,68,68,0.1)' }]}
+                onPress={cancelRecording}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="trash-outline" size={18} color="#ef4444" />
+              </TouchableOpacity>
+              <View style={[styles.recordingBar, { backgroundColor: 'rgba(239,68,68,0.06)', borderColor: 'rgba(239,68,68,0.2)' }]}>
+                <View style={styles.recordingDot} />
+                <Text style={styles.recordingText}>
+                  {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
+                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: fontSize.xs, flex: 1 }}>Recording...</Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.sendBtn, { backgroundColor: '#ef4444' }]}
+                onPress={stopAndSendRecording}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="arrow-up" size={18} color="#fff" />
+              </TouchableOpacity>
+            </>
+          ) : (
+            /* ── Normal input UI ── */
+            <>
+              {/* + button (components) */}
+              <TouchableOpacity
+                style={[styles.plusBtn, { backgroundColor: colors.surface }]}
+                onPress={() => setShowPlusMenu(true)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="add" size={22} color={colors.primary} />
+              </TouchableOpacity>
+              {/* Paperclip button (attachments) */}
+              <TouchableOpacity
+                style={[styles.plusBtn, { backgroundColor: colors.surface }]}
+                onPress={() => setShowAttachMenu(true)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="attach" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+              {/* Mic button */}
+              <TouchableOpacity
+                style={[styles.plusBtn, { backgroundColor: colors.surface }]}
+                onPress={startRecording}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="mic-outline" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+              <TextInput
+                ref={inputRef}
+                style={[styles.textInput, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
+                placeholder="Message..."
+                placeholderTextColor={colors.textMuted}
+                value={inputText}
+                onChangeText={handleTextChange}
+                multiline
+                maxLength={4000}
+                returnKeyType="default"
+              />
+              <TouchableOpacity
+                style={[styles.sendBtn, { backgroundColor: inputText.trim() ? colors.primary : colors.surface }]}
+                onPress={handleSend}
+                disabled={!inputText.trim() || sending}
+                activeOpacity={0.7}
+              >
+                {sending ? (
+                  <ActivityIndicator size="small" color={colors.primaryForeground} />
+                ) : (
+                  <Ionicons name="arrow-up" size={18} color={inputText.trim() ? colors.primaryForeground : colors.textMuted} />
+                )}
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       </KeyboardAvoidingView>
 
@@ -713,7 +930,7 @@ export function ChatScreen({ route }: Props) {
         </TouchableOpacity>
       </Modal>
 
-      {/* Plus menu modal */}
+      {/* Components menu modal (+ button) */}
       <Modal visible={showPlusMenu} transparent animationType="fade" onRequestClose={() => setShowPlusMenu(false)}>
         <TouchableOpacity
           style={styles.modalOverlay}
@@ -721,22 +938,60 @@ export function ChatScreen({ route }: Props) {
           onPress={() => setShowPlusMenu(false)}
         >
           <View style={[styles.plusMenuCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.plusMenuTitle, { color: colors.text }]}>Send Media</Text>
-            <TouchableOpacity style={[styles.plusMenuRow, { borderBottomColor: colors.borderLight }]} onPress={handlePickImage} activeOpacity={0.6}>
+            <Text style={[styles.plusMenuTitle, { color: colors.text }]}>Components</Text>
+            {[
+              { icon: 'checkmark-circle-outline' as const, label: 'Confirmation', sub: 'Ask for yes/no approval', color: colors.primary, bg: colors.primaryLight },
+              { icon: 'bar-chart-outline' as const, label: 'Vote', sub: 'Create a poll', color: colors.success, bg: colors.successLight },
+              { icon: 'list-outline' as const, label: 'Choice', sub: 'Multiple choice selection', color: colors.warning, bg: colors.warningLight },
+              { icon: 'document-text-outline' as const, label: 'Form', sub: 'Structured data form', color: colors.primary, bg: colors.primaryLight },
+              { icon: 'card-outline' as const, label: 'Card', sub: 'Rich card with actions', color: colors.textSecondary, bg: colors.surface },
+              { icon: 'analytics-outline' as const, label: 'Chart', sub: 'Data visualization', color: colors.success, bg: colors.successLight },
+            ].map((item, i, arr) => (
+              <TouchableOpacity
+                key={item.label}
+                style={[styles.plusMenuRow, i < arr.length - 1 ? { borderBottomColor: colors.borderLight } : {}]}
+                onPress={() => {
+                  setShowPlusMenu(false);
+                  // Component types are handled by AI agents — inform user
+                  Alert.alert('Coming Soon', `${item.label} components are created by AI agents in the conversation.`);
+                }}
+                activeOpacity={0.6}
+              >
+                <View style={[styles.plusMenuIcon, { backgroundColor: item.bg }]}><Ionicons name={item.icon} size={20} color={item.color} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.plusMenuLabel, { color: colors.text }]}>{item.label}</Text>
+                  <Text style={[styles.plusMenuSub, { color: colors.textMuted }]}>{item.sub}</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Attachments menu modal (paperclip button) */}
+      <Modal visible={showAttachMenu} transparent animationType="fade" onRequestClose={() => setShowAttachMenu(false)}>
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowAttachMenu(false)}
+        >
+          <View style={[styles.plusMenuCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.plusMenuTitle, { color: colors.text }]}>Attachments</Text>
+            <TouchableOpacity style={[styles.plusMenuRow, { borderBottomColor: colors.borderLight }]} onPress={() => { setShowAttachMenu(false); handlePickImage(); }} activeOpacity={0.6}>
               <View style={[styles.plusMenuIcon, { backgroundColor: colors.primaryLight }]}><Ionicons name="image-outline" size={20} color={colors.primary} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.plusMenuLabel, { color: colors.text }]}>Photo Library</Text>
                 <Text style={[styles.plusMenuSub, { color: colors.textMuted }]}>Choose from gallery</Text>
               </View>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.plusMenuRow, { borderBottomColor: colors.borderLight }]} onPress={handleTakePhoto} activeOpacity={0.6}>
+            <TouchableOpacity style={[styles.plusMenuRow, { borderBottomColor: colors.borderLight }]} onPress={() => { setShowAttachMenu(false); handleTakePhoto(); }} activeOpacity={0.6}>
               <View style={[styles.plusMenuIcon, { backgroundColor: colors.successLight }]}><Ionicons name="camera-outline" size={20} color={colors.success} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.plusMenuLabel, { color: colors.text }]}>Camera</Text>
                 <Text style={[styles.plusMenuSub, { color: colors.textMuted }]}>Take a new photo</Text>
               </View>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.plusMenuRow} onPress={handlePickFile} activeOpacity={0.6}>
+            <TouchableOpacity style={styles.plusMenuRow} onPress={() => { setShowAttachMenu(false); handlePickFile(); }} activeOpacity={0.6}>
               <View style={[styles.plusMenuIcon, { backgroundColor: colors.warningLight }]}><Ionicons name="document-outline" size={20} color={colors.warning} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.plusMenuLabel, { color: colors.text }]}>File</Text>
@@ -761,6 +1016,7 @@ export function ChatScreen({ route }: Props) {
           message={seenInfoMessage}
           members={members}
           currentEntityId={currentEntityId}
+          seenByEntityIds={messageSeenMap[seenInfoMessage.id] || []}
           onClose={() => setSeenInfoMessage(null)}
         />
       )}
@@ -814,6 +1070,11 @@ const styles = StyleSheet.create({
   backBtn: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
   backArrow: { fontSize: 28, fontWeight: '300' },
   headerCenter: { flex: 1, marginHorizontal: spacing.sm },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  headerAvatarWrap: { position: 'relative' },
+  headerAvatar: { width: 34, height: 34, borderRadius: 17 },
+  headerAvatarFallback: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  headerOnlineDot: { position: 'absolute', bottom: 0, right: 0, width: 10, height: 10, borderRadius: 5, borderWidth: 2 },
   headerTitle: { fontSize: fontSize.base, fontWeight: fontWeight.semibold },
   headerSubtitle: { fontSize: fontSize.xs },
   settingsBtn: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
@@ -850,17 +1111,16 @@ const styles = StyleSheet.create({
   timeText: { fontSize: 10 },
   seenCheck: { fontSize: 10, fontWeight: '600' },
 
-  // Reply banner (inside bubble)
-  replyBanner: {
-    borderLeftWidth: 2,
-    paddingLeft: spacing.sm,
-    paddingVertical: 2,
-    marginBottom: spacing.xs,
-    borderRadius: borderRadius.sm,
-    paddingRight: spacing.sm,
+  // Reply banner (above bubble, Vite app style)
+  replyBannerAbove: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+    paddingHorizontal: spacing.xs,
+    maxWidth: '100%',
   },
-  replyName: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
-  replySnippet: { fontSize: fontSize.xs },
+  replyBannerName: { fontSize: 11, fontWeight: fontWeight.medium, marginRight: 4, flexShrink: 0 },
+  replyBannerSnippet: { fontSize: 11, flex: 1 },
 
   // System
   systemContainer: { paddingVertical: spacing.xs },
@@ -909,11 +1169,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   plusBtn: {
-    width: 36,
-    height: 36,
+    width: 32,
+    height: 32,
     borderRadius: borderRadius.full,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  recordingBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+    minHeight: 36,
+  },
+  recordingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ef4444',
+  },
+  recordingText: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    color: '#ef4444',
   },
 
   // Date separator

@@ -95,6 +95,13 @@ export const authApi = {
       method: "POST",
     });
   },
+
+  updateProfile(data: { name: string }) {
+    return request<{ user: AuthUser }>("/me", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  },
 };
 
 // ── Haseef types ────────────────────────────────────────────────────────────

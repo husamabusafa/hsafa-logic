@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Linking, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
@@ -355,6 +355,7 @@ function VoiceContent({ message, isOwn }: { message: Message; isOwn: boolean }) 
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentPos, setCurrentPos] = useState(0);
+  const [playbackError, setPlaybackError] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
 
   // Stable waveform bars seeded from message id
@@ -429,6 +430,11 @@ function VoiceContent({ message, isOwn }: { message: Message; isOwn: boolean }) 
     } catch (err) {
       console.warn('[VoiceContent] Playback error:', err);
       setIsPlaying(false);
+      // Detect unsupported format (e.g. .webm on iOS)
+      const errMsg = String(err);
+      if (errMsg.includes('not supported') || errMsg.includes('-11828') || errMsg.includes('AVFoundation')) {
+        setPlaybackError(true);
+      }
     }
   }, [isPlaying, message.audioUrl, message.id]);
 
@@ -440,6 +446,36 @@ function VoiceContent({ message, isOwn }: { message: Message; isOwn: boolean }) 
   const activeBarColor = isOwn ? 'rgba(255,255,255,0.85)' : colors.primary;
   const inactiveBarColor = isOwn ? 'rgba(255,255,255,0.35)' : colors.primary + '40';
   const activeBarIndex = Math.floor(progress * bars.length);
+
+  // Check if URL is .webm (unsupported on iOS) to show proactive warning
+  const audioUrl = message.audioUrl ?? '';
+  const isWebm = audioUrl.toLowerCase().includes('.webm');
+  const showUnsupported = playbackError || (Platform.OS === 'ios' && isWebm);
+
+  if (showUnsupported) {
+    return (
+      <View>
+        <View style={styles.voiceRow}>
+          <View style={[styles.voicePlayBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.primaryLight, opacity: 0.6 }]}>
+            <Ionicons name="mic" size={16} color={isOwn ? colors.messageMineFg : colors.primary} />
+          </View>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={{ color: isOwn ? 'rgba(255,255,255,0.7)' : colors.textMuted, fontSize: fontSize.xs }}>
+              🎤 Voice message · {timeStr}
+            </Text>
+            <Text style={{ color: isOwn ? 'rgba(255,255,255,0.5)' : colors.textMuted, fontSize: 10 }}>
+              Audio format not supported on this device
+            </Text>
+          </View>
+        </View>
+        {message.transcription && (
+          <Text style={{ color: isOwn ? 'rgba(255,255,255,0.8)' : colors.textSecondary, fontSize: fontSize.xs, fontStyle: 'italic', marginTop: spacing.xs }}>
+            {message.transcription}
+          </Text>
+        )}
+      </View>
+    );
+  }
 
   return (
     <View>

@@ -369,6 +369,59 @@ router.get("/me", async (req, res) => {
   }
 });
 
+// ── PATCH /api/me — Update profile ───────────────────────────────────────────
+
+router.patch("/me", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      res.status(401).json({ error: "No token provided" });
+      return;
+    }
+
+    const payload = await verifyToken(authHeader.slice(7));
+    if (!payload) {
+      res.status(401).json({ error: "Invalid or expired token" });
+      return;
+    }
+
+    const { name } = req.body;
+    if (!name || typeof name !== "string" || !name.trim()) {
+      res.status(400).json({ error: "name is required" });
+      return;
+    }
+
+    const trimmedName = name.trim();
+
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+    });
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    // Update user name
+    const updatedUser = await prisma.user.update({
+      where: { id: payload.sub },
+      data: { name: trimmedName },
+    });
+
+    // Also update entity displayName so it's consistent everywhere
+    if (user.hsafaEntityId) {
+      await prisma.entity.update({
+        where: { id: user.hsafaEntityId },
+        data: { displayName: trimmedName },
+      });
+    }
+
+    res.json({ user: await buildUserResponse(updatedUser) });
+  } catch (error) {
+    console.error("Update profile error:", error);
+    res.status(500).json({ error: "Failed to update profile" });
+  }
+});
+
 // ── Google OAuth ─────────────────────────────────────────────────────────────
 
 // GET /api/auth/google — redirect to Google consent screen
