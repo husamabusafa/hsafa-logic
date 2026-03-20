@@ -306,8 +306,9 @@ export function ChatScreen({ route }: Props) {
           iconColor={colors.primary}
         >
         <TouchableOpacity
-          activeOpacity={0.8}
-          delayLongPress={250}
+          activeOpacity={1}
+          delayLongPress={300}
+          onPress={() => {}}
           onLongPress={() => {
             haptic.medium();
             setActionMessage(item);
@@ -419,13 +420,17 @@ export function ChatScreen({ route }: Props) {
                 const otherCount = members.filter((m) => m.entityId !== currentEntityId).length;
                 const allSeen = seenByOthers.length >= otherCount && otherCount > 0;
                 const delivered = seenByOthers.length > 0;
+                // Match vite app: double check for all states, different colors
+                const iconColor = allSeen
+                  ? '#34b7f1'  // WhatsApp blue for all seen
+                  : delivered
+                    ? (isInteractive ? colors.textMuted : 'rgba(255,255,255,0.6)')
+                    : (isInteractive ? colors.textMuted : 'rgba(255,255,255,0.4)');
                 return (
                   <Ionicons
-                    name={delivered ? 'checkmark-done' : 'checkmark'}
+                    name="checkmark-done"
                     size={15}
-                    color={allSeen
-                      ? '#34b7f1'
-                      : (isInteractive ? colors.textMuted : 'rgba(255,255,255,0.55)')}
+                    color={iconColor}
                     style={{ marginLeft: 3 }}
                   />
                 );

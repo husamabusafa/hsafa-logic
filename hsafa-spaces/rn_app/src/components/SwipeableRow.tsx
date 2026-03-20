@@ -20,8 +20,9 @@ export function SwipeableRow({ children, onSwipeRight, enabled = true, iconColor
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, gestureState) => {
         if (!enabled || !onSwipeRight) return false;
-        // Only respond to horizontal movement greater than vertical
-        return Math.abs(gestureState.dx) > Math.abs(gestureState.dy) && Math.abs(gestureState.dx) > 10;
+        // Require more horizontal movement to activate swipe
+        // This allows buttons to receive taps without triggering swipe
+        return gestureState.dx > 15 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 2;
       },
       onPanResponderMove: (_, gestureState) => {
         // Only allow right swipe (positive dx)

@@ -216,7 +216,7 @@ export function SpacesListScreen() {
       <View style={[styles.actionRow, { borderBottomColor: colors.borderLight }]}>
         <TouchableOpacity
           style={[styles.actionBtn, { backgroundColor: colors.primary }]}
-          onPress={() => setShowCreate(true)}
+          onPress={() => navigation.navigate('CreateSpace')}
           activeOpacity={0.8}
         >
           <Text style={[styles.actionBtnText, { color: colors.primaryForeground }]}>+ New Space</Text>

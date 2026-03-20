@@ -818,6 +818,10 @@ export const basesApi = {
 
 export function resolveMediaUrl(url: string | null | undefined): string | null {
   if (!url) return null;
+  // If it's a localhost URL, replace with the actual server URL
+  if (url.includes('localhost:3005')) {
+    return url.replace('http://localhost:3005', SERVER_URL);
+  }
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
   // Server returns relative URLs like /media/uploads/...
   return `${SERVER_URL}${url}`;
