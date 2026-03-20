@@ -205,8 +205,24 @@ export function HaseefDetailScreen({ route }: Props) {
         <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>CONFIGURATION</Text>
 
-          <ConfigRow label="Model" value={(config.model as string) || 'Default'} colors={colors} />
-          <ConfigRow label="Provider" value={(config.provider as string) || 'Default'} colors={colors} />
+          <ConfigRow
+            label="Model"
+            value={
+              typeof config.model === 'object' && config.model !== null
+                ? String((config.model as any).model || 'Default')
+                : typeof config.model === 'string' ? config.model : 'Default'
+            }
+            colors={colors}
+          />
+          <ConfigRow
+            label="Provider"
+            value={
+              typeof config.model === 'object' && config.model !== null
+                ? String((config.model as any).provider || 'Default')
+                : typeof config.provider === 'string' ? String(config.provider) : 'Default'
+            }
+            colors={colors}
+          />
           {typeof config.instructions === 'string' && config.instructions.length > 0 ? (
             <View style={{ marginTop: spacing.sm }}>
               <Text style={[styles.label, { color: colors.textMuted }]}>Instructions</Text>
@@ -226,7 +242,17 @@ export function HaseefDetailScreen({ route }: Props) {
             <Text style={[styles.emptyText, { color: colors.textMuted }]}>Not in any spaces yet.</Text>
           ) : (
             spaces.map((s) => (
-              <View key={s.id} style={[styles.spaceRow, { borderBottomColor: colors.borderLight }]}>
+              <TouchableOpacity
+                key={s.id}
+                style={[styles.spaceRow, { borderBottomColor: colors.borderLight }]}
+                onPress={() => {
+                  (navigation as any).navigate('SpacesTab', {
+                    screen: 'Chat',
+                    params: { spaceId: s.id, spaceName: s.name || 'Unnamed space' },
+                  });
+                }}
+                activeOpacity={0.7}
+              >
                 <View style={[styles.spaceIcon, { backgroundColor: colors.primaryLight }]}>
                   <Ionicons name="chatbubbles-outline" size={14} color={colors.primary} />
                 </View>
@@ -238,7 +264,8 @@ export function HaseefDetailScreen({ route }: Props) {
                     {s.memberCount} member{s.memberCount !== 1 ? 's' : ''} · {s.role}
                   </Text>
                 </View>
-              </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
             ))
           )}
         </View>

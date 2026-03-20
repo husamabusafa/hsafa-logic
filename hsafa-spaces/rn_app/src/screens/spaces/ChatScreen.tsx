@@ -22,13 +22,15 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../lib/auth-context';
-import { spacesApi, mediaApi, type SpaceMember } from '../../lib/api';
+import { spacesApi, mediaApi, resolveMediaUrl, type SpaceMember } from '../../lib/api';
 import { useSpaceChat, type MediaMessageData } from '../../lib/use-space-chat';
 import { MessageRenderer } from '../../components/messages/MessageRenderer';
 import { ForwardMessageModal } from '../../components/ForwardMessageModal';
 import { SeenInfoModal } from '../../components/SeenInfoModal';
 import { ChatSearchBar } from '../../components/ChatSearchBar';
 import { EntityProfileSheet } from '../../components/EntityProfileSheet';
+import { TypingDots } from '../../components/TypingDots';
+import { SwipeableRow } from '../../components/SwipeableRow';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 import { haptic } from '../../lib/haptics';
 import type { SpacesStackParamList, Message, Member } from '../../lib/types';
@@ -65,8 +67,20 @@ export function ChatScreen({ route }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const [seenInfoMessage, setSeenInfoMessage] = useState<Message | null>(null);
   const [profileMember, setProfileMember] = useState<Member | null>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const highlightAnim = useRef(new Animated.Value(0)).current;
   const flatListRef = useRef<FlatList>(null);
   const inputRef = useRef<TextInput>(null);
+
+  const flashHighlight = useCallback((messageId: string) => {
+    setHighlightedMessageId(messageId);
+    highlightAnim.setValue(1);
+    Animated.timing(highlightAnim, {
+      toValue: 0,
+      duration: 1500,
+      useNativeDriver: false,
+    }).start(() => setHighlightedMessageId(null));
+  }, [highlightAnim]);
 
   const currentEntityId = user?.entityId ?? '';
 
@@ -267,8 +281,13 @@ export function ChatScreen({ route }: Props) {
 
     const time = new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+    const isHighlighted = highlightedMessageId === item.id;
+    const highlightBg = isHighlighted
+      ? highlightAnim.interpolate({ inputRange: [0, 1], outputRange: ['transparent', colors.primary + '20'] })
+      : 'transparent';
+
     return (
-      <View>
+      <Animated.View style={{ backgroundColor: highlightBg }}>
         {showDate && (
           <View style={styles.dateSeparator}>
             <View style={[styles.dateLine, { backgroundColor: colors.border }]} />
@@ -278,8 +297,17 @@ export function ChatScreen({ route }: Props) {
             <View style={[styles.dateLine, { backgroundColor: colors.border }]} />
           </View>
         )}
+        <SwipeableRow
+          onSwipeRight={() => {
+            haptic.light();
+            setReplyingTo(item.id);
+            inputRef.current?.focus();
+          }}
+          iconColor={colors.primary}
+        >
         <TouchableOpacity
           activeOpacity={0.8}
+          delayLongPress={250}
           onLongPress={() => {
             haptic.medium();
             setActionMessage(item);
@@ -290,7 +318,36 @@ export function ChatScreen({ route }: Props) {
             showSenderName && { marginTop: spacing.md },
           ]}
         >
-        <View style={{ maxWidth: '80%' }}>
+        <View style={isOwn ? { maxWidth: '80%' } : styles.messageRowWithAvatar}>
+          {/* Sender avatar */}
+          {!isOwn && showSenderName && (() => {
+            const member = members.find((mem) => mem.entityId === item.entityId);
+            const avatar = resolveMediaUrl(member?.avatarUrl ?? null);
+            const isAgent = member?.type === 'agent' || item.senderType === 'agent';
+            return (
+              <TouchableOpacity
+                onPress={() => { if (member) setProfileMember(member); }}
+                activeOpacity={0.7}
+                style={styles.msgAvatarWrap}
+              >
+                {avatar ? (
+                  <Image source={{ uri: avatar }} style={styles.msgAvatar} />
+                ) : (
+                  <View style={[styles.msgAvatarFallback, { backgroundColor: isAgent ? colors.successLight : colors.primaryLight }]}>
+                    {isAgent ? (
+                      <Ionicons name="sparkles" size={12} color={colors.success} />
+                    ) : (
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: colors.primary }}>
+                        {(item.senderName || '?')[0].toUpperCase()}
+                      </Text>
+                    )}
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })()}
+          {!isOwn && !showSenderName && <View style={styles.msgAvatarSpacer} />}
+        <View style={{ maxWidth: isOwn ? '100%' : undefined, flex: isOwn ? undefined : 1 }}>
           {/* Sender name */}
           {showSenderName && (
             <TouchableOpacity
@@ -308,12 +365,28 @@ export function ChatScreen({ route }: Props) {
 
           {/* Reply banner */}
           {item.replyTo && (
-            <View style={[styles.replyBanner, { backgroundColor: colors.primaryLight, borderLeftColor: colors.primary }]}>
+            <TouchableOpacity
+              style={[styles.replyBanner, { backgroundColor: colors.primaryLight, borderLeftColor: colors.primary }]}
+              onPress={() => {
+                const targetId = item.replyTo?.messageId;
+                if (!targetId) return;
+                const idx = messages.findIndex((m) => m.id === targetId);
+                if (idx >= 0) {
+                  flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.3 });
+                  setTimeout(() => flashHighlight(targetId), 400);
+                }
+              }}
+              activeOpacity={0.7}
+            >
               <Text style={[styles.replyName, { color: colors.primary }]}>{item.replyTo.senderName}</Text>
               <Text style={[styles.replySnippet, { color: colors.textSecondary }]} numberOfLines={1}>
-                {item.replyTo.snippet}
+                {typeof item.replyTo.snippet === 'string'
+                  ? item.replyTo.snippet
+                  : typeof item.replyTo.snippet === 'object' && item.replyTo.snippet !== null
+                    ? '[Attachment]'
+                    : String(item.replyTo.snippet || '')}
               </Text>
-            </View>
+            </TouchableOpacity>
           )}
 
           {/* Bubble */}
@@ -345,23 +418,27 @@ export function ChatScreen({ route }: Props) {
                 const seenByOthers = item.seenBy.filter((eid) => eid !== currentEntityId);
                 const otherCount = members.filter((m) => m.entityId !== currentEntityId).length;
                 const allSeen = seenByOthers.length >= otherCount && otherCount > 0;
+                const delivered = seenByOthers.length > 0;
                 return (
-                  <Text style={[styles.seenCheck, {
-                    color: allSeen
-                      ? (isInteractive ? '#3b82f6' : 'rgba(147,197,253,0.9)')
-                      : (isInteractive ? colors.textMuted : 'rgba(255,255,255,0.5)'),
-                  }]}>
-                    {seenByOthers.length > 0 ? '✔✔' : '✔'}
-                  </Text>
+                  <Ionicons
+                    name={delivered ? 'checkmark-done' : 'checkmark'}
+                    size={15}
+                    color={allSeen
+                      ? '#34b7f1'
+                      : (isInteractive ? colors.textMuted : 'rgba(255,255,255,0.55)')}
+                    style={{ marginLeft: 3 }}
+                  />
                 );
               })()}
             </View>
           </View>
         </View>
+        </View>
         </TouchableOpacity>
-      </View>
+        </SwipeableRow>
+      </Animated.View>
     );
-  }, [currentEntityId, messages, colors, handleRespond]);
+  }, [currentEntityId, messages, colors, handleRespond, members, highlightedMessageId, highlightAnim, flashHighlight]);
 
   // Typing / agent activity indicator
   const statusLine = (() => {
@@ -384,7 +461,11 @@ export function ChatScreen({ route }: Props) {
         <TouchableOpacity onPress={() => navigation.goBack()} activeOpacity={0.7} style={styles.backBtn}>
           <Text style={[styles.backArrow, { color: colors.primary }]}>‹</Text>
         </TouchableOpacity>
-        <View style={styles.headerCenter}>
+        <TouchableOpacity
+          style={styles.headerCenter}
+          onPress={() => (navigation as any).navigate('SpaceSettings', { spaceId })}
+          activeOpacity={0.7}
+        >
           <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
             {spaceName || 'Chat'}
           </Text>
@@ -392,7 +473,7 @@ export function ChatScreen({ route }: Props) {
             {members.length} member{members.length !== 1 ? 's' : ''}
             {onlineUserIds.length > 0 ? ` · ${onlineUserIds.length} online` : ''}
           </Text>
-        </View>
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={() => { setSearchMode(true); setSearchQuery(''); }}
           activeOpacity={0.7}
@@ -456,6 +537,7 @@ export function ChatScreen({ route }: Props) {
         {/* Typing / agent activity */}
         {statusLine && (
           <View style={[styles.statusBar, { backgroundColor: colors.surface }]}>
+            <TypingDots color={colors.primary} size={5} />
             <Text style={[styles.statusText, { color: colors.textSecondary }]}>{statusLine}</Text>
           </View>
         )}
@@ -467,7 +549,11 @@ export function ChatScreen({ route }: Props) {
             <View style={{ flex: 1 }}>
               <Text style={[styles.replyBarName, { color: colors.primary }]}>{replyMessage.senderName}</Text>
               <Text style={[styles.replyBarText, { color: colors.textSecondary }]} numberOfLines={1}>
-                {replyMessage.content || replyMessage.title || replyMessage.formTitle || replyMessage.cardTitle || ''}
+                {typeof replyMessage.content === 'string'
+                  ? (replyMessage.content || replyMessage.title || replyMessage.formTitle || replyMessage.cardTitle || '')
+                  : typeof replyMessage.content === 'object' && replyMessage.content !== null
+                    ? '[Attachment]'
+                    : (replyMessage.title || replyMessage.formTitle || replyMessage.cardTitle || '')}
               </Text>
             </View>
             <TouchableOpacity onPress={() => setReplyingTo(null)} activeOpacity={0.7}>
@@ -740,6 +826,11 @@ const styles = StyleSheet.create({
   messageRow: { marginTop: spacing.xs },
   messageRowOwn: { alignItems: 'flex-end' },
   messageRowOther: { alignItems: 'flex-start' },
+  messageRowWithAvatar: { flexDirection: 'row', alignItems: 'flex-end', maxWidth: '80%', gap: spacing.xs },
+  msgAvatarWrap: { marginBottom: 2 },
+  msgAvatar: { width: 28, height: 28, borderRadius: 14 },
+  msgAvatarFallback: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  msgAvatarSpacer: { width: 28 },
 
   senderName: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, marginBottom: 2, marginLeft: spacing.xs },
 
@@ -770,7 +861,7 @@ const styles = StyleSheet.create({
   systemContainer: { paddingVertical: spacing.xs },
 
   // Status bar (typing indicator)
-  statusBar: { paddingHorizontal: spacing.lg, paddingVertical: spacing.xs },
+  statusBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.xs },
   statusText: { fontSize: fontSize.xs, fontStyle: 'italic' },
 
   // Reply bar (above input)

@@ -154,18 +154,27 @@ export function HaseefEditScreen({ route }: Props) {
         {haseef?.configJson && (
           <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>CURRENT CONFIG</Text>
-            {typeof haseef.configJson.model === 'string' ? (
-              <View style={styles.configRow}>
-                <Text style={[styles.configLabel, { color: colors.textMuted }]}>Model</Text>
-                <Text style={[styles.configValue, { color: colors.text }]}>{haseef.configJson.model as string}</Text>
-              </View>
-            ) : null}
-            {typeof haseef.configJson.provider === 'string' ? (
-              <View style={styles.configRow}>
-                <Text style={[styles.configLabel, { color: colors.textMuted }]}>Provider</Text>
-                <Text style={[styles.configValue, { color: colors.text }]}>{haseef.configJson.provider as string}</Text>
-              </View>
-            ) : null}
+            {(() => {
+              const m = haseef.configJson!.model;
+              const modelStr = typeof m === 'object' && m !== null ? String((m as any).model || '') : typeof m === 'string' ? m : '';
+              const providerStr = typeof m === 'object' && m !== null ? String((m as any).provider || '') : typeof haseef.configJson!.provider === 'string' ? String(haseef.configJson!.provider) : '';
+              return (
+                <>
+                  {modelStr ? (
+                    <View style={styles.configRow}>
+                      <Text style={[styles.configLabel, { color: colors.textMuted }]}>Model</Text>
+                      <Text style={[styles.configValue, { color: colors.text }]}>{modelStr}</Text>
+                    </View>
+                  ) : null}
+                  {providerStr ? (
+                    <View style={styles.configRow}>
+                      <Text style={[styles.configLabel, { color: colors.textMuted }]}>Provider</Text>
+                      <Text style={[styles.configValue, { color: colors.text }]}>{providerStr}</Text>
+                    </View>
+                  ) : null}
+                </>
+              );
+            })()}
           </View>
         )}
       </ScrollView>

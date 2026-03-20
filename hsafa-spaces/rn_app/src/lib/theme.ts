@@ -21,10 +21,10 @@ const lightColors = {
   textMuted: '#94a3b8',
   textInverse: '#ffffff',
 
-  // Primary — warm coral to match react_app oklch(0.68 0.17 22)
-  primary: '#CF5C36',
+  // Primary — matches react_app
+  primary: '#f97676',
   primaryForeground: '#ffffff',
-  primaryLight: '#FDF0EB',
+  primaryLight: '#fef2f2',
 
   // Borders
   border: '#e2e8f0',
@@ -42,7 +42,7 @@ const lightColors = {
   infoLight: '#dbeafe',
 
   // Chat
-  messageMine: '#CF5C36',
+  messageMine: '#f97676',
   messageMineFg: '#ffffff',
   messageOther: '#f1f5f9',
   messageOtherFg: '#0f172a',
@@ -59,28 +59,28 @@ const lightColors = {
 };
 
 const darkColors: typeof lightColors = {
-  // Backgrounds
-  background: '#0f172a',
-  surface: '#1e293b',
-  surfaceHover: '#334155',
-  card: '#1e293b',
-  muted: '#1e293b',
+  // Backgrounds — warm dark (not blue slate)
+  background: '#0a0a0a',
+  surface: '#171717',
+  surfaceHover: '#262626',
+  card: '#171717',
+  muted: '#171717',
 
   // Text
-  text: '#f8fafc',
-  textSecondary: '#94a3b8',
-  textMuted: '#64748b',
-  textInverse: '#0f172a',
+  text: '#f5f5f5',
+  textSecondary: '#a3a3a3',
+  textMuted: '#737373',
+  textInverse: '#0a0a0a',
 
-  // Primary — warm coral for dark mode oklch(0.72 0.16 22)
-  primary: '#DC7454',
+  // Primary — matches react_app
+  primary: '#f97676',
   primaryForeground: '#ffffff',
-  primaryLight: '#3D1E12',
+  primaryLight: '#2a1515',
 
   // Borders
-  border: '#334155',
-  borderLight: '#1e293b',
-  separator: '#334155',
+  border: '#262626',
+  borderLight: '#1a1a1a',
+  separator: '#262626',
 
   // Status
   success: '#4ade80',
@@ -93,20 +93,20 @@ const darkColors: typeof lightColors = {
   infoLight: '#172554',
 
   // Chat
-  messageMine: '#CF5C36',
+  messageMine: '#f97676',
   messageMineFg: '#ffffff',
-  messageOther: '#1e293b',
+  messageOther: '#1c1c1c',
   messageOtherFg: '#f8fafc',
-  messageAgent: '#064e3b',
+  messageAgent: '#0a2418',
   messageAgentFg: '#f8fafc',
 
   // Misc
   overlay: 'rgba(0, 0, 0, 0.7)',
-  tabBar: '#0f172a',
-  tabBarBorder: '#1e293b',
+  tabBar: '#0a0a0a',
+  tabBarBorder: '#1a1a1a',
   badge: '#ef4444',
   badgeFg: '#ffffff',
-  skeleton: '#334155',
+  skeleton: '#262626',
 };
 
 export type ThemeColors = typeof lightColors;

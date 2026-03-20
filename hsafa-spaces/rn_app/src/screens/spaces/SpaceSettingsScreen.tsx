@@ -9,12 +9,14 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../../lib/auth-context';
-import { spacesApi, resolveMediaUrl, type SmartSpace, type SpaceMember } from '../../lib/api';
+import { spacesApi, haseefsApi, resolveMediaUrl, type SmartSpace, type SpaceMember, type HaseefListItem } from '../../lib/api';
+import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
 import type { SpacesStackParamList } from '../../lib/types';
@@ -35,6 +37,11 @@ export function SpaceSettingsScreen({ route }: Props) {
   const [saving, setSaving] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [togglingLink, setTogglingLink] = useState(false);
+  const [showAddHaseef, setShowAddHaseef] = useState(false);
+  const [userHaseefs, setUserHaseefs] = useState<HaseefListItem[]>([]);
+  const [loadingHaseefs, setLoadingHaseefs] = useState(false);
+  const [addingHaseef, setAddingHaseef] = useState<string | null>(null);
 
   const currentEntityId = user?.entityId ?? '';
 
@@ -242,11 +249,81 @@ export function SpaceSettingsScreen({ route }: Props) {
 
           {/* Invite code */}
           {space?.inviteCode && (
-            <View style={[styles.inviteRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.inviteLabel, { color: colors.textMuted }]}>Invite Code</Text>
-                <Text style={[styles.inviteCode, { color: colors.text }]}>{space.inviteCode}</Text>
-              </View>
+            <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+              <TouchableOpacity
+                style={[styles.inviteRow, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                onPress={async () => {
+                  if (space?.inviteCode) {
+                    await Clipboard.setStringAsync(space.inviteCode);
+                    Alert.alert('Copied', 'Invite code copied to clipboard.');
+                  }
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.inviteLabel, { color: colors.textMuted }]}>Invite Code</Text>
+                  <Text style={[styles.inviteCode, { color: colors.text }]}>{space.inviteCode}</Text>
+                </View>
+                <Ionicons name="copy-outline" size={16} color={colors.primary} />
+              </TouchableOpacity>
+
+              {isAdmin && (
+                <View style={styles.inviteLinkRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.inviteLinkLabel, { color: colors.textSecondary }]}>
+                      Invite link: {space.inviteLinkActive ? 'Active' : 'Inactive'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      if (!space || togglingLink) return;
+                      setTogglingLink(true);
+                      try {
+                        const { inviteLinkActive } = await spacesApi.toggleInviteLink(spaceId, !space.inviteLinkActive);
+                        setSpace({ ...space, inviteLinkActive });
+                      } catch (err: any) {
+                        Alert.alert('Error', err.message || 'Failed to toggle');
+                      } finally {
+                        setTogglingLink(false);
+                      }
+                    }}
+                    activeOpacity={0.7}
+                    disabled={togglingLink}
+                    style={[styles.actionPill, { backgroundColor: space.inviteLinkActive ? colors.errorLight : colors.primaryLight }]}
+                  >
+                    <Text style={[styles.actionPillText, { color: space.inviteLinkActive ? colors.error : colors.primary }]}>
+                      {togglingLink ? '...' : space.inviteLinkActive ? 'Disable' : 'Enable'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {isAdmin && (
+                <TouchableOpacity
+                  onPress={() => {
+                    Alert.alert('Regenerate Code', 'This will invalidate the current invite code.', [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Regenerate',
+                        style: 'destructive',
+                        onPress: async () => {
+                          try {
+                            const { inviteCode } = await spacesApi.regenerateCode(spaceId);
+                            setSpace((prev) => prev ? { ...prev, inviteCode } : prev);
+                          } catch (err: any) {
+                            Alert.alert('Error', err.message || 'Failed to regenerate');
+                          }
+                        },
+                      },
+                    ]);
+                  }}
+                  activeOpacity={0.7}
+                  style={[styles.actionPill, { backgroundColor: colors.errorLight, marginTop: spacing.sm }]}
+                >
+                  <Ionicons name="refresh" size={14} color={colors.error} />
+                  <Text style={[styles.actionPillText, { color: colors.error }]}>Regenerate Code</Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
         </View>
@@ -258,12 +335,32 @@ export function SpaceSettingsScreen({ route }: Props) {
               MEMBERS ({members.length})
             </Text>
             {isAdmin && (
-              <TouchableOpacity
-                onPress={() => (navigation as any).navigate('InviteToSpace', { spaceId, spaceName: space?.name || '' })}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.inviteBtn, { color: colors.primary }]}>+ Invite</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                <TouchableOpacity
+                  onPress={() => {
+                    setShowAddHaseef(true);
+                    if (userHaseefs.length === 0) {
+                      setLoadingHaseefs(true);
+                      haseefsApi.list().then(({ haseefs }) => {
+                        setUserHaseefs(haseefs);
+                      }).catch(() => {}).finally(() => setLoadingHaseefs(false));
+                    }
+                  }}
+                  activeOpacity={0.7}
+                  style={[styles.pillBtn, { backgroundColor: colors.primaryLight }]}
+                >
+                  <Ionicons name="sparkles" size={14} color={colors.primary} />
+                  <Text style={[styles.pillBtnText, { color: colors.primary }]}>Haseef</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => (navigation as any).navigate('InviteToSpace', { spaceId, spaceName: space?.name || '' })}
+                  activeOpacity={0.7}
+                  style={[styles.pillBtn, { backgroundColor: colors.primary }]}
+                >
+                  <Ionicons name="person-add" size={14} color={colors.primaryForeground} />
+                  <Text style={[styles.pillBtnText, { color: colors.primaryForeground }]}>Invite</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
 
@@ -341,6 +438,52 @@ export function SpaceSettingsScreen({ route }: Props) {
           )}
         </View>
       </ScrollView>
+      {/* Add Haseef Modal */}
+      <Modal visible={showAddHaseef} transparent animationType="fade" onRequestClose={() => setShowAddHaseef(false)}>
+        <TouchableOpacity style={styles.addHaseefOverlay} activeOpacity={1} onPress={() => setShowAddHaseef(false)}>
+          <TouchableOpacity activeOpacity={1} style={[styles.addHaseefCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.addHaseefTitle, { color: colors.text }]}>Add Haseef to Space</Text>
+            {loadingHaseefs ? (
+              <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: spacing.lg }} />
+            ) : userHaseefs.length === 0 ? (
+              <Text style={[styles.addHaseefEmpty, { color: colors.textMuted }]}>No haseefs available.</Text>
+            ) : (
+              userHaseefs
+                .filter((h) => !members.some((m) => m.entityId === h.entityId))
+                .map((h) => (
+                  <TouchableOpacity
+                    key={h.haseefId}
+                    style={[styles.addHaseefRow, { borderBottomColor: colors.borderLight }]}
+                    onPress={async () => {
+                      setAddingHaseef(h.haseefId);
+                      try {
+                        await haseefsApi.addToSpace(h.haseefId, spaceId);
+                        setShowAddHaseef(false);
+                        fetchData();
+                      } catch (err: any) {
+                        Alert.alert('Error', err.message || 'Failed to add haseef');
+                      } finally {
+                        setAddingHaseef(null);
+                      }
+                    }}
+                    activeOpacity={0.7}
+                    disabled={addingHaseef === h.haseefId}
+                  >
+                    <View style={[styles.addHaseefIcon, { backgroundColor: colors.primaryLight }]}>
+                      <Ionicons name="sparkles" size={16} color={colors.primary} />
+                    </View>
+                    <Text style={[styles.addHaseefName, { color: colors.text }]} numberOfLines={1}>{h.name}</Text>
+                    {addingHaseef === h.haseefId ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : (
+                      <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                ))
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -473,6 +616,28 @@ const styles = StyleSheet.create({
   inviteLabel: { fontSize: fontSize.xs },
   inviteCode: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold, fontFamily: 'monospace' },
   inviteBtn: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  pillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.full,
+  },
+  pillBtnText: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  inviteLinkRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  inviteLinkLabel: { fontSize: fontSize.xs },
+  inviteToggleBtn: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  regenerateText: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+  actionPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.full,
+  },
+  actionPillText: { fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
 
   spaceImage: { width: '100%', height: 120, borderRadius: borderRadius.md, marginBottom: spacing.md },
 
@@ -495,15 +660,26 @@ const styles = StyleSheet.create({
   memberName: { fontSize: fontSize.sm, fontWeight: fontWeight.medium },
   memberRole: { fontSize: fontSize.xs },
   memberActions: { flexDirection: 'row', gap: spacing.sm },
-  memberActionBtn: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  memberActionBtn: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, minHeight: 36 },
 
   // Danger
   dangerBtn: {
-    borderRadius: borderRadius.md,
+    borderRadius: borderRadius.lg,
     borderWidth: 1,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.md,
     alignItems: 'center',
     marginTop: spacing.sm,
+    minHeight: 48,
+    justifyContent: 'center',
   },
-  dangerBtnText: { fontSize: fontSize.sm, fontWeight: fontWeight.semibold },
+  dangerBtnText: { fontSize: fontSize.base, fontWeight: fontWeight.semibold },
+
+  // Add Haseef modal
+  addHaseefOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  addHaseefCard: { marginHorizontal: spacing.md, marginBottom: spacing['3xl'], borderRadius: borderRadius.xl, borderWidth: 1, padding: spacing.lg },
+  addHaseefTitle: { fontSize: fontSize.base, fontWeight: fontWeight.semibold, marginBottom: spacing.md },
+  addHaseefEmpty: { fontSize: fontSize.sm, fontStyle: 'italic', paddingVertical: spacing.md },
+  addHaseefRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, gap: spacing.md },
+  addHaseefIcon: { width: 36, height: 36, borderRadius: borderRadius.full, alignItems: 'center', justifyContent: 'center' },
+  addHaseefName: { flex: 1, fontSize: fontSize.sm, fontWeight: fontWeight.medium },
 });

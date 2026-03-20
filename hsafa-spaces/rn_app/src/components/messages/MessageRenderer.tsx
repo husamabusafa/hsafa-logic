@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import { useTheme, spacing, fontSize, fontWeight, borderRadius } from '../../lib/theme';
@@ -58,9 +58,15 @@ export function MessageRenderer({ message, isOwn, currentEntityId, onRespond }: 
 
 function TextContent({ message, isOwn }: { message: Message; isOwn: boolean }) {
   const { colors } = useTheme();
+  // Safeguard: content might be an object (e.g., {model, provider}) from AI responses
+  const content = typeof message.content === 'string'
+    ? message.content
+    : typeof message.content === 'object' && message.content !== null
+      ? JSON.stringify(message.content)
+      : String(message.content ?? '');
   return (
     <Text style={{ color: isOwn ? colors.messageMineFg : colors.messageOtherFg, fontSize: fontSize.sm, lineHeight: 20 }}>
-      {message.content}
+      {content}
     </Text>
   );
 }
@@ -71,10 +77,16 @@ function TextContent({ message, isOwn }: { message: Message; isOwn: boolean }) {
 
 function SystemContent({ message }: { message: Message }) {
   const { colors } = useTheme();
+  // Safeguard: content might be an object
+  const content = typeof message.content === 'string'
+    ? message.content
+    : typeof message.content === 'object' && message.content !== null
+      ? JSON.stringify(message.content)
+      : String(message.content ?? '');
   return (
     <View style={styles.systemRow}>
       <View style={[styles.systemLine, { backgroundColor: colors.border }]} />
-      <Text style={[styles.systemText, { color: colors.textMuted }]}>{message.content}</Text>
+      <Text style={[styles.systemText, { color: colors.textMuted }]}>{content}</Text>
       <View style={[styles.systemLine, { backgroundColor: colors.border }]} />
     </View>
   );
@@ -364,8 +376,11 @@ function VoiceContent({ message, isOwn }: { message: Message; isOwn: boolean }) 
   }, []);
 
   const togglePlayback = useCallback(async () => {
-    const url = resolveMediaUrl(message.audioUrl);
-    if (!url) return;
+    const url = resolveMediaUrl(message.audioUrl ?? null);
+    if (!url) {
+      console.warn('[VoiceContent] No audio URL for message', message.id);
+      return;
+    }
 
     try {
       if (isPlaying && soundRef.current) {
@@ -375,15 +390,26 @@ function VoiceContent({ message, isOwn }: { message: Message; isOwn: boolean }) 
       }
 
       if (soundRef.current) {
-        await soundRef.current.playAsync();
-        setIsPlaying(true);
-        return;
+        // Check if sound is still loaded before replaying
+        const status = await soundRef.current.getStatusAsync();
+        if (status.isLoaded) {
+          await soundRef.current.playAsync();
+          setIsPlaying(true);
+          return;
+        }
+        // Sound was unloaded, fall through to create new
+        soundRef.current = null;
       }
 
-      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+      await Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        allowsRecordingIOS: false,
+        staysActiveInBackground: false,
+      });
+
       const { sound } = await Audio.Sound.createAsync(
         { uri: url },
-        { shouldPlay: true },
+        { shouldPlay: true, progressUpdateIntervalMillis: 100 },
         (status) => {
           if (!status.isLoaded) return;
           if (status.durationMillis && status.durationMillis > 0) {
@@ -400,10 +426,11 @@ function VoiceContent({ message, isOwn }: { message: Message; isOwn: boolean }) 
       );
       soundRef.current = sound;
       setIsPlaying(true);
-    } catch {
+    } catch (err) {
+      console.warn('[VoiceContent] Playback error:', err);
       setIsPlaying(false);
     }
-  }, [isPlaying, message.audioUrl]);
+  }, [isPlaying, message.audioUrl, message.id]);
 
   const displayDuration = isPlaying ? currentPos : totalDuration;
   const mins = Math.floor(displayDuration / 60);
@@ -420,9 +447,10 @@ function VoiceContent({ message, isOwn }: { message: Message; isOwn: boolean }) 
         <TouchableOpacity
           onPress={togglePlayback}
           activeOpacity={0.7}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           style={[styles.voicePlayBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.2)' : colors.primaryLight }]}
         >
-          <Ionicons name={isPlaying ? 'pause' : 'play'} size={14} color={isOwn ? colors.messageMineFg : colors.primary} />
+          <Ionicons name={isPlaying ? 'pause' : 'play'} size={18} color={isOwn ? colors.messageMineFg : colors.primary} />
         </TouchableOpacity>
         <View style={styles.voiceWaveform}>
           {bars.map((h, i) => (
@@ -453,14 +481,36 @@ function VoiceContent({ message, isOwn }: { message: Message; isOwn: boolean }) 
 // File
 // =============================================================================
 
+function getFileIcon(fileName: string | undefined, mimeType: string | undefined): keyof typeof Ionicons.glyphMap {
+  const ext = (fileName || '').split('.').pop()?.toLowerCase() || '';
+  const mime = (mimeType || '').toLowerCase();
+  if (mime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return 'image-outline';
+  if (mime.startsWith('video/') || ['mp4', 'mov', 'avi', 'webm'].includes(ext)) return 'videocam-outline';
+  if (mime.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'm4a'].includes(ext)) return 'musical-notes-outline';
+  if (mime === 'application/pdf' || ext === 'pdf') return 'document-text-outline';
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive-outline';
+  if (['js', 'ts', 'py', 'java', 'cpp', 'json', 'html', 'css', 'xml'].includes(ext)) return 'code-slash-outline';
+  return 'document-outline';
+}
+
 function FileContent({ message, isOwn }: { message: Message; isOwn: boolean }) {
   const { colors } = useTheme();
   const sizeStr = message.fileSize ? formatFileSize(message.fileSize) : '';
+  const fileUrl = resolveMediaUrl(message.fileUrl ?? null);
+  const iconName = getFileIcon(message.fileName, message.fileMimeType);
+
+  const handlePress = () => {
+    if (fileUrl) Linking.openURL(fileUrl).catch(() => {});
+  };
 
   return (
-    <View style={[styles.fileRow, { backgroundColor: isOwn ? 'rgba(255,255,255,0.1)' : colors.surface, borderColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.border }]}>
+    <TouchableOpacity
+      style={[styles.fileRow, { backgroundColor: isOwn ? 'rgba(255,255,255,0.1)' : colors.surface, borderColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.border }]}
+      onPress={handlePress}
+      activeOpacity={0.7}
+    >
       <View style={[styles.fileIcon, { backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.primaryLight }]}>
-        <Ionicons name="document-outline" size={18} color={isOwn ? colors.messageMineFg : colors.primary} />
+        <Ionicons name={iconName} size={18} color={isOwn ? colors.messageMineFg : colors.primary} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ color: isOwn ? colors.messageMineFg : colors.text, fontSize: fontSize.sm, fontWeight: fontWeight.medium }} numberOfLines={1}>
@@ -470,7 +520,8 @@ function FileContent({ message, isOwn }: { message: Message; isOwn: boolean }) {
           <Text style={{ color: isOwn ? 'rgba(255,255,255,0.6)' : colors.textMuted, fontSize: fontSize.xs }}>{sizeStr}</Text>
         ) : null}
       </View>
-    </View>
+      <Ionicons name="download-outline" size={16} color={isOwn ? 'rgba(255,255,255,0.6)' : colors.textMuted} />
+    </TouchableOpacity>
   );
 }
 
@@ -564,7 +615,7 @@ function AttachmentsContent({ message, isOwn }: { message: Message; isOwn: boole
     <View>
       {message.content ? (
         <Text style={{ color: isOwn ? colors.messageMineFg : colors.messageOtherFg, fontSize: fontSize.sm, marginBottom: spacing.sm }}>
-          {message.content}
+          {typeof message.content === 'string' ? message.content : JSON.stringify(message.content)}
         </Text>
       ) : null}
       {(message.attachments ?? []).map((att, i) => {
@@ -665,7 +716,7 @@ const styles = StyleSheet.create({
 
   // Voice
   voiceRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  voicePlayBtn: { width: 32, height: 32, borderRadius: borderRadius.full, alignItems: 'center', justifyContent: 'center' },
+  voicePlayBtn: { width: 40, height: 40, borderRadius: borderRadius.full, alignItems: 'center', justifyContent: 'center' },
   voiceWaveform: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 1.5, height: 22 },
   voiceBar: { width: 2, borderRadius: 1 },
 

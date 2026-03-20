@@ -10,6 +10,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Animated,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as WebBrowser from 'expo-web-browser';
@@ -120,10 +121,13 @@ export function AuthScreen() {
         >
           {/* Logo & Header */}
           <View style={styles.logoContainer}>
-            <View style={[styles.logo, { backgroundColor: colors.primary }]}>
-              <Text style={[styles.logoText, { color: colors.primaryForeground }]}>H</Text>
-            </View>
-            <Text style={[styles.appName, { color: colors.text }]}>Hsafa Spaces</Text>
+            <Image
+              source={dark
+                ? require('../../../assets/logo/white-logo-spaces-square.png')
+                : require('../../../assets/logo/dark-logo-spaces-square.png')}
+              style={styles.logoImage}
+              resizeMode="contain"
+            />
             <Text style={[styles.tagline, { color: colors.textSecondary }]}>
               {isLogin
                 ? 'Sign in to continue to your spaces'
@@ -298,22 +302,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: spacing['3xl'],
   },
-  logo: {
-    width: 56,
-    height: 56,
-    borderRadius: borderRadius.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.lg,
-  },
-  logoText: {
-    fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
-  },
-  appName: {
-    fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
-    marginBottom: spacing.xs,
+  logoImage: {
+    width: 160,
+    height: 120,
+    marginBottom: spacing.md,
   },
   tagline: {
     fontSize: fontSize.sm,
