@@ -329,35 +329,14 @@ function AppContent() {
   const fetchHaseefs = useCallback(async () => {
     setHaseefsLoading(true);
     try {
-      const [{ haseefs: ownedList }, basesResult] = await Promise.all([
-        haseefsApi.list(),
-        basesApi.list().catch(() => ({ bases: [] as any[] })),
-      ]);
-
-      // Merge base haseefs so all base members' haseefs are visible
-      const haseefMap = new Map(ownedList.map((h) => [h.entityId, h]));
-      const myEntityId = user?.entityId;
-      for (const base of basesResult.bases) {
-        for (const member of base.members) {
-          if (member.entityId === myEntityId) continue;
-          if (member.type === "agent" && !haseefMap.has(member.entityId)) {
-            haseefMap.set(member.entityId, {
-              haseefId: member.entityId,
-              entityId: member.entityId,
-              name: member.displayName,
-              avatarUrl: member.avatarUrl,
-              createdAt: "",
-            });
-          }
-        }
-      }
-      setHaseefs(Array.from(haseefMap.values()));
+      const { haseefs: ownedList } = await haseefsApi.list();
+      setHaseefs(ownedList);
     } catch (err) {
       console.error("Failed to fetch haseefs:", err);
     } finally {
       setHaseefsLoading(false);
     }
-  }, [user?.entityId]);
+  }, []);
 
   // ── Spaces state ──
   const [spaces, setSpaces] = useState<SmartSpace[]>([]);

@@ -1,109 +1,75 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import React from 'react';
+import { StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { LoginScreen } from './screens/LoginScreen';
-import { ChatScreen } from './screens/ChatScreen';
-import { AUTH_URL, GATEWAY_URL } from './config';
+import { NavigationContainer, type LinkingOptions } from '@react-navigation/native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import * as Linking from 'expo-linking';
+import { AuthProvider } from './src/lib/auth-context';
+import { ThemeContext, useAppTheme } from './src/lib/theme';
+import { RootNavigator } from './src/navigation/RootNavigator';
+import type { RootStackParamList } from './src/lib/types';
 
-const SESSION_KEY = 'hsafa_session';
+const prefix = Linking.createURL('/');
 
-export interface SpaceInfo {
-  id: string;
-  name?: string | null;
-}
-
-export interface AuthUser {
-  id: string;
-  name: string;
-  email: string;
-  entityId: string;
-  smartSpaceId: string;
-  agentEntityId: string;
-  spaces?: SpaceInfo[];
-}
-
-export interface AuthSession {
-  token: string;
-  user: AuthUser;
-}
+const linking: LinkingOptions<RootStackParamList> = {
+  prefixes: [prefix, 'hsafa://', 'https://hsafa.app'],
+  config: {
+    screens: {
+      JoinSpaceByCode: 'join/:code',
+      Main: {
+        screens: {
+          SpacesTab: {
+            screens: {
+              Chat: 'spaces/:spaceId',
+            },
+          },
+        },
+      },
+    },
+  },
+};
 
 export default function App() {
-  const [session, setSession] = useState<AuthSession | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    AsyncStorage.getItem(SESSION_KEY)
-      .then(async (raw) => {
-        if (!raw) return;
-        const cached = JSON.parse(raw) as AuthSession;
-        const res = await fetch(`${AUTH_URL}/api/me`, {
-          headers: { Authorization: `Bearer ${cached.token}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          // Update cached session with fresh spaces from server
-          const updated: AuthSession = {
-            ...cached,
-            user: { ...cached.user, ...data.user },
-          };
-          await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(updated));
-          setSession(updated);
-        } else {
-          await AsyncStorage.removeItem(SESSION_KEY);
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
-
-  const handleAuth = async (s: AuthSession) => {
-    await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(s));
-    setSession(s);
-  };
-
-  const handleLogout = async () => {
-    await AsyncStorage.removeItem(SESSION_KEY);
-    setSession(null);
-  };
-
-  const handleUpdateSession = useCallback(async (updated: AuthSession) => {
-    await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(updated));
-    setSession(updated);
-  }, []);
-
-  if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <StatusBar style="auto" />
-      </View>
-    );
-  }
+  const theme = useAppTheme();
 
   return (
-    <SafeAreaProvider>
-      <StatusBar style="auto" />
-      {session ? (
-        <ChatScreen
-          session={session}
-          gatewayUrl={GATEWAY_URL}
-          onLogout={handleLogout}
-          onUpdateSession={handleUpdateSession}
-        />
-      ) : (
-        <LoginScreen authUrl={AUTH_URL} onAuth={handleAuth} />
-      )}
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={styles.flex}>
+      <ThemeContext.Provider value={theme}>
+        <SafeAreaProvider>
+          <NavigationContainer
+            linking={linking}
+            theme={{
+              dark: theme.dark,
+              colors: {
+                primary: theme.colors.primary,
+                background: theme.colors.background,
+                card: theme.colors.card,
+                text: theme.colors.text,
+                border: theme.colors.border,
+                notification: theme.colors.badge,
+              },
+              fonts: {
+                regular: { fontFamily: 'System', fontWeight: '400' },
+                medium: { fontFamily: 'System', fontWeight: '500' },
+                bold: { fontFamily: 'System', fontWeight: '700' },
+                heavy: { fontFamily: 'System', fontWeight: '800' },
+              },
+            }}
+          >
+            <AuthProvider>
+              <StatusBar style={theme.dark ? 'light' : 'dark'} />
+              <RootNavigator />
+            </AuthProvider>
+          </NavigationContainer>
+        </SafeAreaProvider>
+      </ThemeContext.Provider>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
-  center: {
+  flex: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fff',
   },
 });

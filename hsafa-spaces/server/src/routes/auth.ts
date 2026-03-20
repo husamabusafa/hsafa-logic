@@ -372,11 +372,16 @@ router.get("/me", async (req, res) => {
 // ── Google OAuth ─────────────────────────────────────────────────────────────
 
 // GET /api/auth/google — redirect to Google consent screen
-router.get("/auth/google", (_req, res) => {
+router.get("/auth/google", (req, res) => {
   if (!GOOGLE_CLIENT_ID) {
     res.status(500).json({ error: "Google OAuth not configured" });
     return;
   }
+
+  // Carry mobile flag through OAuth state so the callback knows where to redirect
+  const isMobile = req.query.mobile === "true";
+  const stateObj = isMobile ? { mobile: true } : {};
+  const stateStr = Buffer.from(JSON.stringify(stateObj)).toString("base64url");
 
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
@@ -385,6 +390,7 @@ router.get("/auth/google", (_req, res) => {
     scope: "openid email profile",
     access_type: "offline",
     prompt: "consent",
+    state: stateStr,
   });
 
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
@@ -515,8 +521,23 @@ router.get("/auth/google/callback", async (req, res) => {
       entityId: user.hsafaEntityId,
     });
 
-    // Redirect to frontend with token
-    res.redirect(`${FRONTEND_URL}/auth/callback?token=${encodeURIComponent(token)}`);
+    // Check if this was a mobile OAuth flow
+    let isMobile = false;
+    try {
+      const stateParam = req.query.state as string | undefined;
+      if (stateParam) {
+        const stateObj = JSON.parse(Buffer.from(stateParam, "base64url").toString());
+        isMobile = stateObj.mobile === true;
+      }
+    } catch {}
+
+    if (isMobile) {
+      // Redirect to the RN app deep link
+      res.redirect(`hsafa://auth/callback?token=${encodeURIComponent(token)}`);
+    } else {
+      // Redirect to web frontend
+      res.redirect(`${FRONTEND_URL}/auth/callback?token=${encodeURIComponent(token)}`);
+    }
   } catch (error) {
     console.error("Google callback error:", error);
     res.redirect(`${FRONTEND_URL}/auth?error=server_error`);

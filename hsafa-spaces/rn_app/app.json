@@ -1,19 +1,52 @@
 {
   "expo": {
-    "name": "Hsafa Chat",
-    "slug": "rn-app",
-    "version": "0.1.0",
+    "name": "Hsafa Spaces",
+    "slug": "hsafa-spaces",
+    "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "scheme": "hsafa",
+    "newArchEnabled": true,
     "ios": {
-      "supportsTablet": false,
-      "bundleIdentifier": "com.hsafa.rnapp"
+      "supportsTablet": true,
+      "bundleIdentifier": "com.hsafa.spaces",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Hsafa needs camera access to take photos and videos.",
+        "NSMicrophoneUsageDescription": "Hsafa needs microphone access to record voice messages.",
+        "NSPhotoLibraryUsageDescription": "Hsafa needs photo library access to share images."
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#0f172a"
       },
-      "package": "com.hsafa.rnapp"
-    }
+      "package": "com.hsafa.spaces",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "NOTIFICATIONS",
+        "VIBRATE"
+      ]
+    },
+    "plugins": [
+      "expo-camera",
+      "expo-notifications",
+      "expo-secure-store",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Hsafa needs microphone access to record voice messages."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Hsafa needs photo library access to share images.",
+          "cameraPermission": "Hsafa needs camera access to take photos."
+        }
+      ]
+    ]
   }
 }

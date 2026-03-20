@@ -1,9 +1,5 @@
 // Spaces server — serves both auth AND the spaces API.
-// All API calls (messages, spaces, members, SSE) go to this URL.
-export const GATEWAY_URL = 'http://192.168.100.71:3005';
-
-// Spaces public key (for SDK auth — must match SPACES_PUBLIC_KEY in server .env)
-export const PUBLIC_KEY = 'pk_spaces_dev_public_change_in_prod';
-
-// Spaces server (auth endpoints: /api/login, /api/register, /api/me)
-export const AUTH_URL = 'http://192.168.100.71:3005';
+// Change this to your server's LAN IP for physical device testing.
+// Use localhost for simulator.
+export const SERVER_URL = 'http://192.168.100.71:3005';
+export const API_BASE = `${SERVER_URL}/api`;
