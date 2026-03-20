@@ -910,7 +910,10 @@ export function ChatScreen({ route }: Props) {
       {showScrollFab && (
         <TouchableOpacity
           style={[styles.scrollFab, { backgroundColor: colors.card, borderColor: colors.border }]}
-          onPress={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          onPress={() => {
+            flatListRef.current?.scrollToEnd({ animated: true });
+            setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 100);
+          }}
           activeOpacity={0.7}
         >
           <Ionicons name="chevron-down" size={18} color={colors.primary} />
@@ -1159,7 +1162,7 @@ const styles = StyleSheet.create({
   settingsBtn: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
 
   // Messages list
-  messagesList: { paddingHorizontal: spacing.md, paddingBottom: spacing['2xl'], paddingTop: spacing.sm },
+  messagesList: { paddingHorizontal: spacing.md, paddingBottom: spacing['4xl'], paddingTop: spacing.sm },
   emptyList: { flexGrow: 1, justifyContent: 'center' },
   emptyChat: { alignItems: 'center' },
   emptyChatIcon: { marginBottom: spacing.sm },
@@ -1180,7 +1183,7 @@ const styles = StyleSheet.create({
   senderName: { fontSize: fontSize.xs, fontWeight: fontWeight.medium, marginBottom: 2, marginLeft: spacing.xs },
 
   // Bubble
-  bubble: { borderRadius: borderRadius.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, alignSelf: 'flex-start' },
+  bubble: { borderRadius: borderRadius.lg, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, alignSelf: 'flex-start', maxWidth: '80%' },
   bubbleOwn: { borderBottomRightRadius: borderRadius.sm },
   bubbleOther: { borderBottomLeftRadius: borderRadius.sm, borderWidth: StyleSheet.hairlineWidth },
   bubbleOwnInteractive: { borderRadius: borderRadius.lg, borderWidth: 1, paddingHorizontal: spacing.md, paddingVertical: spacing.md },
@@ -1295,7 +1298,7 @@ const styles = StyleSheet.create({
   scrollFab: {
     position: 'absolute',
     right: spacing.lg,
-    bottom: 80,
+    bottom: 100,
     width: 36,
     height: 36,
     borderRadius: borderRadius.full,
