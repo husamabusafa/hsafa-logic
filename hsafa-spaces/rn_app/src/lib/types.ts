@@ -52,6 +52,7 @@ export interface Message {
   createdAt: string;
   seenBy: string[];
   type: MessageType;
+  seq?: string;
   replyTo?: {
     messageId: string;
     snippet: string;

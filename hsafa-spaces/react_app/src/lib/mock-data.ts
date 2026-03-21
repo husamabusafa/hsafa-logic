@@ -70,6 +70,7 @@ export interface MockMessage {
   createdAt: string;
   seenBy: string[];
   type: MessageType;
+  seq?: string;
   replyTo?: { messageId: string; snippet: string; senderName: string; messageType: MessageType };
 
   // Interactive messages

@@ -41,6 +41,12 @@ export async function startActionListener(): Promise<void> {
 
   console.log(`[spaces-service] Action listener started (consumer: ${consumerName}, ${state.connections.size} haseefs)`);
 
+  // Track streams that already have consumer groups (avoid re-creating every poll)
+  const knownGroups = new Set<string>();
+  for (const haseefId of state.connections.keys()) {
+    knownGroups.add(`actions:${haseefId}:${SCOPE}`);
+  }
+
   // Poll loop
   const poll = async () => {
     while (state.actionListenerRunning) {
@@ -55,13 +61,16 @@ export async function startActionListener(): Promise<void> {
           continue;
         }
 
-        // Ensure consumer groups exist for all streams (handles dynamically added haseefs)
+        // Only create consumer groups for NEW streams (dynamically added haseefs)
         for (const streamKey of streamKeys) {
+          if (knownGroups.has(streamKey)) continue;
           try {
             await consumer.xgroup("CREATE", streamKey, consumerGroup, "0", "MKSTREAM");
+            knownGroups.add(streamKey);
           } catch (err: any) {
-            // BUSYGROUP = already exists, which is fine
-            if (!err.message?.includes("BUSYGROUP")) {
+            if (err.message?.includes("BUSYGROUP")) {
+              knownGroups.add(streamKey); // Already exists — remember it
+            } else {
               console.warn(`[spaces-service] Failed to ensure consumer group for ${streamKey}:`, err.message);
             }
           }

@@ -67,19 +67,18 @@ async function syncDispatch(
   const resultChannel = `action_result:${actionId}`;
   const dispatchStart = Date.now();
 
-  return new Promise<unknown>(async (resolve) => {
-    // Create a dedicated subscriber for this action
-    const sub = redis.duplicate();
-    let settled = false;
+  const sub = redis.duplicate();
+  let settled = false;
 
-    const cleanup = () => {
-      if (!settled) {
-        settled = true;
-        sub.unsubscribe(resultChannel).catch(() => {});
-        sub.quit().catch(() => {});
-      }
-    };
+  const cleanup = () => {
+    if (!settled) {
+      settled = true;
+      sub.unsubscribe(resultChannel).catch(() => {});
+      sub.quit().catch(() => {});
+    }
+  };
 
+  return new Promise<unknown>((resolve) => {
     // Set timeout
     const timer = setTimeout(() => {
       const elapsed = Date.now() - dispatchStart;
@@ -106,16 +105,28 @@ async function syncDispatch(
       }
     });
 
-    await sub.subscribe(resultChannel);
+    sub.on('error', (err: Error) => {
+      console.error(`[action-dispatch] Redis subscriber error for ${toolName}:`, err.message);
+    });
 
-    // Now XADD the action (after subscription is active)
-    await redis.xadd(
-      streamKey, '*',
-      'actionId', actionId,
-      'name', toolName,
-      'args', JSON.stringify(args),
-      'mode', 'sync',
-    );
+    // Subscribe then dispatch — wrapped to catch errors safely
+    sub.subscribe(resultChannel)
+      .then(() => {
+        return redis.xadd(
+          streamKey, '*',
+          'actionId', actionId,
+          'name', toolName,
+          'args', JSON.stringify(args),
+          'mode', 'sync',
+        );
+      })
+      .catch((err) => {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[action-dispatch] Failed to dispatch ${toolName}:`, errMsg);
+        clearTimeout(timer);
+        cleanup();
+        resolve({ error: `Action dispatch failed: ${errMsg}` });
+      });
   });
 }
 

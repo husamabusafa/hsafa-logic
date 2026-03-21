@@ -82,6 +82,7 @@ export function adaptMessage(
     createdAt: msg.createdAt,
     seenBy: [],
     type: msgType,
+    seq: msg.seq,
   };
 
   // Reply-to
@@ -323,6 +324,27 @@ export function useSpaceChat(
                 runId: a.runId as string,
               })),
             );
+          }
+
+          // Reconcile missed messages on reconnect
+          // Find the last known seq and fetch anything newer
+          const currentMsgs = messagesRef.current;
+          if (spaceId && currentMsgs.length > 0) {
+            const lastSeq = currentMsgs[currentMsgs.length - 1]?.seq;
+            if (lastSeq) {
+              spacesApi
+                .listMessages(spaceId, { afterSeq: lastSeq, limit: 50 })
+                .then(({ messages: missed }) => {
+                  if (missed.length === 0) return;
+                  const adapted = missed.map((m) => adaptMessage(m, mems));
+                  setMessages((prev) => {
+                    const existingIds = new Set(prev.map((m) => m.id));
+                    const newMsgs = adapted.filter((m) => !existingIds.has(m.id));
+                    return newMsgs.length > 0 ? [...prev, ...newMsgs] : prev;
+                  });
+                })
+                .catch(() => {});
+            }
           }
           break;
         }

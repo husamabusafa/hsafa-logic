@@ -25,6 +25,7 @@ export function adaptMessage(msg: SpaceMessage, members: Member[]): Message {
     createdAt: msg.createdAt,
     seenBy: [],
     type: msgType,
+    seq: msg.seq,
   };
 
   // Reply-to
@@ -239,21 +240,37 @@ export function useSpaceChat(
     const mems = membersRef.current;
     const myEntityId = currentEntityIdRef.current;
 
-    console.log(`[useSpaceChat] SSE event received: ${type}`);
-
     switch (type) {
       case 'connected': {
         const d = data.data as Record<string, unknown>;
-        console.log(`[useSpaceChat] connected event:`, { onlineUsers: d?.onlineUsers, activeAgents: d?.activeAgents });
         if (d?.onlineUsers) setOnlineUserIds(d.onlineUsers as string[]);
         if (d?.seenWatermarks) setSeenWatermarks(d.seenWatermarks as Record<string, string>);
         if (d?.activeAgents) setActiveAgents(d.activeAgents as AgentActivity[]);
+
+        // Reconcile missed messages on reconnect
+        const currentMsgs = messagesRef.current;
+        if (spaceId && currentMsgs.length > 0) {
+          const lastSeq = currentMsgs[currentMsgs.length - 1]?.seq;
+          if (lastSeq) {
+            spacesApi
+              .listMessages(spaceId, { afterSeq: lastSeq, limit: 50 })
+              .then(({ messages: missed }) => {
+                if (missed.length === 0) return;
+                const adapted = missed.map((m) => adaptMessage(m, mems));
+                setMessages((prev) => {
+                  const existingIds = new Set(prev.map((m) => m.id));
+                  const newMsgs = adapted.filter((m) => !existingIds.has(m.id));
+                  return newMsgs.length > 0 ? [...prev, ...newMsgs] : prev;
+                });
+              })
+              .catch(() => {});
+          }
+        }
         break;
       }
 
       case 'space.message': {
         const msg = data.message as SpaceMessage;
-        console.log(`[useSpaceChat] space.message: ${msg?.id}`);
         if (!msg) break;
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.id === msg.id);
@@ -274,7 +291,6 @@ export function useSpaceChat(
         const entityName = (data.entityName as string) || 'Unknown';
         const typing = data.typing !== false;
         const activity = data.activity as "typing" | "recording" | undefined;
-        console.log(`[useSpaceChat] user.typing: ${entityId}, typing=${typing}`);
         // Don't show own typing indicator
         if (entityId === myEntityId) break;
         if (typing) {
@@ -308,7 +324,6 @@ export function useSpaceChat(
 
       case 'user.online': {
         const entityId = data.entityId as string;
-        console.log(`[useSpaceChat] user.online: ${entityId}`);
         setOnlineUserIds((prev) =>
           prev.includes(entityId) ? prev : [...prev, entityId],
         );
@@ -317,7 +332,6 @@ export function useSpaceChat(
 
       case 'user.offline': {
         const entityId = data.entityId as string;
-        console.log(`[useSpaceChat] user.offline: ${entityId}`);
         setOnlineUserIds((prev) => prev.filter((id) => id !== entityId));
         break;
       }
@@ -326,7 +340,6 @@ export function useSpaceChat(
         const agentEntityId = data.agentEntityId as string;
         const agentName = data.agentName as string | undefined;
         const runId = data.runId as string | undefined;
-        console.log(`[useSpaceChat] agent.active: ${agentEntityId}`);
         setActiveAgents((prev) => {
           if (prev.some((a) => a.agentEntityId === agentEntityId && a.runId === runId)) return prev;
           return [...prev, { agentEntityId, agentName, runId }];
@@ -337,7 +350,6 @@ export function useSpaceChat(
       case 'agent.inactive': {
         const agentEntityId = data.agentEntityId as string;
         const runId = data.runId as string | undefined;
-        console.log(`[useSpaceChat] agent.inactive: ${agentEntityId}`);
         setActiveAgents((prev) =>
           prev.filter((a) => !(a.agentEntityId === agentEntityId && a.runId === runId)),
         );
@@ -347,7 +359,6 @@ export function useSpaceChat(
       case 'message.seen': {
         const entityId = data.entityId as string;
         const lastSeenMessageId = data.lastSeenMessageId as string;
-        console.log(`[useSpaceChat] message.seen: entity=${entityId}, msg=${lastSeenMessageId}`);
         if (entityId && lastSeenMessageId) {
           setSeenWatermarks((prev) => ({ ...prev, [entityId]: lastSeenMessageId }));
         }
@@ -414,28 +425,23 @@ export function useSpaceChat(
     let active = true;
 
     const connect = async () => {
-      console.log('[useSpaceChat] Connecting SSE...');
       try {
         const conn = await connectSSE(
           `/api/smart-spaces/${spaceId}/stream`,
           (evt) => {
-            console.log(`[useSpaceChat] SSE event received: ${evt.event}, data length: ${evt.data.length}`);
             try {
               const data = JSON.parse(evt.data);
-              console.log(`[useSpaceChat] Parsed event type: ${data.type}`);
               handleSSEEvent(data);
-            } catch (err) {
-              console.log('[useSpaceChat] Failed to parse SSE data:', err);
+            } catch {
+              // Ignore parse errors (keepalive comments, etc.)
             }
           },
           (err) => {
-            console.log('[useSpaceChat] SSE error:', err.message);
+            console.warn('[useSpaceChat] SSE error:', err.message);
             // Auto-reconnect after 3s
             if (active) reconnectTimer = setTimeout(connect, 3000);
           },
-          () => {
-            console.log('[useSpaceChat] SSE connected (onOpen)');
-          },
+          () => {},
         );
         if (active) {
           sseRef.current = conn;

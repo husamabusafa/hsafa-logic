@@ -54,6 +54,9 @@ router.get("/:smartSpaceId/stream", async (req: Request, res: Response) => {
   // Create a dedicated Redis subscriber for this SSE connection
   const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6380";
   const sub = new Redis(REDIS_URL, { maxRetriesPerRequest: null });
+  sub.on("error", (err) => {
+    console.error(`[space-stream] Redis subscriber error (space=${smartSpaceId.slice(0, 8)}):`, err.message);
+  });
   const channel = `smartspace:${smartSpaceId}`;
 
   await sub.subscribe(channel);
@@ -114,7 +117,9 @@ router.get("/:smartSpaceId/stream", async (req: Request, res: Response) => {
         setTimeout(() => recentSSEKeys.delete(key), 5000);
       }
       res.write(`data: ${message}\n\n`);
-    } catch {}
+    } catch (err) {
+      console.error(`[space-stream] Error forwarding SSE message:`, err instanceof Error ? err.message : err);
+    }
   };
   sub.on("message", messageHandler);
 
@@ -128,8 +133,11 @@ router.get("/:smartSpaceId/stream", async (req: Request, res: Response) => {
     } catch {}
   }, 15_000);
 
-  // Cleanup on close — mark offline
+  // Cleanup on close — mark offline (guarded against double-call)
+  let cleanedUp = false;
   const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     clearInterval(keepalive);
     sub.unsubscribe(channel).catch(() => {});
     sub.disconnect();

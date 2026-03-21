@@ -228,35 +228,26 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
       const triggerSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
       const targetSpaces = triggerSpaceId ? [triggerSpaceId] : conn.spaceIds;
 
-      if (hasError) {
-        // On failed runs, only clear active run entries (no agent.inactive / offline)
+      // Both success and error: always emit agent.inactive + check offline
+      // (Previously, failed runs skipped this — causing permanent "thinking" indicator)
+      for (const spaceId of targetSpaces) {
         if (runId) {
-          for (const spaceId of targetSpaces) {
-            void removeSpaceActiveRun(spaceId, runId);
-          }
-          conn.runSpaces.delete(runId);
+          void removeSpaceActiveRun(spaceId, runId);
         }
-      } else {
-        // Successful completion — agent.inactive + offline
-        for (const spaceId of targetSpaces) {
-          if (runId) {
-            void removeSpaceActiveRun(spaceId, runId);
+        void emitSmartSpaceEvent(spaceId, {
+          type: "agent.inactive",
+          agentEntityId: conn.agentEntityId,
+          runId,
+          data: { agentEntityId: conn.agentEntityId, runId },
+        });
+        listSpaceActiveRuns(spaceId).then((runs) => {
+          const stillActive = runs.some((r) => r.entityId === conn.agentEntityId);
+          if (!stillActive) {
+            void markOffline(spaceId, conn.agentEntityId);
           }
-          void emitSmartSpaceEvent(spaceId, {
-            type: "agent.inactive",
-            agentEntityId: conn.agentEntityId,
-            runId,
-            data: { agentEntityId: conn.agentEntityId, runId },
-          });
-          listSpaceActiveRuns(spaceId).then((runs) => {
-            const stillActive = runs.some((r) => r.entityId === conn.agentEntityId);
-            if (!stillActive) {
-              void markOffline(spaceId, conn.agentEntityId);
-            }
-          }).catch(() => {});
-        }
-        if (runId) conn.runSpaces.delete(runId);
+        }).catch(() => {});
       }
+      if (runId) conn.runSpaces.delete(runId);
 
       // Clear auto-set trigger space — run is over.
       // NOTE: enteredSpace is NOT cleared — it persists across cycles so that
@@ -266,5 +257,8 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
       conn.currentRunId = null;
       conn.typingActivity = "typing";
     }
-  } catch {}
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[stream-bridge] Error bridging event (type=${event?.type}, haseef=${conn.haseefName}):`, errMsg);
+  }
 }
