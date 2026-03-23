@@ -18,34 +18,6 @@ import { pushSenseEvent } from "./core-api.js";
 import { SCOPE } from "./manifest.js";
 import type { InboxMessageParams } from "./inbox.js";
 
-// =============================================================================
-// Loop Prevention — cooldown per haseef per space
-//
-// After a haseef is triggered in a space, impose a cooldown before it can
-// be triggered again. This prevents infinite ping-pong between haseefs
-// and exponential cascades in group spaces with 3+ agents.
-// =============================================================================
-
-const HASEEF_COOLDOWN_MS = 15_000; // 15 seconds
-const lastTriggered = new Map<string, number>(); // key: `${haseefId}:${spaceId}`
-
-function isOnCooldown(haseefId: string, spaceId: string): boolean {
-  const key = `${haseefId}:${spaceId}`;
-  const last = lastTriggered.get(key) ?? 0;
-  return Date.now() - last < HASEEF_COOLDOWN_MS;
-}
-
-function markTriggered(haseefId: string, spaceId: string): void {
-  const key = `${haseefId}:${spaceId}`;
-  lastTriggered.set(key, Date.now());
-  // Prevent unbounded map growth — clean up entries older than 5 minutes
-  if (lastTriggered.size > 500) {
-    const cutoff = Date.now() - 300_000;
-    for (const [k, ts] of lastTriggered) {
-      if (ts < cutoff) lastTriggered.delete(k);
-    }
-  }
-}
 
 // =============================================================================
 // Inbox Handler — V5 Sense Events
@@ -159,12 +131,6 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
   for (const conn of conns) {
     if (entityId === conn.agentEntityId) {
       console.log(`[spaces-service]   SKIP ${conn.haseefName} — sender is self`);
-      continue;
-    }
-
-    // Loop prevention: cooldown per haseef per space
-    if (isOnCooldown(conn.haseefId, spaceId)) {
-      console.log(`[spaces-service]   COOLDOWN ${conn.haseefName} in ${spaceId.slice(0, 8)} — skipping (${HASEEF_COOLDOWN_MS}ms)`);
       continue;
     }
 
@@ -299,9 +265,6 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       data: eventData,
       ...(imageAttachments.length > 0 ? { attachments: imageAttachments } : {}),
     });
-
-    // Mark triggered for cooldown tracking
-    markTriggered(conn.haseefId, spaceId);
 
     // Track message as pending-seen — will be flushed when run.started confirms
     // the events were actually consumed from the inbox (not while haseef is mid-cycle)

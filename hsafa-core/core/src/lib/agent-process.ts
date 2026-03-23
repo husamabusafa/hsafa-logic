@@ -10,13 +10,10 @@ import {
   type ModelMessage,
 } from './consciousness.js';
 import {
-  drainInbox,
-  waitForInbox,
-  markEventsProcessing,
-  markEventsProcessed,
-  recoverStuckEvents,
-  discardStuckEvents,
-  formatInboxEvents,
+  waitForEvent,
+  logEvent,
+  recoverUnprocessedEvents,
+  formatEventForConsciousness,
 } from './inbox.js';
 import {
   buildSystemPrompt,
@@ -25,16 +22,27 @@ import {
 } from '../agent-builder/prompt-builder.js';
 import { processStream } from './stream-processor.js';
 import { HaseefConfigSchema } from '../agent-builder/types.js';
+import type { SenseEvent } from '../agent-builder/types.js';
 import { stepCountIs, hasToolCall } from 'ai';
 
 // =============================================================================
-// Agent Process (v5)
+// Agent Process (v6 — Event-Driven Interrupt/Rerun)
 //
-// The think loop — one long-running process per Haseef.
-// Cycle: SLEEP → DRAIN → FETCH → BUILD → THINK → SAVE → repeat
+// No cycles. No batching. No inbox queue.
+//
+// Each event triggers a new run. If a run is already in progress, it is
+// interrupted: completed work is preserved in consciousness, incomplete
+// work is discarded, and a new run starts with the new event injected.
+//
+// This is how a human brain works — continuous reaction, not batch processing.
+//
+// Flow: WAIT → EVENT → [INTERRUPT if running] → RUN → SAVE → WAIT
 // =============================================================================
 
 const DEFAULT_MAX_TOKENS = 200_000;
+
+/** Maximum steps per run (safety limit). */
+const MAX_STEPS = 50;
 
 interface StartOptions {
   haseefId: string;
@@ -42,9 +50,18 @@ interface StartOptions {
   signal: AbortSignal;
 }
 
+/** Handle to an active run that can be interrupted. */
+interface ActiveRun {
+  runId: string;
+  /** Abort the LLM stream. */
+  abortController: AbortController;
+  /** Resolves when the run fully completes (stream + save). */
+  promise: Promise<void>;
+}
+
 /**
- * Start the continuous think loop for a Haseef.
- * This function runs indefinitely until the signal is aborted.
+ * Start the event-driven process for a Haseef.
+ * Runs indefinitely until the signal is aborted.
  */
 export async function startHaseefProcess(opts: StartOptions): Promise<void> {
   const { haseefId, haseefName, signal } = opts;
@@ -54,10 +71,10 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
   // Dedicated Redis connection for BRPOP (blocking)
   const blockingRedis = createBlockingRedis();
 
-  // Recover any events stuck from a previous crash
-  const recovered = await recoverStuckEvents(haseefId);
+  // Recover any events from a previous crash
+  const recovered = await recoverUnprocessedEvents(haseefId);
   if (recovered > 0) {
-    console.log(`[process] ${haseefName} recovered ${recovered} stuck events`);
+    console.log(`[process] ${haseefName} recovered ${recovered} unprocessed events`);
   }
 
   // Load initial state
@@ -65,298 +82,518 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
   let config = HaseefConfigSchema.parse(haseef.configJson);
   let cachedConfigHash = haseef.configHash;
   let consciousness = await loadConsciousness(haseefId);
+  let runCount = consciousness.cycleCount; // renamed internally but DB field stays
 
-  console.log(`[process] ${haseefName} ready (cycle ${consciousness.cycleCount}, ${estimateTokens(consciousness.messages)} tokens)`);
+  console.log(`[process] ${haseefName} ready (run ${runCount}, ${estimateTokens(consciousness.messages)} tokens)`);
 
-  // ── Main loop ──────────────────────────────────────────────────────────────
+  // ── Active run tracking ────────────────────────────────────────────────────
+
+  let activeRun: ActiveRun | null = null;
+
+  // ── Main event loop ────────────────────────────────────────────────────────
 
   while (!signal.aborted) {
     try {
-      // 1. SLEEP — wait for inbox events
-      const wakeEvent = await waitForInbox(haseefId, blockingRedis, signal);
-      if (signal.aborted || !wakeEvent) break;
+      // 1. WAIT — block until an event arrives (zero CPU)
+      const event = await waitForEvent(haseefId, blockingRedis, signal);
+      if (signal.aborted || !event) break;
 
-      // 2. DRAIN — pull all pending events
-      // BRPOP already consumed one event (wakeEvent), so drain the rest
-      // then prepend the wake event. Deduplicate by eventId.
-      const moreEvents = await drainInbox(haseefId);
-      const seen = new Set(moreEvents.map((e) => e.eventId));
-      const events = seen.has(wakeEvent.eventId)
-        ? moreEvents
-        : [wakeEvent, ...moreEvents];
-      if (events.length === 0) continue;
+      // 2. DRAIN — grab any other events already in the queue (no waiting)
+      const events = await drainPendingEvents(haseefId, event);
+      if (signal.aborted) break;
 
-      const cycleStart = Date.now();
-      const newCycleCount = consciousness.cycleCount + 1;
-
-      // 3. FETCH per-cycle data (parallel)
-      const [dbHaseef, dbTools, dbScopes] = await Promise.all([
-        prisma.haseef.findUniqueOrThrow({ where: { id: haseefId } }),
-        prisma.haseefTool.findMany({ where: { haseefId } }),
-        prisma.haseefScope.findMany({ where: { haseefId }, select: { scope: true, instructions: true } }),
-      ]);
-      haseef = dbHaseef;
-
-      // Scope instructions from extensions (stored in HaseefScope table)
-      const scopeInstructions = new Map<string, string>();
-      for (const s of dbScopes) {
-        if (s.instructions) scopeInstructions.set(s.scope, s.instructions);
+      // 3. INTERRUPT — if a run is active, cancel it
+      if (activeRun) {
+        console.log(`[process] ${haseefName} interrupting run ${activeRun.runId.slice(0, 8)}...`);
+        activeRun.abortController.abort();
+        // Wait for the interrupted run to clean up (saves partial consciousness)
+        await activeRun.promise.catch(() => {});
+        // Reload consciousness — the interrupted run may have saved partial work
+        consciousness = await loadConsciousness(haseefId);
+        runCount = consciousness.cycleCount;
+        activeRun = null;
       }
 
-      // 4. CHECK CONFIG — rebuild model only if hash changed
-      if (haseef.configHash !== cachedConfigHash) {
-        config = HaseefConfigSchema.parse(haseef.configJson);
-        cachedConfigHash = haseef.configHash;
-        console.log(`[process] ${haseefName} config changed — rebuilt`);
-      }
+      // 4. START NEW RUN
+      const runAbort = new AbortController();
+      const newRunCount = runCount + 1;
 
-      // Determine trigger info from first event
-      const firstEvent = events[0];
-      const triggerScope = firstEvent?.scope ?? null;
-      const triggerType = firstEvent?.type ?? null;
-
-      // Create run record
-      const run = await prisma.run.create({
-        data: {
-          haseefId,
-          cycleNumber: newCycleCount,
-          inboxEventCount: events.length,
-          triggerScope,
-          triggerType,
-        },
-      });
-
-      // Mark events as processing
-      const eventIds = events.map((e) => e.eventId);
-      await markEventsProcessing(haseefId, eventIds);
-
-      // 5. SELECT MEMORIES
-      const eventText = events.map((e) => JSON.stringify(e.data)).join(' ');
-      const { selected: memories, totalCount: totalMemoryCount } = await selectMemories(haseefId, eventText);
-
-      // 5b. SEARCH ARCHIVE
-      const relevantPast = await searchArchive(haseefId, eventText);
-
-      // 6. BUILD TOOLS from DB rows + prebuilt
-      const context = {
+      const runPromise = executeRun({
         haseefId,
         haseefName,
-        cycleCount: newCycleCount,
-        currentRunId: run.id,
-      };
-      const built = await buildHaseef(haseef.configJson, context, dbTools);
-
-      // 7. BUILD SYSTEM PROMPT
-      const consciousnessRecord = await prisma.haseefConsciousness.findUnique({
-        where: { haseefId },
-        select: { lastCycleAt: true },
-      });
-
-      const connectedScopes = dbScopes.map((s) => s.scope);
-
-      const systemPrompt = buildSystemPrompt({
-        haseefId,
-        haseefName,
-        cycleCount: newCycleCount,
-        createdAt: haseef.createdAt,
-        lastCycleAt: consciousnessRecord?.lastCycleAt ?? null,
-        profileJson: haseef.profileJson as Record<string, unknown> | null,
+        events,
+        consciousness,
+        runCount: newRunCount,
         config,
-        memories,
-        totalMemoryCount,
-        relevantPast,
-        connectedScopes,
-        scopeInstructions,
-        persona: config.persona,
+        cachedConfigHash,
+        runSignal: runAbort.signal,
+        processSignal: signal,
+      }).then((result) => {
+        // Run completed normally — update local state
+        consciousness = result.consciousness;
+        runCount = result.runCount;
+        config = result.config;
+        cachedConfigHash = result.cachedConfigHash;
+        haseef = result.haseef;
+        activeRun = null;
+      }).catch((err) => {
+        // Run failed (not interrupted) — log and continue
+        if (!runAbort.signal.aborted) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          console.error(`[process] ${haseefName} run error:`, errMsg);
+        }
+        activeRun = null;
       });
 
-      // 8. INJECT events into consciousness
-      // Save pre-cycle length so we can roll back on failure
-      const preCycleMessageCount = consciousness.messages.length;
-      const eventMessage: ModelMessage = {
-        role: 'user',
-        content: formatInboxEvents(events),
+      activeRun = {
+        runId: `pending-${newRunCount}`,
+        abortController: runAbort,
+        promise: runPromise,
       };
-      consciousness.messages.push(eventMessage);
 
-      // 9. THINK — stream with AI SDK
-      const messagesForLLM = consciousness.messages.filter((m) => m.role !== 'system');
-
-      // Emit run.started (includes trigger info for stream bridge routing)
-      const triggerSpaceId = (firstEvent?.data as Record<string, unknown>)?.spaceId as string | undefined;
-      await redis.publish(`haseef:${haseefId}:stream`, JSON.stringify({
-        type: 'run.started',
-        runId: run.id,
-        haseefId,
-        cycleNumber: newCycleCount,
-        triggerScope,
-        triggerType,
-        triggerSource: triggerSpaceId ?? null,
-      }));
-
-      // Use streamText from AI SDK
-      const { streamText } = await import('ai');
-      const result = streamText({
-        model: built.model as any,
-        tools: built.tools as any,
-        system: systemPrompt,
-        messages: messagesForLLM as any,
-        toolChoice: 'required' as any,
-        stopWhen: [hasToolCall('done'), stepCountIs(50)] as any,
-        toolCallStreaming: true,
-        providerOptions: {
-          openai: { parallelToolCalls: false },
-          anthropic: { parallelToolCalls: false },
-        },
-      } as any);
-
-      // 10. PROCESS stream — wrapped in try/finally to ALWAYS emit run.finished
-      let cycleToolCount = 0;
-      let cycleError: string | null = null;
-      try {
-        const t0 = Date.now();
-        const streamResult = await processStream(result.fullStream, {
-          runId: run.id,
-          haseefId,
-        });
-        const streamMs = Date.now() - t0;
-        cycleToolCount = streamResult.toolCalls.length;
-
-        // Log tool call breakdown (only if slow)
-        if (streamMs > 3000) {
-          const toolNames = streamResult.toolCalls.map((tc) => tc.toolName);
-          console.log(`[process] ${haseefName} stream done (${streamMs}ms, tools: [${toolNames.join(', ')}])`);
-        }
-
-        // If the stream had errors and produced no output, throw with the actual
-        // error message — prevents the generic AI SDK "No output generated" error
-        if (streamResult.streamErrors.length > 0 && streamResult.toolCalls.length === 0 && !streamResult.text) {
-          throw new Error(`LLM stream error: ${streamResult.streamErrors.join('; ')}`);
-        }
-
-        // 11. APPEND result messages to consciousness
-        const t1 = Date.now();
-        const responseMessages = await result.response;
-        const responseMs = Date.now() - t1;
-        if (responseMs > 500) {
-          console.warn(`[process] ${haseefName} await result.response took ${responseMs}ms`);
-        }
-        if (responseMessages?.messages) {
-          for (const msg of responseMessages.messages) {
-            consciousness.messages.push(msg as unknown as ModelMessage);
-          }
-        }
-
-        // 12. PRUNE consciousness — archive old cycles if over budget
-        const maxTokens = config.consciousness?.maxTokens ?? DEFAULT_MAX_TOKENS;
-        consciousness.messages = await pruneConsciousness(
-          haseefId,
-          consciousness.messages,
-          newCycleCount,
-          maxTokens,
-        );
-
-        // 13. SAVE consciousness
-        consciousness.cycleCount = newCycleCount;
-        await saveConsciousness(haseefId, consciousness.messages, newCycleCount);
-
-        // Auto-snapshot check
-        await maybeAutoSnapshot(haseefId, newCycleCount);
-
-        // Mark events as processed
-        await markEventsProcessed(haseefId, eventIds);
-
-        // Extract token usage from the stream result (AI SDK provides usage on response)
-        let promptTokens = 0;
-        let completionTokens = 0;
-        try {
-          const usage = (responseMessages as any)?.usage;
-          if (usage) {
-            promptTokens = typeof usage.inputTokens === 'object'
-              ? usage.inputTokens?.total ?? 0
-              : usage.inputTokens ?? usage.promptTokens ?? 0;
-            completionTokens = typeof usage.outputTokens === 'object'
-              ? usage.outputTokens?.total ?? 0
-              : usage.outputTokens ?? usage.completionTokens ?? 0;
-          }
-        } catch {
-          // Non-fatal — usage tracking is best-effort
-        }
-
-        // Update run record
-        const durationMs = Date.now() - cycleStart;
-        await prisma.run.update({
-          where: { id: run.id },
-          data: {
-            status: 'completed',
-            completedAt: new Date(),
-            stepCount: streamResult.toolCalls.length,
-            durationMs,
-            promptTokens,
-            completionTokens,
-          },
-        });
-
-      } catch (innerErr) {
-        // Roll back consciousness to pre-cycle state — prevents stacking
-        // user messages on repeated failures
-        consciousness.messages.length = preCycleMessageCount;
-
-        // Stream or post-stream error — update run as failed
-        cycleError = innerErr instanceof Error ? innerErr.message : String(innerErr);
-        console.error(`[process] ${haseefName} cycle #${newCycleCount} inner error:`, cycleError);
-
-        const durationMs = Date.now() - cycleStart;
-        await prisma.run.update({
-          where: { id: run.id },
-          data: {
-            status: 'failed',
-            completedAt: new Date(),
-            stepCount: cycleToolCount,
-            durationMs,
-            errorMessage: cycleError?.slice(0, 2000) ?? null,
-          },
-        }).catch(() => {});
-
-        // Re-throw so the outer catch discards events and moves on
-        throw innerErr;
-      } finally {
-        // ALWAYS emit run.finished — prevents permanent "thinking" indicator
-        const durationMs = Date.now() - cycleStart;
-        await redis.publish(`haseef:${haseefId}:stream`, JSON.stringify({
-          type: 'run.finished',
-          runId: run.id,
-          haseefId,
-          cycleNumber: newCycleCount,
-          durationMs,
-          stepCount: cycleToolCount,
-          ...(cycleError ? { error: cycleError } : {}),
-        })).catch(() => {});
-
-        // Close MCP clients after cycle (regardless of success/failure)
-        for (const client of built.mcpClients) {
-          client.close().catch((err) => {
-            console.warn(`[process] ${haseefName} MCP client close error:`, err instanceof Error ? err.message : err);
-          });
-        }
-      }
+      // Don't await — we go back to waiting for the next event immediately.
+      // If a new event arrives while the run is in progress, we'll interrupt it.
 
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[process] ${haseefName} cycle error:`, errMsg);
-
-      // Discard failed events and move on — no retries
-      const discarded = await discardStuckEvents(haseefId).catch(() => 0);
-      if (discarded > 0) {
-        console.log(`[process] ${haseefName} discarded ${discarded} failed events`);
-      }
-
-      // Brief pause before next cycle
+      console.error(`[process] ${haseefName} event loop error:`, errMsg);
       await new Promise((r) => setTimeout(r, 3000));
     }
   }
 
-  // Cleanup
+  // ── Shutdown ─────────────────────────────────────────────────────────────
+
+  // Cancel any active run
+  if (activeRun) {
+    activeRun.abortController.abort();
+    await activeRun.promise.catch(() => {});
+  }
+
   blockingRedis.disconnect();
   console.log(`[process] ${haseefName} stopped`);
+}
+
+// =============================================================================
+// Drain — Grab any events already queued (no waiting)
+// =============================================================================
+
+/**
+ * After BRPOP returns the trigger event, instantly drain any other events
+ * already sitting in the Redis list. No waiting, no debounce.
+ */
+async function drainPendingEvents(
+  haseefId: string,
+  triggerEvent: SenseEvent,
+): Promise<SenseEvent[]> {
+  const events: SenseEvent[] = [triggerEvent];
+  const seen = new Set<string>([triggerEvent.eventId]);
+  const key = `events:${haseefId}`;
+
+  // Non-blocking drain — grab everything already in the list
+  while (true) {
+    const item = await redis.rpop(key);
+    if (!item) break;
+
+    try {
+      const event = JSON.parse(item) as SenseEvent;
+      if (!seen.has(event.eventId)) {
+        seen.add(event.eventId);
+        events.push(event);
+      }
+    } catch {
+      // Skip unparseable
+    }
+  }
+
+  return events;
+}
+
+// =============================================================================
+// Execute Run — The actual thinking work
+// =============================================================================
+
+interface RunOptions {
+  haseefId: string;
+  haseefName: string;
+  events: SenseEvent[];
+  consciousness: { messages: ModelMessage[]; cycleCount: number };
+  runCount: number;
+  config: ReturnType<typeof HaseefConfigSchema.parse>;
+  cachedConfigHash: string | null;
+  /** Signal to abort THIS run (interrupt). */
+  runSignal: AbortSignal;
+  /** Signal for the entire process (shutdown). */
+  processSignal: AbortSignal;
+}
+
+interface RunResult {
+  consciousness: { messages: ModelMessage[]; cycleCount: number };
+  runCount: number;
+  config: ReturnType<typeof HaseefConfigSchema.parse>;
+  cachedConfigHash: string | null;
+  haseef: any;
+}
+
+async function executeRun(opts: RunOptions): Promise<RunResult> {
+  const {
+    haseefId,
+    haseefName,
+    events,
+    consciousness,
+    runCount,
+    runSignal,
+  } = opts;
+  let { config, cachedConfigHash } = opts;
+
+  const runStart = Date.now();
+
+  // 1. FETCH per-run data (parallel)
+  const [dbHaseef, dbTools, dbScopes] = await Promise.all([
+    prisma.haseef.findUniqueOrThrow({ where: { id: haseefId } }),
+    prisma.haseefTool.findMany({ where: { haseefId } }),
+    prisma.haseefScope.findMany({ where: { haseefId }, select: { scope: true, instructions: true } }),
+  ]);
+  const haseef = dbHaseef;
+
+  // Scope instructions from extensions
+  const scopeInstructions = new Map<string, string>();
+  for (const s of dbScopes) {
+    if (s.instructions) scopeInstructions.set(s.scope, s.instructions);
+  }
+
+  // 2. CHECK CONFIG — rebuild model only if hash changed
+  if (haseef.configHash !== cachedConfigHash) {
+    config = HaseefConfigSchema.parse(haseef.configJson);
+    cachedConfigHash = haseef.configHash;
+    console.log(`[process] ${haseefName} config changed — rebuilt`);
+  }
+
+  // 3. Determine trigger info
+  const firstEvent = events[0];
+  const triggerScope = firstEvent?.scope ?? null;
+  const triggerType = firstEvent?.type ?? null;
+
+  // 4. Create run record
+  const run = await prisma.run.create({
+    data: {
+      haseefId,
+      cycleNumber: runCount,
+      inboxEventCount: events.length,
+      triggerScope,
+      triggerType,
+    },
+  });
+
+  // Log events to Postgres for audit trail
+  for (const event of events) {
+    await logEvent(haseefId, event, run.id);
+  }
+
+  // 5. SELECT MEMORIES
+  const eventText = events.map((e) => JSON.stringify(e.data)).join(' ');
+  const { selected: memories, totalCount: totalMemoryCount } = await selectMemories(haseefId, eventText);
+
+  // 5b. SEARCH ARCHIVE
+  const relevantPast = await searchArchive(haseefId, eventText);
+
+  // 6. BUILD TOOLS
+  const context = {
+    haseefId,
+    haseefName,
+    runCount,
+    currentRunId: run.id,
+  };
+  const built = await buildHaseef(haseef.configJson, context, dbTools);
+
+  // 7. BUILD SYSTEM PROMPT
+  const consciousnessRecord = await prisma.haseefConsciousness.findUnique({
+    where: { haseefId },
+    select: { lastCycleAt: true },
+  });
+
+  const connectedScopes = dbScopes.map((s) => s.scope);
+
+  const systemPrompt = buildSystemPrompt({
+    haseefId,
+    haseefName,
+    runCount,
+    createdAt: haseef.createdAt,
+    lastActiveAt: consciousnessRecord?.lastCycleAt ?? null,
+    profileJson: haseef.profileJson as Record<string, unknown> | null,
+    config,
+    memories,
+    totalMemoryCount,
+    relevantPast,
+    connectedScopes,
+    scopeInstructions,
+    persona: config.persona,
+  });
+
+  // 8. INJECT events into consciousness
+  const preRunMessageCount = consciousness.messages.length;
+  const eventContent = formatEventForConsciousness(events);
+  const eventMessage: ModelMessage = {
+    role: 'user',
+    content: eventContent,
+  };
+  consciousness.messages.push(eventMessage);
+
+  // 9. THINK — stream with AI SDK
+  const messagesForLLM = consciousness.messages.filter((m) => m.role !== 'system');
+
+  // Emit run.started
+  const triggerSpaceId = (firstEvent?.data as Record<string, unknown>)?.spaceId as string | undefined;
+  await redis.publish(`haseef:${haseefId}:stream`, JSON.stringify({
+    type: 'run.started',
+    runId: run.id,
+    haseefId,
+    runCount,
+    triggerScope,
+    triggerType,
+    triggerSource: triggerSpaceId ?? null,
+  }));
+
+  // Create abort-aware stream
+  const { streamText } = await import('ai');
+  const result = streamText({
+    model: built.model as any,
+    tools: built.tools as any,
+    system: systemPrompt,
+    messages: messagesForLLM as any,
+    toolChoice: 'required' as any,
+    stopWhen: [hasToolCall('done'), stepCountIs(MAX_STEPS)] as any,
+    toolCallStreaming: true,
+    abortSignal: runSignal,
+    providerOptions: {
+      openai: { parallelToolCalls: false },
+      anthropic: { parallelToolCalls: false },
+    },
+  } as any);
+
+  // 10. PROCESS stream
+  let runToolCount = 0;
+  let runError: string | null = null;
+  let interrupted = false;
+
+  try {
+    const t0 = Date.now();
+    const streamResult = await processStream(result.fullStream, {
+      runId: run.id,
+      haseefId,
+    });
+    const streamMs = Date.now() - t0;
+    runToolCount = streamResult.toolCalls.length;
+
+    if (streamMs > 3000) {
+      const toolNames = streamResult.toolCalls.map((tc) => tc.toolName);
+      console.log(`[process] ${haseefName} stream done (${streamMs}ms, tools: [${toolNames.join(', ')}])`);
+    }
+
+    // If the stream had errors and produced no output, throw
+    if (streamResult.streamErrors.length > 0 && streamResult.toolCalls.length === 0 && !streamResult.text) {
+      throw new Error(`LLM stream error: ${streamResult.streamErrors.join('; ')}`);
+    }
+
+    // 11. APPEND result messages to consciousness
+    const responseMessages = await result.response;
+    if (responseMessages?.messages) {
+      for (const msg of responseMessages.messages) {
+        consciousness.messages.push(msg as unknown as ModelMessage);
+      }
+    }
+
+    // 12. PRUNE consciousness if over budget
+    const maxTokens = config.consciousness?.maxTokens ?? DEFAULT_MAX_TOKENS;
+    consciousness.messages = await pruneConsciousness(
+      haseefId,
+      consciousness.messages,
+      runCount,
+      maxTokens,
+    );
+
+    // 13. SAVE consciousness
+    consciousness.cycleCount = runCount;
+    await saveConsciousness(haseefId, consciousness.messages, runCount);
+
+    // Auto-snapshot check
+    await maybeAutoSnapshot(haseefId, runCount);
+
+    // Extract token usage
+    let promptTokens = 0;
+    let completionTokens = 0;
+    try {
+      const usage = (responseMessages as any)?.usage;
+      if (usage) {
+        promptTokens = typeof usage.inputTokens === 'object'
+          ? usage.inputTokens?.total ?? 0
+          : usage.inputTokens ?? usage.promptTokens ?? 0;
+        completionTokens = typeof usage.outputTokens === 'object'
+          ? usage.outputTokens?.total ?? 0
+          : usage.outputTokens ?? usage.completionTokens ?? 0;
+      }
+    } catch {
+      // Non-fatal
+    }
+
+    // Update run record
+    const durationMs = Date.now() - runStart;
+    await prisma.run.update({
+      where: { id: run.id },
+      data: {
+        status: 'completed',
+        completedAt: new Date(),
+        stepCount: streamResult.toolCalls.length,
+        durationMs,
+        promptTokens,
+        completionTokens,
+      },
+    });
+
+  } catch (innerErr) {
+    interrupted = runSignal.aborted;
+
+    if (interrupted) {
+      // ── INTERRUPT ROLLBACK ──────────────────────────────────────────────
+      // The stream was aborted mid-flight. We need to:
+      //   1. Keep completed tool calls + results in consciousness
+      //   2. Discard incomplete work (partial text, in-progress tool calls)
+      //
+      // The response messages may contain partial data. We extract only
+      // the fully completed assistant+tool message pairs.
+      try {
+        const responseMessages = await Promise.resolve(result.response).catch(() => null);
+        const completedMessages = extractCompletedMessages(
+          responseMessages?.messages as unknown as ModelMessage[] | undefined,
+        );
+
+        if (completedMessages.length > 0) {
+          // Keep completed work — append to consciousness
+          for (const msg of completedMessages) {
+            consciousness.messages.push(msg);
+          }
+          console.log(`[process] ${haseefName} interrupted — preserved ${completedMessages.length} completed messages`);
+        } else {
+          // Nothing completed — roll back the injected event message too
+          consciousness.messages.length = preRunMessageCount;
+          console.log(`[process] ${haseefName} interrupted — no completed work, full rollback`);
+        }
+      } catch {
+        // Failed to extract — safe rollback
+        consciousness.messages.length = preRunMessageCount;
+      }
+
+      // Save partial consciousness so the next run sees preserved work
+      consciousness.cycleCount = runCount;
+      await saveConsciousness(haseefId, consciousness.messages, runCount).catch(() => {});
+
+      // Mark run as interrupted
+      const durationMs = Date.now() - runStart;
+      await prisma.run.update({
+        where: { id: run.id },
+        data: {
+          status: 'failed',
+          completedAt: new Date(),
+          stepCount: runToolCount,
+          durationMs,
+          errorMessage: 'interrupted: new event arrived',
+        },
+      }).catch(() => {});
+
+    } else {
+      // ── NORMAL ERROR ──────────────────────────────────────────────────
+      // Roll back consciousness to pre-run state
+      consciousness.messages.length = preRunMessageCount;
+
+      runError = innerErr instanceof Error ? innerErr.message : String(innerErr);
+      console.error(`[process] ${haseefName} run #${runCount} error:`, runError);
+
+      const durationMs = Date.now() - runStart;
+      await prisma.run.update({
+        where: { id: run.id },
+        data: {
+          status: 'failed',
+          completedAt: new Date(),
+          stepCount: runToolCount,
+          durationMs,
+          errorMessage: runError?.slice(0, 2000) ?? null,
+        },
+      }).catch(() => {});
+    }
+
+    if (!interrupted) throw innerErr;
+
+  } finally {
+    // ALWAYS emit run.finished
+    const durationMs = Date.now() - runStart;
+    await redis.publish(`haseef:${haseefId}:stream`, JSON.stringify({
+      type: 'run.finished',
+      runId: run.id,
+      haseefId,
+      runCount,
+      durationMs,
+      stepCount: runToolCount,
+      interrupted,
+      ...(runError ? { error: runError } : {}),
+    })).catch(() => {});
+
+    // Close MCP clients
+    for (const client of built.mcpClients) {
+      client.close().catch((err) => {
+        console.warn(`[process] ${haseefName} MCP client close error:`, err instanceof Error ? err.message : err);
+      });
+    }
+  }
+
+  return {
+    consciousness,
+    runCount,
+    config,
+    cachedConfigHash,
+    haseef,
+  };
+}
+
+// =============================================================================
+// Interrupt Rollback — Extract completed messages from a partial stream
+// =============================================================================
+
+/**
+ * From a potentially incomplete list of response messages, extract only the
+ * fully completed ones. A completed assistant message has all its tool calls
+ * matched by a subsequent tool-result message.
+ */
+function extractCompletedMessages(
+  messages: ModelMessage[] | undefined | null,
+): ModelMessage[] {
+  if (!messages || messages.length === 0) return [];
+
+  const completed: ModelMessage[] = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+
+    if (msg.role === 'assistant') {
+      // Check if this assistant message has tool calls
+      const hasToolCalls = Array.isArray(msg.content) &&
+        msg.content.some((p: any) => p.type === 'tool-call');
+
+      if (hasToolCalls) {
+        // Look for the matching tool result message
+        const nextMsg = messages[i + 1];
+        if (nextMsg && nextMsg.role === 'tool') {
+          // Both the tool call and result are complete — keep both
+          completed.push(msg);
+          completed.push(nextMsg);
+          i++; // skip the tool message (we already added it)
+        }
+        // If no matching tool result, the tool call was in-progress — DISCARD
+      } else {
+        // Text-only assistant message — keep (text was fully generated)
+        completed.push(msg);
+      }
+    }
+    // tool messages are handled paired with their assistant messages above
+  }
+
+  return completed;
 }

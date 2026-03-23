@@ -1,38 +1,41 @@
 import { redis } from './redis.js';
 import { prisma } from './db.js';
-import { relativeTime } from './time-utils.js';
 import type { SenseEvent } from '../agent-builder/types.js';
 import type { UserContentPart } from './consciousness.js';
 
 // =============================================================================
-// Inbox System (v5)
+// Event System (v6 — Event-Driven Interrupt/Rerun)
 //
-// Dual-write: Redis list (fast wakeup queue) + Postgres InboxEvent (durable log).
-// Events are pushed with LPUSH, consumed with RPOP (FIFO order).
-// Agent process blocks on BRPOP to sleep when idle.
-// Postgres enables crash recovery and audit trail.
+// Simplified from v5's inbox/queue system. No more batching, draining, or
+// cycle-based event processing.
 //
-// All events are SenseEvents with { eventId, scope, type, data, attachments }.
+// Redis list (fast wakeup) + Postgres InboxEvent (durable audit log).
+// Events are pushed with LPUSH, consumed with BRPOP (single event wakeup).
+// The agent process handles one event (or debounced batch) per run.
+//
+// Key change from v5: pushEvent writes to `events:{haseefId}` (not `inbox:`).
+// The process wakes immediately on any event. If already running, the
+// current run is interrupted by agent-process.ts.
 // =============================================================================
 
-const INBOX_PREFIX = 'inbox:';
+const EVENT_PREFIX = 'events:';
 
 /** Maximum time (seconds) to block on BRPOP before re-checking. */
 const BRPOP_TIMEOUT = 30;
 
 // =============================================================================
-// Push — Add an event to a Haseef's inbox
+// Push — Add an event (called by API routes)
 // =============================================================================
 
 /**
- * Push a SenseEvent to a Haseef's inbox.
- * Dual-write: Redis (fast queue) + Postgres (durable log).
+ * Push a SenseEvent for a Haseef.
+ * Dual-write: Redis (fast wakeup) + Postgres (durable log).
  */
-export async function pushToInbox(
+export async function pushEvent(
   haseefId: string,
   event: SenseEvent,
 ): Promise<void> {
-  const key = `${INBOX_PREFIX}${haseefId}`;
+  const key = `${EVENT_PREFIX}${haseefId}`;
 
   // Durable write — Postgres (upsert for dedup on retry)
   await prisma.inboxEvent.upsert({
@@ -51,58 +54,25 @@ export async function pushToInbox(
     update: {}, // no-op if already exists (dedup)
   });
 
-  // Fast write — Redis queue
+  // Fast write — Redis list (wakes BRPOP)
   await redis.lpush(key, JSON.stringify(event));
 }
 
 // =============================================================================
-// Drain — Pull all pending events from the inbox
+// Wait — Block until an event arrives (zero CPU sleep)
 // =============================================================================
 
 /**
- * Drain all events from the inbox. Returns them in FIFO order.
- * Deduplicates by eventId.
- */
-export async function drainInbox(haseefId: string): Promise<SenseEvent[]> {
-  const key = `${INBOX_PREFIX}${haseefId}`;
-  const events: SenseEvent[] = [];
-  const seen = new Set<string>();
-
-  while (true) {
-    const item = await redis.rpop(key);
-    if (!item) break;
-
-    try {
-      const event = JSON.parse(item) as SenseEvent;
-      if (!seen.has(event.eventId)) {
-        seen.add(event.eventId);
-        events.push(event);
-      }
-    } catch {
-      console.warn('[inbox] Failed to parse inbox item:', item);
-    }
-  }
-
-  return events;
-}
-
-// =============================================================================
-// Wait — Block until the inbox has events (zero CPU sleep)
-// =============================================================================
-
-/**
- * Block until at least one event arrives in the inbox.
+ * Block until at least one event arrives.
  * Uses a dedicated Redis connection (BRPOP blocks the connection).
- *
- * Returns the first event that triggered the wakeup.
- * The caller should then call `drainInbox` to get all pending events.
+ * Returns the event that triggered the wakeup.
  */
-export async function waitForInbox(
+export async function waitForEvent(
   haseefId: string,
   blockingRedis: import('ioredis').default,
   signal?: AbortSignal,
 ): Promise<SenseEvent | null> {
-  const key = `${INBOX_PREFIX}${haseefId}`;
+  const key = `${EVENT_PREFIX}${haseefId}`;
 
   while (!signal?.aborted) {
     try {
@@ -112,12 +82,12 @@ export async function waitForInbox(
         try {
           return JSON.parse(item) as SenseEvent;
         } catch {
-          console.warn('[inbox] Failed to parse BRPOP item:', item);
+          console.warn('[events] Failed to parse BRPOP item:', item);
         }
       }
     } catch (err) {
       if (signal?.aborted) return null;
-      console.error('[inbox] BRPOP error:', err);
+      console.error('[events] BRPOP error:', err);
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
@@ -126,102 +96,59 @@ export async function waitForInbox(
 }
 
 // =============================================================================
-// Peek — Read pending events without removing them
+// Log — Write event to Postgres audit trail (run-scoped)
 // =============================================================================
 
 /**
- * Peek at pending inbox events without removing them.
- * Used by prepareStep for mid-cycle inbox awareness.
+ * Log an event to Postgres, associated with a specific run.
+ * The event may already exist from pushEvent — we just update its status.
  */
-export async function peekInbox(
+export async function logEvent(
   haseefId: string,
-  count: number = 10,
-): Promise<SenseEvent[]> {
-  const key = `${INBOX_PREFIX}${haseefId}`;
-  const items = await redis.lrange(key, 0, count - 1);
-
-  const events: SenseEvent[] = [];
-  for (const item of items) {
-    try {
-      events.push(JSON.parse(item) as SenseEvent);
-    } catch {
-      // Skip unparseable
-    }
-  }
-
-  return events;
-}
-
-/**
- * Get the count of pending events in the inbox.
- */
-export async function inboxSize(haseefId: string): Promise<number> {
-  const key = `${INBOX_PREFIX}${haseefId}`;
-  return redis.llen(key);
-}
-
-// =============================================================================
-// Lifecycle — Mark events as processing / processed in Postgres
-// =============================================================================
-
-/**
- * Mark a batch of events as 'processing'.
- * Called at the start of a think cycle, after drain.
- */
-export async function markEventsProcessing(
-  haseefId: string,
-  eventIds: string[],
+  event: SenseEvent,
+  _runId: string,
 ): Promise<void> {
-  if (eventIds.length === 0) return;
-  await prisma.inboxEvent.updateMany({
+  await prisma.inboxEvent.upsert({
     where: {
+      haseefId_eventId: { haseefId, eventId: event.eventId },
+    },
+    create: {
       haseefId,
-      eventId: { in: eventIds },
-      status: 'pending',
+      eventId: event.eventId,
+      scope: event.scope,
+      type: event.type,
+      data: event.data as any,
+      attachments: event.attachments ? (event.attachments as any) : undefined,
+      status: 'processed',
+      processedAt: new Date(),
     },
-    data: {
-      status: 'processing',
-    },
-  });
-}
-
-/**
- * Mark a batch of events as 'processed' after a successful think cycle.
- */
-export async function markEventsProcessed(
-  haseefId: string,
-  eventIds: string[],
-): Promise<void> {
-  if (eventIds.length === 0) return;
-  await prisma.inboxEvent.updateMany({
-    where: {
-      haseefId,
-      eventId: { in: eventIds },
-      status: 'processing',
-    },
-    data: {
+    update: {
       status: 'processed',
       processedAt: new Date(),
     },
   });
 }
 
+// =============================================================================
+// Recovery — Re-push unprocessed events after a crash
+// =============================================================================
+
 /**
- * Crash recovery: find events stuck in 'processing' or orphaned as 'pending'
+ * Crash recovery: find events stuck as 'pending' (never processed)
  * and re-push them to Redis so the agent process picks them up.
  */
-export async function recoverStuckEvents(haseefId: string): Promise<number> {
+export async function recoverUnprocessedEvents(haseefId: string): Promise<number> {
   const stuck = await prisma.inboxEvent.findMany({
     where: {
       haseefId,
-      status: { in: ['processing', 'pending'] },
+      status: 'pending',
     },
     orderBy: { createdAt: 'asc' },
   });
 
   if (stuck.length === 0) return 0;
 
-  const key = `${INBOX_PREFIX}${haseefId}`;
+  const key = `${EVENT_PREFIX}${haseefId}`;
   for (const row of stuck) {
     const event: SenseEvent = {
       eventId: row.eventId,
@@ -234,59 +161,19 @@ export async function recoverStuckEvents(haseefId: string): Promise<number> {
     await redis.lpush(key, JSON.stringify(event));
   }
 
-  // Reset 'processing' events back to 'pending'
-  const processingCount = stuck.filter((e) => e.status === 'processing').length;
-  if (processingCount > 0) {
-    await prisma.inboxEvent.updateMany({
-      where: {
-        haseefId,
-        status: 'processing',
-      },
-      data: {
-        status: 'pending',
-      },
-    });
-  }
-
   return stuck.length;
 }
 
-/**
- * Discard stuck events — mark 'processing' and 'pending' as 'failed' and
- * flush the Redis queue. Called on cycle errors so the haseef moves on
- * instead of retrying the same failing events.
- */
-export async function discardStuckEvents(haseefId: string): Promise<number> {
-  const key = `${INBOX_PREFIX}${haseefId}`;
-
-  // Count stuck events
-  const result = await prisma.inboxEvent.updateMany({
-    where: {
-      haseefId,
-      status: { in: ['processing', 'pending'] },
-    },
-    data: {
-      status: 'failed',
-      processedAt: new Date(),
-    },
-  });
-
-  // Flush the Redis queue so the same events don't re-trigger
-  await redis.del(key);
-
-  return result.count;
-}
-
 // =============================================================================
-// Format — Convert inbox events to content for consciousness injection
+// Format — Convert events to content for consciousness injection
 // =============================================================================
 
 /**
- * Sort inbox events by importance.
+ * Sort events by importance.
  * Priority: human messages > tool results > other.
  * Within the same priority tier, preserve FIFO order.
  */
-export function prioritizeEvents(events: SenseEvent[]): SenseEvent[] {
+function prioritizeEvents(events: SenseEvent[]): SenseEvent[] {
   return [...events].sort((a, b) => {
     const pa = eventPriority(a);
     const pb = eventPriority(b);
@@ -303,16 +190,14 @@ function eventPriority(e: SenseEvent): number {
 }
 
 /**
- * Format drained inbox events into a user-message content.
+ * Format events into consciousness content.
  * Returns plain string when no images are present, or a multimodal
- * UserContentPart[] array (text + image parts) when events carry image attachments.
+ * UserContentPart[] array when events carry image attachments.
  *
- * Core is generic — it does NOT interpret event data fields.
- * Each service (spaces, whatsapp, etc.) populates event.data with a
- * human-readable `formattedContext` string. If present, we use it.
- * Otherwise we fall back to JSON.
+ * v6: Uses "EVENT" prefix instead of "SENSE EVENTS" — consciousness.ts
+ * uses this to detect run boundaries for archival.
  */
-export function formatInboxEvents(events: SenseEvent[]): string | UserContentPart[] {
+export function formatEventForConsciousness(events: SenseEvent[]): string | UserContentPart[] {
   const sorted = prioritizeEvents(events);
   const blocks: string[] = [];
 
@@ -328,9 +213,9 @@ export function formatInboxEvents(events: SenseEvent[]): string | UserContentPar
     }
   }
 
-  // Header is required — consciousness.ts isCycleStart() uses this prefix
-  // to detect cycle boundaries for pruning and archival.
-  const header = `SENSE EVENTS (${sorted.length} event${sorted.length !== 1 ? 's' : ''})`;
+  // Header — consciousness.ts isRunStart() uses this prefix
+  // to detect run boundaries for pruning and archival.
+  const header = `EVENT (${sorted.length} event${sorted.length !== 1 ? 's' : ''})`;
   const textContent = [header, ...blocks].join('\n\n');
 
   // Collect image attachments from all events
@@ -345,7 +230,6 @@ export function formatInboxEvents(events: SenseEvent[]): string | UserContentPar
     }
   }
 
-  // If there are image attachments, return multimodal content
   if (imageParts.length > 0) {
     return [
       { type: 'text', text: textContent },
@@ -356,18 +240,9 @@ export function formatInboxEvents(events: SenseEvent[]): string | UserContentPar
   return textContent;
 }
 
-/**
- * Format a lightweight preview of pending events for mid-cycle awareness.
- */
-export function formatInboxPreview(events: SenseEvent[]): string {
-  const previews = events.map((e) => {
-    const data = e.data as Record<string, unknown>;
-    const senderName = data.senderName as string | undefined;
-    if (senderName) {
-      return `  [${e.scope}:${e.type}] from ${senderName}`;
-    }
-    return `  [${e.scope}:${e.type}]`;
-  });
+// =============================================================================
+// Legacy aliases — for backward compatibility during migration
+// =============================================================================
 
-  return `[INBOX PREVIEW — ${events.length} new event(s) waiting]\n${previews.join('\n')}\n(These will be fully processed in your next cycle. If any are urgent, adapt accordingly.)`;
-}
+/** @deprecated Use pushEvent instead */
+export const pushToInbox = pushEvent;

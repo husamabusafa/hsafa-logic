@@ -1,19 +1,19 @@
 import { prisma } from './db.js';
 
 // =============================================================================
-// Consciousness System (v5)
+// Consciousness System (v6 — Event-Driven)
 //
 // Two layers:
-//   Recent  — last N cycles of full conversation (always in prompt)
-//   Archive — older cycles, embedded and searchable (pulled when relevant)
+//   Recent  — last N runs of full conversation (always in prompt)
+//   Archive — older runs, embedded and searchable (pulled when relevant)
 //
-// When recent exceeds budget → oldest cycles move to ConsciousnessArchive:
-//   a. Summarize the cycle (compact text + temporal markers)
+// When recent exceeds budget → oldest runs move to ConsciousnessArchive:
+//   a. Summarize the run (compact text + temporal markers)
 //   b. Embed the summary (vector for search) — done externally
 //   c. Store both summary + original messages in ConsciousnessArchive
 //   d. Remove from active consciousness
 //
-// The Haseef never truly forgets. Old cycles are archived, not deleted.
+// The Haseef never truly forgets. Old runs are archived, not deleted.
 // =============================================================================
 
 /**
@@ -143,38 +143,39 @@ export async function saveConsciousness(
 }
 
 // =============================================================================
-// Cycle extraction
+// Run extraction (for archival)
 // =============================================================================
 
-interface Cycle {
+interface RunSegment {
   startIndex: number;
   endIndex: number;
   messages: ModelMessage[];
 }
 
 /**
- * Determine if a user message represents the start of a real cycle.
- * Real cycles start with "SENSE EVENTS (" (from formatInboxEvents).
+ * Determine if a user message represents the start of a run.
+ * Supports both v5 format ("SENSE EVENTS (") and v6 format ("EVENT (").
  * Supports both plain string and multimodal content (check first text part).
  */
-function isCycleStart(content: string | UserContentPart[]): boolean {
-  if (typeof content === 'string') return content.startsWith('SENSE EVENTS (');
-  // For multimodal content, check the first text part
+function isRunStart(content: string | UserContentPart[]): boolean {
+  const check = (text: string) =>
+    text.startsWith('EVENT (') || text.startsWith('SENSE EVENTS (');
+  if (typeof content === 'string') return check(content);
   const firstText = content.find((p): p is { type: 'text'; text: string } => p.type === 'text');
-  return !!firstText && firstText.text.startsWith('SENSE EVENTS (');
+  return !!firstText && check(firstText.text);
 }
 
-function extractCycles(messages: ModelMessage[]): Cycle[] {
-  const cycles: Cycle[] = [];
+function extractRuns(messages: ModelMessage[]): RunSegment[] {
+  const runs: RunSegment[] = [];
   let currentStart = -1;
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (i === 0 && msg.role === 'system') continue;
 
-    if (msg.role === 'user' && isCycleStart(msg.content)) {
+    if (msg.role === 'user' && isRunStart(msg.content)) {
       if (currentStart >= 0) {
-        cycles.push({
+        runs.push({
           startIndex: currentStart,
           endIndex: i,
           messages: messages.slice(currentStart, i),
@@ -185,22 +186,24 @@ function extractCycles(messages: ModelMessage[]): Cycle[] {
   }
 
   if (currentStart >= 0) {
-    cycles.push({
+    runs.push({
       startIndex: currentStart,
       endIndex: messages.length,
       messages: messages.slice(currentStart),
     });
   }
 
-  return cycles;
+  return runs;
 }
 
 /**
- * Extract the done() tool's summary from a cycle, or fall back to last assistant text.
+ * Extract a summary from a run segment.
+ * Primary: look for done() tool call with a summary arg.
+ * Fallback: summarize tool calls used, or last assistant text.
  */
-function extractCycleSummary(cycle: Cycle): string {
+function extractRunSummary(run: RunSegment): string {
   // Primary: look for done() tool call with a summary arg
-  for (const msg of cycle.messages) {
+  for (const msg of run.messages) {
     if (msg.role !== 'assistant' || typeof msg.content === 'string') continue;
     for (const part of msg.content) {
       if (part.type === 'tool-call' && part.toolName === 'done' && part.args) {
@@ -212,11 +215,26 @@ function extractCycleSummary(cycle: Cycle): string {
     }
   }
 
+  // Fallback: summarize tool calls
+  const toolNames: string[] = [];
+  for (const msg of run.messages) {
+    if (msg.role !== 'assistant' || typeof msg.content === 'string') continue;
+    for (const part of msg.content) {
+      if (part.type === 'tool-call' && part.toolName && part.toolName !== 'done') {
+        toolNames.push(part.toolName);
+      }
+    }
+  }
+
+  if (toolNames.length > 0) {
+    return `Used tools: ${toolNames.join(', ')}`;
+  }
+
   // Fallback: last assistant text
-  for (let i = cycle.messages.length - 1; i >= 0; i--) {
-    const msg = cycle.messages[i];
+  for (let i = run.messages.length - 1; i >= 0; i--) {
+    const msg = run.messages[i];
     if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content.trim()) {
-      return msg.content.trim();
+      return msg.content.trim().slice(0, 200);
     }
   }
 
@@ -229,64 +247,64 @@ function extractCycleSummary(cycle: Cycle): string {
 
 /**
  * Prune consciousness if it exceeds the token budget.
- * Oldest cycles are archived (summary + full messages stored in DB).
- * Embedding is NOT done here — a separate process can embed archived cycles.
+ * Oldest runs are archived (summary + full messages stored in DB).
+ * Embedding is NOT done here — a separate process can embed archived runs.
  *
  * Returns the pruned messages array.
  */
 export async function pruneConsciousness(
   haseefId: string,
   messages: ModelMessage[],
-  cycleCount: number,
+  runCount: number,
   maxTokens: number = DEFAULT_MAX_TOKENS,
 ): Promise<ModelMessage[]> {
   const tokenCount = estimateTokens(messages);
   if (tokenCount <= maxTokens) return messages;
 
-  const cycles = extractCycles(messages);
-  if (cycles.length <= 1) return messages;
+  const runs = extractRuns(messages);
+  if (runs.length <= 1) return messages;
 
-  // Walk backwards to find how many recent cycles fit in the budget
+  // Walk backwards to find how many recent runs fit in the budget
   let recentTokens = 0;
-  let splitIndex = cycles.length;
+  let splitIndex = runs.length;
 
-  for (let i = cycles.length - 1; i >= 0; i--) {
-    const cycleTokens = estimateTokens(cycles[i].messages);
-    if (recentTokens + cycleTokens > maxTokens) break;
-    recentTokens += cycleTokens;
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const runTokens = estimateTokens(runs[i].messages);
+    if (recentTokens + runTokens > maxTokens) break;
+    recentTokens += runTokens;
     splitIndex = i;
   }
 
   if (splitIndex === 0) return messages;
 
-  const oldCycles = cycles.slice(0, splitIndex);
-  const recentCycles = cycles.slice(splitIndex);
+  const oldRuns = runs.slice(0, splitIndex);
+  const recentRuns = runs.slice(splitIndex);
 
-  // Archive old cycles to DB
-  for (let i = 0; i < oldCycles.length; i++) {
-    const cycle = oldCycles[i];
-    const summary = extractCycleSummary(cycle);
-    const cycleNumber = cycleCount - cycles.length + i;
+  // Archive old runs to DB
+  for (let i = 0; i < oldRuns.length; i++) {
+    const run = oldRuns[i];
+    const summary = extractRunSummary(run);
+    const runNumber = runCount - runs.length + i;
 
     try {
       await prisma.consciousnessArchive.create({
         data: {
           haseefId,
-          cycleNumber: Math.max(0, cycleNumber),
+          cycleNumber: Math.max(0, runNumber),
           summary,
-          fullMessages: cycle.messages as any,
+          fullMessages: run.messages as any,
           // embedding is null — populated by a separate embedding job
         },
       });
     } catch (err) {
-      console.warn(`[consciousness] Failed to archive cycle ${cycleNumber}:`, err);
+      console.warn(`[consciousness] Failed to archive run ${runNumber}:`, err);
     }
   }
 
-  // Build pruned consciousness: just the recent cycles
+  // Build pruned consciousness: just the recent runs
   const pruned: ModelMessage[] = [];
-  for (const cycle of recentCycles) {
-    pruned.push(...cycle.messages);
+  for (const run of recentRuns) {
+    pruned.push(...run.messages);
   }
 
   return pruned;

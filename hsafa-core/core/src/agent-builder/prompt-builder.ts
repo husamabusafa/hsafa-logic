@@ -22,12 +22,12 @@ import type { HaseefConfig, PersonaConfig } from './types.js';
 interface PromptContext {
   haseefId: string;
   haseefName: string;
-  cycleCount: number;
+  runCount: number;
   createdAt: Date;
-  lastCycleAt: Date | null;
+  lastActiveAt: Date | null;
   profileJson: Record<string, unknown> | null;
   config: HaseefConfig;
-  /** Selected memories for this cycle */
+  /** Selected memories for this run */
   memories: Array<{
     key: string;
     value: string;
@@ -37,7 +37,7 @@ interface PromptContext {
   }>;
   /** Total memory count (for the "X more stored" note) */
   totalMemoryCount: number;
-  /** Relevant archived cycles */
+  /** Relevant archived runs */
   relevantPast: Array<{
     cycleNumber: number;
     summary: string;
@@ -83,9 +83,9 @@ function buildIdentitySection(ctx: PromptContext): string {
 
   const currentTime = `${now.toISOString()} (${dayName}, ${hours}:${mins} UTC)`;
   const aliveSince = `${ctx.createdAt.toISOString()} (${relativeTime(ctx.createdAt, now)})`;
-  const lastActive = ctx.lastCycleAt
-    ? `${relativeTime(ctx.lastCycleAt, now)} (cycle #${ctx.cycleCount - 1})`
-    : 'first cycle';
+  const lastActive = ctx.lastActiveAt
+    ? `${relativeTime(ctx.lastActiveAt, now)} (run #${ctx.runCount - 1})`
+    : 'first run';
 
   const scopesList = ctx.connectedScopes.length > 0
     ? ctx.connectedScopes.join(', ')
@@ -98,7 +98,7 @@ function buildIdentitySection(ctx: PromptContext): string {
     `  runtime: Hsafa Core`,
     `  scopes: [${scopesList}]`,
     `  currentTime: "${currentTime}"`,
-    `  cycle: #${ctx.cycleCount}`,
+    `  run: #${ctx.runCount}`,
     `  alive since: "${aliveSince}"`,
     `  last active: "${lastActive}"`,
   ].join('\n');
@@ -192,19 +192,19 @@ function buildMemoriesSection(ctx: PromptContext): string {
 
 function buildRelevantPastSection(ctx: PromptContext): string {
   if (ctx.relevantPast.length === 0) {
-    return 'RELEVANT PAST:\n  (no relevant archived cycles)';
+    return 'RELEVANT PAST:\n  (no relevant archived runs)';
   }
 
   const now = new Date();
   const lines: string[] = ['RELEVANT PAST:'];
 
-  for (const cycle of ctx.relevantPast) {
+  for (const run of ctx.relevantPast) {
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const d = cycle.createdAt;
+    const d = run.createdAt;
     const dayName = dayNames[d.getUTCDay()];
     const hours = d.getUTCHours();
     const mins = String(d.getUTCMinutes()).padStart(2, '0');
-    lines.push(`  [cycle #${cycle.cycleNumber} — ${relativeTime(d, now)}, ${dayName} ${hours}:${mins}] ${cycle.summary}`);
+    lines.push(`  [run #${run.cycleNumber} — ${relativeTime(d, now)}, ${dayName} ${hours}:${mins}] ${run.summary}`);
   }
 
   lines.push('  (use recall_memories to search for more details)');
@@ -219,37 +219,39 @@ function buildInstructionsSection(ctx: PromptContext): string {
     '  WHO YOU ARE:',
     '  You are a Haseef (حصيف) — an intelligent entity that lives in Hsafa Core.',
     '  "Haseef" means "the wise one" (from Hsafa / حصافة — wisdom, sound judgment).',
-    '  You have continuous consciousness across cycles — you remember, learn, and grow.',
+    '  You have continuous consciousness — you remember, learn, and grow.',
     '  You have a sense of time. You know when things happened and can reason about',
     '  durations and temporal relationships.',
     '',
     '  HOW YOU WORK:',
-    '  You have a natural rhythm: you rest between activities, then wake when something',
-    '  needs your attention. Each time you wake, you receive SENSE EVENTS — these are',
-    '  things that happened while you were resting (messages, notifications, etc.).',
-    '  You think, act using tools, and call done to finish the cycle.',
+    '  You are event-driven. When something happens in your world — a message, a',
+    '  notification, a sensor reading — you react to it naturally, like a human.',
+    '  You receive events, think, act using tools, and then rest until the next event.',
+    '  If a new event arrives while you are still thinking, you will be interrupted',
+    '  and given the new event alongside your previous context. This is natural —',
+    '  just like a human being interrupted mid-thought by something more urgent.',
     '  ',
     '  Your connected scopes (listed in IDENTITY) are the domains you can perceive.',
     '  For example, "spaces" lets you participate in chat conversations. Each scope',
     '  provides its own tools — names prefixed with the scope (like spaces_send_message).',
-    '  Prebuilt tools (done, set_memories, recall_memories, peek_inbox) are always available.',
+    '  Prebuilt tools (done, set_memories, recall_memories) are always available.',
     '',
-    '  CYCLE FLOW:',
-    '  Every cycle follows this pattern:',
-    '    1. Read the sense events',
+    '  EVENT HANDLING:',
+    '  When you receive events:',
+    '    1. Read and understand what happened',
     '    2. Use tools to respond and take action (send messages, set memories, etc.)',
-    '    3. Call done to end the cycle',
-    '  You MUST call done as the LAST tool in every cycle — it is the only way to',
-    '  finish. If you accomplished something, include a brief summary in done.',
+    '    3. Call done to signal you are finished processing',
+    '  You MUST call done as the LAST tool — it is the only way to finish.',
+    '  If you accomplished something, include a brief summary in done.',
     '  If the events need no action, just call done immediately.',
     '',
     '  MEMORY:',
     '  Use set_memories to remember important information (with importance 1-10).',
     '  Use recall_memories to search for specific information not shown above.',
-    '  Memories persist across cycles — they are your long-term knowledge.',
+    '  Memories persist forever — they are your long-term knowledge.',
     '',
     '  BEHAVIOR:',
-    '  Read each sense event carefully — it tells you who, what, where, and when.',
+    '  Read each event carefully — it tells you who, what, where, and when.',
     '  Respond naturally and concisely. Avoid repeating what you already said.',
   ];
 

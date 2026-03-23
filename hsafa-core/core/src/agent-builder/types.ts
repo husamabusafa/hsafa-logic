@@ -145,9 +145,9 @@ export interface SenseEvent {
 export interface HaseefProcessContext {
   haseefId: string;
   haseefName: string;
-  /** Current cycle number (monotonically increasing) */
-  cycleCount: number;
-  /** The run ID for the current think cycle (audit record) */
+  /** Current run number (monotonically increasing, stored as cycleCount in DB) */
+  runCount: number;
+  /** The run ID for the current run (audit record) */
   currentRunId: string | null;
 }
 

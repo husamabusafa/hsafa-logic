@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import { prisma } from '../lib/db.js';
-import { pushToInbox } from '../lib/inbox.js';
+import { pushEvent } from '../lib/inbox.js';
 import { redis } from '../lib/redis.js';
 import {
   createSnapshot,
@@ -210,7 +210,7 @@ haseefsRouter.post('/:id/events', async (req, res) => {
         return;
       }
       event.timestamp = event.timestamp ?? new Date().toISOString();
-      await pushToInbox(haseefId, event);
+      await pushEvent(haseefId, event);
     }
 
     res.json({ pushed: events.length });

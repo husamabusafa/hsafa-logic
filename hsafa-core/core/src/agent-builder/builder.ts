@@ -101,7 +101,7 @@ export async function buildHaseef(
 
   const model = resolveModel(config.model);
 
-  // Build prebuilt tools (done, set_memories, delete_memories, recall_memories, peek_inbox)
+  // Build prebuilt tools (done, set_memories, delete_memories, recall_memories)
   const prebuilt = buildPrebuiltTools(context);
 
   // Build scoped tools from pre-fetched HaseefTool DB rows

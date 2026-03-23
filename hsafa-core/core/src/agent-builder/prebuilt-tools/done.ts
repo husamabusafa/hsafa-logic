@@ -2,24 +2,24 @@ import { tool } from 'ai';
 import { z } from 'zod';
 
 // =============================================================================
-// done — Signal cycle completion (replaces skip)
+// done — Signal run completion (v6 — Event-Driven)
 //
-// The agent calls this to say "I'm finished". The execute function returns
-// immediately, and hasToolCall('done') in stopWhen stops the loop AFTER
-// execution — ensuring a proper tool-result is included in consciousness.
+// The agent calls this to say "I'm finished processing this event."
+// hasToolCall('done') in stopWhen stops the stream loop AFTER execution,
+// ensuring a proper tool-result is included in consciousness.
+//
+// The done summary is used by extractRunSummary() in consciousness.ts
+// for archive compaction — this is why keeping done is valuable.
 //
 // NOTE: The execute function is required. Without it, no tool-result is
-// generated, and OpenAI's Responses API rejects the next cycle with
+// generated, and OpenAI's Responses API rejects the next run with
 // "No tool output found for function call".
-//
-// Every cycle is real — no rollback, no amnesia. Even "nothing to do" cycles
-// are tracked so the agent remembers evaluating the inbox.
 // =============================================================================
 
 export function createDoneTool() {
   return tool({
     description:
-      'Call this when you are finished with this cycle. If you accomplished something, provide a brief summary — ONE SHORT SENTENCE ONLY (10 words max). Examples: "Sent reply to Sarah." or "No action needed." If nothing to do, If there was nothing to do, just call done without a summary.',
+      'Call this when you are finished processing events. Provide a brief summary — ONE SHORT SENTENCE ONLY (10 words max). Examples: "Sent reply to Sarah." or "No action needed." If nothing to do, just call done without a summary.',
     inputSchema: z.object({
       summary: z
         .string()
