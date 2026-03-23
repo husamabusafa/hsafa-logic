@@ -10,16 +10,113 @@ import { useHsafaClient } from "@/lib/hsafa-react";
 import { ProductCard } from "./product-card";
 import { ConfirmationUI } from "./confirmation-ui";
 import { ChartDisplay } from "./chart-display";
-import { ArrowUpIcon, CheckIcon, CheckCheckIcon } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useRef, useMemo } from "react";
+import { ArrowDownIcon, ArrowUpIcon, CheckIcon, CheckCheckIcon } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useRef, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 
 export function Thread() {
+  const { spaceId } = useCurrentSpace();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const [composerHeight, setComposerHeight] = useState(88);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  const isPinnedToBottomRef = useRef(true);
+
+  const getViewport = useCallback(() => {
+    return rootRef.current?.querySelector('[data-chat-viewport="true"]') as HTMLDivElement | null;
+  }, []);
+
+  const updateScrollState = useCallback(() => {
+    const viewport = getViewport();
+    if (!viewport) return;
+    const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    const isNearBottom = distanceFromBottom <= 96;
+    isPinnedToBottomRef.current = isNearBottom;
+    setShowJumpToBottom(!isNearBottom);
+  }, [getViewport]);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const viewport = getViewport();
+    if (!viewport) return;
+    requestAnimationFrame(() => {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+    });
+  }, [getViewport]);
+
+  useEffect(() => {
+    const viewport = getViewport();
+    if (!viewport) return;
+
+    const handleScroll = () => updateScrollState();
+    viewport.addEventListener("scroll", handleScroll, { passive: true });
+    updateScrollState();
+
+    return () => viewport.removeEventListener("scroll", handleScroll);
+  }, [getViewport, updateScrollState]);
+
+  useEffect(() => {
+    const viewport = getViewport();
+    if (!viewport) return;
+
+    const observer = new MutationObserver(() => {
+      const shouldStayPinned = isPinnedToBottomRef.current;
+      requestAnimationFrame(() => {
+        if (shouldStayPinned) {
+          viewport.scrollTo({ top: viewport.scrollHeight, behavior: "auto" });
+        }
+        updateScrollState();
+      });
+    });
+
+    observer.observe(viewport, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
+    return () => observer.disconnect();
+  }, [getViewport, updateScrollState]);
+
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+
+    const syncComposerHeight = () => {
+      const nextHeight = Math.ceil(composer.getBoundingClientRect().height);
+      setComposerHeight((prev) => (prev === nextHeight ? prev : nextHeight));
+      if (isPinnedToBottomRef.current) {
+        scrollToBottom("auto");
+      }
+    };
+
+    syncComposerHeight();
+
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => syncComposerHeight());
+    observer.observe(composer);
+
+    return () => observer.disconnect();
+  }, [scrollToBottom]);
+
+  useEffect(() => {
+    isPinnedToBottomRef.current = true;
+    setShowJumpToBottom(false);
+    scrollToBottom("auto");
+  }, [scrollToBottom, spaceId]);
+
   return (
-    <ThreadPrimitive.Root className="flex h-full flex-col bg-background">
-      <ThreadPrimitive.Viewport className="scrollbar-none flex flex-1 flex-col overflow-y-auto">
-        <div className="mx-auto w-full max-w-3xl px-4 pt-6">
+    <div ref={rootRef} className="relative flex h-full flex-col bg-background">
+      <ThreadPrimitive.Root className="flex h-full flex-col bg-background">
+      <ThreadPrimitive.Viewport
+        data-chat-viewport="true"
+        className="scrollbar-none flex flex-1 flex-col overflow-y-auto overscroll-contain scroll-smooth"
+      >
+        <div
+          className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 pt-6"
+          style={{ paddingBottom: composerHeight + 20 }}
+        >
           <ThreadPrimitive.Empty>
             <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
               <p className="text-muted-foreground text-sm">
@@ -40,12 +137,38 @@ export function Thread() {
         </div>
       </ThreadPrimitive.Viewport>
 
-      <div className="sticky bottom-0 bg-background">
+      {showJumpToBottom && (
+        <div
+          className="pointer-events-none absolute inset-x-0 z-10 flex justify-end px-4"
+          style={{ bottom: composerHeight + 16 }}
+        >
+          <Button
+            type="button"
+            size="icon"
+            variant="secondary"
+            className="pointer-events-auto size-10 rounded-full border border-border/70 bg-background/95 shadow-lg backdrop-blur"
+            onClick={() => {
+              isPinnedToBottomRef.current = true;
+              setShowJumpToBottom(false);
+              scrollToBottom("smooth");
+            }}
+            aria-label="Scroll to latest message"
+          >
+            <ArrowDownIcon className="size-4" />
+          </Button>
+        </div>
+      )}
+
+      <div
+        ref={composerRef}
+        className="sticky bottom-0 z-20 border-t border-border/60 bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80"
+      >
         <div className="mx-auto w-full max-w-3xl px-4">
           <Composer />
         </div>
       </div>
-    </ThreadPrimitive.Root>
+      </ThreadPrimitive.Root>
+    </div>
   );
 }
 
@@ -80,17 +203,17 @@ function Composer() {
   }, []);
 
   return (
-    <ComposerPrimitive.Root className="bg-background py-2">
-      <div className="rounded-xl border border-border bg-muted/50 focus-within:border-ring/50 focus-within:ring-1 focus-within:ring-ring/20">
+    <ComposerPrimitive.Root className="bg-transparent py-3">
+      <div className="rounded-[28px] border border-border/80 bg-background shadow-sm transition-all focus-within:border-ring/60 focus-within:ring-2 focus-within:ring-ring/15">
         <ComposerPrimitive.Input asChild>
           <textarea
             placeholder="Ask a question..."
-            className="max-h-32 w-full resize-none bg-transparent px-3 pt-2.5 pb-2 text-sm leading-5 placeholder:text-muted-foreground focus:outline-none"
+            className="max-h-40 min-h-[52px] w-full resize-none bg-transparent px-4 pt-3 pb-2 text-sm leading-6 placeholder:text-muted-foreground focus:outline-none"
             rows={1}
             onInput={handleInput}
           />
         </ComposerPrimitive.Input>
-        <div className="flex items-center justify-end px-1.5 pb-1.5">
+        <div className="flex items-center justify-end px-2 pb-2">
           <ComposerAction />
         </div>
       </div>
@@ -101,7 +224,7 @@ function Composer() {
 function ComposerAction(): ReactNode {
   return (
     <ComposerPrimitive.Send asChild>
-      <Button type="submit" size="icon" className="size-7 rounded-lg">
+      <Button type="submit" size="icon" className="size-9 rounded-full shadow-sm">
         <ArrowUpIcon className="size-4" />
       </Button>
     </ComposerPrimitive.Send>
@@ -279,7 +402,7 @@ function AutoMarkSeen() {
 
     // Small delay to ensure messages are rendered
     const timer = setTimeout(() => {
-      const viewport = document.querySelector('[class*="overflow-y-auto"]');
+      const viewport = document.querySelector('[data-chat-viewport="true"]');
       if (!viewport) return;
 
       // Find the last message element

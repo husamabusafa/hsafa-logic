@@ -1,0 +1,88 @@
+# =============================================================================
+# Hsafa Spaces — Production Docker Compose (for Coolify)
+#
+# This deploys the Spaces server with its own PostgreSQL and Redis instances
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hsafa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-spaces_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hsafa}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - spaces-network
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - spaces-network
+
+  server:
+    image: docker.io/husamabusafa/hsafa-spaces:latest
+    pull_policy: always
+    command: sh -c "npx prisma db push --accept-data-loss --schema=./prisma/schema.prisma --url=\"postgresql://${POSTGRES_USER:-hsafa}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-spaces_db}\" && node dist/index.js"
+    environment:
+      NODE_ENV: production
+      PORT: 3005
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hsafa}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-spaces_db}?schema=public
+      # Redis (spaces-own instance)
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      # Auth
+      SPACES_SECRET_KEY: ${SPACES_SECRET_KEY}
+      SPACES_PUBLIC_KEY: ${SPACES_PUBLIC_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      # Email (Resend)
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      FROM_EMAIL: ${FROM_EMAIL:-noreply@hsafa.com}
+      # Google OAuth
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_CALLBACK_URL: ${GOOGLE_CALLBACK_URL}
+      # Frontend URL (for OAuth redirects)
+      FRONTEND_URL: ${FRONTEND_URL}
+      # Core connection (for extension bridge)
+      HSAFA_GATEWAY_URL: ${HSAFA_GATEWAY_URL:-https://core.hsafa.com}
+      CORE_API_KEY: ${CORE_API_KEY}
+      # Optional: ElevenLabs
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      # Optional: OpenAI/OpenRouter for AI features
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    ports:
+      - "${SERVER_PORT:-3005}:3005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - spaces-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  spaces-network:
+    driver: bridge

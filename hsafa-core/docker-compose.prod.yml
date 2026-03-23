@@ -1,0 +1,82 @@
+# =============================================================================
+# Hsafa Core — Production Docker Compose (for Coolify)
+#
+# Usage:
+#   1. Build & push the core image:
+#      docker build -t YOUR_REGISTRY/hsafa-core:latest --target production ./core
+#      docker push YOUR_REGISTRY/hsafa-core:latest
+#
+#   2. In Coolify "Docker Compose Empty", paste this file
+#   3. Set environment variables in Coolify's UI
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hsafa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-hsafa_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hsafa}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hsafa-network
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hsafa-network
+
+  core:
+    image: docker.io/husamabusafa/hsafa-core:latest
+    pull_policy: always
+    command: sh -c "node node_modules/prisma/build/index.js db push --accept-data-loss --url=\"postgresql://${POSTGRES_USER:-hsafa}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hsafa_db}\" && node dist/index.js"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hsafa}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hsafa_db}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      HSAFA_API_KEY: ${HSAFA_API_KEY}
+      HSAFA_SECRET_KEY: ${HSAFA_SECRET_KEY}
+      HSAFA_PUBLIC_KEY: ${HSAFA_PUBLIC_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ENTITY_CLAIM: ${JWT_ENTITY_CLAIM:-sub}
+      # LLM providers
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    ports:
+      - "${CORE_PORT:-3001}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - hsafa-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  hsafa-network:
+    driver: bridge
