@@ -44,6 +44,13 @@ function resolveBaseModel(
   model: string,
   apiKey?: string,
 ) {
+  // OpenRouter accepts parallelToolCalls as model creation settings.
+  // For other providers, parallelToolCalls is set via providerOptions in streamText.
+  if (provider === 'openrouter') {
+    const p = apiKey ? createOpenRouter({ apiKey }) : openrouter;
+    return p(model, { parallelToolCalls: false });
+  }
+
   if (!apiKey) {
     // Use the global registry (env var keys)
     const id = `${provider}:${model}`;
@@ -60,8 +67,6 @@ function resolveBaseModel(
       return createGoogleGenerativeAI({ apiKey })(model);
     case 'xai':
       return createXai({ apiKey })(model);
-    case 'openrouter':
-      return createOpenRouter({ apiKey })(model);
     default: {
       // Unknown provider — fall back to registry
       const id = `${provider}:${model}`;

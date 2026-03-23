@@ -204,6 +204,10 @@ export async function startHaseefProcess(opts: StartOptions): Promise<void> {
         toolChoice: 'required' as any,
         stopWhen: [hasToolCall('done'), stepCountIs(50)] as any,
         toolCallStreaming: true,
+        providerOptions: {
+          openai: { parallelToolCalls: false },
+          anthropic: { parallelToolCalls: false },
+        },
       } as any);
 
       // 10. PROCESS stream — wrapped in try/finally to ALWAYS emit run.finished

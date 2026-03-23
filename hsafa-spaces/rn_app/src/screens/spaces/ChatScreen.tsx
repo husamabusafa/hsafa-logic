@@ -620,22 +620,12 @@ export function ChatScreen({ route }: Props) {
     );
   }, [currentEntityId, messages, colors, handleRespond, members, highlightedMessageId, highlightAnim, flashHighlight, messageSeenMap]);
 
-  // Merge active agents into typing list (agents show as "typing" like humans)
+  // Typing indicator — only from real user.typing SSE events (fires on tool.started for message tools)
   const allTyping = useMemo(() => {
-    const typing: Array<{ entityId: string; name: string; activity?: 'typing' | 'recording' }> = [];
-    // Human typing users
-    for (const t of typingUsers) {
-      if (t.entityId === currentEntityId) continue;
-      typing.push({ entityId: t.entityId, name: t.entityName, activity: t.activity });
-    }
-    // Active agents as typing (only if not already in typingUsers)
-    for (const a of activeAgents) {
-      if (typing.some((t) => t.entityId === a.agentEntityId)) continue;
-      const member = members.find((m) => m.entityId === a.agentEntityId);
-      typing.push({ entityId: a.agentEntityId, name: member?.name || a.agentName || 'Haseef', activity: 'typing' });
-    }
-    return typing;
-  }, [typingUsers, activeAgents, currentEntityId, members]);
+    return typingUsers
+      .filter((t) => t.entityId !== currentEntityId)
+      .map((t) => ({ entityId: t.entityId, name: t.entityName, activity: t.activity }));
+  }, [typingUsers, currentEntityId]);
 
   const statusLine = useMemo(() => {
     if (allTyping.length === 0) return null;

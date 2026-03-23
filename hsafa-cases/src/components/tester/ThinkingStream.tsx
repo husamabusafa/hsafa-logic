@@ -11,26 +11,32 @@ interface StreamEntry {
 
 const EVENT_COLORS: Record<string, string> = {
   'text.delta': 'text-zinc-300',
+  'reasoning.start': 'text-violet-400',
+  'reasoning.delta': 'text-violet-300',
+  'reasoning.end': 'text-violet-400',
   'tool.started': 'text-yellow-400',
   'tool-input.delta': 'text-amber-300',
   'tool.ready': 'text-blue-400',
   'tool.done': 'text-emerald-400',
   'tool.error': 'text-red-400',
   'step.finish': 'text-purple-400',
-  'run.start': 'text-cyan-400',
-  'run.finish': 'text-cyan-400',
+  'run.started': 'text-cyan-400',
+  'run.finished': 'text-cyan-400',
 }
 
 const EVENT_LABELS: Record<string, string> = {
   'text.delta': 'TEXT',
+  'reasoning.start': 'THINK',
+  'reasoning.delta': 'THINK',
+  'reasoning.end': 'THINK END',
   'tool.started': 'TOOL START',
   'tool-input.delta': 'TOOL INPUT',
   'tool.ready': 'TOOL READY',
   'tool.done': 'TOOL DONE',
   'tool.error': 'TOOL ERROR',
   'step.finish': 'STEP',
-  'run.start': 'RUN START',
-  'run.finish': 'RUN FINISH',
+  'run.started': 'RUN START',
+  'run.finished': 'RUN FINISH',
 }
 
 export default function ThinkingStream() {
@@ -39,6 +45,7 @@ export default function ThinkingStream() {
   const [entries, setEntries] = useState<StreamEntry[]>([])
   const [autoScroll, setAutoScroll] = useState(true)
   const [textAccum, setTextAccum] = useState('')
+  const [reasoningAccum, setReasoningAccum] = useState('')
   const [toolInputAccum, setToolInputAccum] = useState<Record<string, string>>({})
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -65,6 +72,10 @@ export default function ThinkingStream() {
           setTextAccum((prev) => prev + event.text)
         }
 
+        if (event.type === 'reasoning.delta' && event.delta) {
+          setReasoningAccum((prev) => prev + event.delta)
+        }
+
         if (event.type === 'tool-input.delta' && event.streamId && event.delta) {
           setToolInputAccum((prev) => ({
             ...prev,
@@ -82,8 +93,9 @@ export default function ThinkingStream() {
           }
         }
 
-        if (event.type === 'step.finish' || event.type === 'run.finish') {
+        if (event.type === 'step.finish' || event.type === 'run.finished') {
           setTextAccum('')
+          setReasoningAccum('')
         }
       },
       () => {
@@ -117,6 +129,12 @@ export default function ThinkingStream() {
     switch (event.type) {
       case 'text.delta':
         return <span className="text-zinc-300 font-mono text-xs">{event.text}</span>
+      case 'reasoning.start':
+        return <span className="text-violet-300 text-xs italic">thinking...</span>
+      case 'reasoning.delta':
+        return <span className="text-violet-200 font-mono text-xs">{event.delta}</span>
+      case 'reasoning.end':
+        return <span className="text-violet-300 text-xs italic">done thinking</span>
       case 'tool.started':
         return <span className="font-mono text-xs">{event.toolName}</span>
       case 'tool-input.delta':
@@ -177,7 +195,7 @@ export default function ThinkingStream() {
             <ChevronDown size={14} />
           </button>
           <button
-            onClick={() => { setEntries([]); setTextAccum(''); setToolInputAccum({}) }}
+            onClick={() => { setEntries([]); setTextAccum(''); setReasoningAccum(''); setToolInputAccum({}) }}
             className="p-1.5 text-zinc-600 hover:text-zinc-400 rounded-lg transition-colors"
             title="Clear"
           >
@@ -203,8 +221,14 @@ export default function ThinkingStream() {
       </div>
 
       {/* Live accumulators */}
-      {(textAccum || Object.keys(toolInputAccum).length > 0) && (
+      {(textAccum || reasoningAccum || Object.keys(toolInputAccum).length > 0) && (
         <div className="space-y-2">
+          {reasoningAccum && (
+            <div className="bg-violet-500/5 border border-violet-500/20 rounded-lg p-2">
+              <span className="text-[10px] text-violet-400 block mb-1">💭 Reasoning</span>
+              <p className="text-xs text-violet-200 font-mono whitespace-pre-wrap max-h-40 overflow-y-auto">{reasoningAccum}</p>
+            </div>
+          )}
           {textAccum && (
             <div className="bg-zinc-800/50 rounded-lg p-2">
               <span className="text-[10px] text-zinc-500 block mb-1">Internal Text</span>

@@ -8,9 +8,9 @@
 // Typing & online indicators use the haseef's resolved space (enteredSpace ?? activeSpace).
 //
 // run.started   → auto-set activeSpace to trigger space, agent.active, online
-// tool.started  → tool.started event, typing for message tools
-// tool.done     → tool.done event
-// run.finished  → stop heartbeat, typing=false, agent.inactive, offline, clear activeSpace (NOT enteredSpace)
+// tool.started  → tool.started event, typing=true for message tools
+// tool.done     → tool.done event, typing=false for message tools
+// run.finished  → typing=false (safety net), agent.inactive, offline, clear activeSpace (NOT enteredSpace)
 // =============================================================================
 
 import Redis from "ioredis";
@@ -72,27 +72,6 @@ function resolvedSpaceId(conn: ActiveConnection): string | undefined {
   return (conn.enteredSpace ?? conn.activeSpace)?.spaceId;
 }
 
-// =============================================================================
-// Typing Heartbeat — single interval per connection, broadcasts to resolved space
-// =============================================================================
-
-function startTypingHeartbeat(conn: ActiveConnection): void {
-  // Don't restart if already running — just update activity via conn.typingActivity
-  if (conn.typingHeartbeat) return;
-  conn.typingHeartbeat = setInterval(() => {
-    const spaceId = resolvedSpaceId(conn);
-    if (spaceId) {
-      void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true, conn.typingActivity);
-    }
-  }, 3000);
-}
-
-function stopTypingHeartbeat(conn: ActiveConnection): void {
-  if (conn.typingHeartbeat) {
-    clearInterval(conn.typingHeartbeat);
-    conn.typingHeartbeat = null;
-  }
-}
 
 // =============================================================================
 // Event Bridge
@@ -177,12 +156,10 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           agentEntityId: conn.agentEntityId,
           runId,
         });
-        // For message tools: update activity, start heartbeat, broadcast
+        // For message tools: broadcast typing=true
         if (isMessageTool(event.toolName)) {
-          const activity = getMessageToolActivity(event.toolName);
-          conn.typingActivity = activity;
-          startTypingHeartbeat(conn);
-          void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true, activity);
+          conn.typingActivity = getMessageToolActivity(event.toolName);
+          void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true, conn.typingActivity);
         }
       }
     } else if (event.type === "tool.done") {
@@ -196,10 +173,10 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
           agentEntityId: conn.agentEntityId,
           runId,
         });
-        // NOTE: Do NOT stop typing heartbeat here. The model may call another
-        // message tool immediately after this one (e.g. send_voice then send_message).
-        // Stopping and restarting causes visible flicker. The heartbeat keeps the
-        // indicator alive between tool calls. It will be stopped on run.finished.
+        // Clear typing when a message tool finishes
+        if (isMessageTool(event.toolName)) {
+          void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, false);
+        }
       }
     } else if (event.type === "tool.error") {
       const spaceId = resolvedSpaceId(conn);
@@ -214,12 +191,7 @@ function bridgeStreamEvent(conn: ActiveConnection, message: string): void {
         });
       }
     } else if (event.type === "run.finished") {
-      const hasError = !!(event as any).error;
-
-      // Stop typing heartbeat
-      stopTypingHeartbeat(conn);
-
-      // Clear typing in the resolved space
+      // Safety net: clear typing in the resolved space
       const resolvedSid = resolvedSpaceId(conn);
       if (resolvedSid) {
         void broadcastTyping(resolvedSid, conn.agentEntityId, conn.haseefName, false);

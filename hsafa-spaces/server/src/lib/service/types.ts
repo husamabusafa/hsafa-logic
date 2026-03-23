@@ -21,9 +21,7 @@ export interface ActiveConnection {
   enteredSpace: { spaceId: string; spaceName: string } | null;
   /** Current run ID (set by run.started, cleared by run.finished) — used as fallback for space lookup */
   currentRunId: string | null;
-  /** Typing heartbeat interval — re-broadcasts typing every 3s to keep client indicator alive */
-  typingHeartbeat: ReturnType<typeof setInterval> | null;
-  /** Current typing activity — 'typing' or 'recording'. Used by heartbeat to broadcast the correct activity. */
+  /** Current typing activity — 'typing' or 'recording'. */
   typingActivity: "typing" | "recording";
   /** Pending seen messages — flushed when run.started confirms events were consumed from inbox */
   pendingSeenMessages: Array<{ spaceId: string; messageId: string }>;

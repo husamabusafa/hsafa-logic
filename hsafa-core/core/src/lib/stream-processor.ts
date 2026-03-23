@@ -38,6 +38,8 @@ export interface StreamResult {
   finishReason: string;
   /** Accumulated text output (vestigial with toolChoice: 'required') */
   text: string;
+  /** Accumulated reasoning output from reasoning models */
+  reasoning: string;
   /** Stream errors collected during processing (from LLM provider) */
   streamErrors: string[];
 }
@@ -65,6 +67,7 @@ export async function processStream(
   /** Tracking: toolCallId → { toolName, startedAt } for duration */
   const activeTiming = new Map<string, { toolName: string; startedAt: number }>();
   let text = '';
+  let reasoning = '';
   let finishReason = 'unknown';
   const streamErrors: string[] = [];
 
@@ -89,12 +92,37 @@ export async function processStream(
         break;
       }
 
-      // ── Reasoning tokens — internal, ignored ────────────────────────────
-      case 'reasoning':
-      case 'reasoning-start':
-      case 'reasoning-delta':
-      case 'reasoning-end':
+      // ── Reasoning tokens — emitted for live UI display ─────────────────
+      case 'reasoning-start': {
+        await emit({
+          type: 'reasoning.start',
+          runId,
+          haseefId,
+        });
         break;
+      }
+      case 'reasoning':
+      case 'reasoning-delta': {
+        const delta = (part as any).textDelta ?? (part as any).text ?? (part as any).delta ?? '';
+        if (delta) {
+          reasoning += delta;
+          await emit({
+            type: 'reasoning.delta',
+            runId,
+            haseefId,
+            delta,
+          });
+        }
+        break;
+      }
+      case 'reasoning-end': {
+        await emit({
+          type: 'reasoning.end',
+          runId,
+          haseefId,
+        });
+        break;
+      }
 
       // ── Tool call begins — record start time for duration tracking ──────
       case 'tool-input-start': {
@@ -214,6 +242,6 @@ export async function processStream(
     }
   }
 
-  return { toolCalls, finishReason, text, streamErrors };
+  return { toolCalls, finishReason, text, reasoning, streamErrors };
 }
 

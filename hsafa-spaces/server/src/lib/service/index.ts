@@ -194,7 +194,6 @@ async function setupHaseefConnection(haseef: {
     activeSpace: null,
     enteredSpace: null,
     currentRunId: null,
-    typingHeartbeat: null,
     typingActivity: "typing",
     pendingSeenMessages: [],
     voiceGender,
