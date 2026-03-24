@@ -4,7 +4,7 @@
 // Uses HSAFA_GATEWAY_URL + CORE_API_KEY from environment.
 // =============================================================================
 
-const CORE_URL = process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
+const CORE_URL = process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
 const API_KEY = process.env.CORE_API_KEY || "";
 
 if (!API_KEY) {
