@@ -18,6 +18,21 @@ function headers(): Record<string, string> {
   };
 }
 
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      throw { status: 504, error: `Core request timed out after ${timeoutMs}ms` };
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface CoreHaseef {
   id: string;
   name: string;
@@ -33,7 +48,7 @@ export async function createHaseef(data: {
   configJson: Record<string, unknown>;
   profileJson?: Record<string, unknown>;
 }): Promise<CoreHaseef> {
-  const res = await fetch(`${CORE_URL}/api/haseefs`, {
+  const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify(data),
@@ -47,7 +62,7 @@ export async function createHaseef(data: {
 }
 
 export async function getHaseef(id: string): Promise<CoreHaseef> {
-  const res = await fetch(`${CORE_URL}/api/haseefs/${id}`, {
+  const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs/${id}`, {
     headers: headers(),
   });
   if (!res.ok) {
@@ -67,7 +82,7 @@ export async function updateHaseef(
     profileJson?: Record<string, unknown>;
   },
 ): Promise<CoreHaseef> {
-  const res = await fetch(`${CORE_URL}/api/haseefs/${id}`, {
+  const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs/${id}`, {
     method: "PATCH",
     headers: headers(),
     body: JSON.stringify(data),
@@ -81,7 +96,7 @@ export async function updateHaseef(
 }
 
 export async function deleteHaseef(id: string): Promise<void> {
-  const res = await fetch(`${CORE_URL}/api/haseefs/${id}`, {
+  const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs/${id}`, {
     method: "DELETE",
     headers: headers(),
   });
@@ -92,7 +107,7 @@ export async function deleteHaseef(id: string): Promise<void> {
 }
 
 export async function listHaseefs(): Promise<CoreHaseef[]> {
-  const res = await fetch(`${CORE_URL}/api/haseefs`, {
+  const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs`, {
     headers: headers(),
   });
   if (!res.ok) {
