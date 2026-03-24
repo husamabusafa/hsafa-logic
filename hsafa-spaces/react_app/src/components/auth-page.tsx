@@ -65,7 +65,10 @@ export function AuthPage() {
     if (redirect) {
       localStorage.setItem("hsafa_auth_redirect", redirect);
     }
-    window.location.href = "/api/auth/google";
+    const serverBase = import.meta.env.VITE_API_URL
+      ? import.meta.env.VITE_API_URL.replace(/\/+$/, "")
+      : "";
+    window.location.href = `${serverBase}/api/auth/google`;
   };
 
   const inputClass = cn(
