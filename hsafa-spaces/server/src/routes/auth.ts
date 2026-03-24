@@ -28,7 +28,7 @@ function generateInviteCode(): string {
   return code;
 }
 
-async function createEntityAndSpace(name: string, email: string) {
+async function createEntityAndBase(name: string, email: string) {
   const entityId = crypto.randomUUID();
   const entity = await prisma.entity.create({
     data: {
@@ -36,18 +36,6 @@ async function createEntityAndSpace(name: string, email: string) {
       type: "human",
       displayName: name,
       externalId: email,
-    },
-  });
-
-  const smartSpace = await prisma.smartSpace.create({
-    data: { name: `${name}'s Space` },
-  });
-
-  await prisma.smartSpaceMembership.create({
-    data: {
-      smartSpaceId: smartSpace.id,
-      entityId: entity.id,
-      role: "owner",
     },
   });
 
@@ -71,7 +59,7 @@ async function createEntityAndSpace(name: string, email: string) {
     data: { inviteeId: entity.id },
   });
 
-  return { entity, smartSpace, base };
+  return { entity, base };
 }
 
 async function buildUserResponse(user: any) {
@@ -138,7 +126,7 @@ router.post("/register", async (req, res) => {
     const code = generateVerificationCode();
     const codeExpiry = getCodeExpiry();
 
-    const { entity, smartSpace, base } = await createEntityAndSpace(name, email);
+    const { entity, base } = await createEntityAndBase(name, email);
 
     const user = await prisma.user.create({
       data: {
@@ -146,7 +134,7 @@ router.post("/register", async (req, res) => {
         name,
         passwordHash,
         hsafaEntityId: entity.id,
-        hsafaSpaceId: smartSpace.id,
+        hsafaSpaceId: null,
         defaultBaseId: base.id,
         emailVerified: false,
         verificationCode: code,
@@ -509,14 +497,14 @@ router.get("/auth/google/callback", async (req, res) => {
     });
 
     if (user) {
-      // Ensure entity and space exist (for legacy users or incomplete registrations)
+      // Ensure entity and base exist (for legacy users or incomplete registrations)
       if (!user.hsafaEntityId) {
-        const { entity, smartSpace, base } = await createEntityAndSpace(user.name, user.email);
+        const { entity, base } = await createEntityAndBase(user.name, user.email);
         user = await prisma.user.update({
           where: { id: user.id },
           data: {
             hsafaEntityId: entity.id,
-            hsafaSpaceId: smartSpace.id,
+            hsafaSpaceId: null,
             defaultBaseId: base.id,
             googleId,
             avatarUrl: picture || user.avatarUrl,
@@ -546,7 +534,7 @@ router.get("/auth/google/callback", async (req, res) => {
     } else {
       // New user via Google
       const displayName = name || email.split("@")[0];
-      const { entity, smartSpace, base } = await createEntityAndSpace(displayName, email);
+      const { entity, base } = await createEntityAndBase(displayName, email);
 
       user = await prisma.user.create({
         data: {
@@ -556,7 +544,7 @@ router.get("/auth/google/callback", async (req, res) => {
           avatarUrl: picture || null,
           emailVerified: true, // Google-verified email
           hsafaEntityId: entity.id,
-          hsafaSpaceId: smartSpace.id,
+          hsafaSpaceId: null,
           defaultBaseId: base.id,
         },
       });
