@@ -1,5 +1,5 @@
-const API_BASE = import.meta.env.VITE_API_URL
-  ? `${import.meta.env.VITE_API_URL.replace(/\/+$/, "")}/api`
+const API_BASE = import.meta.env.VITE_HSAFA_GATEWAY_URL
+  ? `${import.meta.env.VITE_HSAFA_GATEWAY_URL.replace(/\/+$/, "")}/api`
   : "/api";
 
 class ApiError extends Error {
