@@ -1,18 +1,15 @@
 // =============================================================================
-// Spaces Service Configuration (V5)
+// Spaces Service Configuration (v7)
 //
 // Reads env vars for the spaces service connection to hsafa-core.
-// The spaces-app acts as a V5 service: registers tools under the "spaces"
-// scope, listens for actions via Redis Streams, and pushes sense events.
+// v7: uses @hsafa/sdk over SSE — no Redis Streams to Core.
 // =============================================================================
 
 export interface ServiceConfig {
   /** Core API base URL (e.g. http://localhost:3001) */
   coreUrl: string;
-  /** V5 API key for authenticating with Core (x-api-key header) */
+  /** API key for authenticating with Core (x-api-key header) */
   apiKey: string;
-  /** Core's Redis URL — used for action streams + stream bridge (may differ from spaces Redis) */
-  coreRedisUrl: string;
 }
 
 export function loadServiceConfig(): ServiceConfig | null {
@@ -26,9 +23,5 @@ export function loadServiceConfig(): ServiceConfig | null {
     return null;
   }
 
-  // Core's Redis URL — actions and stream bridge MUST connect to Core's Redis,
-  // not the spaces-app's own Redis (they may be different instances).
-  const coreRedisUrl = process.env.CORE_REDIS_URL || process.env.REDIS_URL || "redis://localhost:6379";
-
-  return { coreUrl, apiKey, coreRedisUrl };
+  return { coreUrl, apiKey };
 }

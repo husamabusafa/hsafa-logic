@@ -7,6 +7,9 @@ import { runsRouter } from './routes/runs.js';
 import { haseefsRouter } from './routes/haseefs.js';
 import { scopesRouter } from './routes/scopes.js';
 import { actionsRouter } from './routes/actions.js';
+import { eventsRouter } from './routes/events.js';
+import { globalScopesRouter } from './routes/global-scopes.js';
+import { globalActionsRouter } from './routes/global-actions.js';
 import { requireApiKey } from './middleware/auth.js';
 import { prisma } from './lib/db.js';
 import { redis } from './lib/redis.js';
@@ -50,12 +53,14 @@ app.use('/api', requireApiKey());
 // Routes
 app.use('/api/haseefs', haseefsRouter);
 app.use('/api/runs', runsRouter);
-// Scopes are nested under haseefs: /api/haseefs/:id/scopes/...
+// Legacy v5: per-haseef scopes + actions (Redis Streams)
 app.use('/api/haseefs/:id/scopes', scopesRouter);
-// Actions: /api/haseefs/:id/scopes/:scope/actions/stream (SSE)
-//          /api/haseefs/:id/actions/:actionId/result (POST)
 app.use('/api/haseefs/:id/scopes', actionsRouter);
 app.use('/api/haseefs/:id/actions', actionsRouter);
+// v7: global events, scopes, and actions (SSE-based)
+app.use('/api/events', eventsRouter);
+app.use('/api/scopes', globalScopesRouter);
+app.use('/api/actions', globalActionsRouter);
 
 // Health check (no auth)
 app.get('/health', (_req, res) => {

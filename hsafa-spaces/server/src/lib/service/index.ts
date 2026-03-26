@@ -1,34 +1,37 @@
 // =============================================================================
-// Spaces Service Module (V5)
+// Spaces Service Module (v7)
 //
-// The spaces-app acts as a V5 service. This module handles:
-//   1. Bootstrap: register tools with Core, resolve entities, start listeners
-//   2. Tool execution: send_message, get_messages, send_confirmation,
-//      send_choice, send_vote, send_form, respond_to_message, etc.
-//   3. Action listener: consumes Redis Streams for tool dispatch from Core
-//   4. Stream bridge: forwards Core run events to space SSE channels
-//   5. Sense events: pushes space messages to Core via V5 events API
+// The spaces-app connects to hsafa-core via @hsafa/sdk over SSE.
 //
-// V5 protocol: register tools → listen for actions → execute → submit results
+//   1. Bootstrap: create SDK instances, discover haseefs, resolve entities,
+//      register tools globally, register lifecycle handlers, connect SSE
+//   2. Tool execution: send_message, get_messages, send_confirmation, etc.
+//   3. Action listener: SDK SSE receives tool calls, routes to executeAction
+//   4. Stream bridge: SDK lifecycle events → space SSE channels
+//   5. Sense events: pushes space messages to Core via v5 events API
+//
+// v7 protocol: registerTools (global) → onToolCall → connect (SSE) → execute
 //
 // Split into sub-modules for clarity:
-//   types.ts         — shared state, types, connection helpers
-//   core-api.ts      — V5 Core HTTP helpers (sync tools, sense events, action results)
-//   tool-handlers.ts — tool execution (executeAction + all case handlers)
-//   action-listener.ts — Redis Streams XREADGROUP consumer
-//   stream-bridge.ts — shared Redis psubscribe + run event bridging
-//   sense-events.ts  — inbox handler, seen watermark, interactive message events
+//   types.ts           — shared state, types, connection helpers
+//   config.ts          — env var loading (coreUrl, apiKey)
+//   core-api.ts        — Core HTTP helpers (sync per-haseef instructions, sense events)
+//   tool-handlers.ts   — tool execution (executeAction + all case handlers)
+//   action-listener.ts — SDK onToolCall registration + connect()
+//   stream-bridge.ts   — SDK lifecycle event handlers → space SSE
+//   sense-events.ts    — inbox handler, seen watermark, interactive message events
 // =============================================================================
 
+import { HsafaSDK } from "@hsafa/sdk";
 import { prisma } from "../db.js";
 import { getSpacesForEntity } from "../membership-service.js";
 import { loadServiceConfig } from "./config.js";
-import { SCOPE } from "./manifest.js";
+import { SCOPE, TOOLS, SCHEDULER_SCOPE, SCHEDULER_TOOLS } from "./manifest.js";
 import { setInboxHandler } from "./inbox.js";
 import { state } from "./types.js";
 import { coreHeaders, syncTools } from "./core-api.js";
 import { invalidateEntitySpacesCache } from "../membership-service.js";
-import { startSharedSubscriber } from "./stream-bridge.js";
+import { registerLifecycleHandlers } from "./stream-bridge.js";
 import { startActionListener } from "./action-listener.js";
 import { handleInboxMessage } from "./sense-events.js";
 import { startScheduler } from "./scheduler.js";
@@ -47,9 +50,8 @@ export async function bootstrapExtension(): Promise<void> {
   console.log(`[spaces-service] Bootstrapping... (${new Date().toISOString()})`);
 
   // Reset stale state from previous process (tsx watch restart)
-  state.actionListenerRunning = false;
-  state.actionConsumer = null;
-  state.sharedSubscriber = null;
+  if (state.spacesSDK) { state.spacesSDK.disconnect(); state.spacesSDK = null; }
+  if (state.schedulerSDK) { state.schedulerSDK.disconnect(); state.schedulerSDK = null; }
   state.connections.clear();
 
   const config = loadServiceConfig();
@@ -62,17 +64,49 @@ export async function bootstrapExtension(): Promise<void> {
   // Register inbox handler
   setInboxHandler(handleInboxMessage);
 
-  // Start the shared Redis subscriber for stream bridges
-  await startSharedSubscriber();
+  // ── Create SDK instances ──────────────────────────────────────────────────
+  state.spacesSDK = new HsafaSDK({
+    coreUrl: config.coreUrl,
+    apiKey: config.apiKey,
+    scope: SCOPE,
+  });
 
-  // Auto-discover haseefs from Core (single attempt — no retries)
+  state.schedulerSDK = new HsafaSDK({
+    coreUrl: config.coreUrl,
+    apiKey: config.apiKey,
+    scope: SCHEDULER_SCOPE,
+  });
+
+  // ── Register tools globally (v7 — once per scope, not per haseef) ─────────
+  try {
+    await state.spacesSDK.registerTools(
+      TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+    );
+    console.log(`[spaces-service] Registered ${TOOLS.length} spaces tools globally`);
+  } catch (err) {
+    console.error("[spaces-service] Failed to register spaces tools:", err);
+  }
+
+  try {
+    await state.schedulerSDK.registerTools(
+      SCHEDULER_TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+    );
+    console.log(`[spaces-service] Registered ${SCHEDULER_TOOLS.length} scheduler tools globally`);
+  } catch (err) {
+    console.error("[spaces-service] Failed to register scheduler tools:", err);
+  }
+
+  // ── Register lifecycle event handlers (stream bridge) ─────────────────────
+  registerLifecycleHandlers();
+
+  // ── Auto-discover haseefs from Core ───────────────────────────────────────
   const haseefs = await discoverHaseefs();
   if (haseefs.length === 0) {
     console.warn("[spaces-service] No haseefs found in Core — nothing to connect to");
     return;
   }
 
-  // For each discovered haseef: set up connection + sync tools
+  // For each discovered haseef: set up connection + sync per-haseef instructions
   for (const h of haseefs) {
     try {
       await setupHaseefConnection(h);
@@ -81,7 +115,7 @@ export async function bootstrapExtension(): Promise<void> {
     }
   }
 
-  // Start the action listener (Redis Streams) — uses Core's Redis
+  // ── Start SDK SSE connections (action dispatch + lifecycle events) ─────────
   startActionListener().catch((err: unknown) => {
     console.error("[spaces-service] Action listener failed:", err);
   });
@@ -99,15 +133,14 @@ export async function bootstrapExtension(): Promise<void> {
     return [...allSpaceIds];
   });
 
-  // Re-sync all connected haseefs to ensure they have the latest tools + prompt
-  // (important after deploying new tools like create_schedule / delete_schedule)
+  // Re-sync all connected haseefs to ensure they have the latest instructions + prompt
   for (const conn of state.connections.values()) {
     syncTools(conn.haseefId).catch((err: unknown) => {
       console.error(`[spaces-service] Failed to re-sync tools at bootstrap for ${conn.haseefName}:`, err);
     });
   }
 
-  console.log("[spaces-service] Bootstrap complete");
+  console.log("[spaces-service] Bootstrap complete (v7 — SDK over SSE)");
 }
 
 /** Discover all haseefs from Core via GET /api/haseefs */
@@ -232,18 +265,8 @@ export async function connectNewHaseef(haseef: {
 
   await setupHaseefConnection(haseef);
 
-  // Ensure the action consumer group exists for the new haseef's stream
-  if (state.actionConsumer) {
-    const streamKey = `actions:${haseef.id}:${SCOPE}`;
-    const consumerGroup = `${SCOPE}-consumer`;
-    try {
-      await state.actionConsumer.xgroup("CREATE", streamKey, consumerGroup, "0", "MKSTREAM");
-    } catch (err: any) {
-      if (!err.message?.includes("BUSYGROUP")) {
-        console.error(`[spaces-service] Failed to create consumer group for ${streamKey}:`, err.message);
-      }
-    }
-  }
+  // v7: No per-haseef stream setup needed — SDK SSE is scope-level.
+  // The SDK connection already receives actions for all haseefs in the scope.
 
   console.log(`[spaces-service] Dynamically connected haseef: ${haseef.name}`);
 }

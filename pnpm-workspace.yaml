@@ -1,5 +1,6 @@
 packages:
   - sdks/node
+  - sdks/hsafa-sdk
   - hsafa-core/core
   - hsafa-core/sdks/service-node
   - hsafa-core/services/test-service
@@ -7,6 +8,7 @@ packages:
   - hsafa-spaces/react_app
   - hsafa-spaces/rn_app
   - hsafa-cases
+  - hsafa-core/dashboard
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver

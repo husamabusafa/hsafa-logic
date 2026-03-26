@@ -30,12 +30,13 @@ model Haseef {
   profileJson Json?    @map("profile_json") @db.JsonB // identity: phone, email, location, bio (admin-managed)
   configJson  Json     @map("config_json") @db.JsonB  // model, instructions, consciousness settings
   configHash  String?  @map("config_hash")
+  scopes      String[] @default([]) // v7: active scope names ["spaces", "whatsapp", "body"]
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   consciousness HaseefConsciousness?
   memories      Memory[]
-  scopes        HaseefScope[]
+  haseefScopes  HaseefScope[]
   tools         HaseefTool[]
   archive       ConsciousnessArchive[]
   snapshots     ConsciousnessSnapshot[]
@@ -44,6 +45,41 @@ model Haseef {
 
   @@index([createdAt])
   @@map("haseefs")
+}
+
+// =============================================================================
+// V7 Global Scope Tables
+// Tools registered globally by services (not per-haseef).
+// Haseefs activate scopes by adding scope name to their scopes[] array.
+// =============================================================================
+
+model Scope {
+  id         String    @id @default(uuid()) @db.Uuid
+  name       String    @unique               // "whatsapp", "spaces", "body"
+  connected  Boolean   @default(false)       // is the service currently connected?
+  lastSeenAt DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tools ScopeTool[]
+
+  @@map("scopes")
+}
+
+model ScopeTool {
+  id          String   @id @default(uuid()) @db.Uuid
+  scopeId     String   @map("scope_id") @db.Uuid
+  name        String
+  description String
+  inputSchema Json     @map("input_schema") @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  scope Scope @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+
+  @@unique([scopeId, name])
+  @@index([scopeId])
+  @@map("scope_tools")
 }
 
 model HaseefConsciousness {

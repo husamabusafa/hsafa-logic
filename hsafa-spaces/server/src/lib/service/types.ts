@@ -1,8 +1,10 @@
 // =============================================================================
-// Spaces Service — Shared Types & State (V5)
+// Spaces Service — Shared Types & State (v7)
+//
+// v7: Redis fields removed. SDK instances handle Core communication over SSE.
 // =============================================================================
 
-import Redis from "ioredis";
+import type { HsafaSDK } from "@hsafa/sdk";
 
 // =============================================================================
 // Shared State (module-level singleton)
@@ -34,12 +36,10 @@ export interface ActiveConnection {
 export interface ServiceState {
   config: import("./config.js").ServiceConfig | null;
   connections: Map<string, ActiveConnection>;
-  /** Single shared Redis subscriber for all haseef stream bridges */
-  sharedSubscriber: InstanceType<typeof Redis> | null;
-  /** Redis client for action stream consumption (XREADGROUP) */
-  actionConsumer: InstanceType<typeof Redis> | null;
-  /** Whether the action listener loop is running */
-  actionListenerRunning: boolean;
+  /** @hsafa/sdk instance for the "spaces" scope (tool dispatch + lifecycle events) */
+  spacesSDK: HsafaSDK | null;
+  /** @hsafa/sdk instance for the "scheduler" scope */
+  schedulerSDK: HsafaSDK | null;
   /** Heartbeat interval for keeping haseef entities online */
   presenceInterval: ReturnType<typeof setInterval> | null;
 }
@@ -47,9 +47,8 @@ export interface ServiceState {
 export const state: ServiceState = {
   config: null,
   connections: new Map(),
-  sharedSubscriber: null,
-  actionConsumer: null,
-  actionListenerRunning: false,
+  spacesSDK: null,
+  schedulerSDK: null,
   presenceInterval: null,
 };
 

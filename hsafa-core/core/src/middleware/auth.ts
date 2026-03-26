@@ -21,7 +21,8 @@ const API_KEY = process.env.HSAFA_API_KEY;
  */
 export function requireApiKey() {
   return (req: Request, res: Response, next: NextFunction) => {
-    const key = req.headers['x-api-key'] as string | undefined;
+    const key = (req.headers['x-api-key'] as string | undefined)
+      || (req.query.api_key as string | undefined);
 
     if (!key) {
       res.status(401).json({ error: 'Missing x-api-key header' });

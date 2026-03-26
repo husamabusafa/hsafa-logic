@@ -24,7 +24,8 @@
     "multer": "^2.1.1",
     "pg": "^8.18.0",
     "resend": "^6.9.3",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "@hsafa/sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",

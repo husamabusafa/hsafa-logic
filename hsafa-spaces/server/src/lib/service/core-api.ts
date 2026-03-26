@@ -1,7 +1,10 @@
 // =============================================================================
-// Spaces Service — V5 Core API Helpers
+// Spaces Service — Core API Helpers (v7)
 //
-// HTTP calls to hsafa-core for tool sync, sense events, and action results.
+// HTTP calls to hsafa-core for tool sync and sense events.
+// v7: submitActionResult removed — SDK handles result posting internally.
+// Tool sync still uses per-haseef v5 endpoint for scope instructions.
+// Sense events still use per-haseef v5 endpoint for backward compatibility.
 // =============================================================================
 
 import { prisma } from "../db.js";
@@ -196,24 +199,5 @@ export async function pushSenseEvent(
   }
 }
 
-/** POST /api/haseefs/:id/actions/:actionId/result — Submit action result */
-export async function submitActionResult(
-  haseefId: string,
-  actionId: string,
-  result: unknown,
-): Promise<void> {
-  const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/actions/${actionId}/result`;
-  console.log(`[spaces-service] submitActionResult: POST ${url.replace(state.config!.coreUrl, '')} (actionId=${actionId.slice(0, 8)})`);
-  const res = await fetch(url, {
-    method: "POST",
-    headers: coreHeaders(),
-    body: JSON.stringify(result),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    const errMsg = `submitActionResult failed: ${res.status} ${text}`;
-    console.error(`[spaces-service] ${errMsg}`);
-    throw new Error(errMsg);
-  }
-  console.log(`[spaces-service] submitActionResult: OK (actionId=${actionId.slice(0, 8)})`);
-}
+// NOTE: submitActionResult was removed in v7. The @hsafa/sdk handles
+// posting tool call results internally after onToolCall handlers return.

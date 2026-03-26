@@ -90,12 +90,16 @@ async function loadMCPTools(
  * Build a Haseef from its config JSON, process context, and pre-fetched DB tools.
  * Returns the model and tools needed for streamText().
  *
+ * v7Tools — optional pre-built v7 global scope tools (SSE-based dispatch).
+ *           When provided they are merged in after scoped tools.
+ *
  * Async because MCP client connections are async.
  */
 export async function buildHaseef(
   rawConfig: unknown,
   context: HaseefProcessContext,
   dbTools: Array<{ name: string; description: string; inputSchema: unknown; scope: string; mode: string; timeout: number | null }>,
+  v7Tools: Record<string, unknown> = {},
 ): Promise<BuiltHaseef> {
   const config = HaseefConfigSchema.parse(rawConfig);
 
@@ -104,7 +108,7 @@ export async function buildHaseef(
   // Build prebuilt tools (done, set_memories, delete_memories, recall_memories)
   const prebuilt = buildPrebuiltTools(context);
 
-  // Build scoped tools from pre-fetched HaseefTool DB rows
+  // Build scoped tools from pre-fetched HaseefTool DB rows (v5 Redis Streams)
   const scoped = buildScopedTools(
     context.haseefId,
     dbTools,
@@ -115,8 +119,8 @@ export async function buildHaseef(
   const mcpServers = config.mcpServers ?? [];
   const mcp = await loadMCPTools(mcpServers, context.haseefName);
 
-  // Merge: prebuilt → scoped → MCP (later sources override on name collision)
-  const tools = { ...prebuilt, ...scoped, ...mcp.tools } as ToolSet;
+  // Merge: prebuilt → scoped (v5) → v7Tools (v7 SSE) → MCP
+  const tools = { ...prebuilt, ...scoped, ...v7Tools, ...mcp.tools } as ToolSet;
 
   return { tools, model, mcpClients: mcp.clients };
 }

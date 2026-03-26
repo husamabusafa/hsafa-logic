@@ -1,6 +1,8 @@
 import { prisma } from './db.js';
 import { redis, createBlockingRedis } from './redis.js';
 import { buildHaseef } from '../agent-builder/builder.js';
+import { buildV7Tools } from './tool-builder.js';
+import { emitLifecycleToScope } from './tool-dispatcher.js';
 import {
   loadConsciousness,
   saveConsciousness,
@@ -255,6 +257,32 @@ async function executeRun(opts: RunOptions): Promise<RunResult> {
   ]);
   const haseef = dbHaseef;
 
+  // v7: load global scope tools if haseef has scopes[] set
+  const v7ScopeNames: string[] = haseef.scopes ?? [];
+  let v7Tools: Record<string, unknown> = {};
+  if (v7ScopeNames.length > 0) {
+    const globalToolRows = await prisma.scopeTool.findMany({
+      where: { scope: { name: { in: v7ScopeNames } } },
+      include: { scope: { select: { name: true } } },
+    }).catch(() => []);
+    const v7ToolRows = globalToolRows.map((t: any) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+      scopeName: t.scope.name,
+    }));
+    v7Tools = buildV7Tools(
+      {
+        id: haseef.id,
+        name: haseef.name,
+        profile: (haseef.profileJson as Record<string, unknown>) ?? {},
+        scopes: v7ScopeNames,
+      },
+      v7ToolRows,
+      config.actionTimeout,
+    );
+  }
+
   // Scope instructions from extensions
   const scopeInstructions = new Map<string, string>();
   for (const s of dbScopes) {
@@ -303,7 +331,7 @@ async function executeRun(opts: RunOptions): Promise<RunResult> {
     runCount,
     currentRunId: run.id,
   };
-  const built = await buildHaseef(haseef.configJson, context, dbTools);
+  const built = await buildHaseef(haseef.configJson, context, dbTools, v7Tools);
 
   // 7. BUILD SYSTEM PROMPT
   const consciousnessRecord = await prisma.haseefConsciousness.findUnique({
@@ -311,7 +339,9 @@ async function executeRun(opts: RunOptions): Promise<RunResult> {
     select: { lastCycleAt: true },
   });
 
-  const connectedScopes = dbScopes.map((s) => s.scope);
+  const connectedScopes = v7ScopeNames.length > 0
+    ? v7ScopeNames
+    : dbScopes.map((s) => s.scope);
 
   const systemPrompt = buildSystemPrompt({
     haseefId,
@@ -341,17 +371,22 @@ async function executeRun(opts: RunOptions): Promise<RunResult> {
   // 9. THINK — stream with AI SDK
   const messagesForLLM = consciousness.messages.filter((m) => m.role !== 'system');
 
-  // Emit run.started
+  // Emit run.started — to Redis (legacy stream) + active scope SSE channels (v7)
   const triggerSpaceId = (firstEvent?.data as Record<string, unknown>)?.spaceId as string | undefined;
-  await redis.publish(`haseef:${haseefId}:stream`, JSON.stringify({
-    type: 'run.started',
+  const runStartedPayload = {
     runId: run.id,
-    haseefId,
-    runCount,
+    haseef: { id: haseefId, name: haseefName },
     triggerScope,
     triggerType,
+  };
+  await redis.publish(`haseef:${haseefId}:stream`, JSON.stringify({
+    type: 'run.started',
+    ...runStartedPayload,
     triggerSource: triggerSpaceId ?? null,
   }));
+  for (const scope of connectedScopes) {
+    emitLifecycleToScope(scope, 'run.started', runStartedPayload);
+  }
 
   // Create abort-aware stream
   const { streamText } = await import('ai');
@@ -523,7 +558,7 @@ async function executeRun(opts: RunOptions): Promise<RunResult> {
     if (!interrupted) throw innerErr;
 
   } finally {
-    // ALWAYS emit run.finished
+    // ALWAYS emit run.finished / run.completed
     const durationMs = Date.now() - runStart;
     await redis.publish(`haseef:${haseefId}:stream`, JSON.stringify({
       type: 'run.finished',
@@ -535,6 +570,17 @@ async function executeRun(opts: RunOptions): Promise<RunResult> {
       interrupted,
       ...(runError ? { error: runError } : {}),
     })).catch(() => {});
+    // v7 SSE scope channels
+    if (!interrupted) {
+      const completedPayload = {
+        runId: run.id,
+        haseef: { id: haseefId, name: haseefName },
+        durationMs,
+      };
+      for (const scope of connectedScopes) {
+        emitLifecycleToScope(scope, 'run.completed', completedPayload);
+      }
+    }
 
     // Close MCP clients
     for (const client of built.mcpClients) {
