@@ -2,9 +2,9 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../lib/db.js';
 
 // =============================================================================
-// Runs Routes (v5)
+// Runs Routes (v7)
 //
-// Read-only run history. Runs are created/updated by agent-process.
+// Read-only run history. Runs are created/updated by the invoker.
 // =============================================================================
 
 export const runsRouter = Router();

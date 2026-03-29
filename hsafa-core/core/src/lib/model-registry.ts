@@ -1,10 +1,9 @@
-import { createProviderRegistry, customProvider, wrapLanguageModel } from 'ai';
+import { createProviderRegistry } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createXai } from '@ai-sdk/xai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { loggingMiddleware, costTrackingMiddleware } from './model-middleware.js';
 
 // =============================================================================
 // Model Registry (Ship #6)
@@ -76,19 +75,11 @@ function resolveBaseModel(
 }
 
 /**
- * Resolve a model and wrap it with middleware (logging + cost tracking).
+ * Resolve a model from provider + model string.
  * If config.apiKey is provided, creates a one-off provider with the user's key.
  */
 export function resolveModel(
   config: { provider: string; model: string; apiKey?: string },
 ) {
-  const baseModel = resolveBaseModel(config.provider, config.model, config.apiKey);
-
-  // Build middleware stack
-  const middleware: any[] = [loggingMiddleware, costTrackingMiddleware];
-
-  return wrapLanguageModel({
-    model: baseModel,
-    middleware,
-  });
+  return resolveBaseModel(config.provider, config.model, config.apiKey);
 }

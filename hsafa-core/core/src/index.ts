@@ -3,27 +3,27 @@
 
 import express from 'express';
 import { createServer } from 'http';
-import { runsRouter } from './routes/runs.js';
 import { haseefsRouter } from './routes/haseefs.js';
-import { scopesRouter } from './routes/scopes.js';
-import { actionsRouter } from './routes/actions.js';
 import { eventsRouter } from './routes/events.js';
 import { globalScopesRouter } from './routes/global-scopes.js';
 import { globalActionsRouter } from './routes/global-actions.js';
+import { runsRouter } from './routes/runs.js';
+import { memoryRouter } from './routes/memory.js';
+import { dashboardRouter } from './routes/dashboard.js';
 import { requireApiKey } from './middleware/auth.js';
 import { prisma } from './lib/db.js';
 import { redis } from './lib/redis.js';
-import { startAllProcesses, stopAllProcesses, getProcessCount, getProcessStatuses } from './lib/process-manager.js';
+import { getActiveHaseefIds } from './lib/coordinator.js';
 
 // =============================================================================
-// Hsafa Core (v5)
+// Hsafa Core (v7)
 //
-// No extensions. No plan scheduler.
+// Stateless trigger-based architecture. No living processes.
 // Services connect via:
-//   POST /api/haseefs/:id/events      — push events
-//   PUT  /api/haseefs/:id/scopes/...  — register tools
-//   GET  /api/haseefs/:id/scopes/:scope/actions/stream — consume actions (SSE)
-//   POST /api/haseefs/:id/actions/:actionId/result — return action results
+//   POST /api/events                    — push events (triggers runs)
+//   PUT  /api/scopes/:scope/tools       — register tools
+//   GET  /api/scopes/:scope/actions/stream — consume tool calls (SSE)
+//   POST /api/actions/:actionId/result  — return tool results
 // =============================================================================
 
 const app = express();
@@ -50,95 +50,29 @@ app.use(express.json());
 // All API routes require x-api-key
 app.use('/api', requireApiKey());
 
-// Routes
+// ── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/haseefs', haseefsRouter);
-app.use('/api/runs', runsRouter);
-// Legacy v5: per-haseef scopes + actions (Redis Streams)
-app.use('/api/haseefs/:id/scopes', scopesRouter);
-app.use('/api/haseefs/:id/scopes', actionsRouter);
-app.use('/api/haseefs/:id/actions', actionsRouter);
-// v7: global events, scopes, and actions (SSE-based)
 app.use('/api/events', eventsRouter);
 app.use('/api/scopes', globalScopesRouter);
 app.use('/api/actions', globalActionsRouter);
+app.use('/api/runs', runsRouter);
+app.use('/api/memory', memoryRouter);
+app.use('/api/dashboard', dashboardRouter);
 
 // Health check (no auth)
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     service: 'hsafa-core',
-    version: '5.0.0',
-    processes: getProcessCount(),
+    version: '7.0.0',
+    activeRuns: getActiveHaseefIds().length,
   });
 });
 
-// Admin status overview
-app.get('/api/status', async (_req, res) => {
-  try {
-    const runningProcesses = getProcessStatuses();
-    const haseefIds = runningProcesses.map((p) => p.haseefId);
-
-    const [consciousness, lastRuns, failedRuns, inboxDepths] = await Promise.all([
-      prisma.haseefConsciousness.findMany({
-        where: { haseefId: { in: haseefIds } },
-        select: { haseefId: true, cycleCount: true, tokenEstimate: true, lastCycleAt: true },
-      }),
-      prisma.run.findMany({
-        where: { haseefId: { in: haseefIds }, status: 'completed' },
-        orderBy: { completedAt: 'desc' },
-        distinct: ['haseefId'],
-        select: { haseefId: true, durationMs: true, completedAt: true },
-      }),
-      prisma.run.groupBy({
-        by: ['haseefId'],
-        where: {
-          haseefId: { in: haseefIds },
-          status: 'failed',
-          createdAt: { gte: new Date(Date.now() - 86_400_000) },
-        },
-        _count: true,
-      }),
-      prisma.inboxEvent.groupBy({
-        by: ['haseefId'],
-        where: { haseefId: { in: haseefIds }, status: 'pending' },
-        _count: true,
-      }),
-    ]);
-
-    const consciousnessMap = new Map(consciousness.map((c) => [c.haseefId, c]));
-    const lastRunMap = new Map(lastRuns.map((r) => [r.haseefId, r]));
-    const failedMap = new Map(failedRuns.map((f) => [f.haseefId, f._count]));
-    const inboxMap = new Map(inboxDepths.map((i) => [i.haseefId, i._count]));
-
-    const haseefs = runningProcesses.map((p) => {
-      const c = consciousnessMap.get(p.haseefId);
-      const lastRun = lastRunMap.get(p.haseefId);
-      return {
-        haseefId: p.haseefId,
-        name: p.haseefName,
-        status: 'running',
-        cycleCount: c?.cycleCount ?? 0,
-        tokenEstimate: c?.tokenEstimate ?? 0,
-        lastCycleAt: c?.lastCycleAt ?? null,
-        lastRunDurationMs: lastRun?.durationMs ?? null,
-        failedRuns24h: failedMap.get(p.haseefId) ?? 0,
-        inboxDepth: inboxMap.get(p.haseefId) ?? 0,
-      };
-    });
-
-    res.json({
-      uptime: process.uptime(),
-      processCount: runningProcesses.length,
-      haseefs,
-    });
-  } catch (error) {
-    console.error('[status] error:', error);
-    res.status(500).json({ error: 'Failed to get status' });
-  }
-});
+// ── Startup ──────────────────────────────────────────────────────────────────
 
 server.listen(PORT, async () => {
-  console.log(`Hsafa Core v5 running on http://localhost:${PORT}`);
+  console.log(`Hsafa Core v7 running on http://localhost:${PORT}`);
 
   try {
     await prisma.$connect();
@@ -154,23 +88,14 @@ server.listen(PORT, async () => {
     console.error('Redis connection failed:', error);
   }
 
-  // Start all Haseef processes
-  try {
-    await startAllProcesses();
-  } catch (error) {
-    console.error('Failed to start Haseef processes:', error);
-  }
+  // v7: No process startup needed — haseefs are triggered on-demand by events
+  console.log('Ready — waiting for events');
 });
 
-// Graceful shutdown
+// ── Graceful shutdown ────────────────────────────────────────────────────────
+
 const shutdown = async () => {
   console.log('\nShutting down...');
-
-  try {
-    await stopAllProcesses();
-  } catch (error) {
-    console.error('Error stopping processes:', error);
-  }
 
   server.close(() => {
     prisma.$disconnect();
@@ -181,7 +106,7 @@ const shutdown = async () => {
   setTimeout(() => {
     console.error('Forced shutdown after timeout');
     process.exit(1);
-  }, 15_000);
+  }, 10_000);
 };
 
 process.on('SIGTERM', shutdown);

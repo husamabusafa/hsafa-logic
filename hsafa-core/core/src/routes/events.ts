@@ -1,7 +1,6 @@
 import { Router } from 'express';
-import { randomUUID } from 'crypto';
-import { prisma } from '../lib/db.js';
-import { pushEvent } from '../lib/inbox.js';
+import { routeEvent } from '../lib/event-router.js';
+import { trigger } from '../lib/coordinator.js';
 
 // =============================================================================
 // Events Route (v7)
@@ -13,6 +12,7 @@ import { pushEvent } from '../lib/inbox.js';
 //   target    — profile-based routing (e.g. { phone: "+966..." })
 //
 // The scope must be active in the target Haseef's scopes[] array.
+// Events trigger runs immediately via the coordinator (no inbox queue).
 // =============================================================================
 
 export const eventsRouter = Router();
@@ -31,75 +31,36 @@ eventsRouter.post('/', async (req, res) => {
       return;
     }
 
-    let resolvedId: string;
-
-    if (haseefId) {
-      const haseef = await prisma.haseef.findUnique({
-        where: { id: haseefId },
-        select: { id: true, scopes: true },
-      });
-      if (!haseef) {
-        res.status(404).json({ error: 'Haseef not found' });
-        return;
-      }
-      const haseefScopes: string[] = haseef.scopes ?? [];
-      if (!haseefScopes.includes(scope)) {
-        res.status(400).json({ error: `Scope "${scope}" is not active for this Haseef` });
-        return;
-      }
-      resolvedId = haseef.id;
-    } else {
-      const haseef = await resolveByTarget(target as Record<string, string>);
-      if (!haseef) {
-        res.status(404).json({ error: 'No Haseef found matching target profile' });
-        return;
-      }
-      const haseefScopes: string[] = haseef.scopes ?? [];
-      if (!haseefScopes.includes(scope)) {
-        res.status(400).json({ error: `Scope "${scope}" is not active for matching Haseef` });
-        return;
-      }
-      resolvedId = haseef.id;
-    }
-
-    const event = {
-      eventId: randomUUID(),
+    // Route: resolve event to a specific haseef
+    const routed = await routeEvent({
       scope,
       type,
       data,
-      attachments: attachments ?? undefined,
-      timestamp: new Date().toISOString(),
-    };
+      attachments,
+      haseefId,
+      target,
+    });
 
-    await pushEvent(resolvedId, event);
+    if (!routed) {
+      res.status(404).json({ error: 'No Haseef found for this event' });
+      return;
+    }
 
-    res.json({ pushed: true, haseefId: resolvedId, eventId: event.eventId });
-  } catch (err) {
+    // Trigger: start a run via the coordinator (interrupts if already running)
+    const { runId } = await trigger(routed);
+
+    res.json({
+      triggered: true,
+      haseefId: routed.haseefId,
+      haseefName: routed.haseefName,
+      runId,
+    });
+  } catch (err: any) {
+    if (err.message?.includes('not active')) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
     console.error('[events] push error:', err);
     res.status(500).json({ error: 'Failed to push event' });
   }
 });
-
-// ── Profile-based routing ────────────────────────────────────────────────────
-
-async function resolveByTarget(
-  target: Record<string, string>,
-): Promise<{ id: string; scopes: string[] } | null> {
-  for (const [key, value] of Object.entries(target)) {
-    try {
-      const haseef = await prisma.haseef.findFirst({
-        where: {
-          profileJson: {
-            path: [key],
-            equals: value,
-          },
-        },
-        select: { id: true, scopes: true },
-      });
-      if (haseef) return haseef;
-    } catch {
-      // Unsupported path filter, skip
-    }
-  }
-  return null;
-}

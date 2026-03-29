@@ -8,49 +8,50 @@ generator client {
 
 datasource db {
   provider   = "postgresql"
-  // extensions = [vector] // temporarily disabled for db push without pgvector
+  // extensions = [vector] // enable when pgvector is available
 }
 
 // =============================================================================
-// Hsafa Core v5 — Data Model
+// Hsafa Core v7 — Data Model
 //
-// Seven tables. No context table — services communicate through tools and events.
+// Brain: Haseef profile + 4 memory types + runs
+// Body: Scopes (global tool registry) connected via SSE
+// Stateless invocations: trigger → run → done
 // =============================================================================
 
 enum RunStatus {
   running
   completed
+  interrupted
   failed
 }
+
+// =============================================================================
+// Haseef — The agent identity
+// =============================================================================
 
 model Haseef {
   id          String   @id @default(uuid()) @db.Uuid
   name        String   @unique
   description String?
-  profileJson Json?    @map("profile_json") @db.JsonB // identity: phone, email, location, bio (admin-managed)
-  configJson  Json     @map("config_json") @db.JsonB  // model, instructions, consciousness settings
-  configHash  String?  @map("config_hash")
-  scopes      String[] @default([]) // v7: active scope names ["spaces", "whatsapp", "body"]
+  profileJson Json?    @map("profile_json") @db.JsonB // { phone, email, robotId, ... } — routing table
+  configJson  Json     @map("config_json") @db.JsonB  // { model, instructions, ... }
+  scopes      String[] @default([])                    // ["whatsapp", "spaces", "body"]
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  consciousness HaseefConsciousness?
-  memories      Memory[]
-  haseefScopes  HaseefScope[]
-  tools         HaseefTool[]
-  archive       ConsciousnessArchive[]
-  snapshots     ConsciousnessSnapshot[]
-  inboxEvents   InboxEvent[]
-  runs          Run[]
+  runs       Run[]
+  episodic   EpisodicMemory[]
+  semantic   SemanticMemory[]
+  social     SocialMemory[]
+  procedural ProceduralMemory[]
 
   @@index([createdAt])
   @@map("haseefs")
 }
 
 // =============================================================================
-// V7 Global Scope Tables
-// Tools registered globally by services (not per-haseef).
-// Haseefs activate scopes by adding scope name to their scopes[] array.
+// Scopes — Global tool registry (services register tools here)
 // =============================================================================
 
 model Scope {
@@ -82,39 +83,27 @@ model ScopeTool {
   @@map("scope_tools")
 }
 
-model HaseefConsciousness {
-  id            String   @id @default(uuid()) @db.Uuid
-  haseefId      String   @unique @map("haseef_id") @db.Uuid
-  messages      Json     @db.JsonB // ModelMessage[] — conversation only, NO system prompt
-  cycleCount    Int      @default(0) @map("cycle_count")
-  tokenEstimate Int      @default(0) @map("token_estimate")
-  lastCycleAt   DateTime @default(now()) @map("last_cycle_at") @db.Timestamptz(6)
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
-
-  @@map("haseef_consciousness")
-}
+// =============================================================================
+// Runs — Stateless invocations: trigger → think → act → done
+// =============================================================================
 
 model Run {
-  id              String    @id @default(uuid()) @db.Uuid
-  haseefId        String    @map("haseef_id") @db.Uuid
-  status          RunStatus @default(running)
+  id               String    @id @default(uuid()) @db.Uuid
+  haseefId         String    @map("haseef_id") @db.Uuid
+  status           RunStatus @default(running)
 
-  cycleNumber      Int @default(0) @map("cycle_number")
-  inboxEventCount  Int @default(0) @map("inbox_event_count")
-  stepCount        Int @default(0) @map("step_count")
-  promptTokens     Int @default(0) @map("prompt_tokens")
-  completionTokens Int @default(0) @map("completion_tokens")
-  durationMs       Int @default(0) @map("duration_ms")
+  triggerScope     String?   @map("trigger_scope")    // "whatsapp", "spaces"
+  triggerType      String?   @map("trigger_type")     // "message", "email_received"
+  summary          String?   @db.Text                 // run summary from done tool
 
-  triggerScope     String? @map("trigger_scope")
-  triggerType      String? @map("trigger_type")
+  stepCount        Int       @default(0) @map("step_count")
+  promptTokens     Int       @default(0) @map("prompt_tokens")
+  completionTokens Int       @default(0) @map("completion_tokens")
+  durationMs       Int       @default(0) @map("duration_ms")
 
-  startedAt    DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
-  completedAt  DateTime? @map("completed_at") @db.Timestamptz(6)
-  errorMessage String?   @map("error_message")
+  startedAt        DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt      DateTime? @map("completed_at") @db.Timestamptz(6)
+  errorMessage     String?   @map("error_message")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -127,13 +116,35 @@ model Run {
   @@map("runs")
 }
 
-model Memory {
+// =============================================================================
+// Memory — 4 structured types
+// =============================================================================
+
+// Episodic: what happened in past runs (run summaries, searchable)
+model EpisodicMemory {
+  id        String   @id @default(uuid()) @db.Uuid
+  haseefId  String   @map("haseef_id") @db.Uuid
+  runId     String?  @map("run_id") @db.Uuid
+  summary   String   @db.Text
+  context   Json?    @db.JsonB                       // { triggerScope, triggerType, toolsUsed, ... }
+  // embedding Float[] // pgvector — enable when available
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
+
+  @@index([haseefId])
+  @@index([haseefId, createdAt])
+  @@map("episodic_memories")
+}
+
+// Semantic: facts the haseef knows (key-value, searchable)
+model SemanticMemory {
   id             String    @id @default(uuid()) @db.Uuid
   haseefId       String    @map("haseef_id") @db.Uuid
   key            String
   value          String    @db.Text
-  importance     Int       @default(5) // 1-10, set by the Haseef
-  // embedding      Unsupported("vector(1536)")? // pgvector for semantic search — disabled without pgvector
+  importance     Int       @default(5)                // 1-10
+  // embedding   Float[]   // pgvector — enable when available
   lastRecalledAt DateTime? @map("last_recalled_at") @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -143,93 +154,39 @@ model Memory {
   @@unique([haseefId, key])
   @@index([haseefId])
   @@index([haseefId, importance])
-  @@map("memories")
+  @@map("semantic_memories")
 }
 
-model HaseefScope {
-  id           String   @id @default(uuid()) @db.Uuid
-  haseefId     String   @map("haseef_id") @db.Uuid
-  scope        String   // "spaces", "whatsapp", etc.
-  instructions String?  @db.Text // scope-level instructions injected into the Haseef's prompt
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
-  tools  HaseefTool[]
-
-  @@unique([haseefId, scope])
-  @@index([haseefId])
-  @@map("haseef_scopes")
-}
-
-model HaseefTool {
-  id          String   @id @default(uuid()) @db.Uuid
-  haseefId    String   @map("haseef_id") @db.Uuid
-  scope       String   // references HaseefScope(haseefId, scope)
-  name        String   // original tool name from the extension (e.g. "send_message")
-  description String
-  inputSchema Json     @map("input_schema") @db.JsonB // JSON Schema for args
-  mode        String   @default("sync") // sync | fire_and_forget | async
-  timeout     Int?     // ms, for sync mode
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  haseef      Haseef      @relation(fields: [haseefId], references: [id], onDelete: Cascade)
-  haseefScope HaseefScope @relation(fields: [haseefId, scope], references: [haseefId, scope], onDelete: Cascade)
-
-  @@unique([haseefId, scope, name])
-  @@index([haseefId])
-  @@index([haseefId, scope])
-  @@map("haseef_tools")
-}
-
-model InboxEvent {
-  id          String    @id @default(uuid()) @db.Uuid
-  haseefId    String    @map("haseef_id") @db.Uuid
-  eventId     String    @map("event_id")
-  scope       String    // which service sent this: "spaces", "whatsapp", "core"
-  type        String    // "message", "sensor_update", etc.
-  data        Json      @db.JsonB
-  attachments Json?     @db.JsonB // Attachment[] — images, audio, files
-  status      String    @default("pending")
-  processedAt DateTime? @map("processed_at") @db.Timestamptz(6)
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+// Social: person models — what the haseef knows about people
+model SocialMemory {
+  id              String    @id @default(uuid()) @db.Uuid
+  haseefId        String    @map("haseef_id") @db.Uuid
+  entityName      String    @map("entity_name")       // "Husam", "Sara"
+  observations    Json?     @db.JsonB                  // { preferences, style, traits }
+  relationship    String?   @db.Text                   // "close friend", "manager", etc.
+  lastInteraction DateTime? @map("last_interaction") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
 
-  @@unique([haseefId, eventId])
-  @@index([haseefId])
-  @@index([haseefId, status])
-  @@map("inbox_events")
+  @@unique([haseefId, entityName])
+  @@map("social_memories")
 }
 
-model ConsciousnessArchive {
-  id           String                          @id @default(uuid()) @db.Uuid
-  haseefId     String                          @map("haseef_id") @db.Uuid
-  cycleNumber  Int                             @map("cycle_number")
-  summary      String                          @db.Text // compact summary of what happened
-  fullMessages Json                            @map("full_messages") @db.JsonB // original messages
-  // embedding    Unsupported("vector(1536)")?    // pgvector for semantic search — disabled without pgvector
-  createdAt    DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
+// Procedural: learned patterns — what works in specific situations
+model ProceduralMemory {
+  id         String   @id @default(uuid()) @db.Uuid
+  haseefId   String   @map("haseef_id") @db.Uuid
+  trigger    String   @db.Text                        // "when someone asks about pricing"
+  response   String   @db.Text                        // "use get_pricing tool with their plan"
+  confidence Float    @default(0.5)                   // 0-1, increases with successful use
+  hitCount   Int      @default(0) @map("hit_count")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
 
   @@index([haseefId])
-  @@index([haseefId, cycleNumber])
-  @@map("consciousness_archive")
-}
-
-model ConsciousnessSnapshot {
-  id            String   @id @default(uuid()) @db.Uuid
-  haseefId      String   @map("haseef_id") @db.Uuid
-  cycleCount    Int      @map("cycle_count")
-  messages      Json     @db.JsonB
-  tokenEstimate Int      @default(0) @map("token_estimate")
-  reason        String?  // "auto", "manual", "pre-compaction"
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-
-  haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
-
-  @@index([haseefId, createdAt])
-  @@map("consciousness_snapshots")
+  @@map("procedural_memories")
 }

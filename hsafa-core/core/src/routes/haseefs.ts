@@ -1,24 +1,13 @@
 import { Router } from 'express';
-import crypto from 'crypto';
 import { prisma } from '../lib/db.js';
-import { pushEvent } from '../lib/inbox.js';
 import { redis } from '../lib/redis.js';
-import {
-  createSnapshot,
-  listSnapshots,
-  restoreSnapshot,
-} from '../lib/consciousness.js';
-import {
-  startProcess,
-  stopProcess,
-  isProcessRunning,
-} from '../lib/process-manager.js';
-import type { SenseEvent } from '../agent-builder/types.js';
+import { isRunning, getActiveRunId } from '../lib/coordinator.js';
 
 // =============================================================================
-// Haseefs Routes (v5)
+// Haseefs Routes (v7)
 //
-// CRUD, profile, events, process management, consciousness, streaming.
+// CRUD, profile, status, real-time stream.
+// No consciousness, no process management, no inbox.
 // =============================================================================
 
 export const haseefsRouter = Router();
@@ -28,17 +17,12 @@ export const haseefsRouter = Router();
 // POST /api/haseefs — Create
 haseefsRouter.post('/', async (req, res) => {
   try {
-    const { name, description, profileJson, configJson } = req.body;
+    const { name, description, profileJson, configJson, scopes } = req.body;
 
     if (!name || !configJson) {
       res.status(400).json({ error: 'name and configJson are required' });
       return;
     }
-
-    const configHash = crypto
-      .createHash('md5')
-      .update(JSON.stringify(configJson))
-      .digest('hex');
 
     const haseef = await prisma.haseef.create({
       data: {
@@ -46,16 +30,9 @@ haseefsRouter.post('/', async (req, res) => {
         description,
         profileJson: profileJson ?? undefined,
         configJson,
-        configHash,
+        scopes: scopes ?? [],
       },
     });
-
-    // Auto-start the haseef process so it can immediately consume inbox events
-    try {
-      await startProcess(haseef.id, haseef.name);
-    } catch (err) {
-      console.warn(`[haseefs] Failed to auto-start process for ${haseef.name}:`, err);
-    }
 
     res.status(201).json({ haseef });
   } catch (err: any) {
@@ -74,7 +51,14 @@ haseefsRouter.get('/', async (_req, res) => {
     const haseefs = await prisma.haseef.findMany({
       orderBy: { createdAt: 'desc' },
     });
-    res.json({ haseefs });
+
+    res.json({
+      haseefs: haseefs.map((h) => ({
+        ...h,
+        running: isRunning(h.id),
+        activeRunId: getActiveRunId(h.id),
+      })),
+    });
   } catch (err) {
     console.error('[haseefs] list error:', err);
     res.status(500).json({ error: 'Failed to list haseefs' });
@@ -91,14 +75,20 @@ haseefsRouter.get('/:id', async (req, res) => {
       res.status(404).json({ error: 'Haseef not found' });
       return;
     }
-    res.json({ haseef });
+    res.json({
+      haseef: {
+        ...haseef,
+        running: isRunning(haseef.id),
+        activeRunId: getActiveRunId(haseef.id),
+      },
+    });
   } catch (err) {
     console.error('[haseefs] get error:', err);
     res.status(500).json({ error: 'Failed to get haseef' });
   }
 });
 
-// PATCH /api/haseefs/:id — Update config
+// PATCH /api/haseefs/:id — Update
 haseefsRouter.patch('/:id', async (req, res) => {
   try {
     const { name, description, configJson, profileJson, scopes } = req.body;
@@ -106,13 +96,7 @@ haseefsRouter.patch('/:id', async (req, res) => {
 
     if (name !== undefined) data.name = name;
     if (description !== undefined) data.description = description;
-    if (configJson !== undefined) {
-      data.configJson = configJson;
-      data.configHash = crypto
-        .createHash('md5')
-        .update(JSON.stringify(configJson))
-        .digest('hex');
-    }
+    if (configJson !== undefined) data.configJson = configJson;
     if (profileJson !== undefined) data.profileJson = profileJson;
     if (scopes !== undefined) data.scopes = scopes;
 
@@ -135,7 +119,6 @@ haseefsRouter.patch('/:id', async (req, res) => {
 // DELETE /api/haseefs/:id — Delete
 haseefsRouter.delete('/:id', async (req, res) => {
   try {
-    await stopProcess(req.params.id);
     await prisma.haseef.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (err: any) {
@@ -187,87 +170,25 @@ haseefsRouter.patch('/:id/profile', async (req, res) => {
   }
 });
 
-// ── Events (senses in) ──────────────────────────────────────────────────────
-
-// POST /api/haseefs/:id/events — Push events
-haseefsRouter.post('/:id/events', async (req, res) => {
-  try {
-    const haseefId = req.params.id;
-    const events: SenseEvent[] = Array.isArray(req.body) ? req.body : [req.body];
-
-    // Verify haseef exists
-    const exists = await prisma.haseef.findUnique({
-      where: { id: haseefId },
-      select: { id: true },
-    });
-    if (!exists) {
-      res.status(404).json({ error: 'Haseef not found' });
-      return;
-    }
-
-    for (const event of events) {
-      if (!event.eventId || !event.scope || !event.type) {
-        res.status(400).json({ error: 'Each event must have eventId, scope, and type' });
-        return;
-      }
-      event.timestamp = event.timestamp ?? new Date().toISOString();
-      await pushEvent(haseefId, event);
-    }
-
-    res.json({ pushed: events.length });
-  } catch (err) {
-    console.error('[haseefs] push events error:', err);
-    res.status(500).json({ error: 'Failed to push events' });
-  }
-});
-
-// ── Process management ───────────────────────────────────────────────────────
-
-// POST /api/haseefs/:id/start
-haseefsRouter.post('/:id/start', async (req, res) => {
-  try {
-    const haseef = await prisma.haseef.findUnique({
-      where: { id: req.params.id },
-      select: { id: true, name: true },
-    });
-    if (!haseef) {
-      res.status(404).json({ error: 'Haseef not found' });
-      return;
-    }
-    await startProcess(haseef.id, haseef.name);
-    res.json({ status: 'started' });
-  } catch (err) {
-    console.error('[haseefs] start error:', err);
-    res.status(500).json({ error: 'Failed to start process' });
-  }
-});
-
-// POST /api/haseefs/:id/stop
-haseefsRouter.post('/:id/stop', async (req, res) => {
-  try {
-    await stopProcess(req.params.id);
-    res.json({ status: 'stopped' });
-  } catch (err) {
-    console.error('[haseefs] stop error:', err);
-    res.status(500).json({ error: 'Failed to stop process' });
-  }
-});
+// ── Status ───────────────────────────────────────────────────────────────────
 
 // GET /api/haseefs/:id/status
 haseefsRouter.get('/:id/status', async (req, res) => {
-  const running = isProcessRunning(req.params.id);
-  res.json({ running });
+  const running = isRunning(req.params.id);
+  const activeRunId = getActiveRunId(req.params.id);
+  res.json({ running, activeRunId: activeRunId ?? null });
 });
 
-// ── Consciousness ────────────────────────────────────────────────────────────
+// ── Real-time Stream ─────────────────────────────────────────────────────────
 
-// GET /api/haseefs/:id/stream — SSE: real-time thinking
+// GET /api/haseefs/:id/stream — SSE: real-time run events
 haseefsRouter.get('/:id/stream', async (req, res) => {
   const haseefId = req.params.id;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
   const channel = `haseef:${haseefId}:stream`;
@@ -279,46 +200,17 @@ haseefsRouter.get('/:id/stream', async (req, res) => {
 
   await sub.subscribe(channel);
 
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': heartbeat\n\n');
+    } catch {
+      clearInterval(heartbeat);
+    }
+  }, 30_000);
+
   req.on('close', () => {
+    clearInterval(heartbeat);
     sub.unsubscribe(channel).catch(() => {});
     sub.quit().catch(() => {});
   });
-});
-
-// POST /api/haseefs/:id/snapshot — Create snapshot
-haseefsRouter.post('/:id/snapshot', async (req, res) => {
-  try {
-    const snapshot = await createSnapshot(req.params.id, 'manual');
-    res.json({ snapshot });
-  } catch (err: any) {
-    console.error('[haseefs] snapshot error:', err);
-    res.status(500).json({ error: err.message || 'Failed to create snapshot' });
-  }
-});
-
-// GET /api/haseefs/:id/snapshots — List snapshots
-haseefsRouter.get('/:id/snapshots', async (req, res) => {
-  try {
-    const snapshots = await listSnapshots(req.params.id);
-    res.json({ snapshots });
-  } catch (err) {
-    console.error('[haseefs] list snapshots error:', err);
-    res.status(500).json({ error: 'Failed to list snapshots' });
-  }
-});
-
-// POST /api/haseefs/:id/restore — Restore snapshot
-haseefsRouter.post('/:id/restore', async (req, res) => {
-  try {
-    const { snapshotId } = req.body;
-    if (!snapshotId) {
-      res.status(400).json({ error: 'snapshotId is required' });
-      return;
-    }
-    const result = await restoreSnapshot(req.params.id, snapshotId);
-    res.json(result);
-  } catch (err: any) {
-    console.error('[haseefs] restore error:', err);
-    res.status(500).json({ error: err.message || 'Failed to restore snapshot' });
-  }
 });

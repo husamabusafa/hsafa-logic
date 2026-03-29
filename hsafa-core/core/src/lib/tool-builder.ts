@@ -1,57 +1,11 @@
 import { tool, jsonSchema } from 'ai';
-import { dispatchAction } from './action-dispatch.js';
 import { dispatchToScope, emitLifecycleToScope } from './tool-dispatcher.js';
-import { randomUUID } from 'crypto';
 
 // =============================================================================
-// Tool Builder
+// Tool Builder (v7)
 //
-// v5: buildScopedTools — per-haseef tools dispatched via Redis Streams
-// v7: buildV7Tools     — global scope tools dispatched via SSE with lifecycle events
-// =============================================================================
-
-/**
- * v5: Build AI SDK tools from per-haseef HaseefTool DB rows (Redis Streams dispatch).
- */
-export function buildScopedTools(
-  haseefId: string,
-  dbTools: Array<{ name: string; description: string; inputSchema: unknown; scope: string; mode: string; timeout: number | null }>,
-  defaultTimeout?: number,
-): Record<string, unknown> {
-  const tools: Record<string, unknown> = {};
-
-  for (const dbTool of dbTools) {
-    const mode = dbTool.mode as 'sync' | 'fire_and_forget' | 'async';
-    const timeout = dbTool.timeout ?? defaultTimeout;
-    const scope = dbTool.scope;
-    const originalName = dbTool.name;
-    const prefixedName = `${scope}_${originalName}`;
-
-    const schema = jsonSchema<Record<string, unknown>>(dbTool.inputSchema as any);
-
-    tools[prefixedName] = tool({
-      description: dbTool.description,
-      inputSchema: schema,
-      execute: async (args: Record<string, unknown>) => {
-        const actionId = randomUUID();
-        return await dispatchAction({
-          haseefId,
-          scope,
-          actionId,
-          toolName: originalName,
-          args,
-          mode,
-          timeout,
-        });
-      },
-    });
-  }
-
-  return tools;
-}
-
-// =============================================================================
-// V7: Global scope tools with SSE dispatch + tool lifecycle events
+// Builds AI SDK tools from global ScopeTool rows.
+// Dispatches via SSE (tool-dispatcher) with lifecycle events.
 // =============================================================================
 
 export interface V7ToolRow {
