@@ -85,16 +85,16 @@ Two instances of the same template are fully independent scopes with different n
 
 | Table | Purpose |
 |-------|---------|
-| `Haseef` | Name, config, profile, `scopes[]` array |
+| `Haseef` | Name, config, profile, `scopes[]` array, `apiKeyId` (owner) |
 | `Run` | Stateless execution runs with metrics |
 | `EpisodicMemory` | Run summaries + context metadata |
 | `SemanticMemory` | Key-value facts with importance |
 | `SocialMemory` | Person models with observations |
 | `ProceduralMemory` | Learned patterns with confidence |
-| `Scope` | Global scope registry (name, connected status) |
+| `Scope` | Global scope registry (name, connected status, `apiKeyId` owner) |
 | `ScopeTool` | Tools registered by each scope |
 
-**Core stores NO user secrets.** It knows scope names and tools but not API keys.
+**Core stores NO user secrets.** It knows scope names and tools but not service API keys. It does track which Core API key (`apiKeyId`) created each haseef and registered each scope — this is for ownership, not secrets.
 
 ### Spaces DB (users, spaces, messages, scope configs, scope code)
 
@@ -210,6 +210,14 @@ ScopeCode
 ---
 
 ## Scope Ownership Model
+
+Security works in **two layers**:
+
+1. **Core layer** — API key ownership. Core tracks which API key created each haseef and registered each scope (`apiKeyId` fields). Core enforces: you can only modify your own haseefs, and you can only attach scopes you own (or platform scopes). See [Security → API Key Ownership](#api-key-ownership-core-level) for details.
+
+2. **Spaces layer** — User-level visibility and sharing. Spaces maps API keys to users and adds richer rules: private vs. shared instances, Base (team) membership, detach permissions.
+
+The rest of this section describes the **Spaces layer** (layer 2).
 
 Scope instances can be **private** or **shared**:
 
@@ -635,6 +643,53 @@ POST /api/scopes/instances/:instanceId/webhook
 
 ## Security
 
+### API Key Ownership (Core-Level)
+
+Core tracks which API key created each haseef and registered each scope. This is the foundation of multi-user security — without it, anyone with a Core API key could see or modify anyone else's haseefs and scopes.
+
+**Two fields added to Core DB:**
+
+```prisma
+model Haseef {
+  // ... existing fields
+  apiKeyId     String              // which API key created this haseef
+}
+
+model Scope {
+  // ... existing fields
+  apiKeyId    String?              // which API key registered this scope (null = platform)
+}
+```
+
+**Enforcement in Core:**
+
+| Action | Rule |
+|--------|------|
+| Create haseef | Records `apiKeyId` from the `x-api-key` header |
+| Read/update/delete haseef | Must be the same `apiKeyId` that created it |
+| Register scope tools | Records `apiKeyId` from the `x-api-key` header |
+| Attach scope to haseef | Must own the haseef AND own the scope (or scope is platform) |
+| List haseefs | Only returns haseefs owned by this API key |
+| List scopes | Returns all scopes (with `apiKeyId`) — Spaces filters client-side |
+
+**Platform scopes** (`spaces`, `scheduler`) have `apiKeyId = null`. They can be attached to any haseef by any API key.
+
+**How Spaces uses this:**
+
+Spaces server knows which API keys belong to which users (it issued them). When a user opens the scopes page, Spaces:
+1. Calls `GET /api/scopes` → gets all scopes with `apiKeyId`
+2. Filters to: platform scopes (`apiKeyId = null`) + scopes where `apiKeyId` matches the user's API key(s) + scopes shared via Base membership
+3. Shows only those scopes to the user
+
+```
+Husam sees:                         Sara sees:
+  spaces        Platform  🟢          spaces        Platform  🟢
+  scheduler     Platform  🟢          scheduler     Platform  🟢
+  my-gmail      External  🟢          sara-twitter  External  🟢
+  robot-vision  External  🟢
+  (does NOT see sara-twitter)        (does NOT see my-gmail or robot-vision)
+```
+
 ### Config Encryption
 
 All config values marked `"secret": true` in the template's configSchema are encrypted using AES-256-GCM before storage. The encryption key is derived from a server-side `SCOPE_ENCRYPTION_KEY` environment variable (same pattern as the existing `ApiKey` model).
@@ -823,12 +878,12 @@ HTTP scopes are intentionally simple. If the user needs more, they graduate to a
    - New routes for scope template/instance CRUD
    - New Prisma models for templates, instances, configs, code
 
-3. **Core stays unchanged** — it already has the right API surface:
-   - `GET/POST/PATCH/DELETE /api/haseefs` — CRUD
-   - `PUT /api/scopes/:scope/tools` — register tools
-   - `GET /api/scopes/:scope/actions/stream` — SSE for tool calls
-   - `POST /api/actions/:actionId/result` — submit results
-   - `POST /api/events` — push sense events
+3. **Core gets two small changes** — API surface stays the same, but ownership tracking is added:
+   - Add `apiKeyId` field to `Haseef` model (records who created it)
+   - Add `apiKeyId` field to `Scope` model (records who registered it)
+   - `PATCH /api/haseefs/:id` validates ownership before allowing scope attachment
+   - `GET /api/scopes` returns `apiKeyId` so Spaces can filter by user
+   - All existing routes unchanged: `PUT /api/scopes/:scope/tools`, `GET /api/scopes/:scope/actions/stream`, `POST /api/actions/:actionId/result`, `POST /api/events`
 
 4. **Haseef creation flow** updates:
    - Currently: Spaces creates haseef in Core + auto-connects to spaces service
@@ -836,9 +891,8 @@ HTTP scopes are intentionally simple. If the user needs more, they graduate to a
 
 ### What Stays the Same
 
-- Core DB schema (no changes needed)
-- Core API (no changes needed)
-- `@hsafa/sdk` protocol (scopes still connect via SSE)
+- Core API surface (no new endpoints)
+- `@hsafa/sdk` protocol (scopes still connect via SSE — SDK doesn't change)
 - Existing spaces scope behavior (messages, tool calls, streaming)
 - Frontend chat UI (react_app)
 
@@ -857,6 +911,7 @@ HTTP scopes are intentionally simple. If the user needs more, they graduate to a
 | **Shared instance** | Any member of a Base (team) can attach it to their haseefs |
 | **Default scope** | New haseefs get "spaces" by default (removable) |
 | **Config encryption** | Secrets encrypted with AES-256-GCM, never sent to Core |
+| **API key ownership** | Core tracks which API key created each haseef/scope; enforces ownership on mutations |
 | **Light sandbox** | Custom code runs in Worker Threads with restricted globals |
 | **CLI workflow** | `scope init` → `scope dev` → `scope release` |
 | **No-code HTTP scope** | Form-based builder for simple HTTP integrations (no code needed) |

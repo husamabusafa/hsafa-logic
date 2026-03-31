@@ -405,6 +405,51 @@ Core owns:                    Service owns:
   └─ LLM orchestration
 ```
 
+### API Key Ownership
+
+Every API key identifies an owner. Core uses this to enforce two security invariants:
+
+1. **Haseef ownership** — When a haseef is created (`POST /api/haseefs`), Core records which API key created it (`apiKeyId`). Only that API key can read, update, or delete the haseef.
+
+2. **Scope ownership** — When a scope registers tools (`PUT /api/scopes/:scope/tools`), Core records which API key registered it (`apiKeyId`). This lets downstream consumers (like Spaces) know who owns each scope.
+
+**Scope attachment validation** — When `PATCH /api/haseefs/:id` updates the `scopes[]` array, Core checks:
+- The API key must own the haseef
+- Every scope being attached must either:
+  - Belong to the same API key (same owner), OR
+  - Be a platform scope (`apiKeyId = null` — e.g. `spaces`, `scheduler`)
+
+This prevents User A from attaching User B's scope to their haseef, or modifying User B's haseef.
+
+```typescript
+// Pseudocode — scope attachment validation inside PATCH /api/haseefs/:id
+async function validateScopeAttachment(haseefId: string, scopeNames: string[], apiKeyId: string) {
+  const haseef = await db.haseef.findUnique({ where: { id: haseefId } });
+  if (haseef.apiKeyId !== apiKeyId) throw new Error('Forbidden');
+
+  for (const name of scopeNames) {
+    const scope = await db.scope.findUnique({ where: { name } });
+    if (!scope) throw new Error(`Scope "${name}" does not exist`);
+    // Platform scopes (apiKeyId = null) are always allowed
+    if (scope.apiKeyId !== null && scope.apiKeyId !== apiKeyId) {
+      throw new Error(`Forbidden: scope "${name}" belongs to another owner`);
+    }
+  }
+}
+```
+
+**`GET /api/scopes` response** includes `apiKeyId` per scope so Spaces can filter by user:
+
+```json
+[
+  { "name": "spaces",       "connected": true, "apiKeyId": null,          "tools": [...] },
+  { "name": "my-gmail",     "connected": true, "apiKeyId": "key-abc-123", "tools": [...] },
+  { "name": "sara-twitter", "connected": true, "apiKeyId": "key-xyz-789", "tools": [...] }
+]
+```
+
+Spaces server maps API key IDs to users and filters: each user only sees platform scopes + scopes registered by their own API keys.
+
 ---
 
 ## Scope Scenarios
@@ -1248,19 +1293,19 @@ await hsafa.registerTools([
 ## Core API Routes
 
 ```
-# Haseef CRUD
-POST   /api/haseefs                              # Create haseef
-GET    /api/haseefs                              # List all haseefs
-GET    /api/haseefs/:id                          # Get haseef details
-PATCH  /api/haseefs/:id                          # Update haseef (profile, scopes, model, instructions)
-DELETE /api/haseefs/:id                          # Delete haseef
+# Haseef CRUD (ownership-scoped: API key can only see/modify haseefs it created)
+POST   /api/haseefs                              # Create haseef (records apiKeyId from x-api-key)
+GET    /api/haseefs                              # List haseefs owned by this API key
+GET    /api/haseefs/:id                          # Get haseef details (must own)
+PATCH  /api/haseefs/:id                          # Update haseef (must own; scope attachment validated)
+DELETE /api/haseefs/:id                          # Delete haseef (must own)
 
 # Events (services push events to haseefs)
 POST   /api/events                               # Push event (with haseefId or target)
 
 # Scopes (services register tools)
-PUT    /api/scopes/:scope/tools                  # Register/update all tools in scope
-GET    /api/scopes                               # List all registered scopes
+PUT    /api/scopes/:scope/tools                  # Register/update tools (records apiKeyId as scope owner)
+GET    /api/scopes                               # List all registered scopes (includes apiKeyId for filtering)
 GET    /api/scopes/:scope/tools                  # List tools in a scope
 
 # Actions (tool call dispatch)
@@ -1297,6 +1342,7 @@ model Haseef {
   id           String   @id @default(uuid())
   name         String   @unique
   description  String?
+  apiKeyId     String                          // which API key created this haseef (ownership)
   profileJson  Json?    @db.JsonB              // { phone, email, robotId, ... }
   configJson   Json     @db.JsonB              // { model, instructions, ... }
   scopes       String[] @default([])           // ["whatsapp", "spaces", "body"]
@@ -1313,6 +1359,7 @@ model Haseef {
 model Scope {
   id          String   @id @default(uuid())
   name        String   @unique                // "whatsapp", "body", "email"
+  apiKeyId    String?                         // which API key registered this scope (ownership, null = platform)
   connected   Boolean  @default(false)        // is the service currently connected?
   lastSeenAt  DateTime?                       // last heartbeat
   createdAt   DateTime @default(now())
