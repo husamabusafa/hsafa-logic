@@ -22,21 +22,20 @@
 //   sense-events.ts    — inbox handler, seen watermark, interactive message events
 // =============================================================================
 
-import { HsafaSDK } from "@hsafa/sdk";
 import { prisma } from "../db.js";
 import { getSpacesForEntity } from "../membership-service.js";
 import { loadServiceConfig } from "./config.js";
-import { SCOPE, TOOLS, SCHEDULER_SCOPE, SCHEDULER_TOOLS } from "./manifest.js";
+import { SCOPE } from "./manifest.js";
 import { setInboxHandler } from "./inbox.js";
 import { state } from "./types.js";
 import { coreHeaders, syncTools } from "./core-api.js";
 import { invalidateEntitySpacesCache } from "../membership-service.js";
 import { registerLifecycleHandlers } from "./stream-bridge.js";
-import { startActionListener } from "./action-listener.js";
 import { handleInboxMessage } from "./sense-events.js";
 import { startScheduler } from "./scheduler.js";
 import { syncSchedulesToRedis } from "./schedule-service.js";
 import { startPresenceCleanup, stopPresenceCleanup } from "../smartspace-events.js";
+import { loadScopesFromDB, connectAllScopes } from "./scope-registry.js";
 
 // Re-export public API so existing imports from "./service/index.js" keep working
 export { getConnectionsForSpace, getConnectionForHaseef } from "./types.js";
@@ -64,37 +63,8 @@ export async function bootstrapExtension(): Promise<void> {
   // Register inbox handler
   setInboxHandler(handleInboxMessage);
 
-  // ── Create SDK instances ──────────────────────────────────────────────────
-  state.spacesSDK = new HsafaSDK({
-    coreUrl: config.coreUrl,
-    apiKey: config.apiKey,
-    scope: SCOPE,
-  });
-
-  state.schedulerSDK = new HsafaSDK({
-    coreUrl: config.coreUrl,
-    apiKey: config.apiKey,
-    scope: SCHEDULER_SCOPE,
-  });
-
-  // ── Register tools globally (v7 — once per scope, not per haseef) ─────────
-  try {
-    await state.spacesSDK.registerTools(
-      TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
-    );
-    console.log(`[spaces-service] Registered ${TOOLS.length} spaces tools globally`);
-  } catch (err) {
-    console.error("[spaces-service] Failed to register spaces tools:", err);
-  }
-
-  try {
-    await state.schedulerSDK.registerTools(
-      SCHEDULER_TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
-    );
-    console.log(`[spaces-service] Registered ${SCHEDULER_TOOLS.length} scheduler tools globally`);
-  } catch (err) {
-    console.error("[spaces-service] Failed to register scheduler tools:", err);
-  }
+  // ── Load scope instances from DB, create SDK instances, register tools ─────
+  await loadScopesFromDB();
 
   // ── Register lifecycle event handlers (stream bridge) ─────────────────────
   registerLifecycleHandlers();
@@ -115,10 +85,8 @@ export async function bootstrapExtension(): Promise<void> {
     }
   }
 
-  // ── Start SDK SSE connections (action dispatch + lifecycle events) ─────────
-  startActionListener().catch((err: unknown) => {
-    console.error("[spaces-service] Action listener failed:", err);
-  });
+  // ── Start SDK SSE connections for all registered scopes ────────────────────
+  connectAllScopes();
 
   // Hydrate Redis sorted set from DB, then start the schedule poller
   await syncSchedulesToRedis();

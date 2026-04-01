@@ -42,6 +42,7 @@ import { useToast } from "@/components/ui/toast";
 import { Avatar } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { getPersonaById } from "@/lib/personas";
+import { HaseefScopesTab } from "@/components/haseef-scopes-tab";
 
 // ─── Detail Page ─────────────────────────────────────────────────────────────
 
@@ -616,6 +617,20 @@ export function HaseefDetailPage({ onDeleted, allHaseefs = [] }: HaseefDetailPag
                 );
               })}
             </div>
+          )}
+        </div>
+
+        {/* Scopes Section */}
+        <div className="rounded-2xl border border-border bg-card p-5">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1.5">
+            <ZapIcon className="size-3.5" />
+            Scopes
+          </h3>
+          {haseefId && (
+            <HaseefScopesTab
+              haseefId={haseefId}
+              profileJson={haseef.profileJson}
+            />
           )}
         </div>
 

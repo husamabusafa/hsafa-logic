@@ -257,8 +257,9 @@ model Base {
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  members     BaseMember[]
-  defaultUsers User[]  @relation("userDefaultBase")
+  members        BaseMember[]
+  defaultUsers   User[]          @relation("userDefaultBase")
+  scopeInstances ScopeInstance[]
 
   @@map("bases")
 }
@@ -322,6 +323,76 @@ model HaseefOwnership {
   @@unique([userId, haseefId])
   @@index([userId])
   @@map("haseef_ownerships")
+}
+
+// =============================================================================
+// SCOPE TEMPLATE — Blueprint for a scope type (prebuilt or custom)
+// =============================================================================
+
+model ScopeTemplate {
+  id                    String   @id @default(uuid()) @db.Uuid
+  slug                  String   @unique                          // "spaces", "scheduler", "whatsapp", etc.
+  name                  String                                    // Display name
+  description           String   @default("")
+  icon                  String?                                   // Icon name or URL
+  category              String   @default("prebuilt")             // "prebuilt" | "custom"
+  configSchema          Json     @default("{}") @map("config_schema") @db.JsonB  // JSON Schema for user config
+  requiredProfileFields String[] @default([]) @map("required_profile_fields")    // e.g. ["phone"] for WhatsApp
+  tools                 Json     @default("[]") @db.JsonB         // [{name, description, inputSchema}]
+  instructions          String?  @db.Text                         // Scope-level instructions for haseef prompt
+  sourceCode            String?  @map("source_code") @db.Text     // Bundled JS for custom scopes (null for prebuilt)
+  authorId              String?  @map("author_id")                // userId of developer (null for prebuilt)
+  published             Boolean  @default(false)
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  instances ScopeInstance[]
+
+  @@map("scope_templates")
+}
+
+// =============================================================================
+// SCOPE INSTANCE — A configured, named instance of a template
+// =============================================================================
+
+model ScopeInstance {
+  id          String   @id @default(uuid()) @db.Uuid
+  templateId  String   @map("template_id") @db.Uuid
+  name        String                                    // User-chosen name ("personal-whatsapp")
+  scopeName   String   @unique @map("scope_name")       // Scope name registered in Core (same as name by default)
+  description String?
+  ownerId     String?  @map("owner_id")                 // userId (null = platform-owned)
+  baseId      String?  @map("base_id") @db.Uuid         // If shared with a Base (null = private)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  template ScopeTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  base     Base?               @relation(fields: [baseId], references: [id], onDelete: SetNull)
+  configs  ScopeInstanceConfig[]
+
+  @@index([templateId])
+  @@index([ownerId])
+  @@map("scope_instances")
+}
+
+// =============================================================================
+// SCOPE INSTANCE CONFIG — Encrypted config values for a scope instance
+// =============================================================================
+
+model ScopeInstanceConfig {
+  id         String   @id @default(uuid()) @db.Uuid
+  instanceId String   @map("instance_id") @db.Uuid
+  key        String                                   // Config field name ("apiKey", "phoneNumber")
+  value      String   @db.Text                        // Encrypted for secrets, plain for non-secrets
+  isSecret   Boolean  @default(false) @map("is_secret")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  instance ScopeInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@unique([instanceId, key])
+  @@map("scope_instance_configs")
 }
 
 // =============================================================================

@@ -2,15 +2,14 @@
 // Spaces Service — Core API Helpers (v7)
 //
 // HTTP calls to hsafa-core for tool sync and sense events.
-// v7: submitActionResult removed — SDK handles result posting internally.
-// Tool sync still uses per-haseef v5 endpoint for scope instructions.
-// Sense events still use per-haseef v5 endpoint for backward compatibility.
+// v7: Tools registered globally by scope-registry via SDK.registerTools().
+//     Per-haseef instructions pushed via PATCH /api/haseefs/:id configJson.
+//     submitActionResult removed — SDK handles result posting internally.
 // =============================================================================
 
 import { prisma } from "../db.js";
 import { state } from "./types.js";
-import { SCOPE, SCOPE_INSTRUCTIONS, TOOLS, SCHEDULER_SCOPE, SCHEDULER_TOOLS } from "./manifest.js";
-import { getActiveSchedules } from "./schedule-service.js";
+import { SCOPE_INSTRUCTIONS } from "./manifest.js";
 
 export function coreHeaders(): Record<string, string> {
   return {
@@ -19,40 +18,48 @@ export function coreHeaders(): Record<string, string> {
   };
 }
 
-/** PUT /api/haseefs/:id/scopes/:scope/tools — Sync all tools + scope instructions */
+/**
+ * Sync per-haseef scope instructions to Core via PATCH configJson.instructions.
+ * In v7, tools are registered globally by the scope registry — this only pushes
+ * the dynamic context (YOUR BASES, YOUR SPACES, etc.) into the haseef's prompt.
+ */
 export async function syncTools(haseefId: string): Promise<void> {
-  await syncSpacesTools(haseefId);
-  await syncSchedulerTools(haseefId);
-}
+  const instructions = await buildAllInstructions(haseefId);
 
-/** Sync spaces scope tools */
-async function syncSpacesTools(haseefId: string): Promise<void> {
-  const instructions = await buildSpacesInstructions(haseefId);
-  const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/scopes/${SCOPE}/tools`;
-  const res = await fetch(url, {
-    method: "PUT",
-    headers: coreHeaders(),
-    body: JSON.stringify({ tools: TOOLS, instructions }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`syncSpacesTools failed for ${haseefId}: ${res.status} ${text}`);
+  try {
+    // Read current haseef configJson to avoid overwriting model/voice config
+    const getUrl = `${state.config!.coreUrl}/api/haseefs/${haseefId}`;
+    const getRes = await fetch(getUrl, { headers: coreHeaders() });
+    if (!getRes.ok) {
+      console.warn(`[core-api] Failed to read haseef ${haseefId}: ${getRes.status}`);
+      return;
+    }
+    const { haseef } = (await getRes.json()) as { haseef: { configJson: Record<string, unknown> } };
+    const currentConfig = haseef?.configJson ?? {};
+
+    // Merge instructions into configJson
+    const patchUrl = `${state.config!.coreUrl}/api/haseefs/${haseefId}`;
+    const patchRes = await fetch(patchUrl, {
+      method: "PATCH",
+      headers: coreHeaders(),
+      body: JSON.stringify({ configJson: { ...currentConfig, instructions } }),
+    });
+    if (!patchRes.ok) {
+      const text = await patchRes.text();
+      console.warn(`[core-api] Failed to sync instructions for ${haseefId}: ${patchRes.status} ${text}`);
+    }
+  } catch (err) {
+    console.warn(`[core-api] syncTools error for ${haseefId}:`, err);
   }
 }
 
-/** Sync scheduler scope tools */
-async function syncSchedulerTools(haseefId: string): Promise<void> {
-  const instructions = buildSchedulerInstructions();
-  const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/scopes/${SCHEDULER_SCOPE}/tools`;
-  const res = await fetch(url, {
-    method: "PUT",
-    headers: coreHeaders(),
-    body: JSON.stringify({ tools: SCHEDULER_TOOLS, instructions }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`syncSchedulerTools failed for ${haseefId}: ${res.status} ${text}`);
-  }
+/**
+ * Build combined instructions for all active scopes.
+ */
+async function buildAllInstructions(haseefId: string): Promise<string> {
+  const spacesInstructions = await buildSpacesInstructions(haseefId);
+  const schedulerInstructions = buildSchedulerInstructions();
+  return [spacesInstructions, schedulerInstructions].filter(Boolean).join('\n\n---\n\n');
 }
 
 /**
@@ -165,7 +172,7 @@ HOW IT WORKS:
   return sections.join('\n\n');
 }
 
-/** POST /api/haseefs/:id/events — Push V5 sense events */
+/** POST /api/events — Push sense events (v7 global events endpoint) */
 export async function pushSenseEvent(
   haseefId: string,
   event: {
@@ -177,13 +184,12 @@ export async function pushSenseEvent(
     timestamp?: string;
   },
 ): Promise<void> {
-  const url = `${state.config!.coreUrl}/api/haseefs/${haseefId}/events`;
+  const url = `${state.config!.coreUrl}/api/events`;
   const body: Record<string, unknown> = {
-    eventId: event.eventId,
+    haseefId,
     scope: event.scope,
     type: event.type,
     data: event.data,
-    timestamp: event.timestamp ?? new Date().toISOString(),
   };
   if (event.attachments && event.attachments.length > 0) {
     body.attachments = event.attachments;

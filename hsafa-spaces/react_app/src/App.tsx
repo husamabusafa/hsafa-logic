@@ -21,6 +21,8 @@ import { VerifyEmailPage } from "@/components/verify-email-page";
 import { AuthCallback } from "@/components/auth-callback";
 import { ApiKeysPage } from "@/components/api-keys-page";
 import { BasesPage, JoinByLinkPage, JoinSpaceByLinkPage } from "@/components/bases-page";
+import { ScopesPage } from "@/components/scopes-page";
+import { ScopeInstancePage } from "@/components/scope-instance-page";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { haseefsApi, spacesApi, invitationsApi, basesApi, type HaseefListItem, type SmartSpace, type SpaceMember } from "@/lib/api";
 import type { MockMember } from "@/lib/mock-data";
@@ -262,6 +264,15 @@ function SpaceChatRoute({
   );
 }
 
+// ─── Scope Instance Route (extracts param) ──────────────────────────────────
+
+function ScopeInstanceRoute() {
+  const { instanceId } = useParams<{ instanceId: string }>();
+  const navigate = useNavigate();
+  if (!instanceId) return <Navigate to="/scopes" replace />;
+  return <ScopeInstancePage instanceId={instanceId} onBack={() => navigate("/scopes")} />;
+}
+
 // ─── Auth Guard ─────────────────────────────────────────────────────────────
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -375,6 +386,7 @@ function AppContent() {
   // Derive active page from URL
   const activePage: AppPage = useMemo(() => {
     if (location.pathname.startsWith("/haseefs")) return "haseefs";
+    if (location.pathname.startsWith("/scopes")) return "scopes";
     if (location.pathname.startsWith("/bases")) return "bases";
     if (location.pathname.startsWith("/invitations")) return "invitations";
     if (location.pathname.startsWith("/api-keys") || location.pathname.startsWith("/settings/api-keys")) return "api-keys";
@@ -397,6 +409,12 @@ function AppContent() {
     }
     if (page === "haseefs") {
       navigate("/haseefs");
+      setSidebarOpen(false);
+      setMobileSidebarOpen(false);
+      return;
+    }
+    if (page === "scopes") {
+      navigate("/scopes");
       setSidebarOpen(false);
       setMobileSidebarOpen(false);
       return;
@@ -470,6 +488,15 @@ function AppContent() {
             <Route path="/haseefs/new" element={<HaseefCreatePage onCreated={fetchHaseefs} />} />
             <Route path="/haseefs/:haseefId" element={<HaseefDetailPage onDeleted={fetchHaseefs} allHaseefs={haseefs} />} />
             <Route path="/haseefs/:haseefId/edit" element={<HaseefEditPage onSaved={fetchHaseefs} />} />
+
+            {/* Scopes */}
+            <Route path="/scopes" element={
+              <ScopesPage
+                onNavigateToInstance={(id) => navigate(`/scopes/instances/${id}`)}
+                onNavigateToTemplate={(id) => navigate(`/scopes/templates/${id}`)}
+              />
+            } />
+            <Route path="/scopes/instances/:instanceId" element={<ScopeInstanceRoute />} />
 
             {/* Bases */}
             <Route path="/bases" element={<BasesPage />} />

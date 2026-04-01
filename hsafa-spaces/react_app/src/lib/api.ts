@@ -647,4 +647,138 @@ export const basesApi = {
   },
 };
 
+// ── Scope types ──────────────────────────────────────────────────────────────
+
+export interface ScopeTemplate {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  icon: string | null;
+  category: string;
+  configSchema: Record<string, unknown>;
+  requiredProfileFields: string[];
+  tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+  instructions: string | null;
+  published: boolean;
+  createdAt: string;
+  _count?: { instances: number };
+}
+
+export interface ScopeInstanceConfig {
+  id: string;
+  key: string;
+  isSecret: boolean;
+  value?: string;
+  hasValue: boolean;
+}
+
+export interface ScopeInstance {
+  id: string;
+  templateId: string;
+  name: string;
+  scopeName: string;
+  description: string | null;
+  ownerId: string | null;
+  baseId: string | null;
+  active: boolean;
+  createdAt: string;
+  template: {
+    id: string;
+    slug: string;
+    name: string;
+    icon: string | null;
+    category: string;
+    requiredProfileFields?: string[];
+    configSchema?: Record<string, unknown>;
+    tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+    instructions?: string | null;
+  };
+  configs: ScopeInstanceConfig[];
+  connected?: boolean;
+}
+
+export interface CoreScopeStatus {
+  name: string;
+  connected: boolean;
+  lastSeenAt: string | null;
+  toolCount: number;
+}
+
+// ── Scopes API ──────────────────────────────────────────────────────────────
+
+export const scopesApi = {
+  // Templates
+  listTemplates() {
+    return request<{ templates: ScopeTemplate[] }>("/scopes/templates");
+  },
+
+  getTemplate(id: string) {
+    return request<{ template: ScopeTemplate }>(`/scopes/templates/${id}`);
+  },
+
+  // Instances
+  listInstances() {
+    return request<{ instances: ScopeInstance[] }>("/scopes/instances");
+  },
+
+  getInstance(id: string) {
+    return request<{ instance: ScopeInstance }>(`/scopes/instances/${id}`);
+  },
+
+  createInstance(data: {
+    templateId: string;
+    name: string;
+    scopeName?: string;
+    description?: string;
+    baseId?: string;
+    configs?: Array<{ key: string; value: string; isSecret?: boolean }>;
+  }) {
+    return request<{ instance: ScopeInstance }>("/scopes/instances", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateInstance(id: string, data: {
+    name?: string;
+    description?: string;
+    active?: boolean;
+    configs?: Array<{ key: string; value: string; isSecret?: boolean }>;
+  }) {
+    return request<{ instance: ScopeInstance }>(`/scopes/instances/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteInstance(id: string) {
+    return request<{ success: boolean }>(`/scopes/instances/${id}`, { method: "DELETE" });
+  },
+
+  // Haseef attachment
+  listHaseefScopes(haseefId: string) {
+    return request<{ attachedScopes: string[]; instances: ScopeInstance[] }>(`/scopes/haseef/${haseefId}`);
+  },
+
+  attachScope(haseefId: string, instanceId: string) {
+    return request<{ success: boolean; scopeName: string }>(`/scopes/haseef/${haseefId}/attach`, {
+      method: "POST",
+      body: JSON.stringify({ instanceId }),
+    });
+  },
+
+  detachScope(haseefId: string, scopeName: string) {
+    return request<{ success: boolean }>(`/scopes/haseef/${haseefId}/detach`, {
+      method: "POST",
+      body: JSON.stringify({ scopeName }),
+    });
+  },
+
+  // Connection status
+  getStatus() {
+    return request<{ scopes: CoreScopeStatus[] }>("/scopes/status");
+  },
+};
+
 export { ApiError };

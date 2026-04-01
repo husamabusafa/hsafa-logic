@@ -258,6 +258,10 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       }
     }
 
+    // Auto-set activeSpace so tool handlers know which space triggered this run
+    // without relying on the LLM calling enter_space with the correct spaceId.
+    conn.activeSpace = { spaceId, spaceName };
+
     await pushSenseEvent(conn.haseefId, {
       eventId: messageId,
       scope: SCOPE,

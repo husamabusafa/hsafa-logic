@@ -122,6 +122,9 @@ export async function executeAction(
       case "enter_space": {
         const spaceId = args.spaceId as string;
         if (!spaceId) return { error: "spaceId is required" };
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(spaceId)) {
+          return { error: `Invalid spaceId format: "${spaceId.slice(0, 60)}". Use a valid UUID from the event data.` };
+        }
         if (!conn) return { error: "Haseef not connected" };
         if (!agentEntityId) return { error: "agentEntityId not resolved" };
 
