@@ -35,7 +35,7 @@ import { handleInboxMessage } from "./sense-events.js";
 import { startScheduler } from "./scheduler.js";
 import { syncSchedulesToRedis } from "./schedule-service.js";
 import { startPresenceCleanup, stopPresenceCleanup } from "../smartspace-events.js";
-import { loadScopesFromDB, connectAllScopes } from "./scope-registry.js";
+import { ensurePrebuiltScopes, loadScopesFromDB, connectAllScopes } from "./scope-registry.js";
 
 // Re-export public API so existing imports from "./service/index.js" keep working
 export { getConnectionsForSpace, getConnectionForHaseef } from "./types.js";
@@ -62,6 +62,9 @@ export async function bootstrapExtension(): Promise<void> {
 
   // Register inbox handler
   setInboxHandler(handleInboxMessage);
+
+  // ── Ensure prebuilt scope templates + instances exist in DB (from code) ────
+  await ensurePrebuiltScopes();
 
   // ── Load scope instances from DB, create SDK instances, register tools ─────
   await loadScopesFromDB();

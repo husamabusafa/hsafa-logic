@@ -104,6 +104,11 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const [previewTime, setPreviewTime] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
+  const prevMsgCountRef = useRef(0);
+  const [showScrollDown, setShowScrollDown] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
@@ -162,9 +167,55 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
     }
   }, [messages.length, currentEntityId, onMarkSeen]);
 
+  // ── Scroll helpers ──
+  const scrollToBottom = useCallback((instant?: boolean) => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: instant ? "instant" : "smooth" });
+  }, []);
+
+  // Track scroll position — "at bottom" = within 120px of the edge
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    isAtBottomRef.current = atBottom;
+    if (atBottom) {
+      setShowScrollDown(false);
+      setUnreadCount(0);
+    }
+  }, []);
+
+  // Initial load → instant scroll to bottom
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+    if (!isLoading && messages.length > 0) {
+      scrollToBottom(true);
+    }
+  }, [isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // New messages → smooth scroll if at bottom, else show badge
+  useEffect(() => {
+    const prev = prevMsgCountRef.current;
+    const curr = messages.length;
+    prevMsgCountRef.current = curr;
+    if (curr <= prev) return; // no new messages (or fewer, e.g. optimistic removed)
+    const newCount = curr - prev;
+
+    if (isAtBottomRef.current) {
+      // Use rAF so DOM has time to render the new message
+      requestAnimationFrame(() => scrollToBottom(false));
+    } else {
+      setUnreadCount((c) => c + newCount);
+      setShowScrollDown(true);
+    }
+  }, [messages.length, scrollToBottom]);
+
+  // Typing indicator → keep visible if already at bottom
+  useEffect(() => {
+    if (isAtBottomRef.current && typingUsers.length > 0) {
+      requestAnimationFrame(() => scrollToBottom(false));
+    }
+  }, [typingUsers.length, scrollToBottom]);
 
   // Preserve activity info from typingUsers while mapping to member info
   const typingMembers = typingUsers
@@ -201,6 +252,9 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
     const replyId = replyingTo ?? undefined;
     setInputValue("");
     setReplyingTo(null);
+    onTyping?.(false);
+    // Always scroll to bottom when user sends — instant, like real chat apps
+    scrollToBottom(true);
 
     // If there are attachments, upload all and send as media message (with optional text)
     if (hasAttachments && onSendMediaMessage) {
@@ -254,7 +308,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
         setSending(false);
       }
     }
-  }, [inputValue, replyingTo, sending, uploading, pendingFiles, onSendMessage, onSendMediaMessage]);
+  }, [inputValue, replyingTo, sending, uploading, pendingFiles, onSendMessage, onSendMediaMessage, onTyping, scrollToBottom]);
 
   const handleReply = useCallback((messageId: string) => {
     setReplyingTo(messageId);
@@ -653,7 +707,8 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
 
       {/* Messages */}
       <InteractiveProvider spaceId={space.id} currentEntityId={currentEntityId}>
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
+      <div className="relative flex-1 min-h-0">
+      <div ref={scrollContainerRef} onScroll={handleScroll} className="absolute inset-0 overflow-y-auto px-4 py-4 space-y-1">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <LoaderIcon className="size-6 animate-spin text-muted-foreground mb-2" />
@@ -750,6 +805,22 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
 
 
         <div ref={bottomRef} />
+      </div>
+
+      {/* Scroll-to-bottom button — appears when user scrolls up */}
+      {showScrollDown && (
+        <button
+          onClick={() => { scrollToBottom(false); setShowScrollDown(false); setUnreadCount(0); }}
+          className="absolute bottom-4 right-6 z-30 flex items-center gap-1.5 rounded-full bg-background/95 border border-border shadow-lg px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-background transition-all backdrop-blur-sm"
+        >
+          <ArrowUpIcon className="size-3.5 rotate-180" />
+          {unreadCount > 0 && (
+            <span className="flex items-center justify-center min-w-[18px] h-[18px] rounded-full bg-primary text-primary-foreground text-[10px] font-bold px-1">
+              {unreadCount}
+            </span>
+          )}
+        </button>
+      )}
       </div>
       </InteractiveProvider>
 

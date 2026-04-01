@@ -254,6 +254,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
         runId,
         haseef: { id: haseefId, name: haseef.name },
         summary: runSummary,
+        durationMs,
       });
     }
 

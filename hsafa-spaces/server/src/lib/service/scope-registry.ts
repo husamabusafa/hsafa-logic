@@ -13,6 +13,69 @@ import { HsafaSDK } from "@hsafa/sdk";
 import { prisma } from "../db.js";
 import { state } from "./types.js";
 import { executeAction } from "./tool-handlers.js";
+import { SCOPE_TEMPLATES } from "../scope-templates.js";
+
+/**
+ * Ensure prebuilt scope templates and their platform-owned instances exist in DB.
+ * Upserts from the code-defined SCOPE_TEMPLATES — no seed script needed.
+ * Must be called before loadScopesFromDB().
+ */
+export async function ensurePrebuiltScopes(): Promise<void> {
+  for (const tmpl of SCOPE_TEMPLATES) {
+    // Upsert template row (code is source of truth)
+    await prisma.scopeTemplate.upsert({
+      where: { slug: tmpl.slug },
+      update: {
+        name: tmpl.name,
+        description: tmpl.description,
+        icon: tmpl.icon,
+        category: tmpl.category,
+        configSchema: tmpl.configSchema as any,
+        requiredProfileFields: tmpl.requiredProfileFields,
+        tools: tmpl.tools as any,
+        instructions: tmpl.instructions,
+        published: tmpl.published,
+      },
+      create: {
+        id: tmpl.id,
+        slug: tmpl.slug,
+        name: tmpl.name,
+        description: tmpl.description,
+        icon: tmpl.icon,
+        category: tmpl.category,
+        configSchema: tmpl.configSchema as any,
+        requiredProfileFields: tmpl.requiredProfileFields,
+        tools: tmpl.tools as any,
+        instructions: tmpl.instructions,
+        published: tmpl.published,
+      },
+    });
+
+    // Ensure platform-owned instance exists for this template
+    const existing = await prisma.scopeInstance.findUnique({
+      where: { scopeName: tmpl.slug },
+    });
+    if (!existing) {
+      // Need the DB template ID (may differ from code ID if it was created before)
+      const dbTemplate = await prisma.scopeTemplate.findUnique({ where: { slug: tmpl.slug } });
+      if (dbTemplate) {
+        await prisma.scopeInstance.create({
+          data: {
+            templateId: dbTemplate.id,
+            name: tmpl.name,
+            scopeName: tmpl.slug,
+            description: tmpl.description,
+            ownerId: null, // platform-owned
+            active: true,
+          },
+        });
+        console.log(`[scope-registry] Created platform instance for "${tmpl.slug}"`);
+      }
+    }
+  }
+
+  console.log(`[scope-registry] Prebuilt scopes ensured (${SCOPE_TEMPLATES.length} templates)`);
+}
 
 export interface RegisteredScope {
   scopeName: string;

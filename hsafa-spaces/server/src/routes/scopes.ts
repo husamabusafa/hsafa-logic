@@ -12,6 +12,7 @@ import type { Request, Response } from "express";
 import { prisma } from "../lib/db.js";
 import { verifyToken } from "../lib/auth.js";
 import { encrypt, decrypt } from "../lib/encryption.js";
+import { SCOPE_TEMPLATES, getTemplateById } from "../lib/scope-templates.js";
 
 const router = Router();
 
@@ -46,79 +47,26 @@ function isJwtError(r: any): r is { status: number; error: string } {
 // TEMPLATES
 // =============================================================================
 
-// GET /api/scopes/templates — List all published templates (+ user's own drafts)
+// GET /api/scopes/templates — List all prebuilt templates (from code, not DB)
 router.get("/templates", async (req: Request, res: Response) => {
   const auth = await requireJwtUser(req);
   if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
 
-  try {
-    const templates = await prisma.scopeTemplate.findMany({
-      where: {
-        OR: [
-          { published: true },
-          { authorId: auth.userId },
-        ],
-      },
-      select: {
-        id: true,
-        slug: true,
-        name: true,
-        description: true,
-        icon: true,
-        category: true,
-        configSchema: true,
-        requiredProfileFields: true,
-        tools: true,
-        instructions: true,
-        published: true,
-        createdAt: true,
-        _count: { select: { instances: true } },
-      },
-      orderBy: [{ category: "asc" }, { name: "asc" }],
-    });
-
-    res.json({ templates });
-  } catch (error) {
-    console.error("List templates error:", error);
-    res.status(500).json({ error: "Failed to list templates" });
-  }
+  res.json({ templates: SCOPE_TEMPLATES });
 });
 
-// GET /api/scopes/templates/:id — Get template details
+// GET /api/scopes/templates/:id — Get template details (from code)
 router.get("/templates/:id", async (req: Request, res: Response) => {
   const auth = await requireJwtUser(req);
   if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
 
-  try {
-    const template = await prisma.scopeTemplate.findUnique({
-      where: { id: req.params.id as string },
-      select: {
-        id: true,
-        slug: true,
-        name: true,
-        description: true,
-        icon: true,
-        category: true,
-        configSchema: true,
-        requiredProfileFields: true,
-        tools: true,
-        instructions: true,
-        published: true,
-        createdAt: true,
-        _count: { select: { instances: true } },
-      },
-    });
-
-    if (!template) {
-      res.status(404).json({ error: "Template not found" });
-      return;
-    }
-
-    res.json({ template });
-  } catch (error) {
-    console.error("Get template error:", error);
-    res.status(500).json({ error: "Failed to get template" });
+  const template = getTemplateById(req.params.id as string);
+  if (!template) {
+    res.status(404).json({ error: "Template not found" });
+    return;
   }
+
+  res.json({ template });
 });
 
 // =============================================================================

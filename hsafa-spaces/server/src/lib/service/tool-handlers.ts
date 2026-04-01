@@ -177,10 +177,29 @@ export async function executeAction(
         if ('error' in active) return active;
         const spaceId = active.spaceId;
 
-        const text = args.text as string;
-        if (!text) return { error: "text is required" };
+        const rawText = args.text as string;
+        if (!rawText) return { error: "text is required" };
         if (!agentEntityId)
           return { error: "agentEntityId not resolved — is this haseef connected?" };
+
+        // Strip common LLM formatting artifacts:
+        // - Leading ">" or ">>>" (markdown quotes copied from formattedContext)
+        // - Leading "HaseefName:" prefix (LLM mimicking conversation format)
+        // - Bare leading ":" (LLM sending just a colon)
+        // - Wrapping quotes (LLM wrapping its response in "…")
+        let text = rawText
+          .replace(/^>{1,3}\s*/, "")  // strip leading > / >> / >>>
+          .replace(/^:\s*/, "")        // strip bare leading colon
+          .trim();
+        if (conn?.haseefName) {
+          const namePrefix = new RegExp(`^${conn.haseefName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:\\s*`, "i");
+          text = text.replace(namePrefix, "").trim();
+        }
+        // Strip wrapping quotes: "hello" → hello
+        if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
+          text = text.slice(1, -1).trim();
+        }
+        if (!text) text = rawText.trim(); // fallback to original if stripping emptied it
 
         const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
 

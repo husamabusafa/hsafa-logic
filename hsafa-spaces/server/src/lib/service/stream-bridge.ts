@@ -103,10 +103,16 @@ function onRunStarted(
   // Track current run ID for fallback space resolution
   conn.currentRunId = runId ?? null;
 
-  // Auto-set activeSpace if we have trigger context
-  const triggerSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
-  if (triggerSpaceId) {
-    conn.activeSpace = { spaceId: triggerSpaceId, spaceName: triggerSpaceId };
+  // Determine trigger space: first check runSpaces map, then fall back to activeSpace
+  // (sense-events.ts sets conn.activeSpace before pushing the event that triggers this run)
+  let triggerSpaceId = runId ? conn.runSpaces.get(runId) : undefined;
+  if (!triggerSpaceId && conn.activeSpace) {
+    triggerSpaceId = conn.activeSpace.spaceId;
+  }
+
+  // Populate runSpaces so onRunFinished can route events to the correct space
+  if (runId && triggerSpaceId) {
+    conn.runSpaces.set(runId, triggerSpaceId);
   }
 
   // Broadcast agent.active + online to trigger space
@@ -122,6 +128,12 @@ function onRunStarted(
       runId,
       data: { agentEntityId: conn.agentEntityId, agentName: conn.haseefName, runId },
     });
+
+    // Start typing indicator immediately for spaces-triggered runs
+    // so the user sees feedback as soon as the haseef begins thinking
+    if (isSpacesTrigger) {
+      void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
+    }
   }
 
   // Flush pending seen messages — run.started means events were consumed from inbox
