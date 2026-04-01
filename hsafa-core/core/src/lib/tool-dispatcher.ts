@@ -103,21 +103,44 @@ export interface DispatchOptions {
 
 /**
  * Dispatch an action to a scope's connected service and wait for the result.
+ * Sends to exactly ONE connected client (unicast) — not all.
  * Times out if no result arrives within `timeout` ms.
  */
 export async function dispatchToScope(opts: DispatchOptions): Promise<unknown> {
   const { scope, actionId, toolName, args, haseef, timeout = DEFAULT_TIMEOUT_MS } = opts;
 
-  const sent = emitToScope(scope, {
-    type: 'action',
-    actionId,
-    toolName,
-    args,
-    haseef,
-  });
+  const conns = scopeConnections.get(scope);
+  if (!conns || conns.size === 0) {
+    return { error: `Scope "${scope}" has no connected service — tool "${toolName}" cannot execute` };
+  }
+
+  // Send to ONE client only (first that accepts the write).
+  // Tool call actions must be unicast — broadcasting causes duplicate execution.
+  const payload = `data: ${JSON.stringify({ type: 'action', actionId, toolName, args, haseef })}\n\n`;
+  let sent = false;
+  const dead: Response[] = [];
+
+  for (const res of conns) {
+    try {
+      res.write(payload);
+      sent = true;
+      break; // Stop after first successful write
+    } catch {
+      dead.push(res);
+    }
+  }
+
+  // Clean up dead connections discovered during dispatch
+  for (const res of dead) {
+    conns.delete(res);
+  }
+  if (conns.size === 0) {
+    scopeConnections.delete(scope);
+    void updateScopeConnected(scope, false);
+  }
 
   if (!sent) {
-    return { error: `Scope "${scope}" has no connected service — tool "${toolName}" cannot execute` };
+    return { error: `Scope "${scope}" has no reachable service — tool "${toolName}" cannot execute` };
   }
 
   return new Promise<unknown>((resolve) => {

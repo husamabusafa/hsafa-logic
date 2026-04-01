@@ -6,7 +6,7 @@ import { createXai } from '@ai-sdk/xai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 
 // =============================================================================
-// Model Registry (Ship #6)
+// Model Registry (v7)
 //
 // Centralizes all LLM provider configuration in one place.
 // Uses AI SDK's createProviderRegistry so model resolution is a one-liner:

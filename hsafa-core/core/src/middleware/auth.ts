@@ -1,9 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 
 // =============================================================================
-// Auth Middleware (v5) — Single API Key
+// Auth Middleware (v7) — Single API Key
 //
-// All routes protected by x-api-key header. Scoped keys later.
+// All routes protected by x-api-key header (+ api_key query param for SSE).
 // =============================================================================
 
 declare global {

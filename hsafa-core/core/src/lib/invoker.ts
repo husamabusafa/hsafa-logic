@@ -102,8 +102,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
   for (const scope of haseef.scopes) {
     emitLifecycleToScope(scope, 'run.started', {
       runId,
-      haseefId,
-      haseefName: haseef.name,
+      haseef: { id: haseefId, name: haseef.name },
       triggerScope,
       triggerType,
     });
@@ -226,8 +225,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
 
     // ── 10. Finalize run ──────────────────────────────────────────────────────
     const durationMs = Date.now() - startedAt;
-    const isDone = toolsUsed.includes('done');
-    const status = signal.aborted ? 'interrupted' : isDone ? 'completed' : 'completed';
+    const status = signal.aborted ? 'interrupted' : 'completed';
 
     await prisma.run.update({
       where: { id: runId },
@@ -254,8 +252,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
     for (const scope of haseef.scopes) {
       emitLifecycleToScope(scope, 'run.completed', {
         runId,
-        haseefId,
-        haseefName: haseef.name,
+        haseef: { id: haseefId, name: haseef.name },
         summary: runSummary,
       });
     }

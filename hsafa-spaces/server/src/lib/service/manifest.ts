@@ -1,15 +1,12 @@
 // =============================================================================
-// Spaces Service — Tool Definitions (V5)
+// Spaces Service — Tool Definitions (v7)
 //
 // Defines the tools registered under the "spaces" scope.
-// Tools are synced to Core via PUT /api/haseefs/:id/scopes/spaces/tools.
-//
-// Removed legacy stubs:
-//   - confirmAction (superseded by send_confirmation)
-//   - displayChart  (deferred to Ship 12)
+// Tools are registered globally via scope-registry → SDK.registerTools()
+// → PUT /api/scopes/:scope/tools.
 // =============================================================================
 
-/** V5 scope name for this service */
+/** Scope name for this service */
 export const SCOPE = "spaces";
 
 /** Scheduler scope for schedule-related tools */

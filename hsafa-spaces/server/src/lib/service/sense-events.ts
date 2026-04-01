@@ -1,7 +1,7 @@
 // =============================================================================
-// Spaces Service — Sense Events
+// Spaces Service — Sense Events (v7)
 //
-// Pushes V5 sense events to Core for connected haseefs:
+// Pushes sense events to Core for connected haseefs:
 //   - handleInboxMessage: new space messages → sense events
 //   - markHaseefSeen: advance seen watermark after events consumed
 //   - pushInteractiveMessageEvent: interactive message lifecycle
@@ -20,10 +20,10 @@ import type { InboxMessageParams } from "./inbox.js";
 
 
 // =============================================================================
-// Inbox Handler — V5 Sense Events
+// Inbox Handler — Sense Events (v7)
 //
 // Called by space-service.ts after persisting a message.
-// Pushes V5 sense events to Core for connected haseefs.
+// Pushes sense events to Core for connected haseefs via POST /api/events.
 // =============================================================================
 
 export async function handleInboxMessage(params: InboxMessageParams): Promise<void> {

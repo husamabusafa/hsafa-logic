@@ -14,7 +14,7 @@ export interface ServiceConfig {
 
 export function loadServiceConfig(): ServiceConfig | null {
   const coreUrl = process.env.HSAFA_GATEWAY_URL || process.env.CORE_URL;
-  const apiKey = process.env.CORE_API_KEY || process.env.EXTENSION_KEY;
+  const apiKey = process.env.CORE_API_KEY;
 
   if (!coreUrl || !apiKey) {
     console.warn(
