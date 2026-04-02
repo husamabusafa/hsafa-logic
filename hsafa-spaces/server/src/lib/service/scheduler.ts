@@ -10,6 +10,7 @@ import { pushSenseEvent } from "./core-api.js";
 import { state } from "./types.js";
 import { SCOPE } from "./manifest.js";
 import { syncTools } from "./core-api.js";
+import { prisma } from "../db.js";
 
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
 
@@ -55,7 +56,27 @@ async function pollDueSchedules(): Promise<void> {
       }
 
       try {
-        console.log(`[scheduler] Firing schedule "${schedule.description}" for ${conn.haseefName}`);
+        // Resolve target space — use enteredSpace, or fall back to first space
+        let targetSpaceId = conn.enteredSpace?.spaceId ?? conn.spaceIds[0];
+        let targetSpaceName = conn.enteredSpace?.spaceName ?? "Unknown";
+
+        if (targetSpaceId && !conn.enteredSpace) {
+          // Look up space name from DB
+          try {
+            const space = await prisma.smartSpace.findUnique({
+              where: { id: targetSpaceId },
+              select: { name: true },
+            });
+            if (space) targetSpaceName = space.name;
+          } catch { /* non-fatal */ }
+        }
+
+        // Set activeSpace so tool handlers (send_message, etc.) know where to act
+        if (targetSpaceId) {
+          conn.activeSpace = { spaceId: targetSpaceId, spaceName: targetSpaceName };
+        }
+
+        console.log(`[scheduler] Firing schedule "${schedule.description}" for ${conn.haseefName} (space: ${targetSpaceName})`);
 
         // Push sense event to wake the haseef
         await pushSenseEvent(schedule.haseefId, {
@@ -69,7 +90,8 @@ async function pollDueSchedules(): Promise<void> {
             cronExpression: schedule.cronExpression,
             timezone: schedule.timezone,
             firedAt: new Date().toISOString(),
-            formattedContext: buildScheduleContext(conn.haseefName, schedule),
+            ...(targetSpaceId ? { spaceId: targetSpaceId, spaceName: targetSpaceName } : {}),
+            formattedContext: buildScheduleContext(conn.haseefName, schedule, targetSpaceId, targetSpaceName),
           },
         });
 
@@ -103,14 +125,19 @@ async function pollDueSchedules(): Promise<void> {
 function buildScheduleContext(
   haseefName: string,
   schedule: { id: string; description: string; type: string; cronExpression: string | null; timezone: string },
+  spaceId?: string,
+  spaceName?: string,
 ): string {
   const lines: string[] = [];
   lines.push(`[SCHEDULED PLAN TRIGGERED]`);
   lines.push(`[YOU ARE: ${haseefName}]`);
+  if (spaceId && spaceName) {
+    lines.push(`[ACTIVE SPACE: "${spaceName}" (spaceId:${spaceId})]`);
+  }
   lines.push(`Schedule: "${schedule.description}" (id: ${schedule.id})`);
   lines.push(`Type: ${schedule.type === "recurring" ? `recurring (${schedule.cronExpression})` : "one-time"}`);
   lines.push(`Timezone: ${schedule.timezone}`);
   lines.push(`Fired at: ${new Date().toISOString()}`);
-  lines.push(`>>> This is your scheduled plan firing. Execute whatever this plan is for.`);
+  lines.push(`>>> This is your scheduled plan firing. Execute whatever this plan is for. You are already in the active space — use spaces_send_message to communicate.`);
   return lines.join("\n");
 }
