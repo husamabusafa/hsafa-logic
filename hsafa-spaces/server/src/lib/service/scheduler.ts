@@ -67,7 +67,7 @@ async function pollDueSchedules(): Promise<void> {
               where: { id: targetSpaceId },
               select: { name: true },
             });
-            if (space) targetSpaceName = space.name;
+            if (space?.name) targetSpaceName = space.name;
           } catch { /* non-fatal */ }
         }
 
