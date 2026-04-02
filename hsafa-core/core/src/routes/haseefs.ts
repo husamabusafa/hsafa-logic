@@ -24,13 +24,17 @@ haseefsRouter.post('/', async (req, res) => {
       return;
     }
 
+    // Record which API key created this haseef (for ownership tracking)
+    const apiKeyId = req.headers['x-api-key'] as string | undefined;
+
     const haseef = await prisma.haseef.create({
       data: {
         name,
         description,
         profileJson: profileJson ?? undefined,
         configJson,
-        scopes: scopes ?? [],
+        scopes: scopes ?? ['spaces'], // "spaces" is always included by default
+        apiKeyId: apiKeyId ?? null,
       },
     });
 

@@ -38,10 +38,12 @@ globalScopesRouter.put('/:scope/tools', async (req, res) => {
       }
     }
 
+    const apiKeyId = req.headers['x-api-key'] as string | undefined;
+
     const scopeRecord = await prisma.scope.upsert({
       where: { name: scope },
-      create: { name: scope, connected: isScopeConnected(scope) },
-      update: {},
+      create: { name: scope, connected: isScopeConnected(scope), apiKeyId: apiKeyId ?? null },
+      update: { ...(apiKeyId ? { apiKeyId } : {}) },
     });
 
     await prisma.scopeTool.deleteMany({ where: { scopeId: scopeRecord.id } });

@@ -115,6 +115,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   }
 
   const tools = (instance.template.tools ?? []) as Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+  const isBuiltIn = !!(instance as any).builtIn;
 
   return (
     <div className="flex flex-col h-full">
@@ -151,7 +152,11 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
                 type="text"
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                disabled={isBuiltIn}
+                className={cn(
+                  "mt-1 w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30",
+                  isBuiltIn && "opacity-60 cursor-not-allowed",
+                )}
               />
             </div>
             <div>
@@ -159,19 +164,25 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
               <textarea
                 value={editDescription}
                 onChange={(e) => setEditDescription(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                disabled={isBuiltIn}
+                className={cn(
+                  "mt-1 w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none",
+                  isBuiltIn && "opacity-60 cursor-not-allowed",
+                )}
                 rows={2}
               />
             </div>
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-muted-foreground">Active</label>
-              <button
-                onClick={() => setEditActive(!editActive)}
-                className={cn("transition-colors", editActive ? "text-green-500" : "text-muted-foreground")}
-              >
-                {editActive ? <ToggleRightIcon className="size-6" /> : <ToggleLeftIcon className="size-6" />}
-              </button>
-            </div>
+            {!isBuiltIn && (
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-muted-foreground">Active</label>
+                <button
+                  onClick={() => setEditActive(!editActive)}
+                  className={cn("transition-colors", editActive ? "text-green-500" : "text-muted-foreground")}
+                >
+                  {editActive ? <ToggleRightIcon className="size-6" /> : <ToggleLeftIcon className="size-6" />}
+                </button>
+              </div>
+            )}
           </div>
         </section>
 
@@ -231,26 +242,28 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
         {success && <p className="text-xs text-green-500">{success}</p>}
 
         {/* Actions */}
-        <div className="flex items-center gap-3 pt-4 border-t border-border">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-          >
-            {saving ? <Loader2Icon className="size-4 animate-spin" /> : <SaveIcon className="size-4" />}
-            Save Changes
-          </button>
-          <div className="flex-1" />
-          <button
-            onClick={handleDelete}
-            disabled={deleting || !instance.ownerId}
-            className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg border border-red-300 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors disabled:opacity-50"
-            title={!instance.ownerId ? "Platform-owned instances cannot be deleted" : undefined}
-          >
-            {deleting ? <Loader2Icon className="size-4 animate-spin" /> : <TrashIcon className="size-4" />}
-            Delete
-          </button>
-        </div>
+        {!isBuiltIn && (
+          <div className="flex items-center gap-3 pt-4 border-t border-border">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              {saving ? <Loader2Icon className="size-4 animate-spin" /> : <SaveIcon className="size-4" />}
+              Save Changes
+            </button>
+            <div className="flex-1" />
+            <button
+              onClick={handleDelete}
+              disabled={deleting || !instance.ownerId}
+              className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg border border-red-300 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors disabled:opacity-50"
+              title={!instance.ownerId ? "Platform-owned instances cannot be deleted" : undefined}
+            >
+              {deleting ? <Loader2Icon className="size-4 animate-spin" /> : <TrashIcon className="size-4" />}
+              Delete
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

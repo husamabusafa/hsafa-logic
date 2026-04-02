@@ -47,11 +47,15 @@ export async function createHaseef(data: {
   description?: string;
   configJson: Record<string, unknown>;
   profileJson?: Record<string, unknown>;
+  scopes?: string[];
 }): Promise<CoreHaseef> {
   const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs`, {
     method: "POST",
     headers: headers(),
-    body: JSON.stringify(data),
+    body: JSON.stringify({
+      ...data,
+      scopes: data.scopes ?? ["spaces"], // "spaces" is always included by default
+    }),
   });
   if (!res.ok) {
     const text = await res.text();

@@ -36,7 +36,8 @@ model Haseef {
   description String?
   profileJson Json?    @map("profile_json") @db.JsonB // { phone, email, robotId, ... } — routing table
   configJson  Json     @map("config_json") @db.JsonB  // { model, instructions, ... }
-  scopes      String[] @default([])                    // ["whatsapp", "spaces", "body"]
+  scopes      String[] @default(["spaces"])              // ["spaces", "scheduler", "whatsapp"]
+  apiKeyId    String?  @map("api_key_id")                // which API key created this haseef
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -58,6 +59,7 @@ model Scope {
   id         String    @id @default(uuid()) @db.Uuid
   name       String    @unique               // "whatsapp", "spaces", "body"
   connected  Boolean   @default(false)       // is the service currently connected?
+  apiKeyId   String?   @map("api_key_id")    // which API key registered this scope (null = platform)
   lastSeenAt DateTime? @map("last_seen_at") @db.Timestamptz(6)
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)

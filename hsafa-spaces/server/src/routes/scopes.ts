@@ -74,6 +74,7 @@ router.get("/templates/:id", async (req: Request, res: Response) => {
 // =============================================================================
 
 // GET /api/scopes/instances — List user's scope instances (owned + shared via base)
+// Also includes the built-in "spaces" scope as a virtual entry.
 router.get("/instances", async (req: Request, res: Response) => {
   const auth = await requireJwtUser(req);
   if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
@@ -118,8 +119,9 @@ router.get("/instances", async (req: Request, res: Response) => {
     });
 
     // Mask secret config values
-    const result = instances.map((inst) => ({
+    const pluginInstances = instances.map((inst) => ({
       ...inst,
+      builtIn: false,
       configs: inst.configs.map((c) => ({
         id: c.id,
         key: c.key,
@@ -128,7 +130,44 @@ router.get("/instances", async (req: Request, res: Response) => {
       })),
     }));
 
-    res.json({ instances: result });
+    // Fetch connection status from Core for the built-in spaces scope
+    const coreUrl = process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
+    const apiKey = process.env.CORE_API_KEY || "";
+    let spacesConnected = false;
+    try {
+      const scopesRes = await fetch(`${coreUrl}/api/scopes`, { headers: { "x-api-key": apiKey } });
+      if (scopesRes.ok) {
+        const coreScopes = (await scopesRes.json()).scopes ?? [];
+        const spacesScope = coreScopes.find((s: any) => s.name === "spaces");
+        spacesConnected = spacesScope?.connected ?? false;
+      }
+    } catch { /* ignore — Core might be down */ }
+
+    // Inject built-in "spaces" scope as virtual entry at the top
+    const spacesEntry = {
+      id: "built-in-spaces",
+      templateId: "built-in",
+      name: "Spaces",
+      scopeName: "spaces",
+      description: "Chat in smart spaces — built-in, always available.",
+      ownerId: null,
+      baseId: null,
+      active: true,
+      builtIn: true,
+      createdAt: new Date(0).toISOString(),
+      template: {
+        id: "built-in",
+        slug: "spaces",
+        name: "Spaces",
+        icon: "MessageSquare",
+        category: "built-in",
+        requiredProfileFields: [],
+      },
+      configs: [],
+      connected: spacesConnected,
+    };
+
+    res.json({ instances: [spacesEntry, ...pluginInstances] });
   } catch (error) {
     console.error("List instances error:", error);
     res.status(500).json({ error: "Failed to list instances" });
@@ -139,6 +178,53 @@ router.get("/instances", async (req: Request, res: Response) => {
 router.get("/instances/:id", async (req: Request, res: Response) => {
   const auth = await requireJwtUser(req);
   if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  // Handle built-in "spaces" scope (no DB row)
+  if (req.params.id === "built-in-spaces") {
+    const coreUrl = process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
+    const apiKey = process.env.CORE_API_KEY || "";
+    let spacesConnected = false;
+    let toolCount = 0;
+    try {
+      const scopesRes = await fetch(`${coreUrl}/api/scopes/spaces/tools`, { headers: { "x-api-key": apiKey } });
+      if (scopesRes.ok) {
+        const data = await scopesRes.json();
+        spacesConnected = data.connected ?? false;
+        toolCount = data.tools?.length ?? 0;
+      }
+    } catch { /* ignore */ }
+
+    res.json({
+      instance: {
+        id: "built-in-spaces",
+        templateId: "built-in",
+        name: "Spaces",
+        scopeName: "spaces",
+        description: "Chat in smart spaces — built-in, always available.",
+        ownerId: null,
+        baseId: null,
+        active: true,
+        builtIn: true,
+        createdAt: new Date(0).toISOString(),
+        template: {
+          id: "built-in",
+          slug: "spaces",
+          name: "Spaces",
+          description: "Chat in smart spaces — built-in, always available.",
+          icon: "MessageSquare",
+          category: "built-in",
+          configSchema: null,
+          requiredProfileFields: [],
+          tools: [],
+          instructions: null,
+        },
+        configs: [],
+        connected: spacesConnected,
+        toolCount,
+      },
+    });
+    return;
+  }
 
   try {
     const instance = await prisma.scopeInstance.findUnique({
@@ -268,6 +354,11 @@ router.patch("/instances/:id", async (req: Request, res: Response) => {
   const auth = await requireJwtUser(req);
   if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
 
+  if (req.params.id === "built-in-spaces") {
+    res.status(403).json({ error: "The built-in Spaces scope cannot be modified" });
+    return;
+  }
+
   try {
     const instanceId = req.params.id as string;
     const instance = await prisma.scopeInstance.findUnique({
@@ -338,6 +429,11 @@ router.delete("/instances/:id", async (req: Request, res: Response) => {
   const auth = await requireJwtUser(req);
   if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
 
+  if (req.params.id === "built-in-spaces") {
+    res.status(403).json({ error: "The built-in Spaces scope cannot be deleted" });
+    return;
+  }
+
   try {
     const deleteId = req.params.id as string;
     const instance = await prisma.scopeInstance.findUnique({
@@ -396,10 +492,11 @@ router.get("/haseef/:haseefId", async (req: Request, res: Response) => {
     const { haseef } = await coreRes.json();
     const attachedScopeNames: string[] = haseef.scopes ?? [];
 
-    // Resolve scope instances from our DB
-    const instances = attachedScopeNames.length > 0
+    // Resolve plugin scope instances from our DB (excludes built-in "spaces")
+    const pluginScopeNames = attachedScopeNames.filter((s) => s !== "spaces");
+    const instances = pluginScopeNames.length > 0
       ? await prisma.scopeInstance.findMany({
-          where: { scopeName: { in: attachedScopeNames } },
+          where: { scopeName: { in: pluginScopeNames } },
           include: {
             template: {
               select: { id: true, slug: true, name: true, icon: true, category: true, requiredProfileFields: true },
@@ -418,10 +515,29 @@ router.get("/haseef/:haseefId", async (req: Request, res: Response) => {
       connectionMap.set(s.name, s.connected ?? false);
     }
 
-    const result = instances.map((inst) => ({
-      ...inst,
-      connected: connectionMap.get(inst.scopeName) ?? false,
-    }));
+    // Build result: built-in "spaces" as virtual entry + plugin instances
+    const result: Array<Record<string, unknown>> = [];
+
+    if (attachedScopeNames.includes("spaces")) {
+      result.push({
+        id: null,
+        scopeName: "spaces",
+        name: "Spaces",
+        description: "Chat in smart spaces — built-in, always available.",
+        builtIn: true,
+        active: true,
+        template: { slug: "spaces", name: "Spaces", icon: "MessageSquare", category: "built-in" },
+        connected: connectionMap.get("spaces") ?? false,
+      });
+    }
+
+    for (const inst of instances) {
+      result.push({
+        ...inst,
+        builtIn: false,
+        connected: connectionMap.get(inst.scopeName) ?? false,
+      });
+    }
 
     res.json({
       attachedScopes: attachedScopeNames,

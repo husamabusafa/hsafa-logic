@@ -1,11 +1,14 @@
 // =============================================================================
-// Scope Templates — Hardcoded in code, always available
+// Scope Templates — Prebuilt plugin templates (installable scopes)
 //
-// These are the prebuilt scope templates. They are NEVER stored in the DB.
-// The templates API serves them directly from here.
+// NOTE: "spaces" is NOT a template — it's a built-in scope that always exists.
+// Only installable plugins (scheduler, whatsapp, gmail, custom, etc.) live here.
+//
+// These are the prebuilt scope templates. They are synced to DB on bootstrap
+// via ensurePrebuiltScopes(). Custom templates are created by developers.
 // =============================================================================
 
-import { TOOLS, SCOPE_INSTRUCTIONS, SCHEDULER_TOOLS } from "./service/manifest.js";
+import { SCHEDULER_TOOLS } from "./service/manifest.js";
 
 export interface ScopeTemplate {
   id: string;
@@ -22,27 +25,12 @@ export interface ScopeTemplate {
 }
 
 /**
- * Prebuilt scope templates — always available, defined in code.
+ * Prebuilt scope templates — installable plugins defined in code.
  * IDs are stable UUIDs so instance templateId references stay consistent.
+ *
+ * "spaces" is NOT here — it's a built-in scope managed by scope-registry.ts.
  */
 export const SCOPE_TEMPLATES: ScopeTemplate[] = [
-  {
-    id: "00000000-0000-0000-0000-000000000001",
-    slug: "spaces",
-    name: "Spaces",
-    description: "Chat in smart spaces — send messages, images, voice, forms, polls, and more.",
-    icon: "MessageSquare",
-    category: "prebuilt",
-    configSchema: {},
-    requiredProfileFields: [],
-    tools: TOOLS.map((t) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: t.inputSchema,
-    })),
-    instructions: SCOPE_INSTRUCTIONS,
-    published: true,
-  },
   {
     id: "00000000-0000-0000-0000-000000000002",
     slug: "scheduler",

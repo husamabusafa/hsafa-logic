@@ -1,12 +1,15 @@
 // =============================================================================
-// Scope Registry — Dynamic scope instance loading from DB
+// Scope Registry — Built-in spaces scope + dynamic plugin loading from DB
 //
-// At bootstrap, loads all active ScopeInstance rows from the DB, groups them
-// by scopeName, creates an HsafaSDK instance per unique scope, registers
-// tools from the template, and wires onToolCall to executeAction.
+// Architecture:
+//   "spaces" = BUILT-IN scope. Always created, always connected, not a template.
+//              Managed entirely in code — no ScopeInstance row needed.
+//
+//   Other scopes (scheduler, whatsapp, custom, etc.) = PLUGINS.
+//              Loaded from ScopeInstance rows in DB, grouped by scopeName,
+//              one HsafaSDK per unique scope. Templates define tools.
 //
 // Provides backward-compatible aliases: state.spacesSDK / state.schedulerSDK
-// are set to the SDK instances matching the "spaces" / "scheduler" scopeNames.
 // =============================================================================
 
 import { HsafaSDK } from "@hsafa/sdk";
@@ -14,11 +17,30 @@ import { prisma } from "../db.js";
 import { state } from "./types.js";
 import { executeAction } from "./tool-handlers.js";
 import { SCOPE_TEMPLATES } from "../scope-templates.js";
+import { SCOPE, TOOLS, SCOPE_INSTRUCTIONS } from "./manifest.js";
+
+export interface RegisteredScope {
+  scopeName: string;
+  templateSlug: string | null; // null for built-in (spaces)
+  sdk: HsafaSDK;
+  tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+  instructions: string | null;
+  instanceIds: string[]; // empty for built-in
+  builtIn: boolean;
+}
+
+/** Map of scopeName → RegisteredScope */
+export const scopeRegistry = new Map<string, RegisteredScope>();
+
+// =============================================================================
+// Ensure Prebuilt Templates — sync installable plugin templates to DB
+// =============================================================================
 
 /**
- * Ensure prebuilt scope templates and their platform-owned instances exist in DB.
+ * Ensure prebuilt plugin templates and their platform-owned instances exist in DB.
  * Upserts from the code-defined SCOPE_TEMPLATES — no seed script needed.
- * Must be called before loadScopesFromDB().
+ *
+ * NOTE: "spaces" is NOT a template. It's a built-in scope handled separately.
  */
 export async function ensurePrebuiltScopes(): Promise<void> {
   for (const tmpl of SCOPE_TEMPLATES) {
@@ -56,7 +78,6 @@ export async function ensurePrebuiltScopes(): Promise<void> {
       where: { scopeName: tmpl.slug },
     });
     if (!existing) {
-      // Need the DB template ID (may differ from code ID if it was created before)
       const dbTemplate = await prisma.scopeTemplate.findUnique({ where: { slug: tmpl.slug } });
       if (dbTemplate) {
         await prisma.scopeInstance.create({
@@ -74,28 +95,20 @@ export async function ensurePrebuiltScopes(): Promise<void> {
     }
   }
 
-  console.log(`[scope-registry] Prebuilt scopes ensured (${SCOPE_TEMPLATES.length} templates)`);
+  console.log(`[scope-registry] Prebuilt plugin templates ensured (${SCOPE_TEMPLATES.length} templates)`);
 }
 
-export interface RegisteredScope {
-  scopeName: string;
-  templateSlug: string;
-  sdk: HsafaSDK;
-  tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
-  instructions: string | null;
-  instanceIds: string[];
-}
-
-/** Map of scopeName → RegisteredScope */
-export const scopeRegistry = new Map<string, RegisteredScope>();
+// =============================================================================
+// Load Scopes — built-in spaces + plugin scopes from DB
+// =============================================================================
 
 /**
- * Load active scope instances from DB, create SDK instances, register tools.
+ * Create the built-in spaces SDK, then load plugin scope instances from DB.
  * Sets state.spacesSDK and state.schedulerSDK for backward compatibility.
  *
  * Must be called AFTER state.config is set.
  */
-export async function loadScopesFromDB(): Promise<void> {
+export async function loadScopes(): Promise<void> {
   const config = state.config;
   if (!config) return;
 
@@ -107,7 +120,66 @@ export async function loadScopesFromDB(): Promise<void> {
   state.spacesSDK = null;
   state.schedulerSDK = null;
 
-  // Load all active scope instances with their templates
+  // ── 1. Built-in: spaces scope (always created, not from DB) ────────────────
+  await createBuiltInSpacesScope(config);
+
+  // ── 2. Plugin scopes: loaded from ScopeInstance rows in DB ─────────────────
+  await loadPluginScopesFromDB(config);
+
+  console.log(`[scope-registry] Registry initialized: [${[...scopeRegistry.keys()].join(", ")}]`);
+}
+
+/**
+ * Create the built-in spaces SDK — always exists, always connected.
+ * Not driven by DB. Tools and instructions come from manifest.ts.
+ */
+async function createBuiltInSpacesScope(config: { coreUrl: string; apiKey: string }): Promise<void> {
+  const spacesTools = TOOLS.map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+  }));
+
+  const sdk = new HsafaSDK({
+    coreUrl: config.coreUrl,
+    apiKey: config.apiKey,
+    scope: SCOPE, // "spaces"
+  });
+
+  // Register tools
+  try {
+    await sdk.registerTools(spacesTools);
+    console.log(`[scope-registry] Built-in "spaces" scope: registered ${spacesTools.length} tools`);
+  } catch (err) {
+    console.error(`[scope-registry] Failed to register built-in spaces tools:`, err);
+  }
+
+  // Wire tool handlers
+  for (const tool of spacesTools) {
+    sdk.onToolCall(tool.name, async (args, ctx) => {
+      return executeAction(ctx.haseef.id, ctx.actionId, tool.name, args);
+    });
+  }
+
+  const entry: RegisteredScope = {
+    scopeName: SCOPE,
+    templateSlug: null, // built-in, not from a template
+    sdk,
+    tools: spacesTools,
+    instructions: SCOPE_INSTRUCTIONS,
+    instanceIds: [],
+    builtIn: true,
+  };
+
+  scopeRegistry.set(SCOPE, entry);
+  state.spacesSDK = sdk;
+}
+
+/**
+ * Load plugin scope instances from DB, create SDK instances, register tools.
+ * Skips any instance with scopeName === "spaces" (handled as built-in above).
+ */
+async function loadPluginScopesFromDB(config: { coreUrl: string; apiKey: string }): Promise<void> {
   const instances = await prisma.scopeInstance.findMany({
     where: { active: true },
     include: {
@@ -121,47 +193,47 @@ export async function loadScopesFromDB(): Promise<void> {
     },
   });
 
-  if (instances.length === 0) {
-    console.warn("[scope-registry] No active scope instances found in DB");
+  // Filter out any stale "spaces" instance from DB (no longer needed)
+  const pluginInstances = instances.filter((i) => i.scopeName !== SCOPE);
+
+  if (pluginInstances.length === 0) {
+    console.log("[scope-registry] No active plugin scope instances found in DB");
     return;
   }
 
   // Group by scopeName (one SDK per unique scope name)
-  const byScope = new Map<string, typeof instances>();
-  for (const inst of instances) {
+  const byScope = new Map<string, typeof pluginInstances>();
+  for (const inst of pluginInstances) {
     const arr = byScope.get(inst.scopeName) ?? [];
     arr.push(inst);
     byScope.set(inst.scopeName, arr);
   }
 
-  console.log(`[scope-registry] Found ${instances.length} active instance(s) across ${byScope.size} scope(s)`);
+  console.log(`[scope-registry] Found ${pluginInstances.length} plugin instance(s) across ${byScope.size} scope(s)`);
 
   for (const [scopeName, scopeInstances] of byScope) {
-    // Use the first instance's template for tools/instructions
-    // (all instances of the same scopeName should share the same template)
     const firstInst = scopeInstances[0];
     const templateSlug = firstInst.template.slug;
     const rawTools = firstInst.template.tools as Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
     const instructions = firstInst.template.instructions ?? null;
 
-    // Create SDK instance for this scope
     const sdk = new HsafaSDK({
       coreUrl: config.coreUrl,
       apiKey: config.apiKey,
       scope: scopeName,
     });
 
-    // Register tools globally on the SDK
+    // Register tools
     try {
       await sdk.registerTools(
         rawTools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
       );
-      console.log(`[scope-registry] Registered ${rawTools.length} tools for scope "${scopeName}" (template: ${templateSlug})`);
+      console.log(`[scope-registry] Plugin "${scopeName}": registered ${rawTools.length} tools (template: ${templateSlug})`);
     } catch (err) {
-      console.error(`[scope-registry] Failed to register tools for scope "${scopeName}":`, err);
+      console.error(`[scope-registry] Failed to register tools for plugin "${scopeName}":`, err);
     }
 
-    // Register onToolCall handlers — route to executeAction
+    // Wire tool handlers
     for (const tool of rawTools) {
       sdk.onToolCall(tool.name, async (args, ctx) => {
         return executeAction(ctx.haseef.id, ctx.actionId, tool.name, args);
@@ -175,29 +247,27 @@ export async function loadScopesFromDB(): Promise<void> {
       tools: rawTools,
       instructions,
       instanceIds: scopeInstances.map((i) => i.id),
+      builtIn: false,
     };
 
     scopeRegistry.set(scopeName, entry);
 
-    // Backward-compatible aliases
-    if (scopeName === "spaces") {
-      state.spacesSDK = sdk;
-    } else if (scopeName === "scheduler") {
+    // Backward-compatible alias
+    if (scopeName === "scheduler") {
       state.schedulerSDK = sdk;
     }
   }
-
-  console.log(`[scope-registry] Scope registry initialized: [${[...scopeRegistry.keys()].join(", ")}]`);
 }
 
 /**
  * Connect all registered scope SDKs (start SSE).
- * Must be called AFTER loadScopesFromDB() and lifecycle handler registration.
+ * Must be called AFTER loadScopes() and lifecycle handler registration.
  */
 export function connectAllScopes(): void {
   for (const [scopeName, entry] of scopeRegistry) {
     entry.sdk.connect();
-    console.log(`[scope-registry] Connected SDK for scope "${scopeName}"`);
+    const label = entry.builtIn ? "built-in" : "plugin";
+    console.log(`[scope-registry] Connected ${label} scope "${scopeName}"`);
   }
 }
 
