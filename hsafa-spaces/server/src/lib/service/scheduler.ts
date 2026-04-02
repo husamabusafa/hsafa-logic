@@ -134,10 +134,13 @@ function buildScheduleContext(
   if (spaceId && spaceName) {
     lines.push(`[ACTIVE SPACE: "${spaceName}" (spaceId:${spaceId})]`);
   }
-  lines.push(`Schedule: "${schedule.description}" (id: ${schedule.id})`);
+  lines.push(`Schedule: "${schedule.description}" (scheduleId: ${schedule.id})`);
   lines.push(`Type: ${schedule.type === "recurring" ? `recurring (${schedule.cronExpression})` : "one-time"}`);
   lines.push(`Timezone: ${schedule.timezone}`);
   lines.push(`Fired at: ${new Date().toISOString()}`);
-  lines.push(`>>> This is your scheduled plan firing. Execute whatever this plan is for. You are already in the active space — use spaces_send_message to communicate.`);
+
+  lines.push(``);
+  lines.push(`>>> Your scheduled plan fired. Execute what this plan describes.`);
+  lines.push(`>>> If you remember being asked to stop or cancel this schedule, call scheduler_delete_schedule with scheduleId "${schedule.id}" instead of executing.`);
   return lines.join("\n");
 }

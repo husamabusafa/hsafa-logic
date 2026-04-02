@@ -176,7 +176,7 @@ export function VoiceMessage({ message, isOwn = false }: VoiceMessageProps) {
   }, []);
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1 max-w-[320px]">
       {message.audioUrl && (
         <audio ref={audioRef} src={message.audioUrl} preload="metadata" />
       )}

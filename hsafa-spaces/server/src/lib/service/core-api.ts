@@ -11,6 +11,7 @@ import { prisma } from "../db.js";
 import { state } from "./types.js";
 import { SCOPE_INSTRUCTIONS } from "./manifest.js";
 import { scopeRegistry } from "./scope-registry.js";
+import { getActiveSchedules } from "./schedule-service.js";
 
 export function coreHeaders(): Record<string, string> {
   return {
@@ -127,6 +128,33 @@ async function buildSpacesInstructions(haseefId: string): Promise<string> {
     }
   } else {
     sections.push('YOUR BASES:\n  (no bases yet)');
+  }
+
+  // ── YOUR SCHEDULES ──────────────────────────────────────────────────
+  if (conn) {
+    try {
+      const schedules = await getActiveSchedules(haseefId);
+      if (schedules.length > 0) {
+        const scheduleLines = schedules.map((s) => {
+          const nextRun = s.nextRunAt ? new Date(s.nextRunAt).toISOString() : 'unknown';
+          if (s.type === 'recurring') {
+            return `  - "${s.description}" (scheduleId: ${s.id}, cron: ${s.cronExpression}, tz: ${s.timezone}, nextRun: ${nextRun})`;
+          } else {
+            return `  - "${s.description}" (scheduleId: ${s.id}, one-time: ${s.scheduledAt?.toISOString() ?? nextRun}, tz: ${s.timezone})`;
+          }
+        });
+        sections.push(
+          'YOUR SCHEDULES:\n' +
+          '  To stop a schedule, use scheduler_delete_schedule with the scheduleId.\n' +
+          '  If someone asks you to stop, cancel, or delete a schedule — DO IT immediately with delete_schedule. Do not just say "understood".\n' +
+          scheduleLines.join('\n'),
+        );
+      } else {
+        sections.push('YOUR SCHEDULES:\n  (none active)');
+      }
+    } catch {
+      // Non-fatal — skip if schedule lookup fails
+    }
   }
 
   // ── YOUR SPACES ──────────────────────────────────────────────────────
