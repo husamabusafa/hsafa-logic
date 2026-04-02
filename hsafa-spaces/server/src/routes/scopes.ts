@@ -91,7 +91,6 @@ router.get("/instances", async (req: Request, res: Response) => {
       where: {
         OR: [
           { ownerId: auth.userId },
-          { ownerId: null }, // platform-owned
           ...(baseIds.length > 0 ? [{ baseId: { in: baseIds } }] : []),
         ],
       },

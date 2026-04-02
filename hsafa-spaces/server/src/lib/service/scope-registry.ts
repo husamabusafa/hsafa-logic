@@ -73,26 +73,8 @@ export async function ensurePrebuiltScopes(): Promise<void> {
       },
     });
 
-    // Ensure platform-owned instance exists for this template
-    const existing = await prisma.scopeInstance.findUnique({
-      where: { scopeName: tmpl.slug },
-    });
-    if (!existing) {
-      const dbTemplate = await prisma.scopeTemplate.findUnique({ where: { slug: tmpl.slug } });
-      if (dbTemplate) {
-        await prisma.scopeInstance.create({
-          data: {
-            templateId: dbTemplate.id,
-            name: tmpl.name,
-            scopeName: tmpl.slug,
-            description: tmpl.description,
-            ownerId: null, // platform-owned
-            active: true,
-          },
-        });
-        console.log(`[scope-registry] Created platform instance for "${tmpl.slug}"`);
-      }
-    }
+    // NOTE: No platform-owned instances are auto-created here.
+    // Templates exist in DB for browsing — users create instances when they install a scope.
   }
 
   console.log(`[scope-registry] Prebuilt plugin templates ensured (${SCOPE_TEMPLATES.length} templates)`);
