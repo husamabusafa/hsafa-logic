@@ -353,18 +353,29 @@ export function useSpaceChat(
           const msg = data.message as SpaceMessage;
           if (!msg) break;
           setMessages((prev) => {
+            // 1. Real message already in list (API response arrived first)
             const idx = prev.findIndex((m) => m.id === msg.id);
             if (idx !== -1) {
-              // Optimistic stub exists — replace with full server data
               const adapted = adaptMessage(msg, mems);
               const updated = [...prev];
               updated[idx] = adapted;
               return updated;
             }
+            // 2. Optimistic temp message exists for this sender (SSE arrived before API response)
+            const tempIdx = prev.findIndex(
+              (m) => m.id.startsWith("temp-") && m.entityId === msg.entityId,
+            );
+            if (tempIdx !== -1) {
+              const adapted = adaptMessage(msg, mems);
+              const updated = [...prev];
+              updated[tempIdx] = adapted;
+              return updated;
+            }
+            // 3. Truly new message (from another user or agent)
             return [...prev, adaptMessage(msg, mems)];
           });
 
-          // Remove sender from typing list
+          // Remove sender from typing list (covers both human typing and agent "typing")
           setTypingUsers((prev) => prev.filter((t) => t.entityId !== msg.entityId));
           break;
         }
@@ -439,6 +450,35 @@ export function useSpaceChat(
           setActiveAgents((prev) =>
             prev.filter((a) => !(a.agentEntityId === agentEntityId && a.runId === runId)),
           );
+          // Safety net: clear typing if agent goes inactive without tool.done
+          setTypingUsers((prev) => prev.filter((t) => t.entityId !== agentEntityId));
+          break;
+        }
+
+        case "tool.started": {
+          const toolName = data.toolName as string;
+          const agentEntityId = data.agentEntityId as string;
+          // Only show typing for message tools (send_message, send_confirmation, etc.)
+          if (toolName?.startsWith("send_")) {
+            const member = mems.find((m) => m.entityId === agentEntityId);
+            const name = member?.name || "Agent";
+            const activity = toolName === "send_voice" ? "recording" as const : "typing" as const;
+            setTypingUsers((prev) => {
+              if (prev.some((t) => t.entityId === agentEntityId)) {
+                return prev.map((t) => t.entityId === agentEntityId ? { ...t, activity } : t);
+              }
+              return [...prev, { entityId: agentEntityId, entityName: name, activity }];
+            });
+          }
+          break;
+        }
+
+        case "tool.done": {
+          const toolName = data.toolName as string;
+          const agentEntityId = data.agentEntityId as string;
+          if (toolName?.startsWith("send_")) {
+            setTypingUsers((prev) => prev.filter((t) => t.entityId !== agentEntityId));
+          }
           break;
         }
 

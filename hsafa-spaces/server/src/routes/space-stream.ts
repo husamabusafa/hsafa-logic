@@ -109,8 +109,8 @@ router.get("/:smartSpaceId/stream", async (req: Request, res: Response) => {
     try {
       const parsed = JSON.parse(message);
       const t = parsed.type as string | undefined;
-      // Dedup agent/tool/typing events by type+runId+streamId (text.delta exempt)
-      if (t && t !== "text.delta" && t !== "space.message" && t !== "message.seen") {
+      // Dedup agent/tool events by type+runId+streamId (ephemeral state events exempt)
+      if (t && t !== "text.delta" && t !== "space.message" && t !== "message.seen" && t !== "user.typing" && t !== "user.online" && t !== "user.offline") {
         const key = `${t}:${parsed.runId ?? ""}:${parsed.streamId ?? ""}`;
         if (recentSSEKeys.has(key)) return;
         recentSSEKeys.add(key);

@@ -1,5 +1,4 @@
-import { tool } from 'ai';
-import { z } from 'zod';
+import { tool, jsonSchema } from 'ai';
 
 // =============================================================================
 // done — Signal run completion (v7 prebuilt tool)
@@ -10,8 +9,12 @@ import { z } from 'zod';
 
 export const doneTool = (tool as any)({
   description: 'Signal that you are done processing this event. You MUST call this as your last action. Include a brief summary of what you did.',
-  parameters: z.object({
-    summary: z.string().describe('Brief summary of what you accomplished in this run'),
+  inputSchema: jsonSchema<{ summary: string }>({
+    type: 'object',
+    properties: {
+      summary: { type: 'string', description: 'Brief summary of what you accomplished in this run' },
+    },
+    required: ['summary'],
   }),
   execute: async ({ summary }: { summary: string }) => {
     // The invoker detects the "done" tool call and stops the loop.

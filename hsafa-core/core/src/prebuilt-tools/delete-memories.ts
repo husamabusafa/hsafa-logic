@@ -1,5 +1,4 @@
-import { tool } from 'ai';
-import { z } from 'zod';
+import { tool, jsonSchema } from 'ai';
 import { deleteMemories } from '../memory/semantic.js';
 
 // =============================================================================
@@ -9,8 +8,12 @@ import { deleteMemories } from '../memory/semantic.js';
 export function buildDeleteMemoriesTool(haseefId: string) {
   return (tool as any)({
     description: 'Delete one or more memories by key. Use this to remove outdated or incorrect information.',
-    parameters: z.object({
-      keys: z.array(z.string()).describe('Memory keys to delete'),
+    inputSchema: jsonSchema<{ keys: string[] }>({
+      type: 'object',
+      properties: {
+        keys: { type: 'array', items: { type: 'string' }, description: 'Memory keys to delete' },
+      },
+      required: ['keys'],
     }),
     execute: async ({ keys }: { keys: string[] }) => {
       const deleted = await deleteMemories(haseefId, keys);

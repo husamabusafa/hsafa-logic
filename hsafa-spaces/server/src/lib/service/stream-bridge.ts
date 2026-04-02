@@ -128,12 +128,6 @@ function onRunStarted(
       runId,
       data: { agentEntityId: conn.agentEntityId, agentName: conn.haseefName, runId },
     });
-
-    // Start typing indicator immediately for spaces-triggered runs
-    // so the user sees feedback as soon as the haseef begins thinking
-    if (isSpacesTrigger) {
-      void broadcastTyping(spaceId, conn.agentEntityId, conn.haseefName, true);
-    }
   }
 
   // Flush pending seen messages — run.started means events were consumed from inbox

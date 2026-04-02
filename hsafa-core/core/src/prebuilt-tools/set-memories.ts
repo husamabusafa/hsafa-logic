@@ -1,5 +1,4 @@
-import { tool } from 'ai';
-import { z } from 'zod';
+import { tool, jsonSchema } from 'ai';
 import { setMemories } from '../memory/semantic.js';
 
 // =============================================================================
@@ -9,12 +8,23 @@ import { setMemories } from '../memory/semantic.js';
 export function buildSetMemoriesTool(haseefId: string) {
   return (tool as any)({
     description: 'Store or update one or more memories. Use importance 1-10 (10 = critical, never forget; 5 = normal; 1 = minor detail). Memories persist forever.',
-    parameters: z.object({
-      memories: z.array(z.object({
-        key: z.string().describe('Short descriptive key (e.g. "husam_favorite_color", "project_deadline")'),
-        value: z.string().describe('The information to remember'),
-        importance: z.number().min(1).max(10).describe('How important this memory is (1-10)'),
-      })),
+    inputSchema: jsonSchema<{ memories: Array<{ key: string; value: string; importance: number }> }>({
+      type: 'object',
+      properties: {
+        memories: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              key: { type: 'string', description: 'Short descriptive key (e.g. "husam_favorite_color", "project_deadline")' },
+              value: { type: 'string', description: 'The information to remember' },
+              importance: { type: 'number', description: 'How important this memory is (1-10)', minimum: 1, maximum: 10 },
+            },
+            required: ['key', 'value', 'importance'],
+          },
+        },
+      },
+      required: ['memories'],
     }),
     execute: async ({ memories }: { memories: Array<{ key: string; value: string; importance: number }> }) => {
       await setMemories(haseefId, memories);

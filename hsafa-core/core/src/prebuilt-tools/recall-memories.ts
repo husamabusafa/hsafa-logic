@@ -1,5 +1,4 @@
-import { tool } from 'ai';
-import { z } from 'zod';
+import { tool, jsonSchema } from 'ai';
 import { searchMemories } from '../memory/semantic.js';
 import { searchEpisodes } from '../memory/episodic.js';
 
@@ -10,9 +9,13 @@ import { searchEpisodes } from '../memory/episodic.js';
 export function buildRecallMemoriesTool(haseefId: string) {
   return (tool as any)({
     description: 'Search your memories and past run history for information. Returns matching semantic memories and relevant episodic summaries.',
-    parameters: z.object({
-      query: z.string().describe('What to search for'),
-      limit: z.number().optional().describe('Max results per type (default 10)'),
+    inputSchema: jsonSchema<{ query: string; limit?: number }>({
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'What to search for' },
+        limit: { type: 'number', description: 'Max results per type (default 10)' },
+      },
+      required: ['query'],
     }),
     execute: async ({ query, limit }: { query: string; limit?: number }) => {
       const max = limit ?? 10;
