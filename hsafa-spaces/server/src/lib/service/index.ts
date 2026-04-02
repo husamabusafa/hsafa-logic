@@ -32,8 +32,8 @@ import { coreHeaders, syncTools } from "./core-api.js";
 import { invalidateEntitySpacesCache } from "../membership-service.js";
 import { registerLifecycleHandlers } from "./stream-bridge.js";
 import { handleInboxMessage } from "./sense-events.js";
-import { startScheduler } from "./scheduler.js";
-import { syncSchedulesToRedis } from "./schedule-service.js";
+import { initSchedulerScope } from "../scope-templates/scheduler/index.js";
+import { initPostgresScope } from "../scope-templates/postgres/index.js";
 import { startPresenceCleanup, stopPresenceCleanup } from "../smartspace-events.js";
 import { ensurePrebuiltScopes, loadScopes, connectAllScopes } from "./scope-registry.js";
 
@@ -90,9 +90,9 @@ export async function bootstrapExtension(): Promise<void> {
   // ── Start SDK SSE connections for all registered scopes ────────────────────
   connectAllScopes();
 
-  // Hydrate Redis sorted set from DB, then start the schedule poller
-  await syncSchedulesToRedis();
-  startScheduler();
+  // Initialize self-managed scope templates
+  await initSchedulerScope(config);
+  await initPostgresScope(config);
 
   // Start presence cleanup job — removes stale online SET entries after crashes
   startPresenceCleanup(() => {

@@ -1,13 +1,14 @@
 // =============================================================================
-// Haseef Schedule Service — CRUD + next-run computation
+// Scheduler Scope — Schedule Service (CRUD + Redis)
 //
 // Manages scheduled plans for haseefs: recurring (cron) or one-time.
 // Uses cron-parser for cron expression parsing with timezone support.
+// Redis sorted set for fast due-check polling.
 // =============================================================================
 
 import { CronExpressionParser } from "cron-parser";
-import { prisma } from "../db.js";
-import { redis } from "../redis.js";
+import { prisma } from "../../db.js";
+import { redis } from "../../redis.js";
 
 // Redis sorted set key — score = nextRunAt epoch ms, member = scheduleId
 const SCHEDULE_ZSET = "haseef:schedules:due";
@@ -259,7 +260,7 @@ export async function syncSchedulesToRedis(): Promise<void> {
   if (active.length === 0) {
     // Clear any stale entries
     await redis.del(SCHEDULE_ZSET);
-    console.log("[schedule-service] Redis sync: no active schedules");
+    console.log("[scheduler] Redis sync: no active schedules");
     return;
   }
 
@@ -271,7 +272,7 @@ export async function syncSchedulesToRedis(): Promise<void> {
   }
   await pipeline.exec();
 
-  console.log(`[schedule-service] Redis sync: loaded ${active.length} active schedule(s)`);
+  console.log(`[scheduler] Redis sync: loaded ${active.length} active schedule(s)`);
 }
 
 // =============================================================================

@@ -4,11 +4,21 @@
 // NOTE: "spaces" is NOT a template — it's a built-in scope that always exists.
 // Only installable plugins (scheduler, whatsapp, gmail, custom, etc.) live here.
 //
-// These are the prebuilt scope templates. They are synced to DB on bootstrap
-// via ensurePrebuiltScopes(). Custom templates are created by developers.
+// To add a new scope template:
+//   1. Create a folder: scope-templates/<name>/
+//   2. Define tools.ts, handler.ts, and any service files
+//   3. Export from <name>/index.ts
+//   4. Add the template definition to SCOPE_TEMPLATES below
 // =============================================================================
 
-import { SCHEDULER_TOOLS } from "./service/manifest.js";
+import { SCHEDULER_TOOLS, SCHEDULER_INSTRUCTIONS } from "./scheduler/index.js";
+import { POSTGRES_TOOLS, POSTGRES_INSTRUCTIONS } from "./postgres/index.js";
+
+/**
+ * Scopes that create their own SDK instance during init.
+ * scope-registry skips these in loadPluginScopesFromDB to avoid duplicates.
+ */
+export const SELF_MANAGED_SCOPES = new Set<string>(["scheduler", "postgres"]);
 
 export interface ScopeTemplate {
   id: string;
@@ -45,12 +55,35 @@ export const SCOPE_TEMPLATES: ScopeTemplate[] = [
       description: t.description,
       inputSchema: t.inputSchema,
     })),
-    instructions: `You can create scheduled plans that trigger you as sense events.
-
-HOW IT WORKS:
-  Use scheduler_create_schedule to set up recurring or one-time schedules.
-  When the time comes, you will receive a scheduled_plan sense event.
-  Respond to these events like any other — use spaces tools to take action.`,
+    instructions: SCHEDULER_INSTRUCTIONS,
+    published: true,
+  },
+  {
+    id: "00000000-0000-0000-0000-000000000003",
+    slug: "postgres",
+    name: "PostgreSQL",
+    description: "Query databases, inspect schemas, and set up reactive watches with Postgres triggers.",
+    icon: "Database",
+    category: "prebuilt",
+    configSchema: {
+      type: "object",
+      properties: {
+        connectionString: { type: "string", description: "PostgreSQL connection string", secret: true },
+        schema: { type: "string", description: "Schema name", default: "public" },
+        readOnly: { type: "boolean", description: "Read-only mode (no writes)", default: true },
+        maxRows: { type: "number", description: "Max rows per query", default: 100 },
+        queryTimeoutMs: { type: "number", description: "Query timeout in ms", default: 10000 },
+        maxWatches: { type: "number", description: "Max watches per haseef", default: 10 },
+      },
+      required: ["connectionString"],
+    },
+    requiredProfileFields: [],
+    tools: POSTGRES_TOOLS.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    })),
+    instructions: POSTGRES_INSTRUCTIONS,
     published: true,
   },
 ];

@@ -12,7 +12,7 @@ import type { Request, Response } from "express";
 import { prisma } from "../lib/db.js";
 import { verifyToken } from "../lib/auth.js";
 import { encrypt, decrypt } from "../lib/encryption.js";
-import { SCOPE_TEMPLATES, getTemplateById } from "../lib/scope-templates.js";
+import { SCOPE_TEMPLATES, getTemplateById } from "../lib/scope-templates/index.js";
 
 const router = Router();
 

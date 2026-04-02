@@ -16,7 +16,7 @@ import { HsafaSDK } from "@hsafa/sdk";
 import { prisma } from "../db.js";
 import { state } from "./types.js";
 import { executeAction } from "./tool-handlers.js";
-import { SCOPE_TEMPLATES } from "../scope-templates.js";
+import { SCOPE_TEMPLATES, SELF_MANAGED_SCOPES } from "../scope-templates/index.js";
 import { SCOPE, TOOLS, SCOPE_INSTRUCTIONS } from "./manifest.js";
 
 export interface RegisteredScope {
@@ -174,8 +174,10 @@ async function loadPluginScopesFromDB(config: { coreUrl: string; apiKey: string 
     },
   });
 
-  // Filter out any stale "spaces" instance from DB (no longer needed)
-  const pluginInstances = instances.filter((i) => i.scopeName !== SCOPE);
+  // Filter out built-in "spaces" and self-managed scopes (they create their own SDK)
+  const pluginInstances = instances.filter(
+    (i) => i.scopeName !== SCOPE && !SELF_MANAGED_SCOPES.has(i.scopeName),
+  );
 
   if (pluginInstances.length === 0) {
     console.log("[scope-registry] No active plugin scope instances found in DB");

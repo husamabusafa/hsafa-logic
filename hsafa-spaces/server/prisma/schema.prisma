@@ -396,6 +396,27 @@ model ScopeInstanceConfig {
 }
 
 // =============================================================================
+// HASEEF WATCH — Database trigger watches (postgres scope)
+// =============================================================================
+
+model HaseefWatch {
+  id              String   @id @default(uuid()) @db.Uuid
+  haseefId        String   @map("haseef_id")
+  instanceId      String   @map("instance_id") @db.Uuid
+  description     String
+  tableName       String   @map("table_name")
+  operation       String   // "INSERT" | "UPDATE" | "DELETE" | "ALL"
+  whereCondition  String?  @map("where_condition")
+  triggerName     String   @map("trigger_name")  // hsafa_watch_<id>
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([haseefId, active])
+  @@index([instanceId])
+  @@map("haseef_watches")
+}
+
+// =============================================================================
 // API KEY — Encrypted LLM provider API keys (per user)
 // =============================================================================
 
