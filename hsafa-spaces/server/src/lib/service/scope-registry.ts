@@ -9,7 +9,7 @@
 //              Loaded from ScopeInstance rows in DB, grouped by scopeName,
 //              one HsafaSDK per unique scope. Templates define tools.
 //
-// Provides backward-compatible aliases: state.spacesSDK / state.schedulerSDK
+// Provides state.spacesSDK for the built-in spaces scope.
 // =============================================================================
 
 import { HsafaSDK } from "@hsafa/sdk";
@@ -37,7 +37,7 @@ export const scopeRegistry = new Map<string, RegisteredScope>();
 // =============================================================================
 
 /**
- * Ensure prebuilt plugin templates and their platform-owned instances exist in DB.
+ * Ensure prebuilt plugin templates exist in DB.
  * Upserts from the code-defined SCOPE_TEMPLATES — no seed script needed.
  *
  * NOTE: "spaces" is NOT a template. It's a built-in scope handled separately.
@@ -86,7 +86,7 @@ export async function ensurePrebuiltScopes(): Promise<void> {
 
 /**
  * Create the built-in spaces SDK, then load plugin scope instances from DB.
- * Sets state.spacesSDK and state.schedulerSDK for backward compatibility.
+ * Sets state.spacesSDK for the built-in spaces scope.
  *
  * Must be called AFTER state.config is set.
  */
@@ -100,7 +100,6 @@ export async function loadScopes(): Promise<void> {
   }
   scopeRegistry.clear();
   state.spacesSDK = null;
-  state.schedulerSDK = null;
 
   // ── 1. Built-in: spaces scope (always created, not from DB) ────────────────
   await createBuiltInSpacesScope(config);
@@ -233,11 +232,6 @@ async function loadPluginScopesFromDB(config: { coreUrl: string; apiKey: string 
     };
 
     scopeRegistry.set(scopeName, entry);
-
-    // Backward-compatible alias
-    if (scopeName === "scheduler") {
-      state.schedulerSDK = sdk;
-    }
   }
 }
 

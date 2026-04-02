@@ -16,6 +16,15 @@ import { SCOPE_TEMPLATES, getTemplateById } from "../lib/scope-templates.js";
 
 const router = Router();
 
+// ── Core API helper ─────────────────────────────────────────────────────────
+
+function getCoreConfig(): { coreUrl: string; apiKey: string } {
+  return {
+    coreUrl: process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001",
+    apiKey: process.env.CORE_API_KEY || "",
+  };
+}
+
 // ── JWT auth helper ──────────────────────────────────────────────────────────
 
 async function requireJwtUser(req: Request): Promise<
@@ -130,8 +139,7 @@ router.get("/instances", async (req: Request, res: Response) => {
     }));
 
     // Fetch connection status from Core for the built-in spaces scope
-    const coreUrl = process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
-    const apiKey = process.env.CORE_API_KEY || "";
+    const { coreUrl, apiKey } = getCoreConfig();
     let spacesConnected = false;
     try {
       const scopesRes = await fetch(`${coreUrl}/api/scopes`, { headers: { "x-api-key": apiKey } });
@@ -180,8 +188,7 @@ router.get("/instances/:id", async (req: Request, res: Response) => {
 
   // Handle built-in "spaces" scope (no DB row)
   if (req.params.id === "built-in-spaces") {
-    const coreUrl = process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
-    const apiKey = process.env.CORE_API_KEY || "";
+    const { coreUrl, apiKey } = getCoreConfig();
     let spacesConnected = false;
     let toolCount = 0;
     try {
@@ -252,6 +259,23 @@ router.get("/instances/:id", async (req: Request, res: Response) => {
     if (!instance) {
       res.status(404).json({ error: "Instance not found" });
       return;
+    }
+
+    // Ownership check: user must own the instance or share a base
+    if (instance.ownerId !== auth.userId) {
+      // Check if shared via base membership
+      if (instance.baseId) {
+        const baseMembership = await prisma.baseMember.findFirst({
+          where: { entityId: auth.entityId, baseId: instance.baseId },
+        });
+        if (!baseMembership) {
+          res.status(403).json({ error: "Not authorized to view this instance" });
+          return;
+        }
+      } else {
+        res.status(403).json({ error: "Not authorized to view this instance" });
+        return;
+      }
     }
 
     // Mask secret values, decrypt non-secrets for display
@@ -368,8 +392,8 @@ router.patch("/instances/:id", async (req: Request, res: Response) => {
       return;
     }
 
-    // Only owner or platform instances can be updated
-    if (instance.ownerId && instance.ownerId !== auth.userId) {
+    // Only the owner can update
+    if (instance.ownerId !== auth.userId) {
       res.status(403).json({ error: "Not authorized to update this instance" });
       return;
     }
@@ -442,7 +466,7 @@ router.delete("/instances/:id", async (req: Request, res: Response) => {
       res.status(404).json({ error: "Instance not found" });
       return;
     }
-    if (instance.ownerId && instance.ownerId !== auth.userId) {
+    if (instance.ownerId !== auth.userId) {
       res.status(403).json({ error: "Not authorized to delete this instance" });
       return;
     }
@@ -477,8 +501,7 @@ router.get("/haseef/:haseefId", async (req: Request, res: Response) => {
     }
 
     // Get haseef from Core to read scopes[]
-    const coreUrl = process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
-    const apiKey = process.env.CORE_API_KEY || "";
+    const { coreUrl, apiKey } = getCoreConfig();
     const coreRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
       headers: { "x-api-key": apiKey },
     });
@@ -587,9 +610,24 @@ router.post("/haseef/:haseefId/attach", async (req: Request, res: Response) => {
       return;
     }
 
+    // Verify user has access to this scope instance (owns it or shares a base)
+    if (instance.ownerId !== auth.userId) {
+      if (instance.baseId) {
+        const baseMembership = await prisma.baseMember.findFirst({
+          where: { entityId: auth.entityId, baseId: instance.baseId },
+        });
+        if (!baseMembership) {
+          res.status(403).json({ error: "Not authorized to attach this scope instance" });
+          return;
+        }
+      } else {
+        res.status(403).json({ error: "Not authorized to attach this scope instance" });
+        return;
+      }
+    }
+
     // Validate requiredProfileFields against haseef profile
-    const coreUrl = process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
-    const apiKey = process.env.CORE_API_KEY || "";
+    const { coreUrl, apiKey } = getCoreConfig();
 
     const coreRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
       headers: { "x-api-key": apiKey },
@@ -661,8 +699,7 @@ router.post("/haseef/:haseefId/detach", async (req: Request, res: Response) => {
     }
 
     // Get current scopes from Core
-    const coreUrl = process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
-    const apiKey = process.env.CORE_API_KEY || "";
+    const { coreUrl, apiKey } = getCoreConfig();
 
     const coreRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
       headers: { "x-api-key": apiKey },
@@ -709,8 +746,7 @@ router.get("/status", async (req: Request, res: Response) => {
   if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
 
   try {
-    const coreUrl = process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
-    const apiKey = process.env.CORE_API_KEY || "";
+    const { coreUrl, apiKey } = getCoreConfig();
 
     const scopesRes = await fetch(`${coreUrl}/api/scopes`, {
       headers: { "x-api-key": apiKey },

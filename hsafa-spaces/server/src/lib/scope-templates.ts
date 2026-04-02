@@ -45,7 +45,12 @@ export const SCOPE_TEMPLATES: ScopeTemplate[] = [
       description: t.description,
       inputSchema: t.inputSchema,
     })),
-    instructions: null,
+    instructions: `You can create scheduled plans that trigger you as sense events.
+
+HOW IT WORKS:
+  Use scheduler_create_schedule to set up recurring or one-time schedules.
+  When the time comes, you will receive a scheduled_plan sense event.
+  Respond to these events like any other — use spaces tools to take action.`,
     published: true,
   },
 ];

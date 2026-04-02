@@ -9,9 +9,6 @@
 /** Scope name for this service */
 export const SCOPE = "spaces";
 
-/** Scheduler scope for schedule-related tools */
-export const SCHEDULER_SCOPE = "scheduler";
-
 /**
  * Scope-level instructions synced to core and injected into the Haseef's prompt.
  * These are spaces-specific — core remains generic.

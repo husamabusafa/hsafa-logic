@@ -10,6 +10,7 @@
 import { prisma } from "../db.js";
 import { state } from "./types.js";
 import { SCOPE_INSTRUCTIONS } from "./manifest.js";
+import { scopeRegistry } from "./scope-registry.js";
 
 export function coreHeaders(): Record<string, string> {
   return {
@@ -55,11 +56,24 @@ export async function syncTools(haseefId: string): Promise<void> {
 
 /**
  * Build combined instructions for all active scopes.
+ * Spaces scope has its own dynamic builder (YOUR BASES, YOUR SPACES).
+ * Plugin scopes get their static instructions from the scope registry.
  */
 async function buildAllInstructions(haseefId: string): Promise<string> {
-  const spacesInstructions = await buildSpacesInstructions(haseefId);
-  const schedulerInstructions = buildSchedulerInstructions();
-  return [spacesInstructions, schedulerInstructions].filter(Boolean).join('\n\n---\n\n');
+  const sections: string[] = [];
+
+  // 1. Built-in spaces scope — dynamic context
+  sections.push(await buildSpacesInstructions(haseefId));
+
+  // 2. Plugin scopes — static instructions from registry (loaded from templates)
+  for (const [scopeName, entry] of scopeRegistry) {
+    if (entry.builtIn) continue; // spaces already handled above
+    if (entry.instructions) {
+      sections.push(entry.instructions);
+    }
+  }
+
+  return sections.filter(Boolean).join('\n\n---\n\n');
 }
 
 /**
@@ -152,22 +166,6 @@ async function buildSpacesInstructions(haseefId: string): Promise<string> {
 
     sections.push('YOUR SPACES:\n' + spaceLines.join('\n'));
   }
-
-  return sections.join('\n\n');
-}
-
-/**
- * Build scheduler scope instructions — YOUR SCHEDULES section.
- */
-function buildSchedulerInstructions(): string {
-  const sections: string[] = [
-    `You can create scheduled plans that trigger you as sense events.
-
-HOW IT WORKS:
-  Use scheduler_create_schedule to set up recurring or one-time schedules.
-  When the time comes, you will receive a scheduled_plan sense event.
-  Respond to these events like any other — use spaces tools to take action.`,
-  ];
 
   return sections.join('\n\n');
 }

@@ -38,8 +38,6 @@ export interface ServiceState {
   connections: Map<string, ActiveConnection>;
   /** @hsafa/sdk instance for the "spaces" scope (tool dispatch + lifecycle events) */
   spacesSDK: HsafaSDK | null;
-  /** @hsafa/sdk instance for the "scheduler" scope */
-  schedulerSDK: HsafaSDK | null;
   /** Heartbeat interval for keeping haseef entities online */
   presenceInterval: ReturnType<typeof setInterval> | null;
 }
@@ -48,7 +46,6 @@ export const state: ServiceState = {
   config: null,
   connections: new Map(),
   spacesSDK: null,
-  schedulerSDK: null,
   presenceInterval: null,
 };
 

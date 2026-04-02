@@ -17,7 +17,7 @@
 //   config.ts          — env var loading (coreUrl, apiKey)
 //   core-api.ts        — Core HTTP helpers (sync per-haseef instructions, sense events)
 //   tool-handlers.ts   — tool execution (executeAction + all case handlers)
-//   action-listener.ts — SDK onToolCall registration + connect()
+//   scope-registry.ts  — SDK creation, tool registration, onToolCall wiring + connect()
 //   stream-bridge.ts   — SDK lifecycle event handlers → space SSE
 //   sense-events.ts    — inbox handler, seen watermark, interactive message events
 // =============================================================================
@@ -50,7 +50,6 @@ export async function bootstrapExtension(): Promise<void> {
 
   // Reset stale state from previous process (tsx watch restart)
   if (state.spacesSDK) { state.spacesSDK.disconnect(); state.spacesSDK = null; }
-  if (state.schedulerSDK) { state.schedulerSDK.disconnect(); state.schedulerSDK = null; }
   state.connections.clear();
 
   const config = loadServiceConfig();

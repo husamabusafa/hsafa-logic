@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { type MockMessage } from "@/lib/mock-data";
 import { MicIcon, PlayIcon, PauseIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
@@ -7,8 +7,10 @@ interface VoiceMessageProps {
   isOwn?: boolean;
 }
 
-// Generate a stable pseudo-random waveform from a seed string (messageId)
-function generateWaveform(seed: string, bars: number): number[] {
+const BAR_COUNT = 48;
+
+// Fallback: stable pseudo-random waveform from a seed string
+function generateFallbackWaveform(seed: string, bars: number): number[] {
   let hash = 0;
   for (let i = 0; i < seed.length; i++) {
     hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
@@ -17,23 +19,59 @@ function generateWaveform(seed: string, bars: number): number[] {
   for (let i = 0; i < bars; i++) {
     hash = ((hash << 5) - hash + i * 7 + 13) | 0;
     const val = ((hash >>> 0) % 100) / 100;
-    // Shape: center-heavy with some variation
     const centerBias = 1 - Math.abs((i / bars) * 2 - 1) * 0.4;
     result.push(0.15 + val * 0.65 * centerBias);
   }
   return result;
 }
 
+// Extract real waveform peaks from audio data via Web Audio API
+async function extractWaveform(url: string, bars: number): Promise<number[]> {
+  const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  try {
+    const response = await fetch(url);
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    const channelData = audioBuffer.getChannelData(0);
+    const samplesPerBar = Math.floor(channelData.length / bars);
+    const peaks: number[] = [];
+    for (let i = 0; i < bars; i++) {
+      let sum = 0;
+      const start = i * samplesPerBar;
+      const end = Math.min(start + samplesPerBar, channelData.length);
+      for (let j = start; j < end; j++) {
+        sum += Math.abs(channelData[j]);
+      }
+      peaks.push(sum / (end - start));
+    }
+    // Normalize to 0..1
+    const max = Math.max(...peaks, 0.001);
+    return peaks.map((p) => Math.max(0.08, p / max));
+  } finally {
+    await audioCtx.close();
+  }
+}
+
+// Waveform cache to avoid re-decoding on re-renders
+const waveformCache = new Map<string, number[]>();
+
 export function VoiceMessage({ message, isOwn = false }: VoiceMessageProps) {
   const [playing, setPlaying] = useState(false);
   const [showTranscription, setShowTranscription] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(message.audioDuration || 0);
+  const [waveform, setWaveform] = useState<number[]>(() => {
+    if (message.audioUrl && waveformCache.has(message.audioUrl)) {
+      return waveformCache.get(message.audioUrl)!;
+    }
+    return generateFallbackWaveform(message.id, BAR_COUNT);
+  });
+  const [waveformReady, setWaveformReady] = useState(() =>
+    !!(message.audioUrl && waveformCache.has(message.audioUrl))
+  );
   const audioRef = useRef<HTMLAudioElement>(null);
   const waveformRef = useRef<HTMLDivElement>(null);
-
-  const BAR_COUNT = 36;
-  const waveform = useMemo(() => generateWaveform(message.id, BAR_COUNT), [message.id]);
+  const isDragging = useRef(false);
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
@@ -43,26 +81,72 @@ export function VoiceMessage({ message, isOwn = false }: VoiceMessageProps) {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
+  // Decode real waveform on mount
+  useEffect(() => {
+    if (!message.audioUrl) return;
+    if (waveformCache.has(message.audioUrl)) {
+      setWaveform(waveformCache.get(message.audioUrl)!);
+      setWaveformReady(true);
+      return;
+    }
+    let cancelled = false;
+    extractWaveform(message.audioUrl, BAR_COUNT)
+      .then((peaks) => {
+        if (cancelled) return;
+        waveformCache.set(message.audioUrl!, peaks);
+        setWaveform(peaks);
+        setWaveformReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setWaveformReady(true);
+      });
+    return () => { cancelled = true; };
+  }, [message.audioUrl]);
+
   const handlePlayPause = () => {
     if (!audioRef.current) return;
     if (playing) {
       audioRef.current.pause();
     } else {
-      audioRef.current.play().catch(err => {
+      audioRef.current.play().catch((err) => {
         console.error("Audio playback failed:", err);
       });
     }
   };
 
-  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!audioRef.current || !waveformRef.current) return;
-    const rect = waveformRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const percentage = Math.max(0, Math.min(1, x / rect.width));
-    const newTime = percentage * duration;
-    audioRef.current.currentTime = newTime;
-    setCurrentTime(newTime);
-  };
+  const seekToPosition = useCallback(
+    (clientX: number) => {
+      if (!audioRef.current || !waveformRef.current) return;
+      const rect = waveformRef.current.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const percentage = Math.max(0, Math.min(1, x / rect.width));
+      const newTime = percentage * duration;
+      audioRef.current.currentTime = newTime;
+      setCurrentTime(newTime);
+    },
+    [duration]
+  );
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      isDragging.current = true;
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      seekToPosition(e.clientX);
+    },
+    [seekToPosition]
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDragging.current) return;
+      seekToPosition(e.clientX);
+    },
+    [seekToPosition]
+  );
+
+  const handlePointerUp = useCallback(() => {
+    isDragging.current = false;
+  }, []);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -93,12 +177,11 @@ export function VoiceMessage({ message, isOwn = false }: VoiceMessageProps) {
 
   return (
     <div className="space-y-1">
-      {/* Hidden audio element */}
       {message.audioUrl && (
         <audio ref={audioRef} src={message.audioUrl} preload="metadata" />
       )}
 
-      {/* Player */}
+      {/* Player row */}
       <div className="flex items-center gap-2.5">
         <button
           onClick={handlePlayPause}
@@ -112,26 +195,36 @@ export function VoiceMessage({ message, isOwn = false }: VoiceMessageProps) {
           {playing ? <PauseIcon className="size-4" /> : <PlayIcon className="size-4 ml-0.5" />}
         </button>
 
-        {/* Waveform visualization with progress + seek */}
+        {/* Waveform — bars stretch to fill width so seek always maps correctly */}
         <div className="flex-1 min-w-0">
           <div
             ref={waveformRef}
-            onClick={handleSeek}
-            className="flex items-center gap-[1.5px] h-7 cursor-pointer"
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            className="flex items-center gap-[1px] h-8 cursor-pointer select-none touch-none"
           >
             {waveform.map((level, i) => {
-              const barPct = (i / BAR_COUNT) * 100;
+              const barPct = ((i + 0.5) / BAR_COUNT) * 100;
               const isPlayed = barPct <= progress;
               return (
                 <div
                   key={i}
-                  className={`w-[2.5px] rounded-full transition-colors ${
-                    isOwn
-                      ? (isPlayed ? "bg-white" : "bg-white/30")
-                      : (isPlayed ? "bg-primary" : "bg-primary/25")
-                  }`}
-                  style={{ height: `${Math.max(3, level * 24)}px` }}
-                />
+                  className="flex-1 flex items-center justify-center h-full"
+                >
+                  <div
+                    className={`w-full max-w-[3px] rounded-full transition-colors duration-150 ${
+                      isOwn
+                        ? isPlayed ? "bg-white" : "bg-white/30"
+                        : isPlayed ? "bg-primary" : "bg-primary/25"
+                    } ${!waveformReady ? "animate-pulse" : ""}`}
+                    style={{
+                      height: `${Math.max(3, level * 28)}px`,
+                      borderRadius: "9999px",
+                    }}
+                  />
+                </div>
               );
             })}
           </div>
