@@ -1,17 +1,14 @@
 // =============================================================================
 // Spaces Service — Core API Helpers (v7)
 //
-// HTTP calls to hsafa-core for tool sync and sense events.
+// HTTP calls to hsafa-core for instruction sync and sense events.
 // v7: Tools registered globally by scope-registry via SDK.registerTools().
 //     Per-haseef instructions pushed via PATCH /api/haseefs/:id configJson.
 //     submitActionResult removed — SDK handles result posting internally.
 // =============================================================================
 
-import { prisma } from "../db.js";
 import { state } from "./types.js";
-import { SCOPE_INSTRUCTIONS } from "./manifest.js";
-import { scopeRegistry } from "./scope-registry.js";
-import { getDynamicInstructions } from "../scope-templates/instruction-providers.js";
+import { getLoadedPlugins } from "./scope-registry.js";
 
 export function coreHeaders(): Record<string, string> {
   return {
@@ -20,12 +17,22 @@ export function coreHeaders(): Record<string, string> {
   };
 }
 
+// =============================================================================
+// Instruction Sync — push per-haseef dynamic instructions to Core
+// =============================================================================
+
 /**
- * Sync per-haseef scope instructions to Core via PATCH configJson.instructions.
+ * Build and push per-haseef scope instructions to Core via PATCH configJson.
+ *
  * In v7, tools are registered globally by the scope registry — this only pushes
- * the dynamic context (YOUR BASES, YOUR SPACES, etc.) into the haseef's prompt.
+ * the dynamic context (YOUR BASES, YOUR SPACES, YOUR SCHEDULES, etc.) into
+ * the haseef's prompt.
+ *
+ * Each loaded plugin contributes:
+ *   - staticInstructions (always included)
+ *   - getDynamicInstructions(haseefId) (per-haseef context, if implemented)
  */
-export async function syncTools(haseefId: string): Promise<void> {
+export async function syncInstructions(haseefId: string): Promise<void> {
   const instructions = await buildAllInstructions(haseefId);
 
   try {
@@ -39,7 +46,6 @@ export async function syncTools(haseefId: string): Promise<void> {
     const { haseef } = (await getRes.json()) as { haseef: { configJson: Record<string, unknown> } };
     const currentConfig = haseef?.configJson ?? {};
 
-    // Merge instructions into configJson
     const patchUrl = `${state.config!.coreUrl}/api/haseefs/${haseefId}`;
     const patchRes = await fetch(patchUrl, {
       method: "PATCH",
@@ -51,134 +57,50 @@ export async function syncTools(haseefId: string): Promise<void> {
       console.warn(`[core-api] Failed to sync instructions for ${haseefId}: ${patchRes.status} ${text}`);
     }
   } catch (err) {
-    console.warn(`[core-api] syncTools error for ${haseefId}:`, err);
+    console.warn(`[core-api] syncInstructions error for ${haseefId}:`, err);
   }
 }
 
+
+// =============================================================================
+// Instruction Assembly — centralized, queries all loaded plugins
+// =============================================================================
+
 /**
- * Build combined instructions for all active scopes.
- * Spaces scope has its own dynamic builder (YOUR BASES, YOUR SPACES).
- * Plugin scopes get their static instructions from the scope registry.
+ * Build combined instructions for all loaded plugins.
+ *
+ * For each plugin:
+ *   1. Include staticInstructions (if any)
+ *   2. Call getDynamicInstructions(haseefId) (if implemented)
+ * Sections are joined with dividers.
  */
 async function buildAllInstructions(haseefId: string): Promise<string> {
   const sections: string[] = [];
 
-  // 1. Built-in spaces scope — dynamic context
-  sections.push(await buildSpacesInstructions(haseefId));
+  for (const plugin of getLoadedPlugins()) {
+    const pluginSections: string[] = [];
 
-  // 2. Plugin scopes — static instructions from registry (loaded from templates)
-  for (const [scopeName, entry] of scopeRegistry) {
-    if (entry.builtIn) continue; // spaces already handled above
-    if (entry.instructions) {
-      sections.push(entry.instructions);
+    // Static instructions (scope-level, same for all haseefs)
+    if (plugin.staticInstructions) {
+      pluginSections.push(plugin.staticInstructions);
+    }
+
+    // Dynamic instructions (per-haseef context)
+    if (plugin.getDynamicInstructions) {
+      try {
+        const dynamic = await plugin.getDynamicInstructions(haseefId);
+        if (dynamic) pluginSections.push(dynamic);
+      } catch {
+        // Non-fatal — skip if dynamic instruction provider fails
+      }
+    }
+
+    if (pluginSections.length > 0) {
+      sections.push(pluginSections.join('\n\n'));
     }
   }
 
   return sections.filter(Boolean).join('\n\n---\n\n');
-}
-
-/**
- * Build spaces scope instructions — static SCOPE_INSTRUCTIONS + YOUR SPACES.
- */
-async function buildSpacesInstructions(haseefId: string): Promise<string> {
-  const conn = state.connections.get(haseefId);
-  const sections: string[] = [SCOPE_INSTRUCTIONS];
-
-  // ── YOUR BASES ──────────────────────────────────────────────────────
-  if (conn?.agentEntityId) {
-    const baseMembers = await prisma.baseMember.findMany({
-      where: { entityId: conn.agentEntityId },
-      select: { baseId: true },
-    });
-    const baseIds = baseMembers.map((b) => b.baseId);
-
-    if (baseIds.length === 0) {
-      sections.push('YOUR BASES:\n  (no bases yet)');
-    } else {
-      const bases = await prisma.base.findMany({
-        where: { id: { in: baseIds } },
-        select: { id: true, name: true },
-      });
-
-      const allMembers = await prisma.baseMember.findMany({
-        where: { baseId: { in: baseIds } },
-        include: {
-          entity: { select: { id: true, displayName: true, type: true } },
-        },
-      });
-
-      // Group members by baseId
-      const membersByBase = new Map<string, typeof allMembers>();
-      for (const m of allMembers) {
-        const arr = membersByBase.get(m.baseId) ?? [];
-        arr.push(m);
-        membersByBase.set(m.baseId, arr);
-      }
-
-      const baseLines = bases.map((b) => {
-        const members = membersByBase.get(b.id) ?? [];
-        const memberList = members.map((m: any) => {
-          const isYou = m.entity.id === conn.agentEntityId;
-          return `${m.entity.displayName}${isYou ? ' (You)' : ''} [${m.entity.type}, entityId: ${m.entity.id}]`;
-        }).join(', ');
-        return `  - "${b.name}" (baseId: ${b.id}, ${members.length} members): ${memberList}`;
-      });
-
-      sections.push('YOUR BASES:\n' + baseLines.join('\n'));
-    }
-  } else {
-    sections.push('YOUR BASES:\n  (no bases yet)');
-  }
-
-  // ── DYNAMIC SCOPE INSTRUCTIONS (from scope templates) ──────────────
-  try {
-    const dynamic = await getDynamicInstructions(haseefId);
-    for (const section of dynamic) {
-      sections.push(section);
-    }
-  } catch {
-    // Non-fatal — skip if dynamic instruction providers fail
-  }
-
-  // ── YOUR SPACES ──────────────────────────────────────────────────────
-  if (!conn || conn.spaceIds.length === 0) {
-    sections.push('YOUR SPACES:\n  (no spaces yet)');
-  } else {
-    const spaces = await prisma.smartSpace.findMany({
-      where: { id: { in: conn.spaceIds } },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        _count: { select: { memberships: true } },
-      },
-    });
-
-    const membersBySpace = await Promise.all(
-      spaces.map(async (space: any) => {
-        const members = await prisma.smartSpaceMembership.findMany({
-          where: { smartSpaceId: space.id },
-          include: { entity: { select: { displayName: true } } },
-        });
-        return {
-          spaceId: space.id,
-          memberNames: members.map((m: any) => m.entity?.displayName ?? 'Unknown'),
-        };
-      })
-    );
-    const membersMap = new Map(membersBySpace.map(m => [m.spaceId, m.memberNames]));
-
-    const spaceLines = spaces.map((s: any) => {
-      const desc = s.description ? ` — ${s.description}` : '';
-      const memberNames = membersMap.get(s.id) ?? [];
-      const membersList = memberNames.join(', ') || 'empty';
-      return `  - "${s.name ?? 'Unnamed'}" (spaceId: ${s.id}, ${s._count.memberships} members: ${membersList}${desc})`;
-    });
-
-    sections.push('YOUR SPACES:\n' + spaceLines.join('\n'));
-  }
-
-  return sections.join('\n\n');
 }
 
 /** POST /api/events — Push sense events (v7 global events endpoint) */

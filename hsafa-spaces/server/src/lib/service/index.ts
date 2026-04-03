@@ -23,19 +23,15 @@
 // =============================================================================
 
 import { prisma } from "../db.js";
-import { getSpacesForEntity } from "../membership-service.js";
+import { getSpacesForEntity, invalidateEntitySpacesCache } from "../membership-service.js";
 import { loadServiceConfig } from "./config.js";
-import { SCOPE } from "./manifest.js";
 import { setInboxHandler } from "./inbox.js";
 import { state } from "./types.js";
-import { coreHeaders, syncTools } from "./core-api.js";
-import { invalidateEntitySpacesCache } from "../membership-service.js";
+import { coreHeaders, syncInstructions } from "./core-api.js";
 import { registerLifecycleHandlers } from "./stream-bridge.js";
 import { handleInboxMessage } from "./sense-events.js";
-import { initSchedulerScope } from "../scope-templates/scheduler/index.js";
-import { initPostgresScope } from "../scope-templates/postgres/index.js";
-import { startPresenceCleanup, stopPresenceCleanup } from "../smartspace-events.js";
-import { ensurePrebuiltScopes, loadScopes, connectAllScopes } from "./scope-registry.js";
+import { startPresenceCleanup } from "../smartspace-events.js";
+import { ensurePrebuiltScopes, loadScopes } from "./scope-registry.js";
 
 // Re-export public API so existing imports from "./service/index.js" keep working
 export { getConnectionsForSpace, getConnectionForHaseef } from "./types.js";
@@ -65,11 +61,13 @@ export async function bootstrapExtension(): Promise<void> {
   // ── Ensure prebuilt scope templates + instances exist in DB (from code) ────
   await ensurePrebuiltScopes();
 
-  // ── Load scopes: built-in spaces + plugin scopes from DB ─────────────────
-  await loadScopes();
-
   // ── Register lifecycle event handlers (stream bridge) ─────────────────────
+  // Must be registered BEFORE loadScopes so the SDK has handlers when it connects.
   registerLifecycleHandlers();
+
+  // ── Load scopes: all plugins (spaces, scheduler, postgres, etc.) ──────────
+  // Unified loop: shouldLoad → create SDK → registerTools → init → connect
+  await loadScopes();
 
   // ── Auto-discover haseefs from Core ───────────────────────────────────────
   const haseefs = await discoverHaseefs();
@@ -87,13 +85,6 @@ export async function bootstrapExtension(): Promise<void> {
     }
   }
 
-  // ── Start SDK SSE connections for all registered scopes ────────────────────
-  connectAllScopes();
-
-  // Initialize self-managed scope templates
-  await initSchedulerScope(config);
-  await initPostgresScope(config);
-
   // Start presence cleanup job — removes stale online SET entries after crashes
   startPresenceCleanup(() => {
     const allSpaceIds = new Set<string>();
@@ -105,8 +96,8 @@ export async function bootstrapExtension(): Promise<void> {
 
   // Re-sync all connected haseefs to ensure they have the latest instructions + prompt
   for (const conn of state.connections.values()) {
-    syncTools(conn.haseefId).catch((err: unknown) => {
-      console.error(`[spaces-service] Failed to re-sync tools at bootstrap for ${conn.haseefName}:`, err);
+    syncInstructions(conn.haseefId).catch((err: unknown) => {
+      console.error(`[spaces-service] Failed to sync instructions at bootstrap for ${conn.haseefName}:`, err);
     });
   }
 
@@ -203,9 +194,9 @@ async function setupHaseefConnection(haseef: {
     voiceId,
   });
 
-  // Sync tools to Core
-  await syncTools(haseefId);
-  console.log(`[spaces-service] Tools synced for ${haseefName} (scope: ${SCOPE})`);
+  // Sync instructions to Core
+  await syncInstructions(haseefId);
+  console.log(`[spaces-service] Instructions synced for ${haseefName}`);
 
   // NOTE: Haseefs are NOT marked online at bootstrap.
   // They go online only when a run starts (agent.active) and offline when it finishes.
@@ -270,10 +261,10 @@ export function handleMembershipChanged(
       );
     }
 
-    // Invalidate cache + re-sync tools so the prompt includes the updated spaces list
+    // Invalidate cache + re-sync instructions so the prompt includes the updated spaces list
     invalidateEntitySpacesCache(entityId);
-    syncTools(conn.haseefId).catch((err) => {
-      console.error(`[spaces-service] Failed to re-sync tools after membership change:`, err);
+    syncInstructions(conn.haseefId).catch((err) => {
+      console.error(`[spaces-service] Failed to sync instructions after membership change:`, err);
     });
   }
 
@@ -282,18 +273,17 @@ export function handleMembershipChanged(
 }
 
 /**
- * Re-sync tools for all haseefs in a space (excluding the trigger entity).
+ * Re-sync instructions for all haseefs in a space (excluding the trigger entity).
  * Called when any membership changes so all haseefs see fresh member lists.
  */
 function reSyncHaseefsInSpace(spaceId: string, excludeEntityId: string): void {
   for (const conn of state.connections.values()) {
-    // Skip if not in this space or is the entity that triggered the change
     if (!conn.spaceIds.includes(spaceId)) continue;
     if (conn.agentEntityId === excludeEntityId) continue;
 
     console.log(`[spaces-service] Re-syncing ${conn.haseefName} for updated member list in ${spaceId.slice(0, 8)}`);
-    syncTools(conn.haseefId).catch((err) => {
-      console.error(`[spaces-service] Failed to re-sync tools for space member update:`, err);
+    syncInstructions(conn.haseefId).catch((err) => {
+      console.error(`[spaces-service] Failed to sync instructions for space member update:`, err);
     });
   }
 }
@@ -307,11 +297,11 @@ export function reSyncAllHaseefsInSpace(spaceId: string): void {
     if (!conn.spaceIds.includes(spaceId)) continue;
 
     console.log(`[spaces-service] Re-syncing ${conn.haseefName} for space metadata update in ${spaceId.slice(0, 8)}`);
-    syncTools(conn.haseefId).catch((err) => {
-      console.error(`[spaces-service] Failed to re-sync tools for space update:`, err);
+    syncInstructions(conn.haseefId).catch((err) => {
+      console.error(`[spaces-service] Failed to sync instructions for space update:`, err);
     });
   }
 }
 
-// Export syncTools for external use
-export { syncTools } from "./core-api.js";
+// Export for external use
+export { syncInstructions } from "./core-api.js";

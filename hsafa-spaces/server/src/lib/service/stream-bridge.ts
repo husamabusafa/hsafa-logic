@@ -23,7 +23,7 @@ import {
   broadcastTyping,
 } from "../smartspace-events.js";
 import { state, type ActiveConnection } from "./types.js";
-import { isMessageTool, getMessageToolActivity } from "./tool-handlers.js";
+import { isMessageTool, getMessageToolActivity, resolvedSpaceId } from "./tools/index.js";
 import { markHaseefSeen } from "./sense-events.js";
 import { SCOPE } from "./manifest.js";
 import type { HsafaSDK } from "@hsafa/sdk";
@@ -68,14 +68,6 @@ export function registerLifecycleHandlers(): void {
   });
 
   console.log("[stream-bridge] Lifecycle event handlers registered on spaces SDK");
-}
-
-// =============================================================================
-// Resolved Space — prefers explicitly entered space over auto-set trigger space
-// =============================================================================
-
-function resolvedSpaceId(conn: ActiveConnection): string | undefined {
-  return (conn.enteredSpace ?? conn.activeSpace)?.spaceId;
 }
 
 // =============================================================================

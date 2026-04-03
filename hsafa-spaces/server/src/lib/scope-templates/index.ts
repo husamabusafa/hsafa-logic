@@ -14,12 +14,6 @@
 import { SCHEDULER_TOOLS, SCHEDULER_INSTRUCTIONS } from "./scheduler/index.js";
 import { POSTGRES_TOOLS, POSTGRES_INSTRUCTIONS } from "./postgres/index.js";
 
-/**
- * Scopes that create their own SDK instance during init.
- * scope-registry skips these in loadPluginScopesFromDB to avoid duplicates.
- */
-export const SELF_MANAGED_SCOPES = new Set<string>(["scheduler", "postgres"]);
-
 export interface ScopeTemplate {
   id: string;
   slug: string;

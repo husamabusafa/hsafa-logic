@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   ArrowLeftIcon,
   PuzzleIcon,
@@ -13,6 +13,9 @@ import {
   MessageSquareIcon,
   CalendarIcon,
   PlugIcon,
+  DatabaseIcon,
+  EyeIcon,
+  EyeOffIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { scopesApi, type ScopeInstance } from "@/lib/api";
@@ -22,10 +25,38 @@ function ScopeIcon({ icon, className }: { icon: string | null; className?: strin
   switch (icon) {
     case "MessageSquare": return <MessageSquareIcon className={cls} />;
     case "Calendar": return <CalendarIcon className={cls} />;
+    case "Database": return <DatabaseIcon className={cls} />;
     case "Plug": return <PlugIcon className={cls} />;
     default: return <PuzzleIcon className={cls} />;
   }
 }
+
+// ── Config Schema Helpers ────────────────────────────────────────────────────
+
+interface ConfigFieldSchema {
+  type: string;
+  description?: string;
+  default?: unknown;
+  secret?: boolean;
+}
+
+function parseConfigSchema(schema: Record<string, unknown> | undefined): {
+  fields: Record<string, ConfigFieldSchema>;
+  required: string[];
+} {
+  if (!schema || schema.type !== "object") return { fields: {}, required: [] };
+  const props = (schema.properties ?? {}) as Record<string, ConfigFieldSchema>;
+  const required = (schema.required ?? []) as string[];
+  return { fields: props, required };
+}
+
+function getDefaultValue(field: ConfigFieldSchema): string {
+  if (field.type === "boolean") return field.default === true ? "true" : "false";
+  if (field.default !== undefined) return String(field.default);
+  return "";
+}
+
+// ── Main Component ───────────────────────────────────────────────────────────
 
 interface ScopeInstancePageProps {
   instanceId: string;
@@ -44,6 +75,8 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editActive, setEditActive] = useState(true);
+  const [editConfigs, setEditConfigs] = useState<Record<string, string>>({});
+  const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -53,6 +86,14 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
       setEditName(inst.name);
       setEditDescription(inst.description || "");
       setEditActive(inst.active);
+
+      // Build initial config values from existing configs
+      const cfgValues: Record<string, string> = {};
+      for (const c of inst.configs) {
+        cfgValues[c.key] = c.isSecret ? "" : (c.value ?? "");
+      }
+      setEditConfigs(cfgValues);
+      setRevealedSecrets(new Set());
     } catch (err) {
       console.error("Failed to load instance:", err);
       setError("Failed to load scope instance");
@@ -63,16 +104,53 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
 
   useEffect(() => { load(); }, [load]);
 
+  // Parse the config schema from the template
+  const { fields: schemaFields, required: requiredKeys } = useMemo(
+    () => parseConfigSchema(instance?.template.configSchema as Record<string, unknown> | undefined),
+    [instance],
+  );
+  const hasConfigSchema = Object.keys(schemaFields).length > 0;
+
+  // Merged config keys: schema fields + any existing configs not in schema
+  const configKeys = useMemo(() => {
+    const keys = new Set(Object.keys(schemaFields));
+    for (const c of instance?.configs ?? []) keys.add(c.key);
+    return [...keys];
+  }, [schemaFields, instance]);
+
+  function setConfigValue(key: string, value: string) {
+    setEditConfigs((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function toggleReveal(key: string) {
+    setRevealedSecrets((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
   async function handleSave() {
     if (!instance) return;
     setSaving(true);
     setError("");
     setSuccess("");
     try {
+      // Build configs array — only include keys that have a value or were changed
+      const configs: Array<{ key: string; value: string; isSecret?: boolean }> = [];
+      for (const key of configKeys) {
+        const val = editConfigs[key];
+        if (val === undefined || val === "") continue; // skip empty (don't overwrite secrets with empty)
+        const field = schemaFields[key];
+        const isSecret = field?.secret ?? instance.configs.find((c) => c.key === key)?.isSecret ?? false;
+        configs.push({ key, value: val, isSecret });
+      }
+
       await scopesApi.updateInstance(instance.id, {
         name: editName.trim(),
         description: editDescription.trim() || undefined,
         active: editActive,
+        configs: configs.length > 0 ? configs : undefined,
       });
       setSuccess("Saved successfully");
       setTimeout(() => setSuccess(""), 3000);
@@ -186,6 +264,117 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
           </div>
         </section>
 
+        {/* Configuration */}
+        {(hasConfigSchema || instance.configs.length > 0) && !isBuiltIn && (
+          <section>
+            <h2 className="text-sm font-semibold mb-3">Configuration</h2>
+            <div className="space-y-3">
+              {configKeys.map((key) => {
+                const field = schemaFields[key];
+                const existingCfg = instance.configs.find((c) => c.key === key);
+                const isSecret = field?.secret ?? existingCfg?.isSecret ?? false;
+                const isRequired = requiredKeys.includes(key);
+                const fieldType = field?.type ?? "string";
+                const description = field?.description;
+                const placeholder = field?.default !== undefined ? `Default: ${field.default}` : "";
+
+                // Boolean field → checkbox
+                if (fieldType === "boolean") {
+                  const checked = editConfigs[key] !== undefined
+                    ? editConfigs[key] === "true"
+                    : (field?.default === true);
+                  return (
+                    <div key={key} className="flex items-center justify-between p-3 rounded-lg border border-border bg-card">
+                      <div>
+                        <p className="text-sm font-mono">
+                          {key}
+                          {isRequired && <span className="text-red-500 ml-1">*</span>}
+                        </p>
+                        {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setConfigValue(key, checked ? "false" : "true")}
+                        className={cn("transition-colors", checked ? "text-green-500" : "text-muted-foreground")}
+                      >
+                        {checked ? <ToggleRightIcon className="size-6" /> : <ToggleLeftIcon className="size-6" />}
+                      </button>
+                    </div>
+                  );
+                }
+
+                // Number field
+                if (fieldType === "number") {
+                  return (
+                    <div key={key} className="p-3 rounded-lg border border-border bg-card">
+                      <label className="text-sm font-mono">
+                        {key}
+                        {isRequired && <span className="text-red-500 ml-1">*</span>}
+                      </label>
+                      {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
+                      <input
+                        type="number"
+                        value={editConfigs[key] ?? ""}
+                        onChange={(e) => setConfigValue(key, e.target.value)}
+                        placeholder={placeholder}
+                        className="mt-2 w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
+                  );
+                }
+
+                // Secret string field
+                if (isSecret) {
+                  const revealed = revealedSecrets.has(key);
+                  return (
+                    <div key={key} className="p-3 rounded-lg border border-border bg-card">
+                      <label className="text-sm font-mono">
+                        {key}
+                        {isRequired && <span className="text-red-500 ml-1">*</span>}
+                      </label>
+                      {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
+                      <div className="relative mt-2">
+                        <input
+                          type={revealed ? "text" : "password"}
+                          value={editConfigs[key] ?? ""}
+                          onChange={(e) => setConfigValue(key, e.target.value)}
+                          placeholder={existingCfg?.hasValue ? "••••••••  (leave empty to keep)" : placeholder}
+                          className="w-full px-3 py-2 pr-10 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => toggleReveal(key)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
+                        >
+                          {revealed ? <EyeOffIcon className="size-4" /> : <EyeIcon className="size-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Default: text string field
+                return (
+                  <div key={key} className="p-3 rounded-lg border border-border bg-card">
+                    <label className="text-sm font-mono">
+                      {key}
+                      {isRequired && <span className="text-red-500 ml-1">*</span>}
+                    </label>
+                    {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
+                    <input
+                      type="text"
+                      value={editConfigs[key] ?? ""}
+                      onChange={(e) => setConfigValue(key, e.target.value)}
+                      placeholder={placeholder}
+                      className="mt-2 w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         {/* Template Info */}
         <section>
           <h2 className="text-sm font-semibold mb-3">Template</h2>
@@ -219,23 +408,6 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
             ))}
           </div>
         </section>
-
-        {/* Config */}
-        {instance.configs.length > 0 && (
-          <section>
-            <h2 className="text-sm font-semibold mb-3">Configuration</h2>
-            <div className="space-y-2">
-              {instance.configs.map((cfg) => (
-                <div key={cfg.id} className="flex items-center justify-between p-3 rounded-lg border border-border bg-card">
-                  <span className="text-sm font-mono">{cfg.key}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {cfg.isSecret ? "••••••••" : cfg.value || "(empty)"}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
 
         {/* Errors / Success */}
         {error && <p className="text-xs text-red-500">{error}</p>}
