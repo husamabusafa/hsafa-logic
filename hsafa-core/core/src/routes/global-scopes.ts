@@ -5,6 +5,7 @@ import {
   removeScopeConnection,
   isScopeConnected,
 } from '../lib/tool-dispatcher.js';
+import { assertScopeAccess } from '../middleware/auth.js';
 
 // =============================================================================
 // Global Scopes Routes (v7)
@@ -25,6 +26,11 @@ globalScopesRouter.put('/:scope/tools', async (req, res) => {
   const { scope } = req.params;
   const { tools } = req.body;
 
+  if (!assertScopeAccess(req, scope)) {
+    res.status(403).json({ error: 'Not authorized to register tools for this scope' });
+    return;
+  }
+
   if (!Array.isArray(tools)) {
     res.status(400).json({ error: 'tools must be an array' });
     return;
@@ -38,12 +44,10 @@ globalScopesRouter.put('/:scope/tools', async (req, res) => {
       }
     }
 
-    const apiKeyId = req.headers['x-api-key'] as string | undefined;
-
     const scopeRecord = await prisma.scope.upsert({
       where: { name: scope },
-      create: { name: scope, connected: isScopeConnected(scope), apiKeyId: apiKeyId ?? null },
-      update: { ...(apiKeyId ? { apiKeyId } : {}) },
+      create: { name: scope, connected: isScopeConnected(scope) },
+      update: {},
     });
 
     await prisma.scopeTool.deleteMany({ where: { scopeId: scopeRecord.id } });
@@ -113,6 +117,11 @@ globalScopesRouter.get('/:scope/tools', async (req, res) => {
 // GET /api/scopes/:scope/actions/stream — SSE action stream for a scope
 globalScopesRouter.get('/:scope/actions/stream', (req, res) => {
   const { scope } = req.params;
+
+  if (!assertScopeAccess(req, scope)) {
+    res.status(403).json({ error: 'Not authorized to listen on this scope' });
+    return;
+  }
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');

@@ -106,14 +106,23 @@ export async function loadScopes(): Promise<void> {
       }
     }
 
-    // 2. Create SDK
+    // 2. Request a scope key from Core for this plugin
+    let scopeKey: string;
+    try {
+      scopeKey = await requestScopeKey(config, plugin.name);
+    } catch (err) {
+      console.error(`[scope-registry] "${plugin.name}" — failed to obtain scope key:`, err);
+      continue;
+    }
+
+    // 3. Create SDK with per-scope key
     const sdk = new HsafaSDK({
       coreUrl: config.coreUrl,
-      apiKey: config.apiKey,
+      apiKey: scopeKey,
       scope: plugin.name,
     });
 
-    // 3. Register tools
+    // 4. Register tools
     try {
       const toolDefs = plugin.tools.map((t) => ({
         name: t.name,
@@ -126,7 +135,7 @@ export async function loadScopes(): Promise<void> {
       console.error(`[scope-registry] "${plugin.name}" — tool registration failed:`, err);
     }
 
-    // 4. Wire tool handlers
+    // 5. Wire tool handlers
     for (const tool of plugin.tools) {
       sdk.onToolCall(tool.name, async (args, ctx) => {
         return plugin.handleToolCall(tool.name, args, {
@@ -136,14 +145,14 @@ export async function loadScopes(): Promise<void> {
       });
     }
 
-    // 5. Init (scope-specific setup: pollers, pools, listeners, etc.)
+    // 6. Init (scope-specific setup: pollers, pools, listeners, etc.)
     try {
       await plugin.init(sdk, config);
     } catch (err) {
       console.error(`[scope-registry] "${plugin.name}" — init failed:`, err);
     }
 
-    // 6. Connect SSE
+    // 7. Connect SSE
     sdk.connect();
     console.log(`[scope-registry] "${plugin.name}" — connected`);
 
@@ -189,9 +198,17 @@ export async function registerPlugin(plugin: ScopePlugin): Promise<boolean> {
     if (!shouldLoad) return false;
   }
 
+  let scopeKey: string;
+  try {
+    scopeKey = await requestScopeKey(config, plugin.name);
+  } catch (err) {
+    console.error(`[scope-registry] "${plugin.name}" — failed to obtain scope key:`, err);
+    return false;
+  }
+
   const sdk = new HsafaSDK({
     coreUrl: config.coreUrl,
-    apiKey: config.apiKey,
+    apiKey: scopeKey,
     scope: plugin.name,
   });
 
@@ -217,4 +234,35 @@ export function getSDKForScope(scopeName: string): HsafaSDK | null {
 
 export function getPluginForScope(scopeName: string): ScopePlugin | undefined {
   return scopeRegistry.get(scopeName)?.plugin;
+}
+
+// =============================================================================
+// Scope Key Provisioning — request per-scope keys from Core
+// =============================================================================
+
+/**
+ * Request a scope key from Core via the service key.
+ * Creates a new scope key for the given scope name.
+ */
+async function requestScopeKey(config: import("./config.js").ServiceConfig, scopeName: string): Promise<string> {
+  const res = await fetch(`${config.coreUrl}/api/keys`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": config.serviceKey,
+    },
+    body: JSON.stringify({
+      type: "scope",
+      resourceId: scopeName,
+      description: `Scope key for "${scopeName}" (auto-provisioned by Spaces)`,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to create scope key (${res.status}): ${text}`);
+  }
+
+  const { key } = await res.json();
+  return key;
 }

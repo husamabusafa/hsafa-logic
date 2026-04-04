@@ -49,7 +49,7 @@ services:
       PORT: 3001
       DATABASE_URL: postgresql://${POSTGRES_USER:-hsafa}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hsafa_db}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      HSAFA_API_KEY: ${HSAFA_API_KEY}
+      # NOTE: HSAFA_API_KEY removed — Core now uses per-resource API keys (hsk_*) stored in DB
       HSAFA_SECRET_KEY: ${HSAFA_SECRET_KEY}
       HSAFA_PUBLIC_KEY: ${HSAFA_PUBLIC_KEY}
       JWT_SECRET: ${JWT_SECRET}

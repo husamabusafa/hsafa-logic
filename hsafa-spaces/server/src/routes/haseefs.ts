@@ -6,6 +6,8 @@ import { verifyToken } from "../lib/auth.js";
 import { requireRole } from "../lib/role-auth.js";
 import { invalidateSpace } from "../lib/membership-service.js";
 import { handleMembershipChanged, connectNewHaseef } from "../lib/service/index.js";
+import { state } from "../lib/service/types.js";
+import { syncInstructions } from "../lib/service/core-api.js";
 import {
   createHaseef as coreCreateHaseef,
   getHaseef as coreGetHaseef,
@@ -13,6 +15,7 @@ import {
   deleteHaseef as coreDeleteHaseef,
 } from "../lib/core-proxy.js";
 import { getDecryptedApiKey } from "./api-keys.js";
+import { encrypt } from "../lib/encryption.js";
 
 const router = Router();
 
@@ -122,19 +125,20 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     // Create in Core with profileJson linking to the spaces entity
-    const coreHaseef = await coreCreateHaseef({
+    const { haseef: coreHaseef, apiKey: haseefApiKey } = await coreCreateHaseef({
       name,
       description,
       configJson: config,
       profileJson,
     });
 
-    // Create ownership record
+    // Create ownership record (store encrypted haseef API key)
     await prisma.haseefOwnership.create({
       data: {
         userId: auth.userId,
         haseefId: coreHaseef.id,
         entityId: entity.id,
+        coreApiKey: encrypt(haseefApiKey),
       },
     });
 
@@ -173,6 +177,7 @@ router.post("/", async (req: Request, res: Response) => {
         name: coreHaseef.name,
         description: coreHaseef.description,
         entityId: entity.id,
+        apiKey: haseefApiKey, // returned once to user for CLI use
       },
     });
   } catch (error: any) {
@@ -312,6 +317,21 @@ router.patch("/:id", async (req: Request, res: Response) => {
       await prisma.entity.update({
         where: { id: ownership.entityId },
         data: entityUpdate,
+      });
+    }
+
+    // ── Update in-memory connection state so changes take effect immediately ──
+    const conn = state.connections.get(haseefId);
+    if (conn) {
+      if (name) conn.haseefName = name;
+      const voiceConfig = finalConfigJson?.voice as { gender?: string; voiceId?: string } | undefined;
+      if (voiceConfig !== undefined) {
+        conn.voiceGender = (voiceConfig?.gender === "female" ? "female" : voiceConfig?.gender === "male" ? "male" : undefined) as "male" | "female" | undefined;
+        conn.voiceId = voiceConfig?.voiceId || undefined;
+      }
+      // Re-sync instructions to Core so prompt reflects any config changes
+      syncInstructions(haseefId).catch((err: unknown) => {
+        console.error("[haseefs] Failed to re-sync instructions after update:", err);
       });
     }
 

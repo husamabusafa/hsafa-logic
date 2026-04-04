@@ -18,10 +18,10 @@ const router = Router();
 
 // ── Core API helper ─────────────────────────────────────────────────────────
 
-function getCoreConfig(): { coreUrl: string; apiKey: string } {
+function getCoreConfig(): { coreUrl: string; serviceKey: string } {
   return {
     coreUrl: process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001",
-    apiKey: process.env.CORE_API_KEY || "",
+    serviceKey: process.env.CORE_SERVICE_KEY || "",
   };
 }
 
@@ -139,10 +139,10 @@ router.get("/instances", async (req: Request, res: Response) => {
     }));
 
     // Fetch connection status from Core for the built-in spaces scope
-    const { coreUrl, apiKey } = getCoreConfig();
+    const { coreUrl, serviceKey } = getCoreConfig();
     let spacesConnected = false;
     try {
-      const scopesRes = await fetch(`${coreUrl}/api/scopes`, { headers: { "x-api-key": apiKey } });
+      const scopesRes = await fetch(`${coreUrl}/api/scopes`, { headers: { "x-api-key": serviceKey } });
       if (scopesRes.ok) {
         const coreScopes = (await scopesRes.json()).scopes ?? [];
         const spacesScope = coreScopes.find((s: any) => s.name === "spaces");
@@ -188,11 +188,11 @@ router.get("/instances/:id", async (req: Request, res: Response) => {
 
   // Handle built-in "spaces" scope (no DB row)
   if (req.params.id === "built-in-spaces") {
-    const { coreUrl, apiKey } = getCoreConfig();
+    const { coreUrl, serviceKey } = getCoreConfig();
     let spacesConnected = false;
     let toolCount = 0;
     try {
-      const scopesRes = await fetch(`${coreUrl}/api/scopes/spaces/tools`, { headers: { "x-api-key": apiKey } });
+      const scopesRes = await fetch(`${coreUrl}/api/scopes/spaces/tools`, { headers: { "x-api-key": serviceKey } });
       if (scopesRes.ok) {
         const data = await scopesRes.json();
         spacesConnected = data.connected ?? false;
@@ -501,9 +501,9 @@ router.get("/haseef/:haseefId", async (req: Request, res: Response) => {
     }
 
     // Get haseef from Core to read scopes[]
-    const { coreUrl, apiKey } = getCoreConfig();
+    const { coreUrl, serviceKey } = getCoreConfig();
     const coreRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
-      headers: { "x-api-key": apiKey },
+      headers: { "x-api-key": serviceKey },
     });
 
     if (!coreRes.ok) {
@@ -529,7 +529,7 @@ router.get("/haseef/:haseefId", async (req: Request, res: Response) => {
 
     // Get live connection status from Core
     const scopesRes = await fetch(`${coreUrl}/api/scopes`, {
-      headers: { "x-api-key": apiKey },
+      headers: { "x-api-key": serviceKey },
     });
     const coreScopes = scopesRes.ok ? (await scopesRes.json()).scopes ?? [] : [];
     const connectionMap = new Map<string, boolean>();
@@ -627,10 +627,10 @@ router.post("/haseef/:haseefId/attach", async (req: Request, res: Response) => {
     }
 
     // Validate requiredProfileFields against haseef profile
-    const { coreUrl, apiKey } = getCoreConfig();
+    const { coreUrl, serviceKey } = getCoreConfig();
 
     const coreRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
-      headers: { "x-api-key": apiKey },
+      headers: { "x-api-key": serviceKey },
     });
     if (!coreRes.ok) {
       res.status(502).json({ error: "Failed to fetch haseef from Core" });
@@ -658,7 +658,7 @@ router.post("/haseef/:haseefId/attach", async (req: Request, res: Response) => {
 
     const updateRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey },
+      headers: { "Content-Type": "application/json", "x-api-key": serviceKey },
       body: JSON.stringify({ scopes: [...currentScopes, instance.scopeName] }),
     });
 
@@ -699,10 +699,10 @@ router.post("/haseef/:haseefId/detach", async (req: Request, res: Response) => {
     }
 
     // Get current scopes from Core
-    const { coreUrl, apiKey } = getCoreConfig();
+    const { coreUrl, serviceKey } = getCoreConfig();
 
     const coreRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
-      headers: { "x-api-key": apiKey },
+      headers: { "x-api-key": serviceKey },
     });
     if (!coreRes.ok) {
       res.status(502).json({ error: "Failed to fetch haseef from Core" });
@@ -719,7 +719,7 @@ router.post("/haseef/:haseefId/detach", async (req: Request, res: Response) => {
     // Remove scope from haseef
     const updateRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey },
+      headers: { "Content-Type": "application/json", "x-api-key": serviceKey },
       body: JSON.stringify({ scopes: currentScopes.filter((s) => s !== scopeName) }),
     });
 
@@ -746,10 +746,10 @@ router.get("/status", async (req: Request, res: Response) => {
   if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
 
   try {
-    const { coreUrl, apiKey } = getCoreConfig();
+    const { coreUrl, serviceKey } = getCoreConfig();
 
     const scopesRes = await fetch(`${coreUrl}/api/scopes`, {
-      headers: { "x-api-key": apiKey },
+      headers: { "x-api-key": serviceKey },
     });
 
     if (!scopesRes.ok) {

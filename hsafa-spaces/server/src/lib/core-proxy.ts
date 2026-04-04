@@ -1,20 +1,20 @@
 // =============================================================================
 // Core Proxy — Helper to call hsafa-core API for Haseef CRUD
 //
-// Uses HSAFA_GATEWAY_URL + CORE_API_KEY from environment.
+// Uses HSAFA_GATEWAY_URL + CORE_SERVICE_KEY from environment.
 // =============================================================================
 
 const CORE_URL = process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
-const API_KEY = process.env.CORE_API_KEY || "";
+const SERVICE_KEY = process.env.CORE_SERVICE_KEY || "";
 
-if (!API_KEY) {
-  console.warn("[core-proxy] ⚠ CORE_API_KEY is not set — haseef CRUD will fail. Set it to match HSAFA_API_KEY in your core .env");
+if (!SERVICE_KEY) {
+  console.warn("[core-proxy] ⚠ CORE_SERVICE_KEY is not set — haseef CRUD will fail");
 }
 
 function headers(): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    "x-api-key": API_KEY,
+    "x-api-key": SERVICE_KEY,
   };
 }
 
@@ -48,13 +48,13 @@ export async function createHaseef(data: {
   configJson: Record<string, unknown>;
   profileJson?: Record<string, unknown>;
   scopes?: string[];
-}): Promise<CoreHaseef> {
+}): Promise<{ haseef: CoreHaseef; apiKey: string }> {
   const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({
       ...data,
-      scopes: data.scopes ?? ["spaces"], // "spaces" is always included by default
+      scopes: data.scopes ?? ["spaces"],
     }),
   });
   if (!res.ok) {
@@ -62,7 +62,7 @@ export async function createHaseef(data: {
     throw { status: res.status, error: `Core create failed: ${text}` };
   }
   const json = await res.json();
-  return json.haseef;
+  return { haseef: json.haseef, apiKey: json.apiKey };
 }
 
 export async function getHaseef(id: string): Promise<CoreHaseef> {

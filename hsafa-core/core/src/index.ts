@@ -10,6 +10,7 @@ import { globalActionsRouter } from './routes/global-actions.js';
 import { runsRouter } from './routes/runs.js';
 import { memoryRouter } from './routes/memory.js';
 import { dashboardRouter } from './routes/dashboard.js';
+import { apiKeysRouter } from './routes/api-keys.js';
 import { requireApiKey } from './middleware/auth.js';
 import { prisma } from './lib/db.js';
 import { redis } from './lib/redis.js';
@@ -34,7 +35,7 @@ const PORT = process.env.PORT || 3001;
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, x-request-id, Cache-Control');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, x-haseef-key, x-scope-key, x-request-id, Cache-Control');
   res.setHeader('Access-Control-Expose-Headers', 'Content-Type, Cache-Control, Connection, X-Accel-Buffering');
   res.setHeader('Access-Control-Max-Age', '86400');
 
@@ -58,6 +59,7 @@ app.use('/api/actions', globalActionsRouter);
 app.use('/api/runs', runsRouter);
 app.use('/api/memory', memoryRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/keys', apiKeysRouter);
 
 // Health check (no auth)
 app.get('/health', (_req, res) => {

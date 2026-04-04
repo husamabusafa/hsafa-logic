@@ -1,27 +1,27 @@
 // =============================================================================
-// Spaces Service Configuration (v7)
+// Spaces Service Configuration (v8)
 //
 // Reads env vars for the spaces service connection to hsafa-core.
-// v7: uses @hsafa/sdk over SSE — no Redis Streams to Core.
+// v8: per-resource API keys. Service key for admin ops, scope keys for SDK.
 // =============================================================================
 
 export interface ServiceConfig {
   /** Core API base URL (e.g. http://localhost:3001) */
   coreUrl: string;
-  /** API key for authenticating with Core (x-api-key header) */
-  apiKey: string;
+  /** Service key for admin operations (hsk_service_*) */
+  serviceKey: string;
 }
 
 export function loadServiceConfig(): ServiceConfig | null {
   const coreUrl = process.env.HSAFA_GATEWAY_URL || process.env.CORE_URL;
-  const apiKey = process.env.CORE_API_KEY;
+  const serviceKey = process.env.CORE_SERVICE_KEY;
 
-  if (!coreUrl || !apiKey) {
+  if (!coreUrl || !serviceKey) {
     console.warn(
-      "[spaces-service] Missing env vars (HSAFA_GATEWAY_URL/CORE_URL, CORE_API_KEY) — service disabled",
+      "[spaces-service] Missing env vars (HSAFA_GATEWAY_URL/CORE_URL, CORE_SERVICE_KEY) — service disabled",
     );
     return null;
   }
 
-  return { coreUrl, apiKey };
+  return { coreUrl, serviceKey };
 }

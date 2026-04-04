@@ -37,7 +37,6 @@ model Haseef {
   profileJson Json?    @map("profile_json") @db.JsonB // { phone, email, robotId, ... } — routing table
   configJson  Json     @map("config_json") @db.JsonB  // { model, instructions, ... }
   scopes      String[] @default(["spaces"])              // ["spaces", "scheduler", "whatsapp"]
-  apiKeyId    String?  @map("api_key_id")                // which API key created this haseef
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -59,7 +58,6 @@ model Scope {
   id         String    @id @default(uuid()) @db.Uuid
   name       String    @unique               // "whatsapp", "spaces", "body"
   connected  Boolean   @default(false)       // is the service currently connected?
-  apiKeyId   String?   @map("api_key_id")    // which API key registered this scope (null = platform)
   lastSeenAt DateTime? @map("last_seen_at") @db.Timestamptz(6)
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -177,6 +175,30 @@ model SocialMemory {
 }
 
 // Procedural: learned patterns — what works in specific situations
+// =============================================================================
+// API Keys — Per-resource keys for secure multi-tenant access
+//
+// Types:
+//   haseef  — owns one haseef, used by Spaces to manage it
+//   scope   — owns one scope, used by scope services for SSE/tools/results
+//   service — full admin access, used by Spaces backend only
+// =============================================================================
+
+model CoreApiKey {
+  id           String   @id @default(uuid()) @db.Uuid
+  keyHash      String   @unique @map("key_hash")       // SHA-256 hash of the key (never store plaintext)
+  keyPrefix    String   @map("key_prefix")             // first 12 chars for identification (e.g. "hsk_haseef_a")
+  keyType      String   @map("key_type")               // "haseef" | "scope" | "service"
+  resourceId   String?  @map("resource_id")            // haseef UUID or scope name (null for service keys)
+  description  String?                                  // human label
+  active       Boolean  @default(true)
+  lastUsedAt   DateTime? @map("last_used_at") @db.Timestamptz(6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([keyType, resourceId])
+  @@map("core_api_keys")
+}
+
 model ProceduralMemory {
   id         String   @id @default(uuid()) @db.Uuid
   haseefId   String   @map("haseef_id") @db.Uuid

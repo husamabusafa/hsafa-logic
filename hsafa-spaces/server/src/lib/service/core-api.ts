@@ -13,7 +13,7 @@ import { getLoadedPlugins } from "./scope-registry.js";
 export function coreHeaders(): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    "x-api-key": state.config!.apiKey,
+    "x-api-key": state.config!.serviceKey,
   };
 }
 

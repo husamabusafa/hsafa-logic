@@ -14,7 +14,7 @@
 //
 // Split into sub-modules for clarity:
 //   types.ts           — shared state, types, connection helpers
-//   config.ts          — env var loading (coreUrl, apiKey)
+//   config.ts          — env var loading (coreUrl, serviceKey)
 //   core-api.ts        — Core HTTP helpers (sync per-haseef instructions, sense events)
 //   tool-handlers.ts   — tool execution (executeAction + all case handlers)
 //   scope-registry.ts  — SDK creation, tool registration, onToolCall wiring + connect()
