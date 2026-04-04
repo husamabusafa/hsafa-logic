@@ -13,6 +13,16 @@ import { prisma } from "../lib/db.js";
 import { verifyToken } from "../lib/auth.js";
 import { encrypt, decrypt } from "../lib/encryption.js";
 import { SCOPE_TEMPLATES, getTemplateById } from "../lib/scope-templates/index.js";
+import {
+  deployInstance,
+  startInstance,
+  stopInstance,
+  restartInstance,
+  removeInstance,
+  getInstanceLogs,
+  getContainerStatus,
+  isDockerAvailable,
+} from "../lib/scope-docker.js";
 
 const router = Router();
 
@@ -161,6 +171,10 @@ router.get("/instances", async (req: Request, res: Response) => {
       baseId: null,
       active: true,
       builtIn: true,
+      deploymentType: "built-in",
+      containerStatus: spacesConnected ? "running" : "stopped",
+      containerId: null,
+      imageUrl: null,
       createdAt: new Date(0).toISOString(),
       template: {
         id: "built-in",
@@ -328,6 +342,10 @@ router.post("/instances", async (req: Request, res: Response) => {
       return;
     }
 
+    // Determine deployment type and image
+    const deploymentType = req.body.deploymentType || "platform"; // "platform" | "custom" | "external"
+    const imageUrl = req.body.imageUrl || template.imageUrl || null;
+
     // Create instance + configs in a transaction
     const instance = await prisma.$transaction(async (tx) => {
       const inst = await tx.scopeInstance.create({
@@ -339,6 +357,9 @@ router.post("/instances", async (req: Request, res: Response) => {
           ownerId: auth.userId,
           baseId: baseId || null,
           active: true,
+          deploymentType,
+          imageUrl,
+          containerStatus: "stopped",
         },
         include: {
           template: {
@@ -364,6 +385,13 @@ router.post("/instances", async (req: Request, res: Response) => {
 
       return inst;
     });
+
+    // Auto-deploy for platform/custom types (non-blocking)
+    if ((deploymentType === "platform" || deploymentType === "custom") && imageUrl) {
+      deployInstance(instance.id).catch((err) => {
+        console.error(`[scopes] Auto-deploy failed for ${instance.scopeName}:`, err);
+      });
+    }
 
     res.status(201).json({ instance });
   } catch (error) {
@@ -471,11 +499,139 @@ router.delete("/instances/:id", async (req: Request, res: Response) => {
       return;
     }
 
+    // Stop and remove Docker container if it exists
+    if (instance.containerId) {
+      try { await removeInstance(deleteId); } catch { /* best-effort */ }
+    }
+
     await prisma.scopeInstance.delete({ where: { id: deleteId } });
     res.json({ success: true });
   } catch (error) {
     console.error("Delete instance error:", error);
     res.status(500).json({ error: "Failed to delete instance" });
+  }
+});
+
+// =============================================================================
+// INSTANCE LIFECYCLE — deploy, start, stop, restart, logs
+// =============================================================================
+
+// POST /api/scopes/instances/:id/deploy — Deploy (or re-deploy) as Docker container
+router.post("/instances/:id/deploy", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const instance = await prisma.scopeInstance.findUnique({ where: { id: req.params.id as string } });
+    if (!instance) { res.status(404).json({ error: "Instance not found" }); return; }
+    if (instance.ownerId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
+    if (instance.deploymentType === "built-in" || instance.deploymentType === "external") {
+      res.status(400).json({ error: `Cannot deploy ${instance.deploymentType} instances` });
+      return;
+    }
+
+    const dockerOk = await isDockerAvailable();
+    if (!dockerOk) { res.status(503).json({ error: "Docker is not available" }); return; }
+
+    const result = await deployInstance(instance.id);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    console.error("Deploy instance error:", error);
+    res.status(500).json({ error: error.message || "Failed to deploy instance" });
+  }
+});
+
+// POST /api/scopes/instances/:id/start — Start a stopped container
+router.post("/instances/:id/start", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const instance = await prisma.scopeInstance.findUnique({ where: { id: req.params.id as string } });
+    if (!instance) { res.status(404).json({ error: "Instance not found" }); return; }
+    if (instance.ownerId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
+    if (!instance.containerId) { res.status(400).json({ error: "No container — deploy first" }); return; }
+
+    await startInstance(instance.id);
+    res.json({ success: true, containerStatus: "running" });
+  } catch (error: any) {
+    console.error("Start instance error:", error);
+    res.status(500).json({ error: error.message || "Failed to start instance" });
+  }
+});
+
+// POST /api/scopes/instances/:id/stop — Stop a running container
+router.post("/instances/:id/stop", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const instance = await prisma.scopeInstance.findUnique({ where: { id: req.params.id as string } });
+    if (!instance) { res.status(404).json({ error: "Instance not found" }); return; }
+    if (instance.ownerId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
+    if (!instance.containerId) { res.status(400).json({ error: "No container to stop" }); return; }
+
+    await stopInstance(instance.id);
+    res.json({ success: true, containerStatus: "stopped" });
+  } catch (error: any) {
+    console.error("Stop instance error:", error);
+    res.status(500).json({ error: error.message || "Failed to stop instance" });
+  }
+});
+
+// POST /api/scopes/instances/:id/restart — Restart a container
+router.post("/instances/:id/restart", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const instance = await prisma.scopeInstance.findUnique({ where: { id: req.params.id as string } });
+    if (!instance) { res.status(404).json({ error: "Instance not found" }); return; }
+    if (instance.ownerId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
+    if (!instance.containerId) { res.status(400).json({ error: "No container to restart" }); return; }
+
+    await restartInstance(instance.id);
+    res.json({ success: true, containerStatus: "running" });
+  } catch (error: any) {
+    console.error("Restart instance error:", error);
+    res.status(500).json({ error: error.message || "Failed to restart instance" });
+  }
+});
+
+// GET /api/scopes/instances/:id/logs — Get container logs
+router.get("/instances/:id/logs", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const instance = await prisma.scopeInstance.findUnique({ where: { id: req.params.id as string } });
+    if (!instance) { res.status(404).json({ error: "Instance not found" }); return; }
+    if (instance.ownerId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
+
+    const tail = parseInt(req.query.tail as string) || 200;
+    const logs = await getInstanceLogs(instance.id, { tail });
+    res.json({ logs });
+  } catch (error: any) {
+    console.error("Get logs error:", error);
+    res.status(500).json({ error: error.message || "Failed to get logs" });
+  }
+});
+
+// GET /api/scopes/instances/:id/container-status — Get live container status
+router.get("/instances/:id/container-status", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const instance = await prisma.scopeInstance.findUnique({ where: { id: req.params.id as string } });
+    if (!instance) { res.status(404).json({ error: "Instance not found" }); return; }
+    if (instance.ownerId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
+
+    const status = await getContainerStatus(instance.id);
+    res.json(status);
+  } catch (error: any) {
+    console.error("Container status error:", error);
+    res.status(500).json({ error: error.message || "Failed to get status" });
   }
 });
 

@@ -25,6 +25,7 @@ export interface ScopeTemplate {
   requiredProfileFields: string[];
   tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
   instructions: string | null;
+  imageUrl: string | null;
   published: boolean;
 }
 
@@ -43,6 +44,7 @@ export const SCOPE_TEMPLATES: ScopeTemplate[] = [
     icon: "Calendar",
     category: "prebuilt",
     configSchema: {},
+    imageUrl: "hsafa/scope-scheduler:latest",
     requiredProfileFields: [],
     tools: SCHEDULER_TOOLS.map((t) => ({
       name: t.name,
@@ -59,6 +61,7 @@ export const SCOPE_TEMPLATES: ScopeTemplate[] = [
     description: "Query databases, inspect schemas, and set up reactive watches with Postgres triggers.",
     icon: "Database",
     category: "prebuilt",
+    imageUrl: "hsafa/scope-postgres:latest",
     configSchema: {
       type: "object",
       properties: {

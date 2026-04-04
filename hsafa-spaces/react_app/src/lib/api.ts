@@ -660,6 +660,7 @@ export interface ScopeTemplate {
   requiredProfileFields: string[];
   tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
   instructions: string | null;
+  imageUrl: string | null;
   published: boolean;
   createdAt: string;
   _count?: { instances: number };
@@ -673,6 +674,8 @@ export interface ScopeInstanceConfig {
   hasValue: boolean;
 }
 
+export type ContainerStatus = "stopped" | "starting" | "running" | "error" | "building" | "removing";
+
 export interface ScopeInstance {
   id: string;
   templateId: string;
@@ -682,6 +685,12 @@ export interface ScopeInstance {
   ownerId: string | null;
   baseId: string | null;
   active: boolean;
+  builtIn?: boolean;
+  deploymentType: string; // "platform" | "custom" | "external" | "built-in"
+  imageUrl: string | null;
+  containerId: string | null;
+  containerStatus: ContainerStatus;
+  statusMessage?: string | null;
   createdAt: string;
   template: {
     id: string;
@@ -732,6 +741,8 @@ export const scopesApi = {
     scopeName?: string;
     description?: string;
     baseId?: string;
+    deploymentType?: string;
+    imageUrl?: string;
     configs?: Array<{ key: string; value: string; isSecret?: boolean }>;
   }) {
     return request<{ instance: ScopeInstance }>("/scopes/instances", {
@@ -781,6 +792,31 @@ export const scopesApi = {
       method: "POST",
       body: JSON.stringify(data),
     });
+  },
+
+  // Instance lifecycle
+  deployInstance(id: string) {
+    return request<{ success: boolean; containerId: string; containerStatus: ContainerStatus }>(`/scopes/instances/${id}/deploy`, { method: "POST" });
+  },
+
+  startInstance(id: string) {
+    return request<{ success: boolean; containerStatus: ContainerStatus }>(`/scopes/instances/${id}/start`, { method: "POST" });
+  },
+
+  stopInstance(id: string) {
+    return request<{ success: boolean; containerStatus: ContainerStatus }>(`/scopes/instances/${id}/stop`, { method: "POST" });
+  },
+
+  restartInstance(id: string) {
+    return request<{ success: boolean; containerStatus: ContainerStatus }>(`/scopes/instances/${id}/restart`, { method: "POST" });
+  },
+
+  getInstanceLogs(id: string, tail = 200) {
+    return request<{ logs: string }>(`/scopes/instances/${id}/logs?tail=${tail}`);
+  },
+
+  getContainerStatus(id: string) {
+    return request<{ containerStatus: ContainerStatus; statusMessage?: string }>(`/scopes/instances/${id}/container-status`);
   },
 
   // Connection status

@@ -58,6 +58,7 @@ export async function ensurePrebuiltScopes(): Promise<void> {
         requiredProfileFields: tmpl.requiredProfileFields,
         tools: tmpl.tools as any,
         instructions: tmpl.instructions,
+        imageUrl: tmpl.imageUrl,
         published: tmpl.published,
       },
       create: {
@@ -71,6 +72,7 @@ export async function ensurePrebuiltScopes(): Promise<void> {
         requiredProfileFields: tmpl.requiredProfileFields,
         tools: tmpl.tools as any,
         instructions: tmpl.instructions,
+        imageUrl: tmpl.imageUrl,
         published: tmpl.published,
       },
     });

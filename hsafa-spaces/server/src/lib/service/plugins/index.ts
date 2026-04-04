@@ -10,15 +10,12 @@
 
 import type { ScopePlugin } from "../scope-plugin.js";
 import { spacesPlugin } from "./spaces-plugin.js";
-import { schedulerPlugin } from "../../scope-templates/scheduler/index.js";
-import { postgresPlugin } from "../../scope-templates/postgres/index.js";
 
 /**
- * All registered scope plugins. Order determines init order.
- * "spaces" should be first (built-in, always loaded).
+ * All registered scope plugins. Only "spaces" is built-in.
+ * All other scopes (postgres, scheduler, etc.) are deployed as
+ * standalone Docker containers via the unified instance model.
  */
 export const ALL_PLUGINS: ScopePlugin[] = [
   spacesPlugin,
-  schedulerPlugin,
-  postgresPlugin,
 ];

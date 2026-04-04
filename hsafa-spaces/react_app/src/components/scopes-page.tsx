@@ -20,6 +20,14 @@ import {
   GlobeIcon,
   ToggleRightIcon,
   ToggleLeftIcon,
+  PlayIcon,
+  SquareIcon,
+  RotateCwIcon,
+  FileTextIcon,
+  RocketIcon,
+  TrashIcon,
+  DatabaseIcon,
+  ChevronDownIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -36,6 +44,7 @@ function ScopeIcon({ icon, className }: { icon: string | null; className?: strin
   switch (icon) {
     case "MessageSquare": return <MessageSquareIcon className={cls} />;
     case "Calendar": return <CalendarIcon className={cls} />;
+    case "Database": return <DatabaseIcon className={cls} />;
     case "Plug": return <PlugIcon className={cls} />;
     default: return <PuzzleIcon className={cls} />;
   }
@@ -159,6 +168,7 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
             instances={filteredInstances}
             statusMap={statusMap}
             onNavigate={onNavigateToInstance}
+            onRefresh={load}
           />
         ) : tab === "templates" ? (
           <TemplatesList
@@ -185,15 +195,201 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
 
 // ── Instances List ───────────────────────────────────────────────────────────
 
+function ContainerStatusBadge({ status, connected }: { status: string; connected?: boolean }) {
+  const configs: Record<string, { icon: React.ReactNode; label: string; cls: string }> = {
+    running: { icon: <CheckCircle2Icon className="size-3" />, label: connected ? "Connected" : "Running", cls: connected ? "text-green-600" : "text-blue-500" },
+    starting: { icon: <Loader2Icon className="size-3 animate-spin" />, label: "Starting", cls: "text-blue-500" },
+    building: { icon: <Loader2Icon className="size-3 animate-spin" />, label: "Building", cls: "text-amber-500" },
+    stopped: { icon: <XCircleIcon className="size-3" />, label: "Stopped", cls: "text-muted-foreground" },
+    error: { icon: <XCircleIcon className="size-3" />, label: "Error", cls: "text-red-500" },
+    removing: { icon: <Loader2Icon className="size-3 animate-spin" />, label: "Removing", cls: "text-muted-foreground" },
+  };
+  const cfg = configs[status] ?? configs.stopped;
+  return <span className={cn("flex items-center gap-1 text-xs", cfg.cls)}>{cfg.icon} {cfg.label}</span>;
+}
+
+function DeploymentTypeBadge({ type }: { type: string }) {
+  const labels: Record<string, string> = { "built-in": "Built-in", platform: "Platform", custom: "Custom", external: "External" };
+  return (
+    <span className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-medium uppercase">
+      {labels[type] ?? type}
+    </span>
+  );
+}
+
+function InstanceLifecycleActions({
+  instance,
+  onRefresh,
+}: {
+  instance: ScopeInstance;
+  onRefresh: () => void;
+}) {
+  const [acting, setActing] = useState<string | null>(null);
+  const [logs, setLogs] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  const isManaged = instance.deploymentType === "platform" || instance.deploymentType === "custom";
+  const hasContainer = !!instance.containerId;
+  const isRunning = instance.containerStatus === "running";
+  const isStopped = instance.containerStatus === "stopped";
+  const isError = instance.containerStatus === "error";
+
+  async function act(action: string, fn: () => Promise<unknown>) {
+    setActing(action);
+    setError("");
+    try {
+      await fn();
+      onRefresh();
+    } catch (err: any) {
+      setError(err.message || `Failed to ${action}`);
+    } finally {
+      setActing(null);
+    }
+  }
+
+  async function viewLogs() {
+    setActing("logs");
+    setError("");
+    try {
+      const res = await scopesApi.getInstanceLogs(instance.id, 100);
+      setLogs(res.logs || "(no logs)");
+    } catch (err: any) {
+      setError(err.message || "Failed to fetch logs");
+    } finally {
+      setActing(null);
+    }
+  }
+
+  if (!isManaged && instance.deploymentType !== "external") return null;
+
+  if (instance.deploymentType === "external") {
+    return (
+      <div className="text-xs text-muted-foreground px-1 py-2">
+        External scope — managed outside this platform. Status updates when the service connects to Core.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* Deploy / Re-deploy */}
+        {(!hasContainer || isStopped || isError) && instance.imageUrl && (
+          <button
+            onClick={() => act("deploy", () => scopesApi.deployInstance(instance.id))}
+            disabled={!!acting}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            {acting === "deploy" ? <Loader2Icon className="size-3 animate-spin" /> : <RocketIcon className="size-3" />}
+            {hasContainer ? "Re-deploy" : "Deploy"}
+          </button>
+        )}
+
+        {/* Start */}
+        {hasContainer && isStopped && (
+          <button
+            onClick={() => act("start", () => scopesApi.startInstance(instance.id))}
+            disabled={!!acting}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+          >
+            {acting === "start" ? <Loader2Icon className="size-3 animate-spin" /> : <PlayIcon className="size-3" />}
+            Start
+          </button>
+        )}
+
+        {/* Stop */}
+        {hasContainer && isRunning && (
+          <button
+            onClick={() => act("stop", () => scopesApi.stopInstance(instance.id))}
+            disabled={!!acting}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-muted text-foreground hover:bg-muted/80 transition-colors disabled:opacity-50"
+          >
+            {acting === "stop" ? <Loader2Icon className="size-3 animate-spin" /> : <SquareIcon className="size-3" />}
+            Stop
+          </button>
+        )}
+
+        {/* Restart */}
+        {hasContainer && isRunning && (
+          <button
+            onClick={() => act("restart", () => scopesApi.restartInstance(instance.id))}
+            disabled={!!acting}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-muted text-foreground hover:bg-muted/80 transition-colors disabled:opacity-50"
+          >
+            {acting === "restart" ? <Loader2Icon className="size-3 animate-spin" /> : <RotateCwIcon className="size-3" />}
+            Restart
+          </button>
+        )}
+
+        {/* Logs */}
+        {hasContainer && (
+          <button
+            onClick={viewLogs}
+            disabled={!!acting}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-muted text-foreground hover:bg-muted/80 transition-colors disabled:opacity-50"
+          >
+            {acting === "logs" ? <Loader2Icon className="size-3 animate-spin" /> : <FileTextIcon className="size-3" />}
+            Logs
+          </button>
+        )}
+
+        {/* Delete */}
+        {!instance.builtIn && (
+          <button
+            onClick={() => {
+              if (!confirm(`Delete instance "${instance.name}"? This will stop and remove its container.`)) return;
+              act("delete", () => scopesApi.deleteInstance(instance.id));
+            }}
+            disabled={!!acting}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50 ml-auto"
+          >
+            {acting === "delete" ? <Loader2Icon className="size-3 animate-spin" /> : <TrashIcon className="size-3" />}
+            Delete
+          </button>
+        )}
+      </div>
+
+      {/* Image info */}
+      {instance.imageUrl && (
+        <p className="text-[10px] text-muted-foreground font-mono">
+          Image: {instance.imageUrl}
+          {instance.containerId && <> · Container: {instance.containerId.slice(0, 12)}</>}
+        </p>
+      )}
+
+      {error && <p className="text-xs text-red-500">{error}</p>}
+
+      {/* Logs panel */}
+      {logs !== null && (
+        <div className="relative">
+          <button
+            onClick={() => setLogs(null)}
+            className="absolute top-2 right-2 text-xs text-muted-foreground hover:text-foreground"
+          >
+            ✕
+          </button>
+          <pre className="p-3 rounded-lg bg-black text-green-400 text-[10px] font-mono overflow-x-auto max-h-60 overflow-y-auto whitespace-pre-wrap">
+            {logs}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InstancesList({
   instances,
   statusMap,
   onNavigate,
+  onRefresh,
 }: {
   instances: ScopeInstance[];
   statusMap: Map<string, CoreScopeStatus>;
   onNavigate?: (id: string) => void;
+  onRefresh: () => void;
 }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   if (instances.length === 0) {
     return (
       <div className="text-center py-12 text-muted-foreground">
@@ -207,45 +403,58 @@ function InstancesList({
   return (
     <div className="grid gap-3">
       {instances.map((inst) => {
-        const status = statusMap.get(inst.scopeName);
-        const connected = status?.connected ?? false;
+        const coreStatus = statusMap.get(inst.scopeName);
+        const connected = coreStatus?.connected ?? false;
+        const containerStatus = inst.containerStatus ?? "stopped";
+        const isRunning = containerStatus === "running";
+        const isExpanded = expandedId === inst.id;
 
         return (
-          <button
-            key={inst.id}
-            onClick={() => onNavigate?.(inst.id)}
-            className="flex items-center gap-4 p-4 rounded-xl border border-border bg-card hover:bg-muted/50 transition-colors text-left group"
-          >
-            <div className={cn(
-              "flex items-center justify-center size-10 rounded-lg",
-              connected ? "bg-green-500/10 text-green-600" : "bg-muted text-muted-foreground",
-            )}>
-              <ScopeIcon icon={inst.template.icon} />
-            </div>
-
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-medium text-sm truncate">{inst.name}</span>
-                <span className="text-xs text-muted-foreground font-mono">({inst.scopeName})</span>
+          <div key={inst.id} className="rounded-xl border border-border bg-card overflow-hidden">
+            <button
+              onClick={() => setExpandedId(isExpanded ? null : inst.id)}
+              className="flex items-center gap-4 p-4 hover:bg-muted/50 transition-colors text-left group w-full"
+            >
+              <div className={cn(
+                "flex items-center justify-center size-10 rounded-lg",
+                isRunning && connected ? "bg-green-500/10 text-green-600"
+                  : isRunning ? "bg-blue-500/10 text-blue-500"
+                  : "bg-muted text-muted-foreground",
+              )}>
+                <ScopeIcon icon={inst.template.icon} />
               </div>
-              <div className="flex items-center gap-3 mt-0.5">
-                <span className="text-xs text-muted-foreground">{inst.template.name}</span>
-                {inst.active ? (
-                  <span className="flex items-center gap-1 text-xs">
-                    {connected ? (
-                      <><CheckCircle2Icon className="size-3 text-green-500" /> Connected</>
-                    ) : (
-                      <><XCircleIcon className="size-3 text-yellow-500" /> Disconnected</>
-                    )}
-                  </span>
-                ) : (
-                  <span className="text-xs text-muted-foreground">Inactive</span>
-                )}
-              </div>
-            </div>
 
-            <ChevronRightIcon className="size-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-          </button>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-sm truncate">{inst.name}</span>
+                  <span className="text-xs text-muted-foreground font-mono">({inst.scopeName})</span>
+                  <DeploymentTypeBadge type={inst.deploymentType} />
+                </div>
+                <div className="flex items-center gap-3 mt-0.5">
+                  <span className="text-xs text-muted-foreground">{inst.template.name}</span>
+                  {inst.active ? (
+                    <ContainerStatusBadge status={containerStatus} connected={connected} />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Inactive</span>
+                  )}
+                  {inst.statusMessage && (
+                    <span className="text-[10px] text-red-400 truncate max-w-48">{inst.statusMessage}</span>
+                  )}
+                </div>
+              </div>
+
+              <ChevronDownIcon className={cn(
+                "size-4 text-muted-foreground transition-transform",
+                isExpanded && "rotate-180",
+              )} />
+            </button>
+
+            {isExpanded && (
+              <div className="px-4 pb-4 pt-1 border-t border-border">
+                <InstanceLifecycleActions instance={inst} onRefresh={onRefresh} />
+              </div>
+            )}
+          </div>
         );
       })}
     </div>
