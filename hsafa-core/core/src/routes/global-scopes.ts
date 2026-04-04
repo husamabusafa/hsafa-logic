@@ -50,20 +50,24 @@ globalScopesRouter.put('/:scope/tools', async (req, res) => {
       update: {},
     });
 
-    await prisma.scopeTool.deleteMany({ where: { scopeId: scopeRecord.id } });
-
-    const created = await Promise.all(
-      (tools as Array<{ name: string; description: string; inputSchema: unknown }>).map((t) =>
-        prisma.scopeTool.create({
-          data: {
-            scopeId: scopeRecord.id,
-            name: t.name,
-            description: t.description,
-            inputSchema: t.inputSchema as any,
-          },
-        }),
-      ),
-    );
+    // Atomic: delete all existing tools then recreate in a transaction
+    const created = await prisma.$transaction(async (tx) => {
+      await tx.scopeTool.deleteMany({ where: { scopeId: scopeRecord.id } });
+      const results = [];
+      for (const t of tools as Array<{ name: string; description: string; inputSchema: unknown }>) {
+        results.push(
+          await tx.scopeTool.create({
+            data: {
+              scopeId: scopeRecord.id,
+              name: t.name,
+              description: t.description,
+              inputSchema: t.inputSchema as any,
+            },
+          }),
+        );
+      }
+      return results;
+    });
 
     res.json({ scope, tools: created, count: created.length });
   } catch (err) {

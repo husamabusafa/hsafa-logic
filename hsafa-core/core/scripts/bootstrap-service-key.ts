@@ -4,7 +4,7 @@
 // Run this once after setting up the Core database to create the first
 // service key. Copy the output key into your Spaces .env as CORE_SERVICE_KEY.
 //
-// Usage: npx tsx scripts/bootstrap-service-key.ts
+// Usage: node --env-file=.env --import tsx scripts/bootstrap-service-key.ts
 // =============================================================================
 
 import { prisma } from '../src/lib/db.js';

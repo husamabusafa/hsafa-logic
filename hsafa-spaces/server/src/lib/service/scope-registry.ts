@@ -242,15 +242,28 @@ export function getPluginForScope(scopeName: string): ScopePlugin | undefined {
 
 /**
  * Request a scope key from Core via the service key.
- * Creates a new scope key for the given scope name.
+ * Revokes any existing scope keys for this scope, then creates a fresh one.
  */
 async function requestScopeKey(config: import("./config.js").ServiceConfig, scopeName: string): Promise<string> {
+  const authHeaders = { "Content-Type": "application/json", "x-api-key": config.serviceKey };
+
+  // Revoke existing scope keys for this scope (cleanup from previous boots)
+  try {
+    const listRes = await fetch(`${config.coreUrl}/api/keys?type=scope&resourceId=${encodeURIComponent(scopeName)}`, {
+      headers: authHeaders,
+    });
+    if (listRes.ok) {
+      const { keys } = await listRes.json();
+      for (const k of keys ?? []) {
+        await fetch(`${config.coreUrl}/api/keys/${k.id}/revoke`, { method: "POST", headers: authHeaders });
+      }
+    }
+  } catch { /* best-effort cleanup */ }
+
+  // Create fresh scope key
   const res = await fetch(`${config.coreUrl}/api/keys`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": config.serviceKey,
-    },
+    headers: authHeaders,
     body: JSON.stringify({
       type: "scope",
       resourceId: scopeName,

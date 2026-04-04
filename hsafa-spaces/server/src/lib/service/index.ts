@@ -61,13 +61,13 @@ export async function bootstrapExtension(): Promise<void> {
   // ── Ensure prebuilt scope templates + instances exist in DB (from code) ────
   await ensurePrebuiltScopes();
 
-  // ── Register lifecycle event handlers (stream bridge) ─────────────────────
-  // Must be registered BEFORE loadScopes so the SDK has handlers when it connects.
-  registerLifecycleHandlers();
-
   // ── Load scopes: all plugins (spaces, scheduler, postgres, etc.) ──────────
   // Unified loop: shouldLoad → create SDK → registerTools → init → connect
   await loadScopes();
+
+  // ── Register lifecycle event handlers (stream bridge) ─────────────────────
+  // Must be called AFTER loadScopes() which sets state.spacesSDK.
+  registerLifecycleHandlers();
 
   // ── Auto-discover haseefs from Core ───────────────────────────────────────
   const haseefs = await discoverHaseefs();

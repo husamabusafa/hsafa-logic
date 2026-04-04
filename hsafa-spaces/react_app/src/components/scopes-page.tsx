@@ -18,6 +18,8 @@ import {
   ExternalLinkIcon,
   FolderTreeIcon,
   GlobeIcon,
+  ToggleRightIcon,
+  ToggleLeftIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -782,7 +784,14 @@ function CreateInstanceModal({
   const configProperties = (template.configSchema as any)?.properties ?? {};
   const configRequired = (template.configSchema as any)?.required ?? [];
   const configKeys = Object.keys(configProperties);
-  const [configValues, setConfigValues] = useState<Record<string, string>>({});
+  const [configValues, setConfigValues] = useState<Record<string, string | boolean | number>>(() => {
+    const defaults: Record<string, string | boolean | number> = {};
+    for (const key of configKeys) {
+      const prop = configProperties[key];
+      if (prop?.default !== undefined) defaults[key] = prop.default;
+    }
+    return defaults;
+  });
 
   async function handleCreate() {
     setError("");
@@ -791,11 +800,16 @@ function CreateInstanceModal({
 
     setCreating(true);
     try {
-      const configs = configKeys.map((key) => ({
-        key,
-        value: configValues[key] || "",
-        isSecret: configProperties[key]?.format === "password" || configProperties[key]?.sensitive === true,
-      })).filter((c) => c.value);
+      const configs = configKeys.map((key) => {
+        const prop = configProperties[key];
+        const raw = configValues[key];
+        const value = raw !== undefined && raw !== "" ? String(raw) : "";
+        return {
+          key,
+          value,
+          isSecret: prop?.secret === true || prop?.format === "password" || prop?.sensitive === true,
+        };
+      }).filter((c) => c.value);
 
       await scopesApi.createInstance({
         templateId: template.id,
@@ -869,7 +883,35 @@ function CreateInstanceModal({
                 {configKeys.map((key) => {
                   const prop = configProperties[key];
                   const isRequired = configRequired.includes(key);
-                  const isSecret = prop?.format === "password" || prop?.sensitive === true;
+                  const isSecret = prop?.secret === true || prop?.format === "password" || prop?.sensitive === true;
+                  const fieldType = prop?.type;
+
+                  if (fieldType === "boolean") {
+                    const checked = configValues[key] === true || configValues[key] === "true";
+                    return (
+                      <div key={key} className="mb-3 flex items-center justify-between p-3 rounded-lg border border-border bg-background">
+                        <div>
+                          <p className="text-sm font-medium">
+                            {prop?.title || key}
+                            {isRequired && <span className="text-red-500 ml-0.5">*</span>}
+                          </p>
+                          {prop?.description && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5">{prop.description}</p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setConfigValues({ ...configValues, [key]: !checked })}
+                          className={`transition-colors ${checked ? "text-primary" : "text-muted-foreground"}`}
+                        >
+                          {checked
+                            ? <ToggleRightIcon className="size-7" />
+                            : <ToggleLeftIcon className="size-7" />}
+                        </button>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div key={key} className="mb-3">
                       <label className="text-xs font-medium text-muted-foreground">
@@ -880,11 +922,14 @@ function CreateInstanceModal({
                         <p className="text-[10px] text-muted-foreground">{prop.description}</p>
                       )}
                       <input
-                        type={isSecret ? "password" : "text"}
-                        value={configValues[key] || ""}
-                        onChange={(e) => setConfigValues({ ...configValues, [key]: e.target.value })}
+                        type={isSecret ? "password" : fieldType === "number" ? "number" : "text"}
+                        value={configValues[key] !== undefined ? String(configValues[key]) : ""}
+                        onChange={(e) => setConfigValues({
+                          ...configValues,
+                          [key]: fieldType === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value,
+                        })}
                         className="mt-1 w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-                        placeholder={prop?.default || ""}
+                        placeholder={prop?.default !== undefined ? String(prop.default) : ""}
                       />
                     </div>
                   );

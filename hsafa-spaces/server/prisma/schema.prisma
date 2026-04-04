@@ -342,6 +342,7 @@ model ScopeTemplate {
   tools                 Json     @default("[]") @db.JsonB         // [{name, description, inputSchema}]
   instructions          String?  @db.Text                         // Scope-level instructions for haseef prompt
   sourceCode            String?  @map("source_code") @db.Text     // Bundled JS for custom scopes (null for prebuilt)
+  imageUrl              String?  @map("image_url")                // Default Docker image (e.g. "hsafa/scope-postgres:latest")
   authorId              String?  @map("author_id")                // userId of developer (null for prebuilt)
   published             Boolean  @default(false)
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -364,7 +365,17 @@ model ScopeInstance {
   description String?
   ownerId     String?  @map("owner_id")                 // userId (null = platform-owned)
   baseId      String?  @map("base_id") @db.Uuid         // If shared with a Base (null = private)
-  active      Boolean  @default(true)
+  active          Boolean  @default(true)
+
+  // ── Deployment ──────────────────────────────────────
+  deploymentType  String   @default("platform") @map("deployment_type")   // "platform" | "custom" | "external" | "built-in"
+  imageUrl        String?  @map("image_url")                              // Docker image URL (null for external/built-in)
+  containerId     String?  @map("container_id")                            // Docker container ID (null for external/built-in)
+  containerStatus String   @default("stopped") @map("container_status")   // "stopped" | "starting" | "running" | "error" | "building"
+  statusMessage   String?  @map("status_message")                          // Error message or status details
+  lastHealthAt    DateTime? @map("last_health_at") @db.Timestamptz(6)      // Last successful health check
+  port            Int?                                                     // Assigned port (if needed)
+
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
