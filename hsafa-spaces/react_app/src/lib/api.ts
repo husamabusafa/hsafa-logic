@@ -775,6 +775,14 @@ export const scopesApi = {
     });
   },
 
+  // External scopes
+  registerExternal(data: { scopeName: string; displayName: string; apiKey: string; description?: string }) {
+    return request<{ template: ScopeTemplate; instance: ScopeInstance }>("/scopes/external", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
   // Connection status
   getStatus() {
     return request<{ scopes: CoreScopeStatus[] }>("/scopes/status");
