@@ -129,6 +129,138 @@ function ConfirmModal({
   );
 }
 
+// ── Deploy Output Modal ──────────────────────────────────────────────────────
+
+interface DeployOutput {
+  status: "deploying" | "success" | "error";
+  containerId?: string;
+  containerStatus?: string;
+  error?: string;
+}
+
+function DeployOutputModal({
+  output,
+  instanceName,
+  onClose,
+  onViewLogs,
+}: {
+  output: DeployOutput;
+  instanceName: string;
+  onClose: () => void;
+  onViewLogs: () => void;
+}) {
+  const steps = [
+    "Pulling Docker image",
+    "Removing old container",
+    "Building environment",
+    "Creating container",
+    "Starting container",
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={output.status !== "deploying" ? onClose : undefined} />
+      <div className="relative bg-card border border-border rounded-xl shadow-2xl w-full max-w-md mx-4">
+        <div className="p-6 space-y-5">
+          {/* Header */}
+          <div className="flex items-center gap-3">
+            <div className={cn(
+              "flex items-center justify-center size-10 rounded-full shrink-0",
+              output.status === "deploying" && "bg-blue-500/10 text-blue-500",
+              output.status === "success" && "bg-green-500/10 text-green-500",
+              output.status === "error" && "bg-red-500/10 text-red-500",
+            )}>
+              {output.status === "deploying" && <Loader2Icon className="size-5 animate-spin" />}
+              {output.status === "success" && <CheckCircle2Icon className="size-5" />}
+              {output.status === "error" && <XCircleIcon className="size-5" />}
+            </div>
+            <div>
+              <h3 className="font-semibold text-base">
+                {output.status === "deploying" && "Deploying..."}
+                {output.status === "success" && "Deployed Successfully"}
+                {output.status === "error" && "Deployment Failed"}
+              </h3>
+              <p className="text-xs text-muted-foreground">{instanceName}</p>
+            </div>
+          </div>
+
+          {/* Steps */}
+          <div className="rounded-lg border border-border overflow-hidden bg-muted/30">
+            {steps.map((step, i) => {
+              const activeIdx = output.status === "deploying" ? Math.min(i, steps.length - 1) : steps.length;
+              let icon: React.ReactNode;
+              let textCls: string;
+
+              if (output.status === "success") {
+                icon = <CheckCircle2Icon className="size-4 text-green-500" />;
+                textCls = "text-muted-foreground";
+              } else if (output.status === "error" && i === steps.length - 1) {
+                icon = <XCircleIcon className="size-4 text-red-500" />;
+                textCls = "text-red-500 font-medium";
+              } else if (output.status === "error" && i < steps.length - 1) {
+                icon = <CheckCircle2Icon className="size-4 text-green-500" />;
+                textCls = "text-muted-foreground";
+              } else if (output.status === "deploying" && i < activeIdx) {
+                icon = <CheckCircle2Icon className="size-4 text-green-500" />;
+                textCls = "text-muted-foreground";
+              } else if (output.status === "deploying" && i === activeIdx) {
+                icon = <Loader2Icon className="size-4 text-blue-500 animate-spin" />;
+                textCls = "text-foreground font-medium";
+              } else {
+                icon = <div className="size-4 rounded-full border-2 border-border" />;
+                textCls = "text-muted-foreground";
+              }
+
+              return (
+                <div key={i} className="flex items-center gap-3 px-4 py-2.5 border-b border-border last:border-0">
+                  <div className="shrink-0">{icon}</div>
+                  <span className={cn("text-sm", textCls)}>{step}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Result details */}
+          {output.status === "success" && output.containerId && (
+            <div className="rounded-lg border border-green-200 dark:border-green-900/50 bg-green-50 dark:bg-green-950/20 p-3 space-y-1">
+              <p className="text-xs font-medium text-green-700 dark:text-green-400">Container started</p>
+              <p className="text-[11px] text-green-600 dark:text-green-500 font-mono">{output.containerId.slice(0, 12)}</p>
+            </div>
+          )}
+
+          {output.status === "error" && output.error && (
+            <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/20 p-3">
+              <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-1">Error</p>
+              <p className="text-xs text-red-600 dark:text-red-400 font-mono break-all leading-relaxed">{output.error}</p>
+            </div>
+          )}
+
+          {/* Actions */}
+          {output.status !== "deploying" && (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={onClose}
+                className="flex-1 px-4 py-2 text-sm rounded-lg border border-border font-medium hover:bg-muted transition-colors"
+              >
+                Close
+              </button>
+              {output.status === "success" && (
+                <button
+                  onClick={onViewLogs}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"
+                >
+                  <TerminalIcon className="size-3.5" />
+                  View Logs
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Tab types ─────────────────────────────────────────────────────────────────
 
 type InstanceTab = "general" | "configuration" | "logs";
@@ -738,6 +870,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   const [error, setError] = useState("");
   const [tab, setTab] = useState<InstanceTab>("general");
   const [acting, setActing] = useState<string | null>(null);
+  const [deployOutput, setDeployOutput] = useState<DeployOutput | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -762,6 +895,24 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
       load();
     } catch (err: any) {
       console.error(`Action ${action} failed:`, err);
+    } finally {
+      setActing(null);
+    }
+  }
+
+  async function handleDeploy() {
+    setActing("deploy");
+    setDeployOutput({ status: "deploying" });
+    try {
+      const res = await scopesApi.deployInstance(instanceId);
+      if (res.containerStatus === "error") {
+        setDeployOutput({ status: "error", error: res.statusMessage || "Deployment failed" });
+      } else {
+        setDeployOutput({ status: "success", containerId: res.containerId, containerStatus: res.containerStatus });
+      }
+      load();
+    } catch (err: any) {
+      setDeployOutput({ status: "error", error: err.message || "Deployment failed" });
     } finally {
       setActing(null);
     }
@@ -834,7 +985,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
                 <HeaderAction
                   label={hasContainer ? "Redeploy" : "Deploy"}
                   icon={<RocketIcon className="size-3.5" />}
-                  onClick={() => act("deploy", () => scopesApi.deployInstance(instance.id))}
+                  onClick={handleDeploy}
                   disabled={!!acting}
                   loading={acting === "deploy"}
                 />
@@ -899,6 +1050,16 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
         {tab === "configuration" && <ConfigurationTab instance={instance} onSaved={load} />}
         {tab === "logs" && <LogsTab instance={instance} />}
       </div>
+
+      {/* Deploy output modal */}
+      {deployOutput && (
+        <DeployOutputModal
+          output={deployOutput}
+          instanceName={instance.name}
+          onClose={() => setDeployOutput(null)}
+          onViewLogs={() => { setDeployOutput(null); setTab("logs"); }}
+        />
+      )}
     </div>
   );
 }

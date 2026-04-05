@@ -93,10 +93,18 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
     if (creating) return;
     setCreating(template.id);
     try {
+      // Find next available index for duplicate names
+      const baseName = template.name;
+      const baseSlug = template.slug;
+      const existing = instances.filter((i) => i.scopeName === baseSlug || i.scopeName.match(new RegExp(`^${baseSlug}-\\d+$`)));
+      const idx = existing.length;
+      const name = idx === 0 ? baseName : `${baseName} ${idx + 1}`;
+      const scopeName = idx === 0 ? baseSlug : `${baseSlug}-${idx + 1}`;
+
       const { instance } = await scopesApi.createInstance({
         templateId: template.id,
-        name: template.name,
-        scopeName: template.slug,
+        name,
+        scopeName,
       });
       load();
       onNavigateToInstance?.(instance.id);

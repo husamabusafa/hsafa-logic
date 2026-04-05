@@ -796,7 +796,7 @@ export const scopesApi = {
 
   // Instance lifecycle
   deployInstance(id: string) {
-    return request<{ success: boolean; containerId: string; containerStatus: ContainerStatus }>(`/scopes/instances/${id}/deploy`, { method: "POST" });
+    return request<{ success: boolean; containerId: string; containerStatus: ContainerStatus; statusMessage?: string }>(`/scopes/instances/${id}/deploy`, { method: "POST" });
   },
 
   startInstance(id: string) {
