@@ -12,6 +12,11 @@ import type { Request, Response } from "express";
 import { prisma } from "../lib/db.js";
 import { verifyToken } from "../lib/auth.js";
 import { encrypt, decrypt } from "../lib/encryption.js";
+import {
+  getDecryptedHaseefKey,
+  getDecryptedScopeKey,
+  provisionAndStoreScopeKey,
+} from "../lib/resource-keys.js";
 import { SCOPE_TEMPLATES, getTemplateById } from "../lib/scope-templates/index.js";
 import {
   deployInstance,
@@ -386,8 +391,14 @@ router.post("/instances", async (req: Request, res: Response) => {
       return inst;
     });
 
+    // Provision a Core scope key for this instance (non-blocking)
+    provisionAndStoreScopeKey(instance.id, instance.scopeName).catch((err) => {
+      console.error(`[scopes] Scope key provisioning failed for ${instance.scopeName}:`, err);
+    });
+
     // Auto-deploy for platform/custom types (non-blocking)
-    if ((deploymentType === "platform" || deploymentType === "custom") && imageUrl) {
+    const autoDeploy = req.body.autoDeploy === true;
+    if (autoDeploy && (deploymentType === "platform" || deploymentType === "custom") && imageUrl) {
       deployInstance(instance.id).catch((err) => {
         console.error(`[scopes] Auto-deploy failed for ${instance.scopeName}:`, err);
       });
@@ -812,9 +823,22 @@ router.post("/haseef/:haseefId/attach", async (req: Request, res: Response) => {
       return;
     }
 
+    // Retrieve per-resource keys for dual-ownership proof
+    const haseefKey = await getDecryptedHaseefKey(auth.userId, haseefId);
+    const scopeKey = await getDecryptedScopeKey(instanceId);
+
+    // Build headers: prefer per-resource keys, fall back to service key
+    const attachHeaders: Record<string, string> = { "Content-Type": "application/json" };
+    if (haseefKey && scopeKey) {
+      attachHeaders["x-haseef-key"] = haseefKey;
+      attachHeaders["x-scope-key"] = scopeKey;
+    } else {
+      attachHeaders["x-api-key"] = serviceKey;
+    }
+
     const updateRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", "x-api-key": serviceKey },
+      headers: attachHeaders,
       body: JSON.stringify({ scopes: [...currentScopes, instance.scopeName] }),
     });
 
@@ -872,10 +896,20 @@ router.post("/haseef/:haseefId/detach", async (req: Request, res: Response) => {
       return;
     }
 
+    // Retrieve per-haseef key for ownership proof (only haseef key needed for detach)
+    const haseefKey = await getDecryptedHaseefKey(auth.userId, haseefId);
+
+    const detachHeaders: Record<string, string> = { "Content-Type": "application/json" };
+    if (haseefKey) {
+      detachHeaders["x-haseef-key"] = haseefKey;
+    } else {
+      detachHeaders["x-api-key"] = serviceKey;
+    }
+
     // Remove scope from haseef
     const updateRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", "x-api-key": serviceKey },
+      headers: detachHeaders,
       body: JSON.stringify({ scopes: currentScopes.filter((s) => s !== scopeName) }),
     });
 
@@ -918,6 +952,46 @@ router.get("/status", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Scope status error:", error);
     res.status(500).json({ error: "Failed to get scope status" });
+  }
+});
+
+// =============================================================================
+// KEY ROTATION
+// =============================================================================
+
+// POST /api/scopes/instances/:id/rotate-key — Rotate the Core scope key for an instance
+router.post("/instances/:id/rotate-key", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  if (req.params.id === "built-in-spaces") {
+    res.status(403).json({ error: "Cannot rotate key for built-in scopes" });
+    return;
+  }
+
+  try {
+    const instance = await prisma.scopeInstance.findUnique({
+      where: { id: req.params.id as string },
+    });
+    if (!instance) {
+      res.status(404).json({ error: "Instance not found" });
+      return;
+    }
+    if (instance.ownerId !== auth.userId) {
+      res.status(403).json({ error: "Not authorized" });
+      return;
+    }
+
+    const newKey = await provisionAndStoreScopeKey(instance.id, instance.scopeName);
+    if (!newKey) {
+      res.status(502).json({ error: "Failed to rotate scope key via Core" });
+      return;
+    }
+
+    res.json({ success: true, keyHint: "..." + newKey.slice(-4) });
+  } catch (error) {
+    console.error("Rotate scope key error:", error);
+    res.status(500).json({ error: "Failed to rotate scope key" });
   }
 });
 

@@ -18,8 +18,6 @@ import {
   ExternalLinkIcon,
   FolderTreeIcon,
   GlobeIcon,
-  ToggleRightIcon,
-  ToggleLeftIcon,
   DatabaseIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -57,8 +55,8 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
   const [statuses, setStatuses] = useState<CoreScopeStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<ScopeTemplate | null>(null);
+  const [creating, setCreating] = useState<string | null>(null);
+  const [createError, setCreateError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -90,10 +88,25 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
     !search || t.name.toLowerCase().includes(search.toLowerCase()) || t.slug.toLowerCase().includes(search.toLowerCase()),
   );
 
-  // ── Create instance handler ────────────────────────────────────────────
-  function openCreateFromTemplate(template: ScopeTemplate) {
-    setSelectedTemplate(template);
-    setShowCreateModal(true);
+  // ── Create instance handler (auto-create + navigate) ─────────────────
+  async function quickCreateFromTemplate(template: ScopeTemplate) {
+    if (creating) return;
+    setCreating(template.id);
+    try {
+      const { instance } = await scopesApi.createInstance({
+        templateId: template.id,
+        name: template.name,
+        scopeName: template.slug,
+      });
+      load();
+      onNavigateToInstance?.(instance.id);
+    } catch (err: any) {
+      console.error("Failed to create instance:", err);
+      setCreateError(err.message || "Failed to create instance");
+      setTimeout(() => setCreateError(""), 5000);
+    } finally {
+      setCreating(null);
+    }
   }
 
   return (
@@ -166,7 +179,8 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
         ) : tab === "templates" ? (
           <TemplatesList
             templates={filteredTemplates}
-            onCreateFrom={openCreateFromTemplate}
+            onCreateFrom={quickCreateFromTemplate}
+            creatingId={creating}
             onNavigate={onNavigateToTemplate}
           />
         ) : (
@@ -174,13 +188,15 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
         )}
       </div>
 
-      {/* Create Modal */}
-      {showCreateModal && selectedTemplate && (
-        <CreateInstanceModal
-          template={selectedTemplate}
-          onClose={() => { setShowCreateModal(false); setSelectedTemplate(null); }}
-          onCreated={() => { setShowCreateModal(false); setSelectedTemplate(null); load(); }}
-        />
+      {/* Error toast */}
+      {createError && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-card shadow-lg animate-in slide-in-from-bottom-4 fade-in duration-200 max-w-sm">
+          <XCircleIcon className="size-4 text-red-500 shrink-0" />
+          <p className="text-sm text-red-600 dark:text-red-400">{createError}</p>
+          <button onClick={() => setCreateError("")} className="p-0.5 text-muted-foreground hover:text-foreground ml-auto shrink-0">
+            <XCircleIcon className="size-3.5" />
+          </button>
+        </div>
       )}
     </div>
   );
@@ -286,10 +302,12 @@ function InstancesList({
 function TemplatesList({
   templates,
   onCreateFrom,
+  creatingId,
   onNavigate,
 }: {
   templates: ScopeTemplate[];
   onCreateFrom: (t: ScopeTemplate) => void;
+  creatingId?: string | null;
   onNavigate?: (id: string) => void;
 }) {
   if (templates.length === 0) {
@@ -339,9 +357,11 @@ function TemplatesList({
             <div className="flex-1" />
             <button
               onClick={() => onCreateFrom(tmpl)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+              disabled={!!creatingId}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
-              <PlusIcon className="size-3" /> Create Instance
+              {creatingId === tmpl.id ? <Loader2Icon className="size-3 animate-spin" /> : <PlusIcon className="size-3" />}
+              {creatingId === tmpl.id ? "Creating..." : "Add"}
             </button>
           </div>
         </div>
@@ -792,203 +812,3 @@ function RegisterExternalForm({
   );
 }
 
-// ── Create Instance Modal ────────────────────────────────────────────────────
-
-function CreateInstanceModal({
-  template,
-  onClose,
-  onCreated,
-}: {
-  template: ScopeTemplate;
-  onClose: () => void;
-  onCreated: () => void;
-}) {
-  const [name, setName] = useState(template.name);
-  const [scopeName, setScopeName] = useState(template.slug);
-  const [description, setDescription] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState("");
-
-  // Config fields from template's configSchema
-  const configProperties = (template.configSchema as any)?.properties ?? {};
-  const configRequired = (template.configSchema as any)?.required ?? [];
-  const configKeys = Object.keys(configProperties);
-  const [configValues, setConfigValues] = useState<Record<string, string | boolean | number>>(() => {
-    const defaults: Record<string, string | boolean | number> = {};
-    for (const key of configKeys) {
-      const prop = configProperties[key];
-      if (prop?.default !== undefined) defaults[key] = prop.default;
-    }
-    return defaults;
-  });
-
-  async function handleCreate() {
-    setError("");
-    if (!name.trim()) { setError("Name is required"); return; }
-    if (!scopeName.trim()) { setError("Scope name is required"); return; }
-
-    setCreating(true);
-    try {
-      const configs = configKeys.map((key) => {
-        const prop = configProperties[key];
-        const raw = configValues[key];
-        const value = raw !== undefined && raw !== "" ? String(raw) : "";
-        return {
-          key,
-          value,
-          isSecret: prop?.secret === true || prop?.format === "password" || prop?.sensitive === true,
-        };
-      }).filter((c) => c.value);
-
-      await scopesApi.createInstance({
-        templateId: template.id,
-        name: name.trim(),
-        scopeName: scopeName.trim(),
-        description: description.trim() || undefined,
-        configs: configs.length > 0 ? configs : undefined,
-      });
-
-      onCreated();
-    } catch (err: any) {
-      setError(err.message || "Failed to create instance");
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative bg-card border border-border rounded-2xl shadow-xl w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="flex items-center justify-center size-10 rounded-lg bg-primary/10 text-primary">
-              <ScopeIcon icon={template.icon} />
-            </div>
-            <div>
-              <h2 className="font-semibold">Create {template.name} Instance</h2>
-              <p className="text-xs text-muted-foreground">From template: {template.slug}</p>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Instance Name</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-                placeholder="My Spaces"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Scope Name (unique identifier)</label>
-              <input
-                type="text"
-                value={scopeName}
-                onChange={(e) => setScopeName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))}
-                className="mt-1 w-full px-3 py-2 text-sm rounded-lg border border-border bg-background font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
-                placeholder="my-spaces"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Description (optional)</label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
-                rows={2}
-                placeholder="Optional description..."
-              />
-            </div>
-
-            {/* Dynamic config fields from template's configSchema */}
-            {configKeys.length > 0 && (
-              <div className="pt-2 border-t border-border">
-                <h3 className="text-xs font-medium text-muted-foreground mb-3">Configuration</h3>
-                {configKeys.map((key) => {
-                  const prop = configProperties[key];
-                  const isRequired = configRequired.includes(key);
-                  const isSecret = prop?.secret === true || prop?.format === "password" || prop?.sensitive === true;
-                  const fieldType = prop?.type;
-
-                  if (fieldType === "boolean") {
-                    const checked = configValues[key] === true || configValues[key] === "true";
-                    return (
-                      <div key={key} className="mb-3 flex items-center justify-between p-3 rounded-lg border border-border bg-background">
-                        <div>
-                          <p className="text-sm font-medium">
-                            {prop?.title || key}
-                            {isRequired && <span className="text-red-500 ml-0.5">*</span>}
-                          </p>
-                          {prop?.description && (
-                            <p className="text-[10px] text-muted-foreground mt-0.5">{prop.description}</p>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setConfigValues({ ...configValues, [key]: !checked })}
-                          className={`transition-colors ${checked ? "text-primary" : "text-muted-foreground"}`}
-                        >
-                          {checked
-                            ? <ToggleRightIcon className="size-7" />
-                            : <ToggleLeftIcon className="size-7" />}
-                        </button>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div key={key} className="mb-3">
-                      <label className="text-xs font-medium text-muted-foreground">
-                        {prop?.title || key}{isRequired && <span className="text-red-500 ml-0.5">*</span>}
-                        {isSecret && <span className="text-xs text-yellow-600 ml-1">(secret)</span>}
-                      </label>
-                      {prop?.description && (
-                        <p className="text-[10px] text-muted-foreground">{prop.description}</p>
-                      )}
-                      <input
-                        type={isSecret ? "password" : fieldType === "number" ? "number" : "text"}
-                        value={configValues[key] !== undefined ? String(configValues[key]) : ""}
-                        onChange={(e) => setConfigValues({
-                          ...configValues,
-                          [key]: fieldType === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value,
-                        })}
-                        className="mt-1 w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-                        placeholder={prop?.default !== undefined ? String(prop.default) : ""}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {error && (
-              <p className="text-xs text-red-500">{error}</p>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3 mt-6 pt-4 border-t border-border">
-            <button
-              onClick={onClose}
-              className="flex-1 px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreate}
-              disabled={creating}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-            >
-              {creating && <Loader2Icon className="size-4 animate-spin" />}
-              Create
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}

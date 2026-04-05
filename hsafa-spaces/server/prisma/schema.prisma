@@ -367,6 +367,8 @@ model ScopeInstance {
   baseId      String?  @map("base_id") @db.Uuid         // If shared with a Base (null = private)
   active          Boolean  @default(true)
 
+  coreScopeKey String?  @map("core_scope_key") @db.Text  // Encrypted per-scope Core API key (hsk_scope_*)
+
   // ── Deployment ──────────────────────────────────────
   deploymentType  String   @default("platform") @map("deployment_type")   // "platform" | "custom" | "external" | "built-in"
   imageUrl        String?  @map("image_url")                              // Docker image URL (null for external/built-in)

@@ -27,6 +27,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CircleDotIcon,
+  AlertTriangleIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { scopesApi, type ScopeInstance } from "@/lib/api";
@@ -59,6 +60,73 @@ function parseConfigSchema(schema: Record<string, unknown> | undefined): {
   const props = (schema.properties ?? {}) as Record<string, ConfigFieldSchema>;
   const required = (schema.required ?? []) as string[];
   return { fields: props, required };
+}
+
+// ── Confirm Modal ────────────────────────────────────────────────────────────
+
+function ConfirmModal({
+  open,
+  title,
+  description,
+  confirmLabel,
+  confirmVariant = "danger",
+  loading,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  confirmVariant?: "danger" | "primary";
+  loading?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!open) return null;
+
+  const btnCls = confirmVariant === "danger"
+    ? "bg-red-600 text-white hover:bg-red-700"
+    : "bg-primary text-primary-foreground hover:bg-primary/90";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative bg-card border border-border rounded-xl shadow-2xl w-full max-w-sm mx-4 animate-in fade-in zoom-in-95 duration-150">
+        <div className="p-6">
+          <div className="flex items-start gap-4">
+            <div className={cn(
+              "flex items-center justify-center size-10 rounded-full shrink-0",
+              confirmVariant === "danger" ? "bg-red-500/10 text-red-500" : "bg-primary/10 text-primary",
+            )}>
+              <AlertTriangleIcon className="size-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-base">{title}</h3>
+              <p className="text-sm text-muted-foreground mt-1">{description}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 mt-6">
+            <button
+              onClick={onCancel}
+              disabled={loading}
+              className="flex-1 px-4 py-2 text-sm rounded-lg border border-border font-medium hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={loading}
+              className={cn("flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm rounded-lg font-medium transition-colors disabled:opacity-50", btnCls)}
+            >
+              {loading && <Loader2Icon className="size-4 animate-spin" />}
+              {confirmLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── Tab types ─────────────────────────────────────────────────────────────────
@@ -153,6 +221,7 @@ function GeneralTab({
   const [editDescription, setEditDescription] = useState(instance.description || "");
   const [editActive, setEditActive] = useState(instance.active);
   const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const isBuiltIn = !!(instance as any).builtIn;
   const tools = (instance.template.tools ?? []) as Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
@@ -178,7 +247,6 @@ function GeneralTab({
   }
 
   async function handleDelete() {
-    if (!confirm(`Delete instance "${instance.name}"? This cannot be undone.`)) return;
     setDeleting(true);
     try {
       await scopesApi.deleteInstance(instance.id);
@@ -186,6 +254,7 @@ function GeneralTab({
     } catch (err: any) {
       setError(err.message || "Failed to delete");
       setDeleting(false);
+      setShowDeleteConfirm(false);
     }
   }
 
@@ -294,7 +363,7 @@ function GeneralTab({
               <p className="text-xs text-muted-foreground">Permanently remove the instance and its container. This cannot be undone.</p>
             </div>
             <button
-              onClick={handleDelete}
+              onClick={() => setShowDeleteConfirm(true)}
               disabled={deleting}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 shrink-0"
             >
@@ -304,6 +373,18 @@ function GeneralTab({
           </div>
         </section>
       )}
+
+      {/* Delete confirmation modal */}
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Delete Instance"
+        description={`Are you sure you want to delete "${instance.name}"? This will permanently remove the instance and its container. This action cannot be undone.`}
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        loading={deleting}
+        onConfirm={handleDelete}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 }
