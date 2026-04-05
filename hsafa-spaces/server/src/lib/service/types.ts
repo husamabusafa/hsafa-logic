@@ -17,8 +17,10 @@ export interface ActiveConnection {
   spaceIds: string[];
   /** runId → triggerSpaceId — routes tool streaming events to the correct space */
   runSpaces: Map<string, string>;
-  /** Auto-set trigger space for the current run (set on run.started, cleared on run.finished) */
+  /** Auto-set trigger space for the current run (set by handleInboxMessage, cleared on run.finished) */
   activeSpace: { spaceId: string; spaceName: string } | null;
+  /** Monotonic counter incremented each time activeSpace is set — prevents stale run.completed from clearing a newer activeSpace */
+  activeSpaceVersion: number;
   /** Explicitly entered space (set by enter_space tool, persists across cycles until changed) */
   enteredSpace: { spaceId: string; spaceName: string } | null;
   /** Current run ID (set by run.started, cleared by run.finished) — used as fallback for space lookup */

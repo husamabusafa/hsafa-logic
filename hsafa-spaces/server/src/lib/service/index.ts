@@ -186,6 +186,7 @@ async function setupHaseefConnection(haseef: {
     spaceIds,
     runSpaces: new Map(),
     activeSpace: null,
+    activeSpaceVersion: 0,
     enteredSpace: null,
     currentRunId: null,
     typingActivity: "typing",

@@ -28,6 +28,9 @@ import { markHaseefSeen } from "./sense-events.js";
 import { SCOPE } from "./manifest.js";
 import type { HsafaSDK } from "@hsafa/sdk";
 
+/** Per-run snapshot of activeSpaceVersion at run.started time */
+const runActiveSpaceVersions = new Map<string, number>();
+
 /**
  * Register SDK lifecycle event handlers on the spaces SDK instance.
  * Only the spaces SDK processes lifecycle events to avoid duplicate handling.
@@ -105,6 +108,12 @@ function onRunStarted(
   // Populate runSpaces so onRunFinished can route events to the correct space
   if (runId && triggerSpaceId) {
     conn.runSpaces.set(runId, triggerSpaceId);
+  }
+
+  // Snapshot the current activeSpaceVersion so onRunFinished can detect
+  // if a newer handleInboxMessage updated activeSpace after this run started.
+  if (runId) {
+    runActiveSpaceVersions.set(runId, conn.activeSpaceVersion);
   }
 
   // Broadcast agent.active + online to trigger space
@@ -235,7 +244,21 @@ function onRunFinished(
   // NOTE: enteredSpace is NOT cleared — it persists across cycles so that
   // a haseef that called enter_space in a previous cycle can still send
   // messages to that space in subsequent cycles.
-  conn.activeSpace = null;
+  //
+  // IMPORTANT: Only clear activeSpace if its version hasn't changed since this
+  // run started. A newer handleInboxMessage increments activeSpaceVersion when
+  // setting activeSpace for the NEXT run. If versions differ, a new message
+  // arrived and we must NOT clear its activeSpace.
+  const snapshotVersion = runId ? runActiveSpaceVersions.get(runId) : undefined;
+  if (snapshotVersion !== undefined && conn.activeSpaceVersion === snapshotVersion) {
+    conn.activeSpace = null;
+  } else if (snapshotVersion === undefined) {
+    // No snapshot — non-spaces run or unknown run; safe to clear
+    conn.activeSpace = null;
+  }
+  // else: activeSpaceVersion changed → a newer message set activeSpace; leave it alone
+
+  if (runId) runActiveSpaceVersions.delete(runId);
   conn.currentRunId = null;
   conn.typingActivity = "typing";
 }

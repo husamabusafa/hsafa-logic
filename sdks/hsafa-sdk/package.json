@@ -1,6 +1,6 @@
 {
   "name": "@hsafa/sdk",
-  "version": "7.0.0",
+  "version": "0.0.1",
   "description": "Hsafa SDK v7 — connect any service to a Haseef brain",
   "type": "module",
   "main": "dist/index.js",
