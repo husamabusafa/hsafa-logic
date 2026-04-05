@@ -10,6 +10,7 @@ import {
   MessageSquareIcon,
   CalendarIcon,
   PlugIcon,
+  DatabaseIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { scopesApi, type ScopeInstance } from "@/lib/api";
@@ -19,6 +20,7 @@ function ScopeIcon({ icon, className }: { icon: string | null; className?: strin
   switch (icon) {
     case "MessageSquare": return <MessageSquareIcon className={cls} />;
     case "Calendar": return <CalendarIcon className={cls} />;
+    case "Database": return <DatabaseIcon className={cls} />;
     case "Plug": return <PlugIcon className={cls} />;
     default: return <PuzzleIcon className={cls} />;
   }
