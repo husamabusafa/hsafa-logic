@@ -22,7 +22,9 @@ let onNotify: NotifyCallback | null = null;
 let connectionString: string | null = null;
 
 const CHANNEL = "hsafa_watches";
-const RECONNECT_DELAY_MS = 5_000;
+const BASE_RECONNECT_MS = 5_000;
+const MAX_RECONNECT_MS = 60_000;
+let reconnectAttempt = 0;
 
 /** Set the global callback for watch notifications. */
 export function setNotifyCallback(cb: NotifyCallback): void {
@@ -41,6 +43,7 @@ export async function stopListener(): Promise<void> {
   const c = client;
   client = null;
   connectionString = null;
+  reconnectAttempt = 0;
   if (c) {
     try { await c.end(); } catch { /* ignore */ }
   }
@@ -68,25 +71,32 @@ async function connectListener(): Promise<void> {
   c.on("error", (err) => {
     console.error(`[postgres-listener] Connection error:`, err.message);
     client = null;
-    // Reconnect after delay
+    // Reconnect with exponential backoff
+    reconnectAttempt++;
+    const delay = Math.min(BASE_RECONNECT_MS * 2 ** (reconnectAttempt - 1), MAX_RECONNECT_MS);
+    console.log(`[postgres-listener] Reconnecting in ${(delay / 1000).toFixed(0)}s (attempt ${reconnectAttempt})...`);
     setTimeout(() => {
       if (!client && connectionString) {
         connectListener().catch(() => {});
       }
-    }, RECONNECT_DELAY_MS);
+    }, delay);
   });
 
   try {
     await c.connect();
     await c.query(`LISTEN ${CHANNEL}`);
     client = c;
+    reconnectAttempt = 0;
     console.log(`[postgres-listener] Listening on "${CHANNEL}"`);
   } catch (err) {
-    console.error(`[postgres-listener] Failed to connect:`, err);
+    reconnectAttempt++;
+    const delay = Math.min(BASE_RECONNECT_MS * 2 ** (reconnectAttempt - 1), MAX_RECONNECT_MS);
+    console.error(`[postgres-listener] Failed to connect:`, (err as Error).message);
+    console.log(`[postgres-listener] Retrying in ${(delay / 1000).toFixed(0)}s (attempt ${reconnectAttempt})...`);
     setTimeout(() => {
       if (!client && connectionString) {
         connectListener().catch(() => {});
       }
-    }, RECONNECT_DELAY_MS);
+    }, delay);
   }
 }

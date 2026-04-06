@@ -479,7 +479,20 @@ router.patch("/instances/:id", async (req: Request, res: Response) => {
       return inst;
     });
 
-    res.json({ instance: updated });
+    // Refetch configs so the response includes them (masked)
+    const updatedConfigs = await prisma.scopeInstanceConfig.findMany({
+      where: { instanceId },
+      select: { id: true, key: true, isSecret: true, value: true },
+    });
+    const maskedConfigs = updatedConfigs.map((c) => ({
+      id: c.id,
+      key: c.key,
+      isSecret: c.isSecret,
+      value: c.isSecret ? "••••••••" : c.value,
+      hasValue: !!c.value,
+    }));
+
+    res.json({ instance: { ...updated, configs: maskedConfigs } });
   } catch (error) {
     console.error("Update instance error:", error);
     res.status(500).json({ error: "Failed to update instance" });

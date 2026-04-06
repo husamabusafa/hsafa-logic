@@ -534,14 +534,21 @@ function ConfigurationTab({
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const [editConfigs, setEditConfigs] = useState<Record<string, string>>(() => {
+  const buildCfgValues = (configs: ScopeInstance["configs"]) => {
     const cfgValues: Record<string, string> = {};
-    for (const c of instance.configs) {
+    for (const c of configs) {
       cfgValues[c.key] = c.isSecret ? "" : (c.value ?? "");
     }
     return cfgValues;
-  });
+  };
+
+  const [editConfigs, setEditConfigs] = useState<Record<string, string>>(() => buildCfgValues(instance.configs));
   const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set());
+
+  // Sync edit state when instance data refreshes (e.g. after save)
+  useEffect(() => {
+    setEditConfigs(buildCfgValues(instance.configs));
+  }, [instance.configs]);
 
   const { fields: schemaFields, required: requiredKeys } = useMemo(
     () => parseConfigSchema(instance.template.configSchema as Record<string, unknown> | undefined),
@@ -872,8 +879,8 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   const [acting, setActing] = useState<string | null>(null);
   const [deployOutput, setDeployOutput] = useState<DeployOutput | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const { instance: inst } = await scopesApi.getInstance(instanceId);
       setInstance(inst);
@@ -881,7 +888,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
       console.error("Failed to load instance:", err);
       setError("Failed to load scope instance");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [instanceId]);
 
@@ -892,7 +899,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
     setActing(action);
     try {
       await fn();
-      load();
+      load(true);
     } catch (err: any) {
       console.error(`Action ${action} failed:`, err);
     } finally {
@@ -910,7 +917,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
       } else {
         setDeployOutput({ status: "success", containerId: res.containerId, containerStatus: res.containerStatus });
       }
-      load();
+      load(true);
     } catch (err: any) {
       setDeployOutput({ status: "error", error: err.message || "Deployment failed" });
     } finally {
@@ -1046,8 +1053,8 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
       {/* ── Tab content ──────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto p-6">
         {error && <p className="text-xs text-red-500 mb-4">{error}</p>}
-        {tab === "general" && <GeneralTab instance={instance} onSaved={load} onDelete={onBack} />}
-        {tab === "configuration" && <ConfigurationTab instance={instance} onSaved={load} />}
+        {tab === "general" && <GeneralTab instance={instance} onSaved={() => load(true)} onDelete={onBack} />}
+        {tab === "configuration" && <ConfigurationTab instance={instance} onSaved={() => load(true)} />}
         {tab === "logs" && <LogsTab instance={instance} />}
       </div>
 

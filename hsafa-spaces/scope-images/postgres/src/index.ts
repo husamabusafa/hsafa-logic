@@ -51,11 +51,31 @@ if (!SCOPE_KEY) {
 const config = loadConfigFromEnv();
 initPool(config);
 
-// Ensure watch metadata table exists in the target DB
-await ensureWatchesTable();
+// Retry helper — exponential backoff for transient DB outages
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  label: string,
+  { maxRetries = Infinity, baseDelayMs = 3_000, maxDelayMs = 60_000 } = {},
+): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      attempt++;
+      if (attempt >= maxRetries) throw err;
+      const delay = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);
+      console.warn(`[postgres] ${label} failed (attempt ${attempt}), retrying in ${(delay / 1000).toFixed(0)}s...`, (err as Error).message);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
 
-// Start LISTEN/NOTIFY listener
-await startListener(config.connectionString);
+// Ensure watch metadata table exists in the target DB (with retry)
+await retryWithBackoff(() => ensureWatchesTable(), "ensureWatchesTable");
+
+// Start LISTEN/NOTIFY listener (with retry)
+await retryWithBackoff(() => startListener(config.connectionString), "startListener");
 
 // ── SDK Setup ───────────────────────────────────────────────────────────────
 
