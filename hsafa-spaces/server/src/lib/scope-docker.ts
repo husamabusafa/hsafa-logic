@@ -8,8 +8,24 @@
 // =============================================================================
 
 import Docker from "dockerode";
+import { EventEmitter } from "events";
 import { prisma } from "./db.js";
 import { decrypt } from "./encryption.js";
+
+// =============================================================================
+// Deployment log streaming — allows SSE endpoints to subscribe to live logs
+// =============================================================================
+
+export const deploymentEvents = new EventEmitter();
+deploymentEvents.setMaxListeners(50);
+
+function emitDeployLog(deploymentId: string, line: string) {
+  deploymentEvents.emit(`log:${deploymentId}`, line);
+}
+
+function emitDeployDone(deploymentId: string, status: "success" | "failed") {
+  deploymentEvents.emit(`done:${deploymentId}`, status);
+}
 
 const docker = new Docker({ socketPath: "/var/run/docker.sock" });
 
@@ -30,6 +46,7 @@ export interface DeployResult {
   containerId: string;
   containerStatus: ContainerStatus;
   statusMessage?: string;
+  deploymentId: string;
 }
 
 // =============================================================================
@@ -45,7 +62,7 @@ export interface DeployResult {
  * 4. Create + start container on the hsafa network
  * 5. Update DB with containerId + status
  */
-export async function deployInstance(instanceId: string): Promise<DeployResult> {
+export async function deployInstance(instanceId: string, triggeredBy?: string): Promise<DeployResult> {
   const instance = await prisma.scopeInstance.findUnique({
     where: { id: instanceId },
     include: { configs: true, template: { select: { imageUrl: true } } },
@@ -56,30 +73,70 @@ export async function deployInstance(instanceId: string): Promise<DeployResult> 
   const imageUrl = instance.imageUrl || instance.template.imageUrl;
   if (!imageUrl) throw new Error(`No Docker image URL for instance ${instanceId}`);
 
-  // Mark as starting
+  // Create deployment record
+  const deployment = await prisma.scopeDeployment.create({
+    data: {
+      instanceId,
+      status: "running",
+      triggeredBy: triggeredBy ?? null,
+      imageUrl,
+      logs: "",
+    },
+  });
+  const deploymentId = deployment.id;
+
+  // Helper to append a log line to the deployment record + emit for SSE
+  async function appendLog(line: string) {
+    const ts = new Date().toISOString();
+    const entry = `[${ts}] ${line}`;
+    emitDeployLog(deploymentId, entry);
+    await prisma.scopeDeployment.update({
+      where: { id: deploymentId },
+      data: { logs: { set: undefined } },
+    }).catch(() => {});
+    // Use raw SQL for efficient append
+    await prisma.$executeRawUnsafe(
+      `UPDATE scope_deployments SET logs = logs || $1 WHERE id = $2::uuid`,
+      entry + "\n",
+      deploymentId,
+    ).catch(() => {});
+  }
+
+  // Mark instance as starting
   await prisma.scopeInstance.update({
     where: { id: instanceId },
     data: { containerStatus: "starting", statusMessage: "Pulling image..." },
   });
 
+  await appendLog(`Deployment started for "${instance.scopeName}"`);
+  await appendLog(`Image: ${imageUrl}`);
+
   try {
     // 1. Pull image
+    await appendLog("Pulling Docker image...");
     await pullImage(imageUrl);
+    await appendLog("Image pulled successfully.");
 
     // 2. Remove old container if exists
     if (instance.containerId) {
+      await appendLog("Removing old container...");
       await removeContainerSafe(instance.containerId);
+      await appendLog("Old container removed.");
     }
 
     // 3. Build env vars
+    await appendLog("Building environment variables...");
     const envVars = await buildEnvVars(instance.id, instance.scopeName, instance.configs);
+    await appendLog(`Environment ready (${envVars.length} vars).`);
 
     // 4. Ensure network exists
+    await appendLog("Ensuring Docker network...");
     await ensureNetwork();
 
     // 5. Create container
     const containerName = `scope-${instance.scopeName}`;
     await removeContainerByNameSafe(containerName);
+    await appendLog("Creating container...");
 
     const container = await docker.createContainer({
       Image: imageUrl,
@@ -97,8 +154,10 @@ export async function deployInstance(instanceId: string): Promise<DeployResult> 
         "hsafa.scope.instance": instance.id,
       },
     });
+    await appendLog(`Container created: ${container.id.slice(0, 12)}`);
 
     // 6. Start container
+    await appendLog("Starting container...");
     await container.start();
 
     const containerId = container.id;
@@ -114,16 +173,36 @@ export async function deployInstance(instanceId: string): Promise<DeployResult> 
       },
     });
 
+    await appendLog(`Container started successfully.`);
+    await appendLog(`Deployment complete.`);
+
+    // Mark deployment as success
+    await prisma.scopeDeployment.update({
+      where: { id: deploymentId },
+      data: { status: "success", containerId, finishedAt: new Date() },
+    });
+    emitDeployDone(deploymentId, "success");
+
     console.log(`[scope-docker] Deployed "${instance.scopeName}" → container ${containerId.slice(0, 12)}`);
-    return { containerId, containerStatus: "running" };
+    return { containerId, containerStatus: "running", deploymentId };
   } catch (err: any) {
     const msg = err.message || String(err);
     await prisma.scopeInstance.update({
       where: { id: instanceId },
       data: { containerStatus: "error", statusMessage: msg },
     });
+
+    await appendLog(`ERROR: ${msg}`);
+
+    // Mark deployment as failed
+    await prisma.scopeDeployment.update({
+      where: { id: deploymentId },
+      data: { status: "failed", errorMessage: msg, finishedAt: new Date() },
+    });
+    emitDeployDone(deploymentId, "failed");
+
     console.error(`[scope-docker] Deploy failed for "${instance.scopeName}":`, msg);
-    return { containerId: "", containerStatus: "error", statusMessage: msg };
+    return { containerId: "", containerStatus: "error", statusMessage: msg, deploymentId };
   }
 }
 

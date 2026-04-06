@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
-  ArrowLeftIcon,
   PuzzleIcon,
   WrenchIcon,
   CheckCircle2Icon,
@@ -14,8 +13,6 @@ import {
   CalendarIcon,
   PlugIcon,
   DatabaseIcon,
-  EyeIcon,
-  EyeOffIcon,
   TerminalIcon,
   SettingsIcon,
   PlayIcon,
@@ -28,9 +25,12 @@ import {
   ChevronRightIcon,
   CircleDotIcon,
   AlertTriangleIcon,
+  HistoryIcon,
+  ClockIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { scopesApi, type ScopeInstance } from "@/lib/api";
+import { CodeTerminal, type CodeTerminalHandle, EnvEditor } from "@/components/env-editor";
+import { scopesApi, type ScopeInstance, type ScopeDeployment } from "@/lib/api";
 
 function ScopeIcon({ icon, className }: { icon: string | null; className?: string }) {
   const cls = cn("size-5", className);
@@ -43,7 +43,7 @@ function ScopeIcon({ icon, className }: { icon: string | null; className?: strin
   }
 }
 
-// ── Config Schema Helpers ────────────────────────────────────────────────────
+// ── Env Text Helpers ─────────────────────────────────────────────────────────
 
 interface ConfigFieldSchema {
   type: string;
@@ -52,14 +52,89 @@ interface ConfigFieldSchema {
   secret?: boolean;
 }
 
-function parseConfigSchema(schema: Record<string, unknown> | undefined): {
-  fields: Record<string, ConfigFieldSchema>;
-  required: string[];
-} {
-  if (!schema || schema.type !== "object") return { fields: {}, required: [] };
-  const props = (schema.properties ?? {}) as Record<string, ConfigFieldSchema>;
-  const required = (schema.required ?? []) as string[];
-  return { fields: props, required };
+function configKeyToEnvKey(key: string): string {
+  return key.replace(/([A-Z])/g, "_$1").toUpperCase().replace(/^_/, "");
+}
+
+function buildEnvTextFromInstance(
+  instance: ScopeInstance,
+): string {
+  const schema = instance.template.configSchema as Record<string, unknown> | undefined;
+  const props = (schema?.type === "object"
+    ? (schema.properties ?? {})
+    : {}) as Record<string, ConfigFieldSchema>;
+  const required = (schema?.type === "object" ? (schema.required ?? []) : []) as string[];
+
+  // Collect all known keys: schema keys + existing config keys
+  const allKeys = new Set(Object.keys(props));
+  for (const c of instance.configs) allKeys.add(c.key);
+
+  const lines: string[] = [];
+  for (const key of allKeys) {
+    const field = props[key];
+    const existing = instance.configs.find((c) => c.key === key);
+    const envKey = configKeyToEnvKey(key);
+    const isSecret = field?.secret ?? existing?.isSecret ?? false;
+    const isRequired = required.includes(key);
+
+    // Comment line with description
+    const desc = field?.description ? ` ${field.description}` : "";
+    const secretTag = isSecret ? " [secret]" : "";
+    const reqTag = isRequired ? " (required)" : "";
+    if (desc || secretTag || reqTag) {
+      lines.push(`#${desc}${secretTag}${reqTag}`);
+    }
+
+    // Value line
+    let value = "";
+    if (existing && !isSecret) {
+      value = existing.value ?? "";
+    } else if (existing && isSecret && existing.hasValue) {
+      // Secret with existing value — show placeholder
+      value = "";
+      lines.push(`# ${envKey} has a saved secret value. Leave empty to keep current.`);
+    } else if (field?.default !== undefined) {
+      value = String(field.default);
+    }
+    lines.push(`${envKey}=${value}`);
+  }
+  return lines.join("\n");
+}
+
+function parseEnvTextForSave(
+  text: string,
+  instance: ScopeInstance,
+): Array<{ key: string; value: string; isSecret?: boolean }> {
+  const schema = instance.template.configSchema as Record<string, unknown> | undefined;
+  const props = (schema?.type === "object"
+    ? (schema.properties ?? {})
+    : {}) as Record<string, ConfigFieldSchema>;
+
+  // Build reverse map: ENV_KEY → camelKey
+  const envToOriginal: Record<string, string> = {};
+  for (const key of Object.keys(props)) {
+    envToOriginal[configKeyToEnvKey(key)] = key;
+  }
+  for (const c of instance.configs) {
+    envToOriginal[configKeyToEnvKey(c.key)] = c.key;
+  }
+
+  const configs: Array<{ key: string; value: string; isSecret?: boolean }> = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx < 1) continue;
+    const envKey = trimmed.slice(0, eqIdx).trim();
+    const value = trimmed.slice(eqIdx + 1).trim();
+    if (!value) continue;
+    const originalKey = envToOriginal[envKey] ?? envKey;
+    const field = props[originalKey];
+    const existingCfg = instance.configs.find((c) => c.key === originalKey);
+    const isSecret = field?.secret ?? existingCfg?.isSecret ?? false;
+    configs.push({ key: originalKey, value, isSecret });
+  }
+  return configs;
 }
 
 // ── Confirm Modal ────────────────────────────────────────────────────────────
@@ -534,61 +609,28 @@ function ConfigurationTab({
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const buildCfgValues = (configs: ScopeInstance["configs"]) => {
-    const cfgValues: Record<string, string> = {};
-    for (const c of configs) {
-      cfgValues[c.key] = c.isSecret ? "" : (c.value ?? "");
-    }
-    return cfgValues;
-  };
+  const defaultEnvText = useMemo(() => buildEnvTextFromInstance(instance), [instance]);
+  const [envText, setEnvText] = useState(defaultEnvText);
 
-  const [editConfigs, setEditConfigs] = useState<Record<string, string>>(() => buildCfgValues(instance.configs));
-  const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set());
-
-  // Sync edit state when instance data refreshes (e.g. after save)
+  // Sync env text when instance data refreshes (e.g. after save)
   useEffect(() => {
-    setEditConfigs(buildCfgValues(instance.configs));
-  }, [instance.configs]);
-
-  const { fields: schemaFields, required: requiredKeys } = useMemo(
-    () => parseConfigSchema(instance.template.configSchema as Record<string, unknown> | undefined),
-    [instance],
-  );
-  const hasConfigSchema = Object.keys(schemaFields).length > 0;
-
-  const configKeys = useMemo(() => {
-    const keys = new Set(Object.keys(schemaFields));
-    for (const c of instance.configs) keys.add(c.key);
-    return [...keys];
-  }, [schemaFields, instance]);
+    setEnvText(buildEnvTextFromInstance(instance));
+  }, [instance]);
 
   const isBuiltIn = !!(instance as any).builtIn;
 
-  function setConfigValue(key: string, value: string) {
-    setEditConfigs((prev) => ({ ...prev, [key]: value }));
-  }
-
-  function toggleReveal(key: string) {
-    setRevealedSecrets((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
-  }
+  const hasConfig = useMemo(() => {
+    const schema = instance.template.configSchema as Record<string, unknown> | undefined;
+    const hasSchema = schema?.type === "object" && Object.keys((schema.properties ?? {}) as object).length > 0;
+    return hasSchema || instance.configs.length > 0;
+  }, [instance]);
 
   async function handleSave() {
     setSaving(true);
     setError("");
     setSuccess("");
     try {
-      const configs: Array<{ key: string; value: string; isSecret?: boolean }> = [];
-      for (const key of configKeys) {
-        const val = editConfigs[key];
-        if (val === undefined || val === "") continue;
-        const field = schemaFields[key];
-        const isSecret = field?.secret ?? instance.configs.find((c) => c.key === key)?.isSecret ?? false;
-        configs.push({ key, value: val, isSecret });
-      }
+      const configs = parseEnvTextForSave(envText, instance);
 
       await scopesApi.updateInstance(instance.id, {
         configs: configs.length > 0 ? configs : undefined,
@@ -603,7 +645,7 @@ function ConfigurationTab({
     }
   }
 
-  if (!hasConfigSchema && instance.configs.length === 0) {
+  if (!hasConfig) {
     return (
       <div className="text-center py-16 text-muted-foreground">
         <SettingsIcon className="size-10 mx-auto mb-3 opacity-30" />
@@ -627,75 +669,11 @@ function ConfigurationTab({
         Environment variables and configuration for your scope instance. Secret values are masked — leave empty to keep current value.
       </p>
 
-      <div className="rounded-lg border border-border overflow-hidden divide-y divide-border">
-        {configKeys.map((key) => {
-          const field = schemaFields[key];
-          const existingCfg = instance.configs.find((c) => c.key === key);
-          const isSecret = field?.secret ?? existingCfg?.isSecret ?? false;
-          const isRequired = requiredKeys.includes(key);
-          const fieldType = field?.type ?? "string";
-          const description = field?.description;
-          const placeholder = field?.default !== undefined ? `Default: ${field.default}` : "";
-
-          if (fieldType === "boolean") {
-            const checked = editConfigs[key] !== undefined
-              ? editConfigs[key] === "true"
-              : (field?.default === true);
-            return (
-              <div key={key} className="flex items-center justify-between px-4 py-3 bg-card">
-                <div>
-                  <p className="text-sm font-mono font-medium">
-                    {key}
-                    {isRequired && <span className="text-red-500 ml-1">*</span>}
-                  </p>
-                  {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setConfigValue(key, checked ? "false" : "true")}
-                  className={cn("transition-colors", checked ? "text-green-500" : "text-muted-foreground")}
-                >
-                  {checked ? <ToggleRightIcon className="size-6" /> : <ToggleLeftIcon className="size-6" />}
-                </button>
-              </div>
-            );
-          }
-
-          return (
-            <div key={key} className="px-4 py-3 bg-card">
-              <div className="flex items-center gap-2 mb-1.5">
-                <label className="text-sm font-mono font-medium">
-                  {key}
-                  {isRequired && <span className="text-red-500 ml-1">*</span>}
-                </label>
-                {isSecret && <span className="text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded bg-yellow-500/10 text-yellow-600">secret</span>}
-              </div>
-              {description && <p className="text-xs text-muted-foreground mb-2">{description}</p>}
-              <div className="relative">
-                <input
-                  type={isSecret && !revealedSecrets.has(key) ? "password" : fieldType === "number" ? "number" : "text"}
-                  value={editConfigs[key] ?? ""}
-                  onChange={(e) => setConfigValue(key, e.target.value)}
-                  placeholder={isSecret && existingCfg?.hasValue ? "••••••••  (leave empty to keep)" : placeholder}
-                  className={cn(
-                    "w-full px-3 py-2 text-sm rounded-lg border border-border bg-background font-mono focus:outline-none focus:ring-2 focus:ring-primary/30",
-                    isSecret && "pr-10",
-                  )}
-                />
-                {isSecret && (
-                  <button
-                    type="button"
-                    onClick={() => toggleReveal(key)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
-                  >
-                    {revealedSecrets.has(key) ? <EyeOffIcon className="size-4" /> : <EyeIcon className="size-4" />}
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <EnvEditor
+        value={envText}
+        onChange={setEnvText}
+        title={`${instance.scopeName}.env`}
+      />
 
       {error && <p className="text-xs text-red-500 bg-red-50 dark:bg-red-950/20 px-3 py-2 rounded-lg">{error}</p>}
       {success && <p className="text-xs text-green-500 bg-green-50 dark:bg-green-950/20 px-3 py-2 rounded-lg">{success}</p>}

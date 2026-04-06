@@ -27,6 +27,7 @@ import {
   getInstanceLogs,
   getContainerStatus,
   isDockerAvailable,
+  deploymentEvents,
 } from "../lib/scope-docker.js";
 
 const router = Router();
@@ -557,7 +558,7 @@ router.post("/instances/:id/deploy", async (req: Request, res: Response) => {
     const dockerOk = await isDockerAvailable();
     if (!dockerOk) { res.status(503).json({ error: "Docker is not available" }); return; }
 
-    const result = await deployInstance(instance.id);
+    const result = await deployInstance(instance.id, auth.userId);
     res.json({ success: true, ...result });
   } catch (error: any) {
     console.error("Deploy instance error:", error);
@@ -656,6 +657,159 @@ router.get("/instances/:id/container-status", async (req: Request, res: Response
   } catch (error: any) {
     console.error("Container status error:", error);
     res.status(500).json({ error: error.message || "Failed to get status" });
+  }
+});
+
+// =============================================================================
+// DEPLOYMENT HISTORY
+// =============================================================================
+
+// GET /api/scopes/instances/:id/deployments — List deployment history for an instance
+router.get("/instances/:id/deployments", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const instance = await prisma.scopeInstance.findUnique({ where: { id: req.params.id as string } });
+    if (!instance) { res.status(404).json({ error: "Instance not found" }); return; }
+    if (instance.ownerId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
+
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    const [deployments, total] = await Promise.all([
+      prisma.scopeDeployment.findMany({
+        where: { instanceId: instance.id },
+        orderBy: { startedAt: "desc" },
+        take: limit,
+        skip: offset,
+        select: {
+          id: true,
+          status: true,
+          triggeredBy: true,
+          imageUrl: true,
+          containerId: true,
+          errorMessage: true,
+          startedAt: true,
+          finishedAt: true,
+        },
+      }),
+      prisma.scopeDeployment.count({ where: { instanceId: instance.id } }),
+    ]);
+
+    res.json({ deployments, total });
+  } catch (error: any) {
+    console.error("List deployments error:", error);
+    res.status(500).json({ error: "Failed to list deployments" });
+  }
+});
+
+// GET /api/scopes/instances/:id/deployments/:deploymentId — Get deployment details + logs
+router.get("/instances/:id/deployments/:deploymentId", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const instance = await prisma.scopeInstance.findUnique({ where: { id: req.params.id as string } });
+    if (!instance) { res.status(404).json({ error: "Instance not found" }); return; }
+    if (instance.ownerId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
+
+    const deployment = await prisma.scopeDeployment.findUnique({
+      where: { id: req.params.deploymentId as string },
+    });
+    if (!deployment || deployment.instanceId !== instance.id) {
+      res.status(404).json({ error: "Deployment not found" });
+      return;
+    }
+
+    res.json({ deployment });
+  } catch (error: any) {
+    console.error("Get deployment error:", error);
+    res.status(500).json({ error: "Failed to get deployment" });
+  }
+});
+
+// GET /api/scopes/instances/:id/deployments/:deploymentId/stream — SSE real-time deployment logs
+// Supports auth via ?token= query param (EventSource doesn't support custom headers)
+router.get("/instances/:id/deployments/:deploymentId/stream", async (req: Request, res: Response) => {
+  // Accept token from query param for SSE (EventSource can't set headers)
+  const tokenFromQuery = req.query.token as string | undefined;
+  if (tokenFromQuery && !req.headers.authorization) {
+    req.headers.authorization = `Bearer ${tokenFromQuery}`;
+  }
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const instance = await prisma.scopeInstance.findUnique({ where: { id: req.params.id as string } });
+    if (!instance) { res.status(404).json({ error: "Instance not found" }); return; }
+    if (instance.ownerId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
+
+    const deployment = await prisma.scopeDeployment.findUnique({
+      where: { id: req.params.deploymentId as string },
+    });
+    if (!deployment || deployment.instanceId !== instance.id) {
+      res.status(404).json({ error: "Deployment not found" });
+      return;
+    }
+
+    // Set SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    const deploymentId = deployment.id;
+
+    // Send existing logs first (replay)
+    if (deployment.logs) {
+      for (const line of deployment.logs.split("\n").filter(Boolean)) {
+        res.write(`data: ${JSON.stringify({ type: "log", line })}\n\n`);
+      }
+    }
+
+    // If already finished, send done event and close
+    if (deployment.status === "success" || deployment.status === "failed" || deployment.status === "stopped") {
+      res.write(`data: ${JSON.stringify({ type: "done", status: deployment.status })}\n\n`);
+      res.end();
+      return;
+    }
+
+    // Subscribe to live log events
+    const onLog = (line: string) => {
+      res.write(`data: ${JSON.stringify({ type: "log", line })}\n\n`);
+    };
+    const onDone = (status: string) => {
+      res.write(`data: ${JSON.stringify({ type: "done", status })}\n\n`);
+      cleanup();
+      res.end();
+    };
+
+    function cleanup() {
+      deploymentEvents.removeListener(`log:${deploymentId}`, onLog);
+      deploymentEvents.removeListener(`done:${deploymentId}`, onDone);
+    }
+
+    deploymentEvents.on(`log:${deploymentId}`, onLog);
+    deploymentEvents.on(`done:${deploymentId}`, onDone);
+
+    // Cleanup on client disconnect
+    req.on("close", cleanup);
+
+    // Safety timeout: close after 5 minutes
+    const timeout = setTimeout(() => {
+      cleanup();
+      res.write(`data: ${JSON.stringify({ type: "timeout" })}\n\n`);
+      res.end();
+    }, 5 * 60 * 1000);
+
+    req.on("close", () => clearTimeout(timeout));
+  } catch (error: any) {
+    console.error("Deployment stream error:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to stream deployment logs" });
+    }
   }
 });
 

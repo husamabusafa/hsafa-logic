@@ -383,7 +383,8 @@ model ScopeInstance {
 
   template ScopeTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
   base     Base?               @relation(fields: [baseId], references: [id], onDelete: SetNull)
-  configs  ScopeInstanceConfig[]
+  configs      ScopeInstanceConfig[]
+  deployments  ScopeDeployment[]
 
   @@index([templateId])
   @@index([ownerId])
@@ -407,6 +408,28 @@ model ScopeInstanceConfig {
 
   @@unique([instanceId, key])
   @@map("scope_instance_configs")
+}
+
+// =============================================================================
+// SCOPE DEPLOYMENT — Deployment history for a scope instance
+// =============================================================================
+
+model ScopeDeployment {
+  id            String   @id @default(uuid()) @db.Uuid
+  instanceId    String   @map("instance_id") @db.Uuid
+  status        String   @default("running") // "running" | "success" | "failed" | "stopped"
+  triggeredBy   String?  @map("triggered_by")  // userId who triggered the deploy
+  imageUrl      String?  @map("image_url")
+  containerId   String?  @map("container_id")
+  logs          String   @default("") @db.Text  // Accumulated deploy log text
+  errorMessage  String?  @map("error_message") @db.Text
+  startedAt     DateTime @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt    DateTime? @map("finished_at") @db.Timestamptz(6)
+
+  instance ScopeInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@index([instanceId, startedAt(sort: Desc)])
+  @@map("scope_deployments")
 }
 
 // =============================================================================

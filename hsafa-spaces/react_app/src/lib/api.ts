@@ -707,6 +707,19 @@ export interface ScopeInstance {
   connected?: boolean;
 }
 
+export interface ScopeDeployment {
+  id: string;
+  instanceId: string;
+  status: "running" | "success" | "failed" | "stopped";
+  triggeredBy: string | null;
+  imageUrl: string | null;
+  containerId: string | null;
+  logs?: string;
+  errorMessage: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
 export interface CoreScopeStatus {
   name: string;
   connected: boolean;
@@ -796,7 +809,7 @@ export const scopesApi = {
 
   // Instance lifecycle
   deployInstance(id: string) {
-    return request<{ success: boolean; containerId: string; containerStatus: ContainerStatus; statusMessage?: string }>(`/scopes/instances/${id}/deploy`, { method: "POST" });
+    return request<{ success: boolean; containerId: string; containerStatus: ContainerStatus; statusMessage?: string; deploymentId: string }>(`/scopes/instances/${id}/deploy`, { method: "POST" });
   },
 
   startInstance(id: string) {
@@ -817,6 +830,22 @@ export const scopesApi = {
 
   getContainerStatus(id: string) {
     return request<{ containerStatus: ContainerStatus; statusMessage?: string }>(`/scopes/instances/${id}/container-status`);
+  },
+
+  // Deployment history
+  listDeployments(instanceId: string, limit = 20, offset = 0) {
+    return request<{ deployments: ScopeDeployment[]; total: number }>(`/scopes/instances/${instanceId}/deployments?limit=${limit}&offset=${offset}`);
+  },
+
+  getDeployment(instanceId: string, deploymentId: string) {
+    return request<{ deployment: ScopeDeployment }>(`/scopes/instances/${instanceId}/deployments/${deploymentId}`);
+  },
+
+  streamDeploymentLogs(instanceId: string, deploymentId: string): EventSource {
+    const token = localStorage.getItem("hsafa_token");
+    const base = API_BASE;
+    const url = `${base}/scopes/instances/${instanceId}/deployments/${deploymentId}/stream?token=${encodeURIComponent(token || "")}`;
+    return new EventSource(url);
   },
 
   // Connection status
