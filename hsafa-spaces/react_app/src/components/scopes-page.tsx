@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   PuzzleIcon,
   PlusIcon,
@@ -50,7 +51,16 @@ interface ScopesPageProps {
 }
 
 export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: ScopesPageProps) {
-  const [tab, setTab] = useState<"instances" | "templates" | "developer">("instances");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const tab = (tabParam === "templates" || tabParam === "developer") ? tabParam : "instances";
+  const setTab = useCallback((t: "instances" | "templates" | "developer") => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (t === "instances") next.delete("tab"); else next.set("tab", t);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
   const [templates, setTemplates] = useState<ScopeTemplate[]>([]);
   const [instances, setInstances] = useState<ScopeInstance[]>([]);
   const [statuses, setStatuses] = useState<CoreScopeStatus[]>([]);

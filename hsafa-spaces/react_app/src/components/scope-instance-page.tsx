@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   PuzzleIcon,
   WrenchIcon,
@@ -831,6 +832,20 @@ function DeploymentsTab({
 
 // ── Deployment Detail View (real-time SSE logs) ──────────────────────────────
 
+function highlightDeployLine(line: string): React.ReactNode {
+  if (!line) return "\n";
+  const lower = line.toLowerCase();
+  const cls = cn(
+    "text-zinc-400",
+    lower.includes("error") && "text-red-400",
+    lower.includes("warn") && "text-yellow-400",
+    (lower.includes("successfully") || lower.includes("complete") || lower.includes("started")) && "text-green-400",
+    lower.includes("pulling") && "text-cyan-400",
+    lower.includes("image:") && "text-blue-400",
+  );
+  return <span className={cls}>{line}</span>;
+}
+
 function DeploymentDetailView({
   instanceId,
   deploymentId,
@@ -844,7 +859,7 @@ function DeploymentDetailView({
   const [logLines, setLogLines] = useState<string[]>([]);
   const [status, setStatus] = useState<string>("loading");
   const [error, setError] = useState("");
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<CodeTerminalHandle>(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -863,7 +878,7 @@ function DeploymentDetailView({
           const data = JSON.parse(event.data);
           if (data.type === "log") {
             setLogLines((prev) => [...prev, data.line]);
-            setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+            setTimeout(() => terminalRef.current?.scrollToBottom(), 50);
           } else if (data.type === "done") {
             setStatus(data.status);
             // Re-fetch deployment for final metadata
@@ -905,6 +920,22 @@ function DeploymentDetailView({
   }
 
   const isLive = status === "running";
+
+  const titleRight = (
+    <div className="flex items-center gap-2">
+      {isLive && <span className="text-[9px] text-blue-400 font-mono animate-pulse">STREAMING</span>}
+      {status === "success" && <span className="text-[9px] text-green-400 font-mono">COMPLETE</span>}
+      {status === "failed" && <span className="text-[9px] text-red-400 font-mono">FAILED</span>}
+      <button
+        onClick={handleCopy}
+        disabled={logLines.length === 0}
+        className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors disabled:opacity-50"
+      >
+        {copied ? <CheckIcon className="size-3 text-green-500" /> : <CopyIcon className="size-3" />}
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-3 h-full max-w-4xl">
@@ -951,67 +982,18 @@ function DeploymentDetailView({
         </div>
       )}
 
-      {/* Toolbar */}
-      <div className="flex items-center gap-2">
-        {isLive && (
-          <span className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-full bg-blue-500/10 text-blue-500">
-            <Loader2Icon className="size-3 animate-spin" />
-            Live
-          </span>
-        )}
-        <div className="flex-1" />
-        <button
-          onClick={handleCopy}
-          disabled={logLines.length === 0}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-        >
-          {copied ? <CheckIcon className="size-3 text-green-500" /> : <CopyIcon className="size-3" />}
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
-
       {/* Terminal log viewer */}
-      <div className="flex-1 min-h-0 rounded-lg overflow-hidden border border-zinc-800 bg-[#0d1117] flex flex-col">
-        {/* Terminal title bar */}
-        <div className="flex items-center gap-2 px-4 py-2 bg-[#161b22] border-b border-zinc-800">
-          <div className="flex gap-1.5">
-            <div className="size-3 rounded-full bg-[#ff5f57]" />
-            <div className="size-3 rounded-full bg-[#febc2e]" />
-            <div className="size-3 rounded-full bg-[#28c840]" />
-          </div>
-          <span className="text-[10px] text-zinc-500 font-mono ml-2">deployment {deploymentId.slice(0, 8)}</span>
-          {isLive && <span className="text-[9px] text-blue-400 font-mono ml-auto animate-pulse">STREAMING</span>}
-          {status === "success" && <span className="text-[9px] text-green-400 font-mono ml-auto">COMPLETE</span>}
-          {status === "failed" && <span className="text-[9px] text-red-400 font-mono ml-auto">FAILED</span>}
-        </div>
-        {/* Log content */}
-        <div className="flex-1 overflow-auto p-4 font-mono text-[12px] leading-[1.7] min-h-[400px] max-h-[600px] selection:bg-blue-500/30">
-          {logLines.length === 0 && status === "loading" ? (
-            <div className="flex items-center justify-center h-full">
-              <Loader2Icon className="size-5 animate-spin text-zinc-600" />
-            </div>
-          ) : logLines.length === 0 ? (
-            <p className="text-zinc-600 text-center py-8">No logs available.</p>
-          ) : (
-            <>
-              {logLines.map((line, i) => (
-                <div key={i} className="hover:bg-white/[0.03] px-1 -mx-1 rounded group">
-                  <span className="text-zinc-600 select-none mr-4 inline-block w-8 text-right text-[11px] group-hover:text-zinc-500">{i + 1}</span>
-                  <span className={cn(
-                    "text-zinc-400",
-                    line.toLowerCase().includes("error") && "text-red-400",
-                    line.toLowerCase().includes("warn") && "text-yellow-400",
-                    (line.includes("successfully") || line.includes("complete") || line.includes("started")) && "text-green-400",
-                    line.includes("Pulling") && "text-cyan-400",
-                    line.includes("Image:") && "text-blue-400",
-                  )}>{line}</span>
-                </div>
-              ))}
-              <div ref={logsEndRef} />
-            </>
-          )}
-        </div>
-      </div>
+      <CodeTerminal
+        ref={terminalRef}
+        value={logLines.join("\n")}
+        highlight={highlightDeployLine}
+        title={`deployment ${deploymentId.slice(0, 8)}`}
+        titleRight={titleRight}
+        loading={logLines.length === 0 && status === "loading"}
+        minRows={20}
+        maxRows={30}
+        className="flex-1 min-h-0"
+      />
     </div>
   );
 }
@@ -1027,9 +1009,29 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   const [instance, setInstance] = useState<ScopeInstance | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<InstanceTab>("general");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab") as InstanceTab | null;
+  const tab: InstanceTab = (tabParam === "configuration" || tabParam === "logs" || tabParam === "deployments") ? tabParam : "general";
+  const activeDeploymentId = searchParams.get("deployment");
+
+  const setTab = useCallback((t: InstanceTab) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (t === "general") next.delete("tab"); else next.set("tab", t);
+      if (t !== "deployments") next.delete("deployment");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const setActiveDeploymentId = useCallback((id: string | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id) next.set("deployment", id); else next.delete("deployment");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
   const [acting, setActing] = useState<string | null>(null);
-  const [activeDeploymentId, setActiveDeploymentId] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -1064,8 +1066,12 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
     try {
       const res = await scopesApi.deployInstance(instanceId);
       // Navigate to the deployment detail view with real-time logs
-      setTab("deployments");
-      setActiveDeploymentId(res.deploymentId);
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("tab", "deployments");
+        if (res.deploymentId) next.set("deployment", res.deploymentId);
+        return next;
+      }, { replace: true });
       load(true);
     } catch (err: any) {
       console.error("Deploy failed:", err);
@@ -1101,7 +1107,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   const tabs: { key: InstanceTab; label: string; icon: React.ReactNode }[] = [
     { key: "general", label: "General", icon: <SettingsIcon className="size-3.5" /> },
     { key: "configuration", label: "Configuration", icon: <WrenchIcon className="size-3.5" /> },
-    { key: "logs", label: "Logs", icon: <TerminalIcon className="size-3.5" /> },
+    ...(hasContainer && isRunning ? [{ key: "logs" as InstanceTab, label: "Logs", icon: <TerminalIcon className="size-3.5" /> }] : []),
     ...(isManaged ? [{ key: "deployments" as InstanceTab, label: "Deployments", icon: <RocketIcon className="size-3.5" /> }] : []),
   ];
 
@@ -1186,7 +1192,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
         {tabs.map((t) => (
           <button
             key={t.key}
-            onClick={() => { setTab(t.key); if (t.key !== "deployments") setActiveDeploymentId(null); }}
+            onClick={() => setTab(t.key)}
             className={cn(
               "flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px",
               tab === t.key
@@ -1205,7 +1211,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
         {error && <p className="text-xs text-red-500 mb-4">{error}</p>}
         {tab === "general" && <GeneralTab instance={instance} onSaved={() => load(true)} onDelete={onBack} />}
         {tab === "configuration" && <ConfigurationTab instance={instance} onSaved={() => load(true)} />}
-        {tab === "logs" && <LogsTab instance={instance} />}
+        {tab === "logs" && hasContainer && isRunning && <LogsTab key={instance.containerId} instance={instance} />}
         {tab === "deployments" && !activeDeploymentId && (
           <DeploymentsTab
             instance={instance}
