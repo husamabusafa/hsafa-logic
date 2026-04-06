@@ -226,7 +226,7 @@ export const CodeTerminal = forwardRef<CodeTerminalHandle, CodeTerminalProps>(
               aria-hidden="true"
             >
               {lines.map((_, i) => (
-                <div key={i} className="px-3 text-right text-[11px] leading-[1.7] font-mono text-zinc-600">{i + 1}</div>
+                <div key={i} className="px-3 text-right text-[13px] leading-[1.7] font-mono text-zinc-600">{i + 1}</div>
               ))}
             </div>
 
@@ -267,22 +267,22 @@ export const CodeTerminal = forwardRef<CodeTerminalHandle, CodeTerminalProps>(
             {/* Line numbers */}
             <div
               ref={lineNumbersRef}
-              className="select-none overflow-hidden shrink-0 bg-[#0d1117] border-r border-zinc-800/50"
+              className="select-none overflow-hidden shrink-0 py-3 bg-[#0d1117] border-r border-zinc-800/50"
               aria-hidden="true"
             >
               {lines.map((_, i) => (
-                <div key={i} className="px-3 text-right text-[11px] leading-[1.7] font-mono text-zinc-600 first:pt-3 last:pb-3">{i + 1}</div>
+                <div key={i} className="px-3 text-right text-[13px] leading-[1.7] font-mono text-zinc-600">{i + 1}</div>
               ))}
             </div>
 
             {/* Content */}
             <div
               ref={contentRef}
-              className="flex-1 min-w-0 overflow-auto p-3 font-mono text-[13px] leading-[1.7] selection:bg-blue-500/30"
+              className="flex-1 min-w-0 overflow-auto py-3 px-3 font-mono text-[13px] leading-[1.7] selection:bg-blue-500/30"
               style={{ minHeight: `${Math.min(maxRows, Math.max(minRows, lines.length)) * 1.7}em`, maxHeight: `${maxRows * 1.7}em` }}
             >
               {lines.map((line, i) => (
-                <div key={i} className="hover:bg-white/[0.03] px-1 -mx-1 rounded">
+                <div key={i} className="hover:bg-white/[0.03] rounded">
                   {highlightLine(line)}
                 </div>
               ))}

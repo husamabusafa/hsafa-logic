@@ -90,11 +90,6 @@ export async function deployInstance(instanceId: string, triggeredBy?: string): 
     const ts = new Date().toISOString();
     const entry = `[${ts}] ${line}`;
     emitDeployLog(deploymentId, entry);
-    await prisma.scopeDeployment.update({
-      where: { id: deploymentId },
-      data: { logs: { set: undefined } },
-    }).catch(() => {});
-    // Use raw SQL for efficient append
     await prisma.$executeRawUnsafe(
       `UPDATE scope_deployments SET logs = logs || $1 WHERE id = $2::uuid`,
       entry + "\n",

@@ -25,7 +25,6 @@ import {
   ChevronRightIcon,
   CircleDotIcon,
   AlertTriangleIcon,
-  HistoryIcon,
   ClockIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -204,141 +203,9 @@ function ConfirmModal({
   );
 }
 
-// ── Deploy Output Modal ──────────────────────────────────────────────────────
-
-interface DeployOutput {
-  status: "deploying" | "success" | "error";
-  containerId?: string;
-  containerStatus?: string;
-  error?: string;
-}
-
-function DeployOutputModal({
-  output,
-  instanceName,
-  onClose,
-  onViewLogs,
-}: {
-  output: DeployOutput;
-  instanceName: string;
-  onClose: () => void;
-  onViewLogs: () => void;
-}) {
-  const steps = [
-    "Pulling Docker image",
-    "Removing old container",
-    "Building environment",
-    "Creating container",
-    "Starting container",
-  ];
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={output.status !== "deploying" ? onClose : undefined} />
-      <div className="relative bg-card border border-border rounded-xl shadow-2xl w-full max-w-md mx-4">
-        <div className="p-6 space-y-5">
-          {/* Header */}
-          <div className="flex items-center gap-3">
-            <div className={cn(
-              "flex items-center justify-center size-10 rounded-full shrink-0",
-              output.status === "deploying" && "bg-blue-500/10 text-blue-500",
-              output.status === "success" && "bg-green-500/10 text-green-500",
-              output.status === "error" && "bg-red-500/10 text-red-500",
-            )}>
-              {output.status === "deploying" && <Loader2Icon className="size-5 animate-spin" />}
-              {output.status === "success" && <CheckCircle2Icon className="size-5" />}
-              {output.status === "error" && <XCircleIcon className="size-5" />}
-            </div>
-            <div>
-              <h3 className="font-semibold text-base">
-                {output.status === "deploying" && "Deploying..."}
-                {output.status === "success" && "Deployed Successfully"}
-                {output.status === "error" && "Deployment Failed"}
-              </h3>
-              <p className="text-xs text-muted-foreground">{instanceName}</p>
-            </div>
-          </div>
-
-          {/* Steps */}
-          <div className="rounded-lg border border-border overflow-hidden bg-muted/30">
-            {steps.map((step, i) => {
-              const activeIdx = output.status === "deploying" ? Math.min(i, steps.length - 1) : steps.length;
-              let icon: React.ReactNode;
-              let textCls: string;
-
-              if (output.status === "success") {
-                icon = <CheckCircle2Icon className="size-4 text-green-500" />;
-                textCls = "text-muted-foreground";
-              } else if (output.status === "error" && i === steps.length - 1) {
-                icon = <XCircleIcon className="size-4 text-red-500" />;
-                textCls = "text-red-500 font-medium";
-              } else if (output.status === "error" && i < steps.length - 1) {
-                icon = <CheckCircle2Icon className="size-4 text-green-500" />;
-                textCls = "text-muted-foreground";
-              } else if (output.status === "deploying" && i < activeIdx) {
-                icon = <CheckCircle2Icon className="size-4 text-green-500" />;
-                textCls = "text-muted-foreground";
-              } else if (output.status === "deploying" && i === activeIdx) {
-                icon = <Loader2Icon className="size-4 text-blue-500 animate-spin" />;
-                textCls = "text-foreground font-medium";
-              } else {
-                icon = <div className="size-4 rounded-full border-2 border-border" />;
-                textCls = "text-muted-foreground";
-              }
-
-              return (
-                <div key={i} className="flex items-center gap-3 px-4 py-2.5 border-b border-border last:border-0">
-                  <div className="shrink-0">{icon}</div>
-                  <span className={cn("text-sm", textCls)}>{step}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Result details */}
-          {output.status === "success" && output.containerId && (
-            <div className="rounded-lg border border-green-200 dark:border-green-900/50 bg-green-50 dark:bg-green-950/20 p-3 space-y-1">
-              <p className="text-xs font-medium text-green-700 dark:text-green-400">Container started</p>
-              <p className="text-[11px] text-green-600 dark:text-green-500 font-mono">{output.containerId.slice(0, 12)}</p>
-            </div>
-          )}
-
-          {output.status === "error" && output.error && (
-            <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/20 p-3">
-              <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-1">Error</p>
-              <p className="text-xs text-red-600 dark:text-red-400 font-mono break-all leading-relaxed">{output.error}</p>
-            </div>
-          )}
-
-          {/* Actions */}
-          {output.status !== "deploying" && (
-            <div className="flex items-center gap-3">
-              <button
-                onClick={onClose}
-                className="flex-1 px-4 py-2 text-sm rounded-lg border border-border font-medium hover:bg-muted transition-colors"
-              >
-                Close
-              </button>
-              {output.status === "success" && (
-                <button
-                  onClick={onViewLogs}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"
-                >
-                  <TerminalIcon className="size-3.5" />
-                  View Logs
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Tab types ─────────────────────────────────────────────────────────────────
 
-type InstanceTab = "general" | "configuration" | "logs";
+type InstanceTab = "general" | "configuration" | "logs" | "deployments";
 
 // ── Status dot (Coolify-style) ───────────────────────────────────────────────
 
@@ -698,9 +565,9 @@ function LogsTab({ instance }: { instance: ScopeInstance }) {
   const [error, setError] = useState("");
   const [tail, setTail] = useState(200);
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const logsEndRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const [copied, setCopied] = useState(false);
+  const terminalRef = useRef<CodeTerminalHandle>(null);
 
   const isManaged = instance.deploymentType === "platform" || instance.deploymentType === "custom";
   const hasContainer = !!instance.containerId;
@@ -712,7 +579,7 @@ function LogsTab({ instance }: { instance: ScopeInstance }) {
     try {
       const res = await scopesApi.getInstanceLogs(instance.id, tail);
       setLogs(res.logs || "(no logs)");
-      setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      setTimeout(() => terminalRef.current?.scrollToBottom(), 50);
     } catch (err: any) {
       setError(err.message || "Failed to fetch logs");
     } finally {
@@ -801,7 +668,309 @@ function LogsTab({ instance }: { instance: ScopeInstance }) {
 
       {error && <p className="text-xs text-red-500">{error}</p>}
 
-      {/* Terminal */}
+      <CodeTerminal
+        ref={terminalRef}
+        value={logs ?? ""}
+        highlight="log"
+        loading={logs === null}
+        title={`${instance.scopeName} — logs`}
+        titleRight={autoRefresh ? <span className="text-[9px] text-green-500 font-mono animate-pulse">LIVE</span> : undefined}
+        minRows={20}
+        maxRows={30}
+        className="flex-1 min-h-0"
+      />
+    </div>
+  );
+}
+
+// ── Main Component ───────────────────────────────────────────────────────────
+
+// ── Deployment Status Badge ───────────────────────────────────────────────────
+
+function DeploymentStatusBadge({ status }: { status: string }) {
+  const map: Record<string, { label: string; cls: string; icon: React.ReactNode }> = {
+    running: { label: "Running", cls: "text-blue-500 bg-blue-500/10", icon: <Loader2Icon className="size-3 animate-spin" /> },
+    success: { label: "Success", cls: "text-green-600 bg-green-500/10", icon: <CheckCircle2Icon className="size-3" /> },
+    failed: { label: "Failed", cls: "text-red-500 bg-red-500/10", icon: <XCircleIcon className="size-3" /> },
+    stopped: { label: "Stopped", cls: "text-zinc-500 bg-zinc-500/10", icon: <SquareIcon className="size-3" /> },
+  };
+  const cfg = map[status] ?? map.stopped;
+  return (
+    <span className={cn("inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full", cfg.cls)}>
+      {cfg.icon}
+      {cfg.label}
+    </span>
+  );
+}
+
+// ── Deployments Tab ──────────────────────────────────────────────────────────
+
+function DeploymentsTab({
+  instance,
+  activeDeploymentId,
+  onSelectDeployment,
+}: {
+  instance: ScopeInstance;
+  activeDeploymentId: string | null;
+  onSelectDeployment: (deploymentId: string) => void;
+}) {
+  const [deployments, setDeployments] = useState<ScopeDeployment[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const fetchDeployments = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await scopesApi.listDeployments(instance.id);
+      setDeployments(res.deployments);
+      setTotal(res.total);
+    } catch (err: any) {
+      setError(err.message || "Failed to load deployments");
+    } finally {
+      setLoading(false);
+    }
+  }, [instance.id]);
+
+  useEffect(() => { fetchDeployments(); }, [fetchDeployments]);
+
+  // Auto-refresh while there's a running deployment
+  useEffect(() => {
+    const hasRunning = deployments.some((d) => d.status === "running");
+    if (!hasRunning) return;
+    const interval = setInterval(fetchDeployments, 5000);
+    return () => clearInterval(interval);
+  }, [deployments, fetchDeployments]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return <p className="text-xs text-red-500 py-8 text-center">{error}</p>;
+  }
+
+  if (deployments.length === 0) {
+    return (
+      <div className="text-center py-16 text-muted-foreground">
+        <RocketIcon className="size-10 mx-auto mb-3 opacity-30" />
+        <p className="text-sm">No deployments yet.</p>
+        <p className="text-xs mt-1">Deploy this scope instance to see history here.</p>
+      </div>
+    );
+  }
+
+  function formatDuration(start: string, end: string | null) {
+    if (!end) return "—";
+    const ms = new Date(end).getTime() - new Date(start).getTime();
+    if (ms < 1000) return `${ms}ms`;
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
+  }
+
+  function formatTime(iso: string) {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
+  return (
+    <div className="space-y-3 max-w-3xl">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">{total} deployment{total !== 1 ? "s" : ""}</p>
+        <button
+          onClick={fetchDeployments}
+          className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border border-border hover:bg-muted transition-colors"
+        >
+          <RefreshCwIcon className="size-3" />
+          Refresh
+        </button>
+      </div>
+
+      <div className="rounded-lg border border-border overflow-hidden bg-card divide-y divide-border">
+        {deployments.map((d) => (
+          <button
+            key={d.id}
+            onClick={() => onSelectDeployment(d.id)}
+            className={cn(
+              "w-full flex items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-muted/50",
+              activeDeploymentId === d.id && "bg-muted/70",
+            )}
+          >
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <DeploymentStatusBadge status={d.status} />
+                <span className="text-xs text-muted-foreground font-mono">{d.id.slice(0, 8)}</span>
+              </div>
+              <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <ClockIcon className="size-3" />
+                  {formatTime(d.startedAt)}
+                </span>
+                <span>Duration: {formatDuration(d.startedAt, d.finishedAt)}</span>
+                {d.imageUrl && (
+                  <span className="font-mono truncate max-w-[200px]">{d.imageUrl.split("/").pop()}</span>
+                )}
+              </div>
+              {d.errorMessage && (
+                <p className="text-[11px] text-red-400 mt-1 truncate">{d.errorMessage}</p>
+              )}
+            </div>
+            <ChevronRightIcon className="size-4 text-muted-foreground shrink-0" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Deployment Detail View (real-time SSE logs) ──────────────────────────────
+
+function DeploymentDetailView({
+  instanceId,
+  deploymentId,
+  onBack,
+}: {
+  instanceId: string;
+  deploymentId: string;
+  onBack: () => void;
+}) {
+  const [deployment, setDeployment] = useState<ScopeDeployment | null>(null);
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const [status, setStatus] = useState<string>("loading");
+  const [error, setError] = useState("");
+  const logsEndRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let es: EventSource | null = null;
+
+    // Fetch deployment metadata first
+    scopesApi.getDeployment(instanceId, deploymentId).then(({ deployment: dep }) => {
+      setDeployment(dep);
+      setStatus(dep.status);
+
+      // Connect SSE for live streaming (also replays existing logs)
+      es = scopesApi.streamDeploymentLogs(instanceId, deploymentId);
+
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "log") {
+            setLogLines((prev) => [...prev, data.line]);
+            setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+          } else if (data.type === "done") {
+            setStatus(data.status);
+            // Re-fetch deployment for final metadata
+            scopesApi.getDeployment(instanceId, deploymentId).then(({ deployment: d }) => setDeployment(d)).catch(() => {});
+            es?.close();
+          } else if (data.type === "timeout") {
+            es?.close();
+          }
+        } catch { /* ignore parse errors */ }
+      };
+
+      es.onerror = () => {
+        // If the connection fails, fall back to fetched logs
+        if (dep.logs) {
+          setLogLines(dep.logs.split("\n").filter(Boolean));
+        }
+        es?.close();
+      };
+    }).catch((err) => {
+      setError(err.message || "Failed to load deployment");
+    });
+
+    return () => { es?.close(); };
+  }, [instanceId, deploymentId]);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(logLines.join("\n"));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-16 text-muted-foreground">
+        <p className="text-sm text-red-500">{error}</p>
+        <button onClick={onBack} className="text-sm text-primary hover:underline mt-2">Go back</button>
+      </div>
+    );
+  }
+
+  const isLive = status === "running";
+
+  return (
+    <div className="flex flex-col gap-3 h-full max-w-4xl">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ChevronRightIcon className="size-3 rotate-180" />
+          All Deployments
+        </button>
+        <div className="flex-1" />
+        {deployment && <DeploymentStatusBadge status={status} />}
+        {deployment && (
+          <span className="text-[11px] text-muted-foreground font-mono">{deployment.id.slice(0, 8)}</span>
+        )}
+      </div>
+
+      {/* Metadata row */}
+      {deployment && (
+        <div className="flex items-center gap-4 text-[11px] text-muted-foreground flex-wrap">
+          <span className="flex items-center gap-1">
+            <ClockIcon className="size-3" />
+            {new Date(deployment.startedAt).toLocaleString()}
+          </span>
+          {deployment.finishedAt && (
+            <span>Finished: {new Date(deployment.finishedAt).toLocaleString()}</span>
+          )}
+          {deployment.imageUrl && (
+            <span className="font-mono">{deployment.imageUrl}</span>
+          )}
+          {deployment.containerId && (
+            <span className="font-mono">Container: {deployment.containerId.slice(0, 12)}</span>
+          )}
+        </div>
+      )}
+
+      {/* Error banner */}
+      {deployment?.errorMessage && (
+        <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/20 p-3">
+          <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-1">Error</p>
+          <p className="text-xs text-red-600 dark:text-red-400 font-mono break-all leading-relaxed">{deployment.errorMessage}</p>
+        </div>
+      )}
+
+      {/* Toolbar */}
+      <div className="flex items-center gap-2">
+        {isLive && (
+          <span className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-full bg-blue-500/10 text-blue-500">
+            <Loader2Icon className="size-3 animate-spin" />
+            Live
+          </span>
+        )}
+        <div className="flex-1" />
+        <button
+          onClick={handleCopy}
+          disabled={logLines.length === 0}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+        >
+          {copied ? <CheckIcon className="size-3 text-green-500" /> : <CopyIcon className="size-3" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+
+      {/* Terminal log viewer */}
       <div className="flex-1 min-h-0 rounded-lg overflow-hidden border border-zinc-800 bg-[#0d1117] flex flex-col">
         {/* Terminal title bar */}
         <div className="flex items-center gap-2 px-4 py-2 bg-[#161b22] border-b border-zinc-800">
@@ -810,26 +979,31 @@ function LogsTab({ instance }: { instance: ScopeInstance }) {
             <div className="size-3 rounded-full bg-[#febc2e]" />
             <div className="size-3 rounded-full bg-[#28c840]" />
           </div>
-          <span className="text-[10px] text-zinc-500 font-mono ml-2">{instance.scopeName} — logs</span>
-          {autoRefresh && <span className="text-[9px] text-green-500 font-mono ml-auto animate-pulse">LIVE</span>}
+          <span className="text-[10px] text-zinc-500 font-mono ml-2">deployment {deploymentId.slice(0, 8)}</span>
+          {isLive && <span className="text-[9px] text-blue-400 font-mono ml-auto animate-pulse">STREAMING</span>}
+          {status === "success" && <span className="text-[9px] text-green-400 font-mono ml-auto">COMPLETE</span>}
+          {status === "failed" && <span className="text-[9px] text-red-400 font-mono ml-auto">FAILED</span>}
         </div>
         {/* Log content */}
         <div className="flex-1 overflow-auto p-4 font-mono text-[12px] leading-[1.7] min-h-[400px] max-h-[600px] selection:bg-blue-500/30">
-          {logs === null ? (
+          {logLines.length === 0 && status === "loading" ? (
             <div className="flex items-center justify-center h-full">
               <Loader2Icon className="size-5 animate-spin text-zinc-600" />
             </div>
+          ) : logLines.length === 0 ? (
+            <p className="text-zinc-600 text-center py-8">No logs available.</p>
           ) : (
             <>
-              {logs.split("\n").map((line, i) => (
+              {logLines.map((line, i) => (
                 <div key={i} className="hover:bg-white/[0.03] px-1 -mx-1 rounded group">
                   <span className="text-zinc-600 select-none mr-4 inline-block w-8 text-right text-[11px] group-hover:text-zinc-500">{i + 1}</span>
                   <span className={cn(
                     "text-zinc-400",
                     line.toLowerCase().includes("error") && "text-red-400",
                     line.toLowerCase().includes("warn") && "text-yellow-400",
-                    (line.toLowerCase().includes("info") || line.toLowerCase().includes("connected") || line.toLowerCase().includes("ready")) && "text-green-400",
-                    line.startsWith(">") && "text-cyan-400",
+                    (line.includes("successfully") || line.includes("complete") || line.includes("started")) && "text-green-400",
+                    line.includes("Pulling") && "text-cyan-400",
+                    line.includes("Image:") && "text-blue-400",
                   )}>{line}</span>
                 </div>
               ))}
@@ -855,7 +1029,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   const [error, setError] = useState("");
   const [tab, setTab] = useState<InstanceTab>("general");
   const [acting, setActing] = useState<string | null>(null);
-  const [deployOutput, setDeployOutput] = useState<DeployOutput | null>(null);
+  const [activeDeploymentId, setActiveDeploymentId] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -887,17 +1061,14 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
 
   async function handleDeploy() {
     setActing("deploy");
-    setDeployOutput({ status: "deploying" });
     try {
       const res = await scopesApi.deployInstance(instanceId);
-      if (res.containerStatus === "error") {
-        setDeployOutput({ status: "error", error: res.statusMessage || "Deployment failed" });
-      } else {
-        setDeployOutput({ status: "success", containerId: res.containerId, containerStatus: res.containerStatus });
-      }
+      // Navigate to the deployment detail view with real-time logs
+      setTab("deployments");
+      setActiveDeploymentId(res.deploymentId);
       load(true);
     } catch (err: any) {
-      setDeployOutput({ status: "error", error: err.message || "Deployment failed" });
+      console.error("Deploy failed:", err);
     } finally {
       setActing(null);
     }
@@ -931,6 +1102,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
     { key: "general", label: "General", icon: <SettingsIcon className="size-3.5" /> },
     { key: "configuration", label: "Configuration", icon: <WrenchIcon className="size-3.5" /> },
     { key: "logs", label: "Logs", icon: <TerminalIcon className="size-3.5" /> },
+    ...(isManaged ? [{ key: "deployments" as InstanceTab, label: "Deployments", icon: <RocketIcon className="size-3.5" /> }] : []),
   ];
 
   return (
@@ -1014,7 +1186,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
         {tabs.map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => { setTab(t.key); if (t.key !== "deployments") setActiveDeploymentId(null); }}
             className={cn(
               "flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px",
               tab === t.key
@@ -1034,17 +1206,21 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
         {tab === "general" && <GeneralTab instance={instance} onSaved={() => load(true)} onDelete={onBack} />}
         {tab === "configuration" && <ConfigurationTab instance={instance} onSaved={() => load(true)} />}
         {tab === "logs" && <LogsTab instance={instance} />}
+        {tab === "deployments" && !activeDeploymentId && (
+          <DeploymentsTab
+            instance={instance}
+            activeDeploymentId={activeDeploymentId}
+            onSelectDeployment={(id) => setActiveDeploymentId(id)}
+          />
+        )}
+        {tab === "deployments" && activeDeploymentId && (
+          <DeploymentDetailView
+            instanceId={instance.id}
+            deploymentId={activeDeploymentId}
+            onBack={() => setActiveDeploymentId(null)}
+          />
+        )}
       </div>
-
-      {/* Deploy output modal */}
-      {deployOutput && (
-        <DeployOutputModal
-          output={deployOutput}
-          instanceName={instance.name}
-          onClose={() => setDeployOutput(null)}
-          onViewLogs={() => { setDeployOutput(null); setTab("logs"); }}
-        />
-      )}
     </div>
   );
 }
