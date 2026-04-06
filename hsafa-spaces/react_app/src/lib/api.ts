@@ -799,10 +799,17 @@ export const scopesApi = {
   },
 
   // External scopes
-  registerExternal(data: { scopeName: string; displayName: string; apiKey: string; description?: string }) {
+  registerExternal(data: { scopeName: string; displayName: string; scopeKey: string; description?: string }) {
     return request<{ template: ScopeTemplate; instance: ScopeInstance }>("/scopes/external", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+  },
+
+  verifyExternalScope(scopeKey: string) {
+    return request<{ valid: boolean; scopeName: string; connected: boolean; toolCount: number }>("/scopes/external/verify", {
+      method: "POST",
+      body: JSON.stringify({ scopeKey }),
     });
   },
 

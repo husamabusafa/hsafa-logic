@@ -142,7 +142,22 @@ router.get("/instances", async (req: Request, res: Response) => {
       orderBy: { createdAt: "desc" },
     });
 
-    // Mask secret config values
+    // Fetch connection status from Core for all scopes (used for built-in + external)
+    const { coreUrl, serviceKey } = getCoreConfig();
+    const coreConnectionMap = new Map<string, boolean>();
+    try {
+      const scopesRes = await fetch(`${coreUrl}/api/scopes`, { headers: { "x-api-key": serviceKey } });
+      if (scopesRes.ok) {
+        const coreScopes = (await scopesRes.json()).scopes ?? [];
+        for (const s of coreScopes) {
+          coreConnectionMap.set(s.name, s.connected ?? false);
+        }
+      }
+    } catch { /* ignore — Core might be down */ }
+
+    const spacesConnected = coreConnectionMap.get("spaces") ?? false;
+
+    // Mask secret config values and add connected status for external instances
     const pluginInstances = instances.map((inst) => ({
       ...inst,
       builtIn: false,
@@ -152,19 +167,8 @@ router.get("/instances", async (req: Request, res: Response) => {
         isSecret: c.isSecret,
         hasValue: true,
       })),
+      ...(inst.deploymentType === "external" ? { connected: coreConnectionMap.get(inst.scopeName) ?? false } : {}),
     }));
-
-    // Fetch connection status from Core for the built-in spaces scope
-    const { coreUrl, serviceKey } = getCoreConfig();
-    let spacesConnected = false;
-    try {
-      const scopesRes = await fetch(`${coreUrl}/api/scopes`, { headers: { "x-api-key": serviceKey } });
-      if (scopesRes.ok) {
-        const coreScopes = (await scopesRes.json()).scopes ?? [];
-        const spacesScope = coreScopes.find((s: any) => s.name === "spaces");
-        spacesConnected = spacesScope?.connected ?? false;
-      }
-    } catch { /* ignore — Core might be down */ }
 
     // Inject built-in "spaces" scope as virtual entry at the top
     const spacesEntry = {
@@ -296,16 +300,34 @@ router.get("/instances/:id", async (req: Request, res: Response) => {
       }
     }
 
-    // Mask secret values, decrypt non-secrets for display
-    const configs = instance.configs.map((c: { id: string; key: string; isSecret: boolean; value: string }) => ({
-      id: c.id,
-      key: c.key,
-      isSecret: c.isSecret,
-      value: c.isSecret ? "••••••••" : c.value,
-      hasValue: !!c.value,
-    }));
+    // Decrypt secret values so the frontend can display them (Coolify-style).
+    // This endpoint is already auth-gated + ownership-checked.
+    const configs = instance.configs.map((c: { id: string; key: string; isSecret: boolean; value: string }) => {
+      let value = c.value ?? "";
+      if (c.isSecret && value) {
+        try { value = decrypt(value); } catch { /* return raw if decrypt fails */ }
+      }
+      return { id: c.id, key: c.key, isSecret: c.isSecret, value, hasValue: !!c.value };
+    });
 
-    res.json({ instance: { ...instance, configs } });
+    // For external instances, fetch connection status from Core
+    let connected: boolean | undefined;
+    if (instance.deploymentType === "external") {
+      const { coreUrl, serviceKey } = getCoreConfig();
+      try {
+        const statusRes = await fetch(`${coreUrl}/api/scopes/${encodeURIComponent(instance.scopeName)}/tools`, {
+          headers: { "x-api-key": serviceKey },
+        });
+        if (statusRes.ok) {
+          const data = await statusRes.json();
+          connected = data.connected ?? false;
+        } else {
+          connected = false;
+        }
+      } catch { connected = false; }
+    }
+
+    res.json({ instance: { ...instance, configs, ...(connected !== undefined ? { connected } : {}) } });
   } catch (error) {
     console.error("Get instance error:", error);
     res.status(500).json({ error: "Failed to get instance" });
@@ -514,20 +536,20 @@ router.patch("/instances/:id", async (req: Request, res: Response) => {
       return inst;
     });
 
-    // Refetch configs so the response includes them (masked)
+    // Refetch configs so the response includes them (decrypted, Coolify-style)
     const updatedConfigs = await prisma.scopeInstanceConfig.findMany({
       where: { instanceId },
       select: { id: true, key: true, isSecret: true, value: true },
     });
-    const maskedConfigs = updatedConfigs.map((c) => ({
-      id: c.id,
-      key: c.key,
-      isSecret: c.isSecret,
-      value: c.isSecret ? "••••••••" : c.value,
-      hasValue: !!c.value,
-    }));
+    const decryptedConfigs = updatedConfigs.map((c) => {
+      let value = c.value ?? "";
+      if (c.isSecret && value) {
+        try { value = decrypt(value); } catch { /* return raw if decrypt fails */ }
+      }
+      return { id: c.id, key: c.key, isSecret: c.isSecret, value, hasValue: !!c.value };
+    });
 
-    res.json({ instance: { ...updated, configs: maskedConfigs } });
+    res.json({ instance: { ...updated, configs: decryptedConfigs } });
   } catch (error) {
     console.error("Update instance error:", error);
     res.status(500).json({ error: "Failed to update instance" });
@@ -1193,6 +1215,221 @@ router.post("/instances/:id/rotate-key", async (req: Request, res: Response) => 
   } catch (error) {
     console.error("Rotate scope key error:", error);
     res.status(500).json({ error: "Failed to rotate scope key" });
+  }
+});
+
+// =============================================================================
+// EXTERNAL SCOPE REGISTRATION (self-hosted)
+// =============================================================================
+
+// POST /api/scopes/external/verify — Verify a scope key against Core and check for duplicates
+router.post("/external/verify", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const { scopeKey } = req.body;
+    if (!scopeKey || typeof scopeKey !== "string") {
+      res.status(400).json({ error: "scopeKey is required" });
+      return;
+    }
+
+    const { coreUrl } = getCoreConfig();
+
+    // 1. Verify scope key against Core by calling GET /api/scopes with the scope key as auth
+    const coreRes = await fetch(`${coreUrl}/api/keys/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": scopeKey },
+    });
+
+    if (!coreRes.ok) {
+      // Fall back: try to get scope info using the key directly
+      const scopeInfoRes = await fetch(`${coreUrl}/api/scopes/me`, {
+        headers: { "x-api-key": scopeKey },
+      });
+      if (!scopeInfoRes.ok) {
+        res.status(400).json({ error: "Invalid scope key — could not verify with Core" });
+        return;
+      }
+      const scopeInfo = await scopeInfoRes.json();
+      const scopeName = scopeInfo.scope?.name || scopeInfo.name;
+      if (!scopeName) {
+        res.status(400).json({ error: "Could not determine scope name from key" });
+        return;
+      }
+
+      // Check if already registered in Spaces DB
+      const existing = await prisma.scopeInstance.findUnique({ where: { scopeName } });
+      if (existing) {
+        res.status(409).json({ error: `Scope "${scopeName}" is already registered in Spaces`, scopeName });
+        return;
+      }
+
+      res.json({
+        valid: true,
+        scopeName,
+        connected: scopeInfo.scope?.connected ?? scopeInfo.connected ?? false,
+        toolCount: scopeInfo.scope?.toolCount ?? scopeInfo.tools?.length ?? 0,
+      });
+      return;
+    }
+
+    const keyInfo = await coreRes.json();
+    if (keyInfo.type !== "scope") {
+      res.status(400).json({ error: "This key is not a scope key. Please provide a scope-specific key (hsk_scope_*)." });
+      return;
+    }
+
+    const scopeName = keyInfo.resourceId || keyInfo.scope;
+    if (!scopeName) {
+      res.status(400).json({ error: "Could not determine scope name from key" });
+      return;
+    }
+
+    // Check if already registered in Spaces DB
+    const existing = await prisma.scopeInstance.findUnique({ where: { scopeName } });
+    if (existing) {
+      res.status(409).json({ error: `Scope "${scopeName}" is already registered in Spaces`, scopeName });
+      return;
+    }
+
+    // Fetch connection status from Core
+    const { serviceKey } = getCoreConfig();
+    let connected = false;
+    let toolCount = 0;
+    try {
+      const statusRes = await fetch(`${coreUrl}/api/scopes/${encodeURIComponent(scopeName)}/tools`, {
+        headers: { "x-api-key": serviceKey },
+      });
+      if (statusRes.ok) {
+        const data = await statusRes.json();
+        connected = data.connected ?? false;
+        toolCount = data.tools?.length ?? 0;
+      }
+    } catch { /* ignore */ }
+
+    res.json({ valid: true, scopeName, connected, toolCount });
+  } catch (error) {
+    console.error("Verify external scope error:", error);
+    res.status(500).json({ error: "Failed to verify scope key" });
+  }
+});
+
+// POST /api/scopes/external — Register a self-hosted scope using scope key
+router.post("/external", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const { scopeName, displayName, scopeKey, description } = req.body;
+
+    if (!scopeName || !displayName || !scopeKey) {
+      res.status(400).json({ error: "scopeName, displayName, and scopeKey are required" });
+      return;
+    }
+
+    if (!/^[a-z][a-z0-9_-]{1,48}$/.test(scopeName)) {
+      res.status(400).json({ error: "Scope name must be lowercase, start with a letter, and only contain a-z, 0-9, _, -" });
+      return;
+    }
+
+    // Check for duplicate in Spaces DB
+    const existing = await prisma.scopeInstance.findUnique({ where: { scopeName } });
+    if (existing) {
+      res.status(409).json({ error: `Scope "${scopeName}" is already registered` });
+      return;
+    }
+
+    // Verify scope key against Core
+    const { coreUrl, serviceKey } = getCoreConfig();
+
+    // Try to verify key type
+    let keyValid = false;
+    try {
+      const verifyRes = await fetch(`${coreUrl}/api/keys/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": scopeKey },
+      });
+      if (verifyRes.ok) {
+        const keyInfo = await verifyRes.json();
+        if (keyInfo.type === "scope" && (keyInfo.resourceId === scopeName || keyInfo.scope === scopeName)) {
+          keyValid = true;
+        } else if (keyInfo.type === "scope") {
+          res.status(400).json({ error: `This scope key belongs to scope "${keyInfo.resourceId || keyInfo.scope}", not "${scopeName}"` });
+          return;
+        } else {
+          res.status(400).json({ error: "This is not a scope key. Please provide a scope-specific key." });
+          return;
+        }
+      }
+    } catch { /* fall through to alternate verification */ }
+
+    // Alternate verification: try calling /api/scopes/me with the key
+    if (!keyValid) {
+      try {
+        const meRes = await fetch(`${coreUrl}/api/scopes/me`, {
+          headers: { "x-api-key": scopeKey },
+        });
+        if (meRes.ok) {
+          const info = await meRes.json();
+          const resolvedName = info.scope?.name || info.name;
+          if (resolvedName === scopeName) {
+            keyValid = true;
+          } else if (resolvedName) {
+            res.status(400).json({ error: `This scope key belongs to scope "${resolvedName}", not "${scopeName}"` });
+            return;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    if (!keyValid) {
+      res.status(400).json({ error: "Could not verify scope key against Core. Make sure the key is valid and the scope name matches." });
+      return;
+    }
+
+    // Create template + instance in a transaction
+    const result = await prisma.$transaction(async (tx) => {
+      // Create a minimal template for external scopes
+      const template = await tx.scopeTemplate.create({
+        data: {
+          slug: scopeName,
+          name: displayName,
+          description: description || `External scope: ${displayName}`,
+          icon: "Plug",
+          category: "external",
+          published: false,
+          authorId: auth.userId,
+        },
+      });
+
+      // Create the instance
+      const instance = await tx.scopeInstance.create({
+        data: {
+          templateId: template.id,
+          name: displayName,
+          scopeName,
+          description: description || null,
+          ownerId: auth.userId,
+          active: true,
+          deploymentType: "external",
+          containerStatus: "stopped",
+          coreScopeKey: encrypt(scopeKey),
+        },
+        include: {
+          template: {
+            select: { id: true, slug: true, name: true, icon: true, category: true },
+          },
+        },
+      });
+
+      return { template, instance };
+    });
+
+    res.status(201).json({ template: result.template, instance: result.instance });
+  } catch (error) {
+    console.error("Register external scope error:", error);
+    res.status(500).json({ error: "Failed to register external scope" });
   }
 });
 

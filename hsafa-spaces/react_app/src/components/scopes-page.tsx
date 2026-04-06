@@ -669,16 +669,15 @@ function RegisterSection({ onRegistered }: { onRegistered: () => void }) {
           <div className="space-y-2">
             <p className="text-sm font-medium">Already deployed your scope?</p>
             <p className="text-xs text-muted-foreground">
-              If you've built and deployed a scope service that connects to Core using the SDK,
+              If you've built and deployed a scope service on your own server that connects to Core using the SDK,
               register it here so it appears in the UI. You'll need:
             </p>
             <ul className="text-xs text-muted-foreground space-y-1 list-disc pl-4">
-              <li><strong className="text-foreground">Scope Name</strong> — the exact name used in your <code className="bg-muted px-1 rounded font-mono">new HsafaSDK({"{"} scope: "..." {"}"})</code> config</li>
-              <li><strong className="text-foreground">API Key</strong> — the same Core API key your service uses to authenticate</li>
+              <li><strong className="text-foreground">Scope Key</strong> — the <code className="bg-muted px-1 rounded font-mono">hsk_scope_*</code> key assigned to your scope when it was created on Core</li>
             </ul>
             <p className="text-xs text-muted-foreground">
-              After registration, the scope will appear in <strong className="text-foreground">My Instances</strong> and can be attached/detached from haseefs.
-              Tools are registered automatically by your service via <code className="bg-muted px-1 rounded font-mono">sdk.registerTools()</code>.
+              The scope name will be detected automatically from the key.
+              After registration, the scope will appear in <strong className="text-foreground">My Instances</strong> and can be attached to haseefs.
             </p>
           </div>
         </div>
@@ -689,7 +688,7 @@ function RegisterSection({ onRegistered }: { onRegistered: () => void }) {
           onClick={() => setShowForm(true)}
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors w-full justify-center"
         >
-          <PlusIcon className="size-4" /> Register External Scope
+          <PlusIcon className="size-4" /> Register Deployed Scope
         </button>
       ) : (
         <RegisterExternalForm
@@ -719,29 +718,45 @@ function RegisterExternalForm({
   onClose: () => void;
   onRegistered: () => void;
 }) {
-  const [scopeName, setScopeName] = useState("");
+  const [scopeKey, setScopeKey] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [apiKey, setApiKey] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState("");
+  const [verified, setVerified] = useState<{ scopeName: string; connected: boolean; toolCount: number } | null>(null);
+
+  async function handleVerify() {
+    setError("");
+    setVerified(null);
+    if (!scopeKey.trim()) { setError("Scope key is required"); return; }
+
+    setVerifying(true);
+    try {
+      const result = await scopesApi.verifyExternalScope(scopeKey.trim());
+      setVerified({ scopeName: result.scopeName, connected: result.connected, toolCount: result.toolCount });
+      if (!displayName.trim()) {
+        setDisplayName(result.scopeName.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to verify scope key");
+    } finally {
+      setVerifying(false);
+    }
+  }
 
   async function handleSubmit() {
     setError("");
-    if (!scopeName.trim()) { setError("Scope name is required"); return; }
+    if (!scopeKey.trim()) { setError("Scope key is required"); return; }
+    if (!verified) { setError("Please verify the scope key first"); return; }
     if (!displayName.trim()) { setError("Display name is required"); return; }
-    if (!apiKey.trim()) { setError("API key is required"); return; }
-    if (!/^[a-z][a-z0-9_-]{1,48}$/.test(scopeName)) {
-      setError("Scope name must be lowercase, start with a letter, and only contain a-z, 0-9, _, -");
-      return;
-    }
 
     setSubmitting(true);
     try {
       await scopesApi.registerExternal({
-        scopeName: scopeName.trim(),
+        scopeName: verified.scopeName,
         displayName: displayName.trim(),
-        apiKey: apiKey.trim(),
+        scopeKey: scopeKey.trim(),
         description: description.trim() || undefined,
       });
       onRegistered();
@@ -755,58 +770,88 @@ function RegisterExternalForm({
   return (
     <div className="p-4 rounded-xl border border-border bg-card space-y-3">
       <div>
-        <label className="text-xs font-medium text-muted-foreground">Scope Name</label>
-        <p className="text-[10px] text-muted-foreground mb-1">
-          The exact <code className="bg-muted px-1 rounded font-mono">scope</code> value used in your <code className="bg-muted px-1 rounded font-mono">new HsafaSDK({"{"} scope: "..." {"}"})</code>
-        </p>
-        <input
-          type="text"
-          value={scopeName}
-          onChange={(e) => setScopeName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
-          className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
-          placeholder="my-weather-scope"
-        />
-      </div>
-
-      <div>
-        <label className="text-xs font-medium text-muted-foreground">Display Name</label>
-        <input
-          type="text"
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-          placeholder="My Weather Scope"
-        />
-      </div>
-
-      <div>
         <label className="text-xs font-medium text-muted-foreground">
-          Core API Key
+          Scope Key
         </label>
         <p className="text-[10px] text-muted-foreground mb-1">
-          The same API key your service uses to connect to Core. Used to verify ownership.
+          The <code className="bg-muted px-1 rounded font-mono">hsk_scope_*</code> key your scope uses to connect to Core.
         </p>
-        <input
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
-          placeholder="your_api_key_here"
-        />
+        <div className="flex gap-2">
+          <input
+            type="password"
+            value={scopeKey}
+            onChange={(e) => { setScopeKey(e.target.value); setVerified(null); }}
+            className="flex-1 px-3 py-2 text-sm rounded-lg border border-border bg-background font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+            placeholder="hsk_scope_..."
+          />
+          <button
+            onClick={handleVerify}
+            disabled={verifying || !scopeKey.trim()}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg font-medium transition-colors disabled:opacity-50 shrink-0",
+              verified
+                ? "bg-green-500/10 text-green-600 border border-green-300 dark:border-green-800"
+                : "bg-muted text-foreground border border-border hover:bg-muted/80",
+            )}
+          >
+            {verifying ? <Loader2Icon className="size-3.5 animate-spin" /> : verified ? <CheckCircle2Icon className="size-3.5" /> : <SearchIcon className="size-3.5" />}
+            {verified ? "Verified" : "Verify"}
+          </button>
+        </div>
       </div>
 
-      <div>
-        <label className="text-xs font-medium text-muted-foreground">Description (optional)</label>
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
-          rows={2}
-          placeholder="What does this scope do?"
-        />
-      </div>
+      {verified && (
+        <div className="p-3 rounded-lg bg-green-500/10 border border-green-300 dark:border-green-800 space-y-1.5">
+          <div className="flex items-center gap-2">
+            <CheckCircle2Icon className="size-3.5 text-green-600" />
+            <span className="text-xs font-medium text-green-700 dark:text-green-400">Scope verified on Core</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-[11px]">
+            <div>
+              <span className="text-muted-foreground">Name:</span>{" "}
+              <span className="font-mono font-medium">{verified.scopeName}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Status:</span>{" "}
+              <span className={verified.connected ? "text-green-600 font-medium" : "text-muted-foreground"}>
+                {verified.connected ? "Connected" : "Disconnected"}
+              </span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Tools:</span>{" "}
+              <span className="font-medium">{verified.toolCount}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {verified && (
+        <>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Display Name</label>
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="My Weather Scope"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Description (optional)</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+              rows={2}
+              placeholder="What does this scope do?"
+            />
+          </div>
+        </>
+      )}
+
+      {error && <p className="text-xs text-red-500 bg-red-50 dark:bg-red-950/20 px-3 py-2 rounded-lg">{error}</p>}
 
       <div className="flex items-center gap-2 pt-1">
         <button
@@ -817,11 +862,11 @@ function RegisterExternalForm({
         </button>
         <button
           onClick={handleSubmit}
-          disabled={submitting}
+          disabled={submitting || !verified}
           className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
         >
           {submitting && <Loader2Icon className="size-4 animate-spin" />}
-          Register
+          Register Scope
         </button>
       </div>
     </div>

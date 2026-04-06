@@ -29,7 +29,7 @@ import {
   ClockIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CodeTerminal, type CodeTerminalHandle } from "@/components/env-editor";
+import { CodeTerminal, type CodeTerminalHandle, EnvEditor } from "@/components/env-editor";
 import { scopesApi, type ScopeInstance, type ScopeInstanceConfig, type ScopeDeployment } from "@/lib/api";
 
 function ScopeIcon({ icon, className }: { icon: string | null; className?: string }) {
@@ -57,9 +57,44 @@ function instanceConfigsToRows(configs: ScopeInstanceConfig[]): EnvRow[] {
   return configs.map((c, i) => ({
     id: c.id || `cfg-${i}`,
     key: c.key,
-    value: c.isSecret ? "" : (c.value ?? ""),
+    value: c.value ?? "",
     isSecret: c.isSecret,
   }));
+}
+
+// ── Env Text ↔ Rows helpers (for developer mode) ────────────────────────────
+
+function rowsToEnvText(rows: EnvRow[]): string {
+  if (rows.length === 0) return "";
+  return rows.map((r) => {
+    const comment = r.isSecret ? " # secret" : "";
+    return `${r.key}=${r.value}${comment}`;
+  }).join("\n");
+}
+
+function envTextToRows(text: string, existingRows: EnvRow[]): EnvRow[] {
+  const existingSecrets = new Set(existingRows.filter((r) => r.isSecret).map((r) => r.key));
+  const result: EnvRow[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx < 0) continue;
+    const rawKey = trimmed.slice(0, eqIdx).trim();
+    if (!rawKey) continue;
+    // Value: strip inline "# secret" comment
+    let rest = trimmed.slice(eqIdx + 1);
+    let isSecret = false;
+    const secretTag = rest.match(/\s+#\s*secret\s*$/i);
+    if (secretTag) {
+      rest = rest.slice(0, secretTag.index!);
+      isSecret = true;
+    } else if (existingSecrets.has(rawKey)) {
+      isSecret = true;
+    }
+    result.push({ id: `env-${result.length}-${Date.now()}`, key: rawKey, value: rest, isSecret });
+  }
+  return result;
 }
 
 // ── Confirm Modal ────────────────────────────────────────────────────────────
@@ -389,7 +424,9 @@ function GeneralTab({
   );
 }
 
-// ── Configuration Tab (Coolify-style key-value rows) ─────────────────────────
+// ── Configuration Tab (Coolify-style, dual-mode) ─────────────────────────────
+
+type ConfigMode = "form" | "editor";
 
 let _rowCounter = 0;
 function nextRowId() { return `new-${++_rowCounter}-${Date.now()}`; }
@@ -407,33 +444,63 @@ function ConfigurationTab({
   const [dirty, setDirty] = useState(false);
   const [rows, setRows] = useState<EnvRow[]>(() => instanceConfigsToRows(instance.configs));
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+  const [mode, setMode] = useState<ConfigMode>("form");
+  const [envText, setEnvText] = useState(() => rowsToEnvText(instanceConfigsToRows(instance.configs)));
+
+  // Skip the next effect cycle after a save so the stale `instance` prop
+  // doesn't overwrite the freshly-saved rows.
+  const justSavedRef = useRef(false);
 
   // Sync from DB when not dirty (e.g. after polling refresh)
   useEffect(() => {
+    if (justSavedRef.current) {
+      justSavedRef.current = false;
+      return;
+    }
     if (!dirty) {
-      setRows(instanceConfigsToRows(instance.configs));
+      const newRows = instanceConfigsToRows(instance.configs);
+      setRows(newRows);
+      setEnvText(rowsToEnvText(newRows));
     }
   }, [instance, dirty]);
 
   const isBuiltIn = !!(instance as any).builtIn;
 
+  // ── Form mode helpers ──────────────────────────────────────────────
+
   function updateRow(id: string, field: keyof EnvRow, value: string | boolean) {
-    setRows((prev) => prev.map((r) => r.id === id ? { ...r, [field]: value } : r));
+    setRows((prev) => {
+      const next = prev.map((r) => r.id === id ? { ...r, [field]: value } : r);
+      setEnvText(rowsToEnvText(next));
+      return next;
+    });
     setDirty(true);
   }
 
   function removeRow(id: string) {
-    setRows((prev) => prev.filter((r) => r.id !== id));
+    setRows((prev) => {
+      const next = prev.filter((r) => r.id !== id);
+      setEnvText(rowsToEnvText(next));
+      return next;
+    });
     setDirty(true);
   }
 
   function addRow() {
-    setRows((prev) => [...prev, { id: nextRowId(), key: "", value: "", isSecret: false, isNew: true }]);
+    setRows((prev) => {
+      const next = [...prev, { id: nextRowId(), key: "", value: "", isSecret: false, isNew: true }];
+      setEnvText(rowsToEnvText(next));
+      return next;
+    });
     setDirty(true);
   }
 
   function toggleSecret(id: string) {
-    setRows((prev) => prev.map((r) => r.id === id ? { ...r, isSecret: !r.isSecret } : r));
+    setRows((prev) => {
+      const next = prev.map((r) => r.id === id ? { ...r, isSecret: !r.isSecret } : r);
+      setEnvText(rowsToEnvText(next));
+      return next;
+    });
     setDirty(true);
   }
 
@@ -441,13 +508,40 @@ function ConfigurationTab({
     setShowSecrets((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
+  // ── Editor mode helper ─────────────────────────────────────────────
+
+  function handleEnvTextChange(text: string) {
+    setEnvText(text);
+    setRows(envTextToRows(text, rows));
+    setDirty(true);
+  }
+
+  // ── Mode switch ────────────────────────────────────────────────────
+
+  function switchMode(newMode: ConfigMode) {
+    if (newMode === mode) return;
+    if (newMode === "editor") {
+      // Sync text from rows
+      setEnvText(rowsToEnvText(rows));
+    } else {
+      // Sync rows from text
+      setRows(envTextToRows(envText, rows));
+    }
+    setMode(newMode);
+  }
+
+  // ── Save ───────────────────────────────────────────────────────────
+
   async function handleSave() {
+    // If in editor mode, sync rows from text first
+    const currentRows = mode === "editor" ? envTextToRows(envText, rows) : rows;
+
     setSaving(true);
     setError("");
     setSuccess("");
     try {
       // Validate: no empty keys
-      const invalidRow = rows.find((r) => !r.key.trim());
+      const invalidRow = currentRows.find((r) => !r.key.trim());
       if (invalidRow) {
         setError("All environment variables must have a key.");
         setSaving(false);
@@ -455,7 +549,7 @@ function ConfigurationTab({
       }
 
       // Validate: no duplicate keys
-      const keys = rows.map((r) => r.key.trim());
+      const keys = currentRows.map((r) => r.key.trim());
       const dupes = keys.filter((k, i) => keys.indexOf(k) !== i);
       if (dupes.length > 0) {
         setError(`Duplicate key: ${dupes[0]}`);
@@ -463,16 +557,10 @@ function ConfigurationTab({
         return;
       }
 
-      // Build payload: send all rows as the complete config set.
-      // For secret rows with empty value (unchanged), we send a special
-      // sentinel so the server knows to keep the existing value.
-      const configs = rows.map((r) => ({
+      const configs = currentRows.map((r) => ({
         key: r.key.trim(),
         value: r.value,
         isSecret: r.isSecret,
-        // If a secret row has empty value and is not new, the server
-        // should preserve the existing encrypted value.
-        _keepExisting: r.isSecret && !r.value && !r.isNew,
       }));
 
       const { instance: saved } = await scopesApi.updateInstance(instance.id, {
@@ -480,8 +568,12 @@ function ConfigurationTab({
         _replaceAllConfigs: true,
       });
 
-      // Reset from server response
-      setRows(instanceConfigsToRows(saved.configs));
+      // Prevent the stale-instance effect from overwriting these rows
+      justSavedRef.current = true;
+
+      const savedRows = instanceConfigsToRows(saved.configs);
+      setRows(savedRows);
+      setEnvText(rowsToEnvText(savedRows));
       setDirty(false);
       setShowSecrets({});
       setSuccess("Configuration saved. Redeploy to apply changes.");
@@ -505,6 +597,7 @@ function ConfigurationTab({
 
   return (
     <div className="space-y-4 max-w-3xl">
+      {/* Header + mode toggle */}
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold">Environment Variables</h3>
@@ -513,98 +606,141 @@ function ConfigurationTab({
             {dirty && <span className="ml-2 text-amber-500 font-medium">● Unsaved changes</span>}
           </p>
         </div>
+        <div className="flex items-center gap-0 rounded-lg border border-border overflow-hidden">
+          <button
+            onClick={() => switchMode("form")}
+            className={cn(
+              "px-3 py-1.5 text-xs font-medium transition-colors",
+              mode === "form"
+                ? "bg-primary text-primary-foreground"
+                : "bg-card text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Form
+          </button>
+          <button
+            onClick={() => switchMode("editor")}
+            className={cn(
+              "px-3 py-1.5 text-xs font-medium transition-colors border-l border-border",
+              mode === "editor"
+                ? "bg-primary text-primary-foreground"
+                : "bg-card text-muted-foreground hover:text-foreground",
+            )}
+          >
+            .env
+          </button>
+        </div>
       </div>
 
-      {rows.length === 0 ? (
-        <div className="text-center py-10 border border-dashed border-border rounded-lg">
-          <SettingsIcon className="size-8 mx-auto mb-2 text-muted-foreground/40" />
-          <p className="text-sm text-muted-foreground">No environment variables yet.</p>
-          <button
-            onClick={addRow}
-            className="mt-3 text-xs font-medium text-primary hover:underline"
-          >
-            + Add Variable
-          </button>
+      {/* ── Editor mode ──────────────────────────────────────────── */}
+      {mode === "editor" && (
+        <div className="space-y-2">
+          <p className="text-[11px] text-muted-foreground">
+            Edit as raw <code className="bg-muted px-1 rounded">.env</code> file. Add <code className="bg-muted px-1 rounded"># secret</code> after a value to mark it as secret.
+          </p>
+          <EnvEditor
+            value={envText}
+            onChange={handleEnvTextChange}
+            title={`${instance.scopeName}.env`}
+          />
         </div>
-      ) : (
-        <div className="space-y-0">
-          {/* Header */}
-          <div className="grid grid-cols-[1fr_1fr_auto] gap-2 px-1 pb-1.5">
-            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Key</span>
-            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Value</span>
-            <span className="w-[72px]" />
-          </div>
+      )}
 
-          {/* Rows */}
-          <div className="space-y-1.5">
-            {rows.map((row) => (
-              <div key={row.id} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center group">
-                <input
-                  type="text"
-                  value={row.key}
-                  onChange={(e) => updateRow(row.id, "key", e.target.value)}
-                  placeholder="KEY"
-                  spellCheck={false}
-                  className="px-3 py-2 text-sm font-mono rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/40"
-                />
-                <div className="relative">
-                  <input
-                    type={row.isSecret && !showSecrets[row.id] ? "password" : "text"}
-                    value={row.value}
-                    onChange={(e) => updateRow(row.id, "value", e.target.value)}
-                    placeholder={row.isSecret && !row.isNew ? "••••••• (unchanged)" : "value"}
-                    spellCheck={false}
-                    className="w-full px-3 py-2 text-sm font-mono rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/40 pr-8"
-                  />
-                  {row.isSecret && (
-                    <button
-                      type="button"
-                      onClick={() => toggleShowSecret(row.id)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                      title={showSecrets[row.id] ? "Hide" : "Show"}
-                    >
-                      {showSecrets[row.id]
-                        ? <ToggleRightIcon className="size-4 text-primary" />
-                        : <ToggleLeftIcon className="size-4" />
-                      }
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => toggleSecret(row.id)}
-                    className={cn(
-                      "flex items-center gap-1 px-2 py-1.5 text-[10px] font-medium rounded-md border transition-colors",
-                      row.isSecret
-                        ? "border-amber-300 dark:border-amber-800 bg-amber-500/10 text-amber-600"
-                        : "border-border text-muted-foreground hover:text-foreground",
-                    )}
-                    title={row.isSecret ? "Mark as plain text" : "Mark as secret"}
-                  >
-                    {row.isSecret ? "Secret" : "Plain"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeRow(row.id)}
-                    className="p-1.5 text-muted-foreground hover:text-red-500 transition-colors rounded-md hover:bg-red-50 dark:hover:bg-red-950/20"
-                    title="Remove"
-                  >
-                    <TrashIcon className="size-3.5" />
-                  </button>
-                </div>
+      {/* ── Form mode ────────────────────────────────────────────── */}
+      {mode === "form" && (
+        <>
+          {rows.length === 0 ? (
+            <div className="text-center py-10 border border-dashed border-border rounded-lg">
+              <SettingsIcon className="size-8 mx-auto mb-2 text-muted-foreground/40" />
+              <p className="text-sm text-muted-foreground">No environment variables yet.</p>
+              <button
+                onClick={addRow}
+                className="mt-3 text-xs font-medium text-primary hover:underline"
+              >
+                + Add Variable
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-0">
+              {/* Header */}
+              <div className="grid grid-cols-[1fr_1fr_auto] gap-2 px-1 pb-1.5">
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Key</span>
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Value</span>
+                <span className="w-[72px]" />
               </div>
-            ))}
-          </div>
 
-          {/* Add row button */}
-          <button
-            onClick={addRow}
-            className="mt-3 flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 transition-colors"
-          >
-            <span className="text-base leading-none">+</span> Add Variable
-          </button>
-        </div>
+              {/* Rows */}
+              <div className="space-y-1.5">
+                {rows.map((row) => (
+                  <div key={row.id} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center group">
+                    <input
+                      type="text"
+                      value={row.key}
+                      onChange={(e) => updateRow(row.id, "key", e.target.value)}
+                      placeholder="KEY"
+                      spellCheck={false}
+                      className="px-3 py-2 text-sm font-mono rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/40"
+                    />
+                    <div className="relative">
+                      <input
+                        type={row.isSecret && !showSecrets[row.id] ? "password" : "text"}
+                        value={row.value}
+                        onChange={(e) => updateRow(row.id, "value", e.target.value)}
+                        placeholder={row.isSecret && !row.isNew ? "••••••• (unchanged)" : "value"}
+                        spellCheck={false}
+                        className="w-full px-3 py-2 text-sm font-mono rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/40 pr-8"
+                      />
+                      {row.isSecret && (
+                        <button
+                          type="button"
+                          onClick={() => toggleShowSecret(row.id)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                          title={showSecrets[row.id] ? "Hide" : "Show"}
+                        >
+                          {showSecrets[row.id]
+                            ? <ToggleRightIcon className="size-4 text-primary" />
+                            : <ToggleLeftIcon className="size-4" />
+                          }
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => toggleSecret(row.id)}
+                        className={cn(
+                          "flex items-center gap-1 px-2 py-1.5 text-[10px] font-medium rounded-md border transition-colors",
+                          row.isSecret
+                            ? "border-amber-300 dark:border-amber-800 bg-amber-500/10 text-amber-600"
+                            : "border-border text-muted-foreground hover:text-foreground",
+                        )}
+                        title={row.isSecret ? "Mark as plain text" : "Mark as secret"}
+                      >
+                        {row.isSecret ? "Secret" : "Plain"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeRow(row.id)}
+                        className="p-1.5 text-muted-foreground hover:text-red-500 transition-colors rounded-md hover:bg-red-50 dark:hover:bg-red-950/20"
+                        title="Remove"
+                      >
+                        <TrashIcon className="size-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add row button */}
+              <button
+                onClick={addRow}
+                className="mt-3 flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 transition-colors"
+              >
+                <span className="text-base leading-none">+</span> Add Variable
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {error && <p className="text-xs text-red-500 bg-red-50 dark:bg-red-950/20 px-3 py-2 rounded-lg">{error}</p>}
@@ -1167,11 +1303,12 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   const isError = containerStatus === "error";
   const hasContainer = !!instance.containerId;
   const isManaged = instance.deploymentType === "platform" || instance.deploymentType === "custom";
+  const isExternal = instance.deploymentType === "external";
 
   const tabs: { key: InstanceTab; label: string; icon: React.ReactNode }[] = [
     { key: "general", label: "General", icon: <SettingsIcon className="size-3.5" /> },
-    { key: "configuration", label: "Configuration", icon: <WrenchIcon className="size-3.5" /> },
-    ...(hasContainer && isRunning ? [{ key: "logs" as InstanceTab, label: "Logs", icon: <TerminalIcon className="size-3.5" /> }] : []),
+    ...(!isExternal ? [{ key: "configuration" as InstanceTab, label: "Configuration", icon: <WrenchIcon className="size-3.5" /> }] : []),
+    ...(!isExternal && hasContainer && isRunning ? [{ key: "logs" as InstanceTab, label: "Logs", icon: <TerminalIcon className="size-3.5" /> }] : []),
     ...(isManaged ? [{ key: "deployments" as InstanceTab, label: "Deployments", icon: <RocketIcon className="size-3.5" /> }] : []),
   ];
 
@@ -1190,9 +1327,11 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
         <div className="flex items-center gap-3">
           <div className={cn(
             "flex items-center justify-center size-10 rounded-lg shrink-0",
-            isRunning && instance.connected ? "bg-green-500/10 text-green-600"
-              : isRunning ? "bg-blue-500/10 text-blue-500"
-              : "bg-muted text-muted-foreground",
+            isExternal
+              ? (instance.connected ? "bg-green-500/10 text-green-600" : "bg-muted text-muted-foreground")
+              : (isRunning && instance.connected ? "bg-green-500/10 text-green-600"
+                : isRunning ? "bg-blue-500/10 text-blue-500"
+                : "bg-muted text-muted-foreground"),
           )}>
             <ScopeIcon icon={instance.template.icon} />
           </div>
@@ -1200,7 +1339,17 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2.5">
               <h1 className="font-semibold text-lg truncate">{instance.name}</h1>
-              <StatusLabel status={containerStatus} connected={instance.connected} />
+              {isExternal ? (
+                <span className={cn(
+                  "inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full",
+                  instance.connected ? "text-green-600 bg-green-500/10" : "text-muted-foreground bg-muted",
+                )}>
+                  <div className={cn("size-2.5 rounded-full", instance.connected ? "bg-green-500" : "bg-zinc-400")} />
+                  {instance.connected ? "Connected" : "Disconnected"}
+                </span>
+              ) : (
+                <StatusLabel status={containerStatus} connected={instance.connected} />
+              )}
             </div>
             <p className="text-xs text-muted-foreground font-mono">{instance.scopeName}</p>
           </div>
