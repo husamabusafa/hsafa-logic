@@ -21,6 +21,7 @@ export interface ScopeTemplate {
   description: string;
   icon: string;
   category: "prebuilt" | "custom";
+  defaultEnv: Array<{ key: string; value: string; isSecret: boolean }>;
   requiredProfileFields: string[];
   tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
   instructions: string | null;
@@ -43,6 +44,7 @@ export const SCOPE_TEMPLATES: ScopeTemplate[] = [
     icon: "Calendar",
     category: "prebuilt",
     imageUrl: "hsafa/scope-scheduler:latest",
+    defaultEnv: [],
     requiredProfileFields: [],
     tools: SCHEDULER_TOOLS.map((t) => ({
       name: t.name,
@@ -60,6 +62,14 @@ export const SCOPE_TEMPLATES: ScopeTemplate[] = [
     icon: "Database",
     category: "prebuilt",
     imageUrl: "hsafa/scope-postgres:latest",
+    defaultEnv: [
+      { key: "connectionString", value: "", isSecret: true },
+      { key: "schema", value: "public", isSecret: false },
+      { key: "readOnly", value: "true", isSecret: false },
+      { key: "maxRows", value: "100", isSecret: false },
+      { key: "queryTimeoutMs", value: "10000", isSecret: false },
+      { key: "maxWatches", value: "10", isSecret: false },
+    ],
     requiredProfileFields: [],
     tools: POSTGRES_TOOLS.map((t) => ({
       name: t.name,

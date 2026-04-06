@@ -372,19 +372,20 @@ router.post("/instances", async (req: Request, res: Response) => {
         },
       });
 
-      // Create config entries if provided
-      if (configs && Array.isArray(configs)) {
-        for (const cfg of configs) {
-          if (!cfg.key || cfg.value === undefined) continue;
-          await tx.scopeInstanceConfig.create({
-            data: {
-              instanceId: inst.id,
-              key: cfg.key,
-              value: cfg.isSecret ? encrypt(cfg.value) : cfg.value,
-              isSecret: !!cfg.isSecret,
-            },
-          });
-        }
+      // Create config entries: user-provided or template defaults
+      const cfgList = (configs && Array.isArray(configs) && configs.length > 0)
+        ? configs
+        : (getTemplateById(templateId)?.defaultEnv ?? []);
+      for (const cfg of cfgList) {
+        if (!cfg.key) continue;
+        await tx.scopeInstanceConfig.create({
+          data: {
+            instanceId: inst.id,
+            key: cfg.key,
+            value: cfg.isSecret && cfg.value ? encrypt(cfg.value) : (cfg.value ?? ""),
+            isSecret: !!cfg.isSecret,
+          },
+        });
       }
 
       return inst;
@@ -436,7 +437,7 @@ router.patch("/instances/:id", async (req: Request, res: Response) => {
       return;
     }
 
-    const { name, description, active, configs } = req.body;
+    const { name, description, active, configs, _replaceAllConfigs } = req.body;
 
     const updated = await prisma.$transaction(async (tx) => {
       const inst = await tx.scopeInstance.update({
@@ -455,23 +456,58 @@ router.patch("/instances/:id", async (req: Request, res: Response) => {
 
       // Update configs if provided
       if (configs && Array.isArray(configs)) {
-        for (const cfg of configs) {
-          if (!cfg.key) continue;
-          await tx.scopeInstanceConfig.upsert({
-            where: {
-              instanceId_key: { instanceId: inst.id, key: cfg.key },
-            },
-            update: {
-              value: cfg.isSecret ? encrypt(cfg.value) : cfg.value,
-              isSecret: !!cfg.isSecret,
-            },
-            create: {
-              instanceId: inst.id,
-              key: cfg.key,
-              value: cfg.isSecret ? encrypt(cfg.value) : cfg.value,
-              isSecret: !!cfg.isSecret,
-            },
+        if (_replaceAllConfigs) {
+          // Full replace mode: the payload is the complete set of configs.
+          // 1. Read existing configs so we can preserve encrypted secret values
+          const existingConfigs = await tx.scopeInstanceConfig.findMany({
+            where: { instanceId: inst.id },
+            select: { key: true, value: true, isSecret: true },
           });
+          const existingMap = new Map(existingConfigs.map((c) => [c.key, c]));
+
+          // 2. Delete all existing configs
+          await tx.scopeInstanceConfig.deleteMany({ where: { instanceId: inst.id } });
+
+          // 3. Re-create from payload
+          for (const cfg of configs) {
+            if (!cfg.key) continue;
+            let value: string;
+            if (cfg._keepExisting) {
+              // Secret with no new value — preserve existing encrypted value as-is
+              const existing = existingMap.get(cfg.key);
+              value = existing?.value ?? "";
+            } else {
+              value = cfg.isSecret ? encrypt(cfg.value) : cfg.value;
+            }
+            await tx.scopeInstanceConfig.create({
+              data: {
+                instanceId: inst.id,
+                key: cfg.key,
+                value,
+                isSecret: !!cfg.isSecret,
+              },
+            });
+          }
+        } else {
+          // Legacy upsert mode (for backward compatibility)
+          for (const cfg of configs) {
+            if (!cfg.key) continue;
+            await tx.scopeInstanceConfig.upsert({
+              where: {
+                instanceId_key: { instanceId: inst.id, key: cfg.key },
+              },
+              update: {
+                value: cfg.isSecret ? encrypt(cfg.value) : cfg.value,
+                isSecret: !!cfg.isSecret,
+              },
+              create: {
+                instanceId: inst.id,
+                key: cfg.key,
+                value: cfg.isSecret ? encrypt(cfg.value) : cfg.value,
+                isSecret: !!cfg.isSecret,
+              },
+            });
+          }
         }
       }
 

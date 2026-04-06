@@ -29,8 +29,8 @@ import {
   ClockIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CodeTerminal, type CodeTerminalHandle, EnvEditor } from "@/components/env-editor";
-import { scopesApi, type ScopeInstance, type ScopeDeployment } from "@/lib/api";
+import { CodeTerminal, type CodeTerminalHandle } from "@/components/env-editor";
+import { scopesApi, type ScopeInstance, type ScopeInstanceConfig, type ScopeDeployment } from "@/lib/api";
 
 function ScopeIcon({ icon, className }: { icon: string | null; className?: string }) {
   const cls = cn("size-5", className);
@@ -43,54 +43,23 @@ function ScopeIcon({ icon, className }: { icon: string | null; className?: strin
   }
 }
 
-// ── Env Text Helpers ─────────────────────────────────────────────────────────
+// ── Env Row Type ─────────────────────────────────────────────────────────────
 
-function configKeyToEnvKey(key: string): string {
-  return key.replace(/([A-Z])/g, "_$1").toUpperCase().replace(/^_/, "");
+interface EnvRow {
+  id: string; // local key for React list
+  key: string;
+  value: string;
+  isSecret: boolean;
+  isNew?: boolean; // true for rows added in the UI
 }
 
-function buildEnvTextFromInstance(instance: ScopeInstance): string {
-  if (instance.configs.length === 0) return "# No configuration yet. Add KEY=value lines.\n";
-
-  const lines: string[] = [];
-  for (const cfg of instance.configs) {
-    const envKey = configKeyToEnvKey(cfg.key);
-    if (cfg.isSecret) {
-      lines.push(`# ${envKey} [secret] — leave empty to keep current value`);
-      lines.push(`${envKey}=`);
-    } else {
-      lines.push(`${envKey}=${cfg.value ?? ""}`);
-    }
-  }
-  return lines.join("\n");
-}
-
-function parseEnvTextForSave(
-  text: string,
-  instance: ScopeInstance,
-): Array<{ key: string; value: string; isSecret?: boolean }> {
-  // Build reverse map: ENV_KEY → original stored key
-  const envToOriginal: Record<string, string> = {};
-  const secretKeys = new Set<string>();
-  for (const c of instance.configs) {
-    envToOriginal[configKeyToEnvKey(c.key)] = c.key;
-    if (c.isSecret) secretKeys.add(c.key);
-  }
-
-  const configs: Array<{ key: string; value: string; isSecret?: boolean }> = [];
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eqIdx = trimmed.indexOf("=");
-    if (eqIdx < 1) continue;
-    const envKey = trimmed.slice(0, eqIdx).trim();
-    const value = trimmed.slice(eqIdx + 1).trim();
-    if (!value) continue; // skip empty — preserves existing secrets
-    const originalKey = envToOriginal[envKey] ?? envKey;
-    const isSecret = secretKeys.has(originalKey);
-    configs.push({ key: originalKey, value, isSecret });
-  }
-  return configs;
+function instanceConfigsToRows(configs: ScopeInstanceConfig[]): EnvRow[] {
+  return configs.map((c, i) => ({
+    id: c.id || `cfg-${i}`,
+    key: c.key,
+    value: c.isSecret ? "" : (c.value ?? ""),
+    isSecret: c.isSecret,
+  }));
 }
 
 // ── Confirm Modal ────────────────────────────────────────────────────────────
@@ -420,7 +389,10 @@ function GeneralTab({
   );
 }
 
-// ── Configuration Tab ────────────────────────────────────────────────────────
+// ── Configuration Tab (Coolify-style key-value rows) ─────────────────────────
+
+let _rowCounter = 0;
+function nextRowId() { return `new-${++_rowCounter}-${Date.now()}`; }
 
 function ConfigurationTab({
   instance,
@@ -432,29 +404,88 @@ function ConfigurationTab({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [dirty, setDirty] = useState(false);
+  const [rows, setRows] = useState<EnvRow[]>(() => instanceConfigsToRows(instance.configs));
+  const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
 
-  const defaultEnvText = useMemo(() => buildEnvTextFromInstance(instance), [instance]);
-  const [envText, setEnvText] = useState(defaultEnvText);
-
-  // Sync env text when instance data refreshes (e.g. after save)
+  // Sync from DB when not dirty (e.g. after polling refresh)
   useEffect(() => {
-    setEnvText(buildEnvTextFromInstance(instance));
-  }, [instance]);
+    if (!dirty) {
+      setRows(instanceConfigsToRows(instance.configs));
+    }
+  }, [instance, dirty]);
 
   const isBuiltIn = !!(instance as any).builtIn;
+
+  function updateRow(id: string, field: keyof EnvRow, value: string | boolean) {
+    setRows((prev) => prev.map((r) => r.id === id ? { ...r, [field]: value } : r));
+    setDirty(true);
+  }
+
+  function removeRow(id: string) {
+    setRows((prev) => prev.filter((r) => r.id !== id));
+    setDirty(true);
+  }
+
+  function addRow() {
+    setRows((prev) => [...prev, { id: nextRowId(), key: "", value: "", isSecret: false, isNew: true }]);
+    setDirty(true);
+  }
+
+  function toggleSecret(id: string) {
+    setRows((prev) => prev.map((r) => r.id === id ? { ...r, isSecret: !r.isSecret } : r));
+    setDirty(true);
+  }
+
+  function toggleShowSecret(id: string) {
+    setShowSecrets((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
 
   async function handleSave() {
     setSaving(true);
     setError("");
     setSuccess("");
     try {
-      const configs = parseEnvTextForSave(envText, instance);
+      // Validate: no empty keys
+      const invalidRow = rows.find((r) => !r.key.trim());
+      if (invalidRow) {
+        setError("All environment variables must have a key.");
+        setSaving(false);
+        return;
+      }
 
-      await scopesApi.updateInstance(instance.id, {
-        configs: configs.length > 0 ? configs : undefined,
+      // Validate: no duplicate keys
+      const keys = rows.map((r) => r.key.trim());
+      const dupes = keys.filter((k, i) => keys.indexOf(k) !== i);
+      if (dupes.length > 0) {
+        setError(`Duplicate key: ${dupes[0]}`);
+        setSaving(false);
+        return;
+      }
+
+      // Build payload: send all rows as the complete config set.
+      // For secret rows with empty value (unchanged), we send a special
+      // sentinel so the server knows to keep the existing value.
+      const configs = rows.map((r) => ({
+        key: r.key.trim(),
+        value: r.value,
+        isSecret: r.isSecret,
+        // If a secret row has empty value and is not new, the server
+        // should preserve the existing encrypted value.
+        _keepExisting: r.isSecret && !r.value && !r.isNew,
+      }));
+
+      const { instance: saved } = await scopesApi.updateInstance(instance.id, {
+        configs,
+        _replaceAllConfigs: true,
       });
-      setSuccess("Configuration saved");
-      setTimeout(() => setSuccess(""), 3000);
+
+      // Reset from server response
+      setRows(instanceConfigsToRows(saved.configs));
+      setDirty(false);
+      setShowSecrets({});
+      setSuccess("Configuration saved. Redeploy to apply changes.");
+      setTimeout(() => setSuccess(""), 5000);
       onSaved();
     } catch (err: any) {
       setError(err.message || "Failed to save");
@@ -473,23 +504,115 @@ function ConfigurationTab({
   }
 
   return (
-    <div className="space-y-4 max-w-2xl">
-      <p className="text-xs text-muted-foreground">
-        Environment variables and configuration for your scope instance. Secret values are masked — leave empty to keep current value.
-      </p>
+    <div className="space-y-4 max-w-3xl">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold">Environment Variables</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Configure environment variables for your scope instance.
+            {dirty && <span className="ml-2 text-amber-500 font-medium">● Unsaved changes</span>}
+          </p>
+        </div>
+      </div>
 
-      <EnvEditor
-        value={envText}
-        onChange={setEnvText}
-        title={`${instance.scopeName}.env`}
-      />
+      {rows.length === 0 ? (
+        <div className="text-center py-10 border border-dashed border-border rounded-lg">
+          <SettingsIcon className="size-8 mx-auto mb-2 text-muted-foreground/40" />
+          <p className="text-sm text-muted-foreground">No environment variables yet.</p>
+          <button
+            onClick={addRow}
+            className="mt-3 text-xs font-medium text-primary hover:underline"
+          >
+            + Add Variable
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-0">
+          {/* Header */}
+          <div className="grid grid-cols-[1fr_1fr_auto] gap-2 px-1 pb-1.5">
+            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Key</span>
+            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Value</span>
+            <span className="w-[72px]" />
+          </div>
+
+          {/* Rows */}
+          <div className="space-y-1.5">
+            {rows.map((row) => (
+              <div key={row.id} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center group">
+                <input
+                  type="text"
+                  value={row.key}
+                  onChange={(e) => updateRow(row.id, "key", e.target.value)}
+                  placeholder="KEY"
+                  spellCheck={false}
+                  className="px-3 py-2 text-sm font-mono rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/40"
+                />
+                <div className="relative">
+                  <input
+                    type={row.isSecret && !showSecrets[row.id] ? "password" : "text"}
+                    value={row.value}
+                    onChange={(e) => updateRow(row.id, "value", e.target.value)}
+                    placeholder={row.isSecret && !row.isNew ? "••••••• (unchanged)" : "value"}
+                    spellCheck={false}
+                    className="w-full px-3 py-2 text-sm font-mono rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/40 pr-8"
+                  />
+                  {row.isSecret && (
+                    <button
+                      type="button"
+                      onClick={() => toggleShowSecret(row.id)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      title={showSecrets[row.id] ? "Hide" : "Show"}
+                    >
+                      {showSecrets[row.id]
+                        ? <ToggleRightIcon className="size-4 text-primary" />
+                        : <ToggleLeftIcon className="size-4" />
+                      }
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleSecret(row.id)}
+                    className={cn(
+                      "flex items-center gap-1 px-2 py-1.5 text-[10px] font-medium rounded-md border transition-colors",
+                      row.isSecret
+                        ? "border-amber-300 dark:border-amber-800 bg-amber-500/10 text-amber-600"
+                        : "border-border text-muted-foreground hover:text-foreground",
+                    )}
+                    title={row.isSecret ? "Mark as plain text" : "Mark as secret"}
+                  >
+                    {row.isSecret ? "Secret" : "Plain"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeRow(row.id)}
+                    className="p-1.5 text-muted-foreground hover:text-red-500 transition-colors rounded-md hover:bg-red-50 dark:hover:bg-red-950/20"
+                    title="Remove"
+                  >
+                    <TrashIcon className="size-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Add row button */}
+          <button
+            onClick={addRow}
+            className="mt-3 flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 transition-colors"
+          >
+            <span className="text-base leading-none">+</span> Add Variable
+          </button>
+        </div>
+      )}
 
       {error && <p className="text-xs text-red-500 bg-red-50 dark:bg-red-950/20 px-3 py-2 rounded-lg">{error}</p>}
       {success && <p className="text-xs text-green-500 bg-green-50 dark:bg-green-950/20 px-3 py-2 rounded-lg">{success}</p>}
 
       <button
         onClick={handleSave}
-        disabled={saving}
+        disabled={saving || !dirty}
         className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
       >
         {saving ? <Loader2Icon className="size-4 animate-spin" /> : <SaveIcon className="size-4" />}

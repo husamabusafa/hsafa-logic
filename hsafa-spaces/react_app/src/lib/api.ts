@@ -766,7 +766,8 @@ export const scopesApi = {
     name?: string;
     description?: string;
     active?: boolean;
-    configs?: Array<{ key: string; value: string; isSecret?: boolean }>;
+    configs?: Array<{ key: string; value: string; isSecret?: boolean; _keepExisting?: boolean }>;
+    _replaceAllConfigs?: boolean;
   }) {
     return request<{ instance: ScopeInstance }>(`/scopes/instances/${id}`, {
       method: "PATCH",
