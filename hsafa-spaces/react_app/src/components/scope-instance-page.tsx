@@ -45,58 +45,22 @@ function ScopeIcon({ icon, className }: { icon: string | null; className?: strin
 
 // ── Env Text Helpers ─────────────────────────────────────────────────────────
 
-interface ConfigFieldSchema {
-  type: string;
-  description?: string;
-  default?: unknown;
-  secret?: boolean;
-}
-
 function configKeyToEnvKey(key: string): string {
   return key.replace(/([A-Z])/g, "_$1").toUpperCase().replace(/^_/, "");
 }
 
-function buildEnvTextFromInstance(
-  instance: ScopeInstance,
-): string {
-  const schema = instance.template.configSchema as Record<string, unknown> | undefined;
-  const props = (schema?.type === "object"
-    ? (schema.properties ?? {})
-    : {}) as Record<string, ConfigFieldSchema>;
-  const required = (schema?.type === "object" ? (schema.required ?? []) : []) as string[];
-
-  // Collect all known keys: schema keys + existing config keys
-  const allKeys = new Set(Object.keys(props));
-  for (const c of instance.configs) allKeys.add(c.key);
+function buildEnvTextFromInstance(instance: ScopeInstance): string {
+  if (instance.configs.length === 0) return "# No configuration yet. Add KEY=value lines.\n";
 
   const lines: string[] = [];
-  for (const key of allKeys) {
-    const field = props[key];
-    const existing = instance.configs.find((c) => c.key === key);
-    const envKey = configKeyToEnvKey(key);
-    const isSecret = field?.secret ?? existing?.isSecret ?? false;
-    const isRequired = required.includes(key);
-
-    // Comment line with description
-    const desc = field?.description ? ` ${field.description}` : "";
-    const secretTag = isSecret ? " [secret]" : "";
-    const reqTag = isRequired ? " (required)" : "";
-    if (desc || secretTag || reqTag) {
-      lines.push(`#${desc}${secretTag}${reqTag}`);
+  for (const cfg of instance.configs) {
+    const envKey = configKeyToEnvKey(cfg.key);
+    if (cfg.isSecret) {
+      lines.push(`# ${envKey} [secret] — leave empty to keep current value`);
+      lines.push(`${envKey}=`);
+    } else {
+      lines.push(`${envKey}=${cfg.value ?? ""}`);
     }
-
-    // Value line
-    let value = "";
-    if (existing && !isSecret) {
-      value = existing.value ?? "";
-    } else if (existing && isSecret && existing.hasValue) {
-      // Secret with existing value — show placeholder
-      value = "";
-      lines.push(`# ${envKey} has a saved secret value. Leave empty to keep current.`);
-    } else if (field?.default !== undefined) {
-      value = String(field.default);
-    }
-    lines.push(`${envKey}=${value}`);
   }
   return lines.join("\n");
 }
@@ -105,18 +69,12 @@ function parseEnvTextForSave(
   text: string,
   instance: ScopeInstance,
 ): Array<{ key: string; value: string; isSecret?: boolean }> {
-  const schema = instance.template.configSchema as Record<string, unknown> | undefined;
-  const props = (schema?.type === "object"
-    ? (schema.properties ?? {})
-    : {}) as Record<string, ConfigFieldSchema>;
-
-  // Build reverse map: ENV_KEY → camelKey
+  // Build reverse map: ENV_KEY → original stored key
   const envToOriginal: Record<string, string> = {};
-  for (const key of Object.keys(props)) {
-    envToOriginal[configKeyToEnvKey(key)] = key;
-  }
+  const secretKeys = new Set<string>();
   for (const c of instance.configs) {
     envToOriginal[configKeyToEnvKey(c.key)] = c.key;
+    if (c.isSecret) secretKeys.add(c.key);
   }
 
   const configs: Array<{ key: string; value: string; isSecret?: boolean }> = [];
@@ -127,11 +85,9 @@ function parseEnvTextForSave(
     if (eqIdx < 1) continue;
     const envKey = trimmed.slice(0, eqIdx).trim();
     const value = trimmed.slice(eqIdx + 1).trim();
-    if (!value) continue;
+    if (!value) continue; // skip empty — preserves existing secrets
     const originalKey = envToOriginal[envKey] ?? envKey;
-    const field = props[originalKey];
-    const existingCfg = instance.configs.find((c) => c.key === originalKey);
-    const isSecret = field?.secret ?? existingCfg?.isSecret ?? false;
+    const isSecret = secretKeys.has(originalKey);
     configs.push({ key: originalKey, value, isSecret });
   }
   return configs;
@@ -487,12 +443,6 @@ function ConfigurationTab({
 
   const isBuiltIn = !!(instance as any).builtIn;
 
-  const hasConfig = useMemo(() => {
-    const schema = instance.template.configSchema as Record<string, unknown> | undefined;
-    const hasSchema = schema?.type === "object" && Object.keys((schema.properties ?? {}) as object).length > 0;
-    return hasSchema || instance.configs.length > 0;
-  }, [instance]);
-
   async function handleSave() {
     setSaving(true);
     setError("");
@@ -511,15 +461,6 @@ function ConfigurationTab({
     } finally {
       setSaving(false);
     }
-  }
-
-  if (!hasConfig) {
-    return (
-      <div className="text-center py-16 text-muted-foreground">
-        <SettingsIcon className="size-10 mx-auto mb-3 opacity-30" />
-        <p className="text-sm">No configuration options for this scope.</p>
-      </div>
-    );
   }
 
   if (isBuiltIn) {
@@ -938,7 +879,7 @@ function DeploymentDetailView({
   );
 
   return (
-    <div className="flex flex-col gap-3 h-full max-w-4xl">
+    <div className="flex flex-col gap-3 h-full">
       {/* Header */}
       <div className="flex items-center gap-3">
         <button

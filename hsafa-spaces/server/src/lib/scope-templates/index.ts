@@ -21,7 +21,6 @@ export interface ScopeTemplate {
   description: string;
   icon: string;
   category: "prebuilt" | "custom";
-  configSchema: Record<string, unknown>;
   requiredProfileFields: string[];
   tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
   instructions: string | null;
@@ -43,7 +42,6 @@ export const SCOPE_TEMPLATES: ScopeTemplate[] = [
     description: "Set recurring schedules and one-time reminders with cron expressions.",
     icon: "Calendar",
     category: "prebuilt",
-    configSchema: {},
     imageUrl: "hsafa/scope-scheduler:latest",
     requiredProfileFields: [],
     tools: SCHEDULER_TOOLS.map((t) => ({
@@ -62,18 +60,6 @@ export const SCOPE_TEMPLATES: ScopeTemplate[] = [
     icon: "Database",
     category: "prebuilt",
     imageUrl: "hsafa/scope-postgres:latest",
-    configSchema: {
-      type: "object",
-      properties: {
-        connectionString: { type: "string", description: "PostgreSQL connection string", secret: true },
-        schema: { type: "string", description: "Schema name", default: "public" },
-        readOnly: { type: "boolean", description: "Read-only mode (no writes)", default: true },
-        maxRows: { type: "number", description: "Max rows per query", default: 100 },
-        queryTimeoutMs: { type: "number", description: "Query timeout in ms", default: 10000 },
-        maxWatches: { type: "number", description: "Max watches per haseef", default: 10 },
-      },
-      required: ["connectionString"],
-    },
     requiredProfileFields: [],
     tools: POSTGRES_TOOLS.map((t) => ({
       name: t.name,

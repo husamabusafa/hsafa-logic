@@ -656,7 +656,6 @@ export interface ScopeTemplate {
   description: string;
   icon: string | null;
   category: string;
-  configSchema: Record<string, unknown>;
   requiredProfileFields: string[];
   tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
   instructions: string | null;
@@ -699,7 +698,6 @@ export interface ScopeInstance {
     icon: string | null;
     category: string;
     requiredProfileFields?: string[];
-    configSchema?: Record<string, unknown>;
     tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
     instructions?: string | null;
   };

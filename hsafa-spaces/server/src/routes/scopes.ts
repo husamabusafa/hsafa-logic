@@ -239,7 +239,6 @@ router.get("/instances/:id", async (req: Request, res: Response) => {
           description: "Chat in smart spaces — built-in, always available.",
           icon: "MessageSquare",
           category: "built-in",
-          configSchema: null,
           requiredProfileFields: [],
           tools: [],
           instructions: null,
@@ -264,7 +263,6 @@ router.get("/instances/:id", async (req: Request, res: Response) => {
             description: true,
             icon: true,
             category: true,
-            configSchema: true,
             requiredProfileFields: true,
             tools: true,
             instructions: true,
@@ -374,7 +372,7 @@ router.post("/instances", async (req: Request, res: Response) => {
         },
       });
 
-      // Create config entries
+      // Create config entries if provided
       if (configs && Array.isArray(configs)) {
         for (const cfg of configs) {
           if (!cfg.key || cfg.value === undefined) continue;

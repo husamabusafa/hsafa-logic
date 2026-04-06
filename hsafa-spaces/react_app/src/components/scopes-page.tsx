@@ -22,7 +22,6 @@ import {
   DatabaseIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { EnvEditor } from "@/components/env-editor";
 import {
   scopesApi,
   type ScopeTemplate,
@@ -99,14 +98,7 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
     !search || t.name.toLowerCase().includes(search.toLowerCase()) || t.slug.toLowerCase().includes(search.toLowerCase()),
   );
 
-  // ── Create instance modal state ─────────────────────────────────────
-  const [createModalTemplate, setCreateModalTemplate] = useState<ScopeTemplate | null>(null);
-
-  function openCreateModal(template: ScopeTemplate) {
-    setCreateModalTemplate(template);
-  }
-
-  async function handleCreateFromModal(template: ScopeTemplate, envText: string) {
+  async function quickCreateFromTemplate(template: ScopeTemplate) {
     if (creating) return;
     setCreating(template.id);
     try {
@@ -117,15 +109,11 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
       const name = idx === 0 ? baseName : `${baseName} ${idx + 1}`;
       const scopeName = idx === 0 ? baseSlug : `${baseSlug}-${idx + 1}`;
 
-      const configs = parseEnvText(envText, template.configSchema);
-
       const { instance } = await scopesApi.createInstance({
         templateId: template.id,
         name,
         scopeName,
-        configs: configs.length > 0 ? configs : undefined,
       });
-      setCreateModalTemplate(null);
       load();
       onNavigateToInstance?.(instance.id);
     } catch (err: any) {
@@ -207,7 +195,7 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
         ) : tab === "templates" ? (
           <TemplatesList
             templates={filteredTemplates}
-            onCreateFrom={openCreateModal}
+            onCreateFrom={quickCreateFromTemplate}
             creatingId={creating}
             onNavigate={onNavigateToTemplate}
           />
@@ -215,16 +203,6 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
           <DeveloperTab onRegistered={load} />
         )}
       </div>
-
-      {/* Create instance modal */}
-      {createModalTemplate && (
-        <CreateInstanceModal
-          template={createModalTemplate}
-          creating={!!creating}
-          onConfirm={(envText) => handleCreateFromModal(createModalTemplate, envText)}
-          onCancel={() => setCreateModalTemplate(null)}
-        />
-      )}
 
       {/* Error toast */}
       {createError && (
@@ -331,141 +309,6 @@ function InstancesList({
           </button>
         );
       })}
-    </div>
-  );
-}
-
-// ── Env Text Helpers ─────────────────────────────────────────────────────────
-
-interface ConfigFieldSchema {
-  type: string;
-  description?: string;
-  default?: unknown;
-  secret?: boolean;
-}
-
-function configKeyToEnvKey(key: string): string {
-  return key.replace(/([A-Z])/g, "_$1").toUpperCase().replace(/^_/, "");
-}
-
-function buildDefaultEnvText(configSchema: Record<string, unknown>): string {
-  if (!configSchema || configSchema.type !== "object") return "";
-  const props = (configSchema.properties ?? {}) as Record<string, ConfigFieldSchema>;
-  const required = (configSchema.required ?? []) as string[];
-  const lines: string[] = [];
-  for (const [key, field] of Object.entries(props)) {
-    const envKey = configKeyToEnvKey(key);
-    const isRequired = required.includes(key);
-    const desc = field.description ? ` ${field.description}` : "";
-    const secretTag = field.secret ? " [secret]" : "";
-    const reqTag = isRequired ? " (required)" : "";
-    lines.push(`#${desc}${secretTag}${reqTag}`);
-    const defaultVal = field.default !== undefined ? String(field.default) : "";
-    lines.push(`${envKey}=${defaultVal}`);
-  }
-  return lines.join("\n");
-}
-
-function parseEnvText(
-  text: string,
-  configSchema: Record<string, unknown>,
-): Array<{ key: string; value: string; isSecret?: boolean }> {
-  const props = (configSchema?.type === "object"
-    ? (configSchema.properties ?? {})
-    : {}) as Record<string, ConfigFieldSchema>;
-
-  // Build a reverse map: ENV_KEY → camelKey
-  const envToOriginal: Record<string, string> = {};
-  for (const key of Object.keys(props)) {
-    envToOriginal[configKeyToEnvKey(key)] = key;
-  }
-
-  const configs: Array<{ key: string; value: string; isSecret?: boolean }> = [];
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eqIdx = trimmed.indexOf("=");
-    if (eqIdx < 1) continue;
-    const envKey = trimmed.slice(0, eqIdx).trim();
-    const value = trimmed.slice(eqIdx + 1).trim();
-    if (!value) continue;
-    // Resolve back to original camelCase key if known, otherwise keep as-is
-    const originalKey = envToOriginal[envKey] ?? envKey;
-    const field = props[originalKey];
-    const isSecret = field?.secret ?? false;
-    configs.push({ key: originalKey, value, isSecret });
-  }
-  return configs;
-}
-
-// ── Create Instance Modal ────────────────────────────────────────────────────
-
-function CreateInstanceModal({
-  template,
-  creating,
-  onConfirm,
-  onCancel,
-}: {
-  template: ScopeTemplate;
-  creating: boolean;
-  onConfirm: (envText: string) => void;
-  onCancel: () => void;
-}) {
-  const defaultText = buildDefaultEnvText(template.configSchema);
-  const [envText, setEnvText] = useState(defaultText);
-  const hasConfig = defaultText.length > 0;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
-      <div className="relative bg-card border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4 animate-in fade-in zoom-in-95 duration-150">
-        <div className="p-6 space-y-4">
-          {/* Header */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center size-10 rounded-lg bg-primary/10 text-primary shrink-0">
-              <ScopeIcon icon={template.icon} />
-            </div>
-            <div>
-              <h3 className="font-semibold text-base">Create {template.name}</h3>
-              <p className="text-xs text-muted-foreground">{template.description}</p>
-            </div>
-          </div>
-
-          {/* Env vars editor */}
-          {hasConfig ? (
-            <EnvEditor
-              value={envText}
-              onChange={setEnvText}
-              title={`${template.slug}.env`}
-              minRows={6}
-              maxRows={18}
-            />
-          ) : (
-            <div className="rounded-lg border border-border bg-muted/30 p-4 text-center">
-              <p className="text-sm text-muted-foreground">No configuration needed for this template.</p>
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="flex items-center gap-3 pt-2">
-            <button
-              onClick={onCancel}
-              disabled={creating}
-              className="flex-1 px-4 py-2 text-sm rounded-lg border border-border font-medium hover:bg-muted transition-colors disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => onConfirm(envText)}
-              disabled={creating}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-            >
-              {creating && <Loader2Icon className="size-4 animate-spin" />}
-              {creating ? "Creating..." : "Create Instance"}
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
