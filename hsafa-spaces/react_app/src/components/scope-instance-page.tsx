@@ -27,6 +27,9 @@ import {
   CircleDotIcon,
   AlertTriangleIcon,
   ClockIcon,
+  EyeIcon,
+  EyeOffIcon,
+  KeyIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CodeTerminal, type CodeTerminalHandle, EnvEditor } from "@/components/env-editor";
@@ -238,6 +241,49 @@ function HeaderAction({
   );
 }
 
+// ── Scope Key Section ─────────────────────────────────────────────────────────
+
+function ScopeKeySection({ scopeKey }: { scopeKey: string }) {
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(scopeKey);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <section className="space-y-2">
+      <h3 className="text-sm font-semibold flex items-center gap-2">
+        <KeyIcon className="size-4" /> Scope Key
+      </h3>
+      <div className="flex items-center gap-2 p-3 rounded-lg border border-border bg-muted/30">
+        <code className="flex-1 text-xs font-mono break-all select-all">
+          {revealed ? scopeKey : "••••••••••••" + scopeKey.slice(-4)}
+        </code>
+        <button
+          onClick={() => setRevealed(!revealed)}
+          className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0"
+          title={revealed ? "Hide" : "Reveal"}
+        >
+          {revealed ? <EyeOffIcon className="size-4" /> : <EyeIcon className="size-4" />}
+        </button>
+        <button
+          onClick={handleCopy}
+          className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0"
+          title="Copy"
+        >
+          {copied ? <CheckIcon className="size-4 text-green-500" /> : <CopyIcon className="size-4" />}
+        </button>
+      </div>
+      <p className="text-[10px] text-muted-foreground">
+        Use this key in your scope service to connect to Core. Keep it secret.
+      </p>
+    </section>
+  );
+}
+
 // ── General Tab ──────────────────────────────────────────────────────────────
 
 function GeneralTab({
@@ -317,6 +363,9 @@ function GeneralTab({
           </div>
         ))}
       </div>
+
+      {/* Scope Key */}
+      {!isBuiltIn && instance.coreScopeKey && <ScopeKeySection scopeKey={instance.coreScopeKey} />}
 
       {/* Editable fields */}
       {!isBuiltIn && (

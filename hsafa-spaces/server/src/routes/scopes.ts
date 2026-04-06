@@ -310,6 +310,12 @@ router.get("/instances/:id", async (req: Request, res: Response) => {
       return { id: c.id, key: c.key, isSecret: c.isSecret, value, hasValue: !!c.value };
     });
 
+    // Decrypt scope key for the owner
+    let scopeKeyDecrypted: string | null = null;
+    if (instance.ownerId === auth.userId && instance.coreScopeKey) {
+      try { scopeKeyDecrypted = decrypt(instance.coreScopeKey); } catch { /* ignore */ }
+    }
+
     // For external instances, fetch connection status from Core
     let connected: boolean | undefined;
     if (instance.deploymentType === "external") {
@@ -327,7 +333,14 @@ router.get("/instances/:id", async (req: Request, res: Response) => {
       } catch { connected = false; }
     }
 
-    res.json({ instance: { ...instance, configs, ...(connected !== undefined ? { connected } : {}) } });
+    res.json({
+      instance: {
+        ...instance,
+        configs,
+        coreScopeKey: scopeKeyDecrypted,
+        ...(connected !== undefined ? { connected } : {}),
+      },
+    });
   } catch (error) {
     console.error("Get instance error:", error);
     res.status(500).json({ error: "Failed to get instance" });
@@ -1234,67 +1247,59 @@ router.post("/external/verify", async (req: Request, res: Response) => {
       return;
     }
 
-    const { coreUrl } = getCoreConfig();
+    // Basic format check
+    if (!scopeKey.startsWith("hsk_scope_")) {
+      res.status(400).json({ error: "This is not a scope key. Scope keys start with hsk_scope_" });
+      return;
+    }
 
-    // 1. Verify scope key against Core by calling GET /api/scopes with the scope key as auth
-    const coreRes = await fetch(`${coreUrl}/api/keys/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": scopeKey },
+    const { coreUrl, serviceKey } = getCoreConfig();
+
+    // 1. Verify the key is valid by calling GET /api/scopes on Core with it.
+    //    Core's requireApiKey() middleware validates the key hash. If 200, the key is active.
+    const coreRes = await fetch(`${coreUrl}/api/scopes`, {
+      headers: { "x-api-key": scopeKey },
     });
 
     if (!coreRes.ok) {
-      // Fall back: try to get scope info using the key directly
-      const scopeInfoRes = await fetch(`${coreUrl}/api/scopes/me`, {
-        headers: { "x-api-key": scopeKey },
-      });
-      if (!scopeInfoRes.ok) {
-        res.status(400).json({ error: "Invalid scope key — could not verify with Core" });
-        return;
+      const status = coreRes.status;
+      if (status === 401) {
+        res.status(400).json({ error: "Invalid or revoked scope key" });
+      } else {
+        res.status(502).json({ error: `Core returned ${status} — could not verify key` });
       }
-      const scopeInfo = await scopeInfoRes.json();
-      const scopeName = scopeInfo.scope?.name || scopeInfo.name;
-      if (!scopeName) {
-        res.status(400).json({ error: "Could not determine scope name from key" });
-        return;
-      }
-
-      // Check if already registered in Spaces DB
-      const existing = await prisma.scopeInstance.findUnique({ where: { scopeName } });
-      if (existing) {
-        res.status(409).json({ error: `Scope "${scopeName}" is already registered in Spaces`, scopeName });
-        return;
-      }
-
-      res.json({
-        valid: true,
-        scopeName,
-        connected: scopeInfo.scope?.connected ?? scopeInfo.connected ?? false,
-        toolCount: scopeInfo.scope?.toolCount ?? scopeInfo.tools?.length ?? 0,
-      });
       return;
     }
 
-    const keyInfo = await coreRes.json();
-    if (keyInfo.type !== "scope") {
-      res.status(400).json({ error: "This key is not a scope key. Please provide a scope-specific key (hsk_scope_*)." });
-      return;
+    // Key is valid. Now find the scope name (resourceId) by looking up keys via service key.
+    // The key prefix is the first 16 chars of the key.
+    const keyPrefix = scopeKey.slice(0, 16);
+    const keysRes = await fetch(`${coreUrl}/api/keys?type=scope`, {
+      headers: { "x-api-key": serviceKey },
+    });
+
+    let scopeName: string | null = null;
+    if (keysRes.ok) {
+      const { keys } = await keysRes.json();
+      const matchedKey = (keys ?? []).find((k: any) => k.keyPrefix === keyPrefix && k.active);
+      if (matchedKey) {
+        scopeName = matchedKey.resourceId;
+      }
     }
 
-    const scopeName = keyInfo.resourceId || keyInfo.scope;
     if (!scopeName) {
-      res.status(400).json({ error: "Could not determine scope name from key" });
+      res.status(400).json({ error: "Key is valid but could not determine scope name. The key may not be associated with a scope." });
       return;
     }
 
-    // Check if already registered in Spaces DB
+    // 2. Check if already registered in Spaces DB
     const existing = await prisma.scopeInstance.findUnique({ where: { scopeName } });
     if (existing) {
       res.status(409).json({ error: `Scope "${scopeName}" is already registered in Spaces`, scopeName });
       return;
     }
 
-    // Fetch connection status from Core
-    const { serviceKey } = getCoreConfig();
+    // 3. Fetch connection status and tools from Core
     let connected = false;
     let toolCount = 0;
     try {
@@ -1341,50 +1346,40 @@ router.post("/external", async (req: Request, res: Response) => {
     }
 
     // Verify scope key against Core
-    const { coreUrl, serviceKey } = getCoreConfig();
-
-    // Try to verify key type
-    let keyValid = false;
-    try {
-      const verifyRes = await fetch(`${coreUrl}/api/keys/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": scopeKey },
-      });
-      if (verifyRes.ok) {
-        const keyInfo = await verifyRes.json();
-        if (keyInfo.type === "scope" && (keyInfo.resourceId === scopeName || keyInfo.scope === scopeName)) {
-          keyValid = true;
-        } else if (keyInfo.type === "scope") {
-          res.status(400).json({ error: `This scope key belongs to scope "${keyInfo.resourceId || keyInfo.scope}", not "${scopeName}"` });
-          return;
-        } else {
-          res.status(400).json({ error: "This is not a scope key. Please provide a scope-specific key." });
-          return;
-        }
-      }
-    } catch { /* fall through to alternate verification */ }
-
-    // Alternate verification: try calling /api/scopes/me with the key
-    if (!keyValid) {
-      try {
-        const meRes = await fetch(`${coreUrl}/api/scopes/me`, {
-          headers: { "x-api-key": scopeKey },
-        });
-        if (meRes.ok) {
-          const info = await meRes.json();
-          const resolvedName = info.scope?.name || info.name;
-          if (resolvedName === scopeName) {
-            keyValid = true;
-          } else if (resolvedName) {
-            res.status(400).json({ error: `This scope key belongs to scope "${resolvedName}", not "${scopeName}"` });
-            return;
-          }
-        }
-      } catch { /* ignore */ }
+    if (!scopeKey.startsWith("hsk_scope_")) {
+      res.status(400).json({ error: "This is not a scope key. Scope keys start with hsk_scope_" });
+      return;
     }
 
-    if (!keyValid) {
-      res.status(400).json({ error: "Could not verify scope key against Core. Make sure the key is valid and the scope name matches." });
+    const { coreUrl, serviceKey } = getCoreConfig();
+
+    // Validate key by calling Core with it
+    const coreRes = await fetch(`${coreUrl}/api/scopes`, {
+      headers: { "x-api-key": scopeKey },
+    });
+    if (!coreRes.ok) {
+      res.status(400).json({ error: coreRes.status === 401 ? "Invalid or revoked scope key" : "Could not verify scope key against Core" });
+      return;
+    }
+
+    // Look up key metadata via service key to confirm it belongs to this scope
+    const keyPrefix = scopeKey.slice(0, 16);
+    const keysRes = await fetch(`${coreUrl}/api/keys?type=scope`, {
+      headers: { "x-api-key": serviceKey },
+    });
+    if (keysRes.ok) {
+      const { keys } = await keysRes.json();
+      const matchedKey = (keys ?? []).find((k: any) => k.keyPrefix === keyPrefix && k.active);
+      if (matchedKey && matchedKey.resourceId !== scopeName) {
+        res.status(400).json({ error: `This scope key belongs to scope "${matchedKey.resourceId}", not "${scopeName}"` });
+        return;
+      }
+      if (!matchedKey) {
+        res.status(400).json({ error: "Could not match scope key to a registered scope on Core" });
+        return;
+      }
+    } else {
+      res.status(502).json({ error: "Could not verify scope key metadata from Core" });
       return;
     }
 

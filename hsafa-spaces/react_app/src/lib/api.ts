@@ -703,6 +703,7 @@ export interface ScopeInstance {
   };
   configs: ScopeInstanceConfig[];
   connected?: boolean;
+  coreScopeKey?: string | null;
 }
 
 export interface ScopeDeployment {
