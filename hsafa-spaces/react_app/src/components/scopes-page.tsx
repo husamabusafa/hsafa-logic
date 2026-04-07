@@ -401,14 +401,81 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+function highlightCode(code: string, lang: string): React.ReactNode[] {
+  const lines = code.split("\n");
+  return lines.map((line, i) => {
+    let content: React.ReactNode = line;
+    if (line.trimStart().startsWith("#") && lang !== "env") {
+      content = <span className="text-zinc-500 italic">{line}</span>;
+    } else if (lang === "env" || lang === ".env") {
+      const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)/)
+      if (m) content = <><span className="text-sky-400">{m[1]}</span><span className="text-zinc-500">=</span><span className="text-amber-300">{m[2]}</span></>;
+    } else if (lang === "bash" || lang === "shell") {
+      const parts: React.ReactNode[] = [];
+      const tokens = line.match(/^(\s*)(\S+)(.*)/)
+      if (tokens) {
+        const [, ws, cmd, rest] = tokens;
+        const keywords = ["npm", "npx", "hsafa", "cd", "echo", "mkdir", "pip", "docker"];
+        parts.push(ws);
+        if (keywords.some(k => cmd === k)) {
+          parts.push(<span key="c" className="text-emerald-400 font-semibold">{cmd}</span>);
+        } else {
+          parts.push(cmd);
+        }
+        const highlighted = rest.replace(/(--[a-z-]+)/g, "\x00OPT$1\x00").replace(/("[^"]*")/g, "\x00STR$1\x00");
+        highlighted.split("\x00").forEach((seg, j) => {
+          if (seg.startsWith("OPT")) parts.push(<span key={`o${j}`} className="text-sky-400">{seg.slice(3)}</span>);
+          else if (seg.startsWith("STR")) parts.push(<span key={`s${j}`} className="text-amber-300">{seg.slice(3)}</span>);
+          else parts.push(seg);
+        });
+        content = <>{parts}</>;
+      }
+    } else if (lang?.includes("ts") || lang?.includes("index") || lang?.includes("typescript")) {
+      const parts: React.ReactNode[] = [];
+      const regex = /(import|from|const|let|var|async|await|export|function|return|new|if|else|switch|case|break|default|type|interface)(?=\s|[({;])|(\/\/.*$)|("[^"]*"|'[^']*'|`[^`]*`)|(\b\d+\.?\d*\b)/g;
+      let last = 0;
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(line)) !== null) {
+        if (match.index > last) parts.push(line.slice(last, match.index));
+        if (match[1]) parts.push(<span key={match.index} className="text-purple-400 font-semibold">{match[1]}</span>);
+        else if (match[2]) parts.push(<span key={match.index} className="text-zinc-500 italic">{match[2]}</span>);
+        else if (match[3]) parts.push(<span key={match.index} className="text-amber-300">{match[3]}</span>);
+        else if (match[4]) parts.push(<span key={match.index} className="text-orange-400">{match[4]}</span>);
+        last = match.index + match[0].length;
+      }
+      if (last < line.length) parts.push(line.slice(last));
+      content = parts.length ? <>{parts}</> : line;
+    }
+    return <div key={i} className="leading-relaxed">{content || " "}</div>;
+  });
+}
+
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
+  const resolvedLang = lang ?? "bash";
+  const isFile = lang?.includes(".") || lang?.includes("/");
   return (
-    <div className="relative group rounded-lg bg-zinc-950 border border-zinc-800 overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-800 bg-zinc-900/50">
-        <span className="text-[10px] text-zinc-500 font-mono">{lang ?? "bash"}</span>
+    <div className="relative group rounded-xl bg-zinc-950 border border-zinc-800/80 overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800/60 bg-zinc-900/60">
+        <div className="flex items-center gap-2">
+          {isFile ? (
+            <FolderTreeIcon className="size-3 text-zinc-500" />
+          ) : (
+            <TerminalIcon className="size-3 text-zinc-500" />
+          )}
+          <span className="text-[11px] text-zinc-400 font-mono tracking-wide">{resolvedLang}</span>
+        </div>
         <CopyButton text={code} />
       </div>
-      <pre className="p-3 text-xs text-zinc-300 overflow-x-auto font-mono leading-relaxed whitespace-pre">{code}</pre>
+      <div className="flex">
+        <div className="shrink-0 py-3 pl-3 pr-2 select-none border-r border-zinc-800/40">
+          {code.split("\n").map((_, i) => (
+            <div key={i} className="text-[10px] text-zinc-700 leading-relaxed text-right font-mono min-w-6">{i + 1}</div>
+          ))}
+        </div>
+        <pre className="flex-1 p-3 text-[13px] text-zinc-300 overflow-x-auto font-mono">
+          {highlightCode(code, resolvedLang)}
+        </pre>
+      </div>
     </div>
   );
 }
@@ -467,11 +534,11 @@ function DeveloperTab({ onRegistered }: { onRegistered: () => void }) {
 
 function CLIGuide() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Step 1: Install CLI */}
       <section className="space-y-3">
         <StepHeader n={1} title="Install the Hsafa CLI" />
-        <div className="pl-8">
+        <div className="pl-9">
           <CodeBlock code="npm install -g @hsafa/cli" />
         </div>
       </section>
@@ -479,15 +546,15 @@ function CLIGuide() {
       {/* Step 2: Authenticate */}
       <section className="space-y-3">
         <StepHeader n={2} title="Authenticate" />
-        <div className="pl-8 space-y-2">
+        <div className="pl-9 space-y-3">
           <CodeBlock code={`# Login with your account
 hsafa auth login
 
 # Or use an API key directly
 hsafa auth login --api-key YOUR_API_KEY`} />
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground leading-relaxed">
             Get your API key from <span className="font-medium text-foreground">Settings → API Keys</span>.
-            The CLI stores your credentials locally in <code className="text-[10px] bg-muted px-1 py-0.5 rounded font-mono">~/.hsafa/config.json</code>.
+            The CLI stores your credentials locally in <code className="text-[11px] bg-zinc-800/60 text-zinc-300 px-1.5 py-0.5 rounded font-mono">~/.hsafa/config.json</code>.
           </p>
         </div>
       </section>
@@ -495,7 +562,7 @@ hsafa auth login --api-key YOUR_API_KEY`} />
       {/* Step 3: Init project */}
       <section className="space-y-3">
         <StepHeader n={3} title="Scaffold a New Scope" />
-        <div className="pl-8 space-y-2">
+        <div className="pl-9 space-y-3">
           <CodeBlock code={`# Create a new scope project
 hsafa scope init my-weather-scope
 
@@ -505,30 +572,32 @@ hsafa scope init my-weather-scope
 #     src/tools.ts      ← tool definitions
 #     src/handler.ts    ← your business logic
 #     package.json
-#     .env
+#     Dockerfile
 #     tsconfig.json`} />
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40 border border-border">
+            <FolderTreeIcon className="size-4 text-primary shrink-0" />
+            <p className="text-xs text-muted-foreground">
+              The scaffolded project is a complete working starter — edit and run immediately.
+            </p>
+          </div>
         </div>
       </section>
 
       {/* Step 4: Template code */}
       <section className="space-y-3">
         <StepHeader n={4} title="Write Your Logic" />
-        <p className="text-sm text-muted-foreground pl-8">
-          The generated <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">src/index.ts</code> is
+        <p className="text-sm text-muted-foreground pl-9 leading-relaxed">
+          The generated <code className="text-[11px] bg-zinc-800/60 text-zinc-300 px-1.5 py-0.5 rounded font-mono">src/index.ts</code> is
           a complete working starter. Here's what it looks like — tools are registered automatically when your service starts:
         </p>
-        <div className="pl-8">
+        <div className="pl-9">
           <CodeBlock lang="src/index.ts" code={`import { HsafaSDK } from "@hsafa/sdk";
 
-// ── Config ──────────────────────────────────────────────────
-const SCOPE_NAME = process.env.SCOPE_NAME || "my-weather-scope";
-const CORE_URL   = process.env.CORE_URL   || "http://localhost:3001";
-const API_KEY    = process.env.API_KEY     || "";
-
+// ── Config (auto-injected by the platform at deploy) ────────
 const sdk = new HsafaSDK({
-  coreUrl: CORE_URL,
-  apiKey: API_KEY,
-  scope: SCOPE_NAME,
+  coreUrl: process.env.CORE_URL!,
+  apiKey: process.env.SCOPE_KEY!,
+  scope: process.env.SCOPE_NAME!,
 });
 
 // ── Tools — registered automatically on startup ─────────────
@@ -561,94 +630,84 @@ await sdk.registerTools([
 // ── Handlers — your custom logic ────────────────────────────
 sdk.onToolCall("get_weather", async (args, ctx) => {
   const { city } = args;
-  // Replace with your actual API call
   const res = await fetch(
     \`https://api.weather.example/current?city=\${city}\`
-  );
-  const data = await res.json();
-  return { city, temperature: data.temp, condition: data.condition };
-});
-
-sdk.onToolCall("get_forecast", async (args, ctx) => {
-  const { city, days = 5 } = args;
-  // Replace with your actual API call
-  const res = await fetch(
-    \`https://api.weather.example/forecast?city=\${city}&days=\${days}\`
   );
   return await res.json();
 });
 
+// ── Events — notify haseefs proactively ─────────────────────
+// Push sense events to wake a haseef and give it context.
+// Target by haseefId, or by phone/email:
+await sdk.pushEvent({
+  type: "weather_alert",
+  data: { city: "Riyadh", alert: "Sandstorm warning" },
+  target: { phone: "+966501234567" },  // or { email: "user@example.com" }
+  // haseefId: "specific-haseef-id",   // alternative: target by ID
+});
+
 // ── Connect — starts SSE listener for tool calls ────────────
-sdk.connect();
-console.log(\`[\${SCOPE_NAME}] Connected to Core — ready for tool calls\`);`} />
+sdk.connect();`} />
         </div>
       </section>
 
-      {/* Step 5: Configure .env */}
+      {/* Step 5: Deploy */}
       <section className="space-y-3">
-        <StepHeader n={5} title="Configure .env" />
-        <div className="pl-8 space-y-2">
-          <CodeBlock lang=".env" code={`SCOPE_NAME=my-weather-scope
-CORE_URL=http://localhost:3001
-API_KEY=your_api_key_here`} />
-          <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              <strong>Important:</strong> The <code className="bg-amber-500/10 px-1 rounded font-mono">SCOPE_NAME</code> must
-              match the scope name you register here. The <code className="bg-amber-500/10 px-1 rounded font-mono">API_KEY</code> is
-              your Core API key from Settings → API Keys.
+        <StepHeader n={5} title="Deploy Template" />
+        <div className="pl-9 space-y-3">
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            Publish your scope as a reusable template. The CLI builds a Docker image, pushes it, and registers the template:
+          </p>
+          <CodeBlock code={`# Deploy to the Hsafa platform (creates a scope template)
+hsafa scope deploy`} />
+          <div className="p-3 rounded-lg bg-muted/40 border border-border space-y-2">
+            <p className="text-xs text-muted-foreground font-medium">
+              When you run <code className="text-[11px] bg-zinc-800/60 text-zinc-300 px-1.5 py-0.5 rounded font-mono">hsafa scope deploy</code>, it:
             </p>
+            <ul className="text-xs text-muted-foreground space-y-1.5 pl-1">
+              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> Builds a Docker image from your project</li>
+              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> Pushes the image to the Hsafa registry</li>
+              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> Registers a <strong className="text-foreground">ScopeTemplate</strong> with your tool definitions</li>
+              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> The template appears in <strong className="text-foreground">Templates</strong> — ready to install</li>
+            </ul>
           </div>
         </div>
       </section>
 
-      {/* Step 6: Deploy */}
+      {/* Step 6: Install & Attach */}
       <section className="space-y-3">
-        <StepHeader n={6} title="Deploy & Register" />
-        <div className="pl-8 space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Deploy your scope using the CLI. This registers it automatically and starts accepting tool calls:
+        <StepHeader n={6} title="Install & Attach" />
+        <div className="pl-9 space-y-3">
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            Once deployed, go to the <strong className="text-foreground">Templates</strong> tab to create an instance from your template.
+            Configure any required settings (API keys, credentials), then attach the instance to your haseefs.
           </p>
-          <CodeBlock code={`# Deploy to the Hsafa platform (auto-registers scope + tools)
-hsafa scope deploy
-
-# Or run locally during development
-npx tsx src/index.ts`} />
-          <p className="text-xs text-muted-foreground">
-            When you run <code className="bg-muted px-1 rounded font-mono">hsafa scope deploy</code>, it:
-          </p>
-          <ul className="text-xs text-muted-foreground space-y-1 list-disc pl-4">
-            <li>Registers the scope name in the platform</li>
-            <li>Calls <code className="bg-muted px-1 rounded font-mono">sdk.registerTools()</code> to sync your tools with Core</li>
-            <li>Connects via SSE to start receiving tool calls</li>
-            <li>The scope appears in <strong className="text-foreground">My Instances</strong> — ready to attach to haseefs</li>
-          </ul>
-        </div>
-      </section>
-
-      {/* Step 7: Attach */}
-      <section className="space-y-3">
-        <StepHeader n={7} title="Attach to Haseefs" />
-        <div className="pl-8 space-y-2">
-          <CodeBlock code={`# Attach via CLI
-hsafa scope attach --haseef <haseef-id>`} />
-          <p className="text-xs text-muted-foreground">
-            Or go to <strong className="text-foreground">Haseefs → (your haseef) → Scopes tab → Attach</strong> in the UI.
-            Once attached, the haseef sees your tools and can call them.
-          </p>
+          <div className="p-3 rounded-lg bg-muted/40 border border-border space-y-2">
+            <ul className="text-xs text-muted-foreground space-y-1.5 pl-1">
+              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> <strong className="text-foreground">Templates</strong> tab → find your template → <strong className="text-foreground">Install</strong></li>
+              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> Fill in instance config (if any) → creates a running <strong className="text-foreground">ScopeInstance</strong></li>
+              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> <strong className="text-foreground">My Instances</strong> → select instance → <strong className="text-foreground">Attach</strong> to a haseef</li>
+            </ul>
+          </div>
         </div>
       </section>
 
       {/* Python / other languages */}
-      <section className="p-4 rounded-xl border border-border bg-muted/30">
+      <section className="p-4 rounded-xl border border-border bg-linear-to-br from-muted/40 to-muted/20">
         <div className="flex items-start gap-3">
-          <TerminalIcon className="size-4 text-muted-foreground mt-0.5 shrink-0" />
+          <div className="size-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+            <GlobeIcon className="size-4 text-primary" />
+          </div>
           <div>
-            <p className="text-sm font-medium">Other Languages</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              You can build scopes in <strong>Python</strong>, <strong>Go</strong>, or any language.
+            <p className="text-sm font-semibold">Other Languages</p>
+            <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+              You can build scopes in <strong className="text-foreground">Python</strong>, <strong className="text-foreground">Go</strong>, or any language.
               The protocol is simple: HTTP to register tools, SSE to receive tool calls, HTTP to post results.
-              Use <code className="bg-muted px-1 rounded font-mono text-[10px]">hsafa scope init --lang python</code> for a Python starter.
             </p>
+            <div className="mt-3">
+              <CodeBlock code={`hsafa scope init --lang python    # Python starter
+hsafa scope init --lang go         # Go starter`} />
+            </div>
           </div>
         </div>
       </section>
@@ -702,9 +761,9 @@ function RegisterSection({ onRegistered }: { onRegistered: () => void }) {
 
 function StepHeader({ n, title }: { n: number; title: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex items-center justify-center size-6 rounded-full bg-primary text-primary-foreground text-xs font-bold">{n}</div>
-      <h3 className="font-semibold text-sm">{title}</h3>
+    <div className="flex items-center gap-3">
+      <div className="flex items-center justify-center size-7 rounded-lg bg-primary text-primary-foreground text-xs font-bold shadow-sm">{n}</div>
+      <h3 className="font-semibold text-[15px]">{title}</h3>
     </div>
   );
 }

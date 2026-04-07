@@ -11,6 +11,7 @@ import Docker from "dockerode";
 import { EventEmitter } from "events";
 import { prisma } from "./db.js";
 import { decrypt } from "./encryption.js";
+import { provisionAndStoreScopeKey } from "./resource-keys.js";
 
 // =============================================================================
 // Deployment log streaming — allows SSE endpoints to subscribe to live logs
@@ -429,14 +430,12 @@ async function buildEnvVars(
   scopeName: string,
   configs: Array<{ key: string; value: string; isSecret: boolean }>,
 ): Promise<string[]> {
-  // Host-facing URL — used by Spaces server to provision scope keys
-  const hostCoreUrl = process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
   // Docker-internal URL — used by containers to reach Core on the Docker network
   const containerCoreUrl = process.env.SCOPE_CORE_URL || "http://hsafa-core:3001";
-  const serviceKey = process.env.CORE_SERVICE_KEY || "";
 
-  // Provision a scope key (from host → Core)
-  const scopeKey = await provisionScopeKey(hostCoreUrl, serviceKey, scopeName);
+  // Provision a scope key (from host → Core) and store it encrypted in the DB
+  const scopeKey = await provisionAndStoreScopeKey(instanceId, scopeName);
+  if (!scopeKey) throw new Error(`Failed to provision scope key for "${scopeName}"`);
 
   const env: string[] = [
     `SCOPE_NAME=${scopeName}`,
@@ -455,46 +454,6 @@ async function buildEnvVars(
   return env;
 }
 
-/**
- * Provision a scope key from Core for a container instance.
- * Stores the key in ScopeInstanceConfig so it can be re-used on restart.
- */
-async function provisionScopeKey(coreUrl: string, serviceKey: string, scopeName: string): Promise<string> {
-  const headers = { "Content-Type": "application/json", "x-api-key": serviceKey };
-
-  // Check if we already have a scope key stored
-  // (We don't store it yet — this will be provisioned fresh each deploy)
-
-  // Revoke existing scope keys for this scope
-  try {
-    const listRes = await fetch(`${coreUrl}/api/keys?type=scope&resourceId=${encodeURIComponent(scopeName)}`, { headers });
-    if (listRes.ok) {
-      const { keys } = await listRes.json();
-      for (const k of keys ?? []) {
-        await fetch(`${coreUrl}/api/keys/${k.id}/revoke`, { method: "POST", headers });
-      }
-    }
-  } catch { /* best-effort cleanup */ }
-
-  // Create fresh scope key
-  const res = await fetch(`${coreUrl}/api/keys`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      type: "scope",
-      resourceId: scopeName,
-      description: `Scope key for "${scopeName}" (container instance)`,
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Failed to create scope key (${res.status}): ${text}`);
-  }
-
-  const { key } = await res.json();
-  return key;
-}
 
 /**
  * Demux Docker multiplexed log stream.
