@@ -170,7 +170,8 @@ router.get("/instances", async (req: Request, res: Response) => {
       ...(inst.deploymentType === "external" ? { connected: coreConnectionMap.get(inst.scopeName) ?? false } : {}),
     }));
 
-    // Inject built-in "spaces" scope as virtual entry at the top
+    // Inject built-in "spaces" scope as virtual entry at the top.
+    // Built-in scopes are always running (they're part of the server process).
     const spacesEntry = {
       id: "built-in-spaces",
       templateId: "built-in",
@@ -182,7 +183,7 @@ router.get("/instances", async (req: Request, res: Response) => {
       active: true,
       builtIn: true,
       deploymentType: "built-in",
-      containerStatus: spacesConnected ? "running" : "stopped",
+      containerStatus: "running",
       containerId: null,
       imageUrl: null,
       createdAt: new Date(0).toISOString(),
@@ -235,6 +236,10 @@ router.get("/instances/:id", async (req: Request, res: Response) => {
         baseId: null,
         active: true,
         builtIn: true,
+        deploymentType: "built-in",
+        containerStatus: "running",
+        containerId: null,
+        imageUrl: null,
         createdAt: new Date(0).toISOString(),
         template: {
           id: "built-in",
@@ -997,6 +1002,47 @@ router.post("/haseef/:haseefId/attach", async (req: Request, res: Response) => {
       return;
     }
 
+    const { coreUrl, serviceKey } = getCoreConfig();
+
+    // Handle built-in "spaces" scope — no DB instance, just add to haseef's scopes[]
+    if (instanceId === "built-in-spaces") {
+      const coreRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
+        headers: { "x-api-key": serviceKey },
+      });
+      if (!coreRes.ok) {
+        res.status(502).json({ error: "Failed to fetch haseef from Core" });
+        return;
+      }
+      const { haseef } = await coreRes.json();
+      const currentScopes: string[] = haseef.scopes ?? [];
+      if (currentScopes.includes("spaces")) {
+        res.status(409).json({ error: "Scope is already attached to this haseef" });
+        return;
+      }
+
+      const haseefKey = await getDecryptedHaseefKey(auth.userId, haseefId);
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (haseefKey) {
+        headers["x-haseef-key"] = haseefKey;
+      } else {
+        headers["x-api-key"] = serviceKey;
+      }
+
+      const updateRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ scopes: [...currentScopes, "spaces"] }),
+      });
+      if (!updateRes.ok) {
+        const text = await updateRes.text();
+        res.status(502).json({ error: `Failed to attach scope in Core: ${text}` });
+        return;
+      }
+
+      res.json({ success: true, scopeName: "spaces" });
+      return;
+    }
+
     // Get the scope instance
     const instance = await prisma.scopeInstance.findUnique({
       where: { id: instanceId },
@@ -1030,8 +1076,6 @@ router.post("/haseef/:haseefId/attach", async (req: Request, res: Response) => {
     }
 
     // Validate requiredProfileFields against haseef profile
-    const { coreUrl, serviceKey } = getCoreConfig();
-
     const coreRes = await fetch(`${coreUrl}/api/haseefs/${haseefId}`, {
       headers: { "x-api-key": serviceKey },
     });

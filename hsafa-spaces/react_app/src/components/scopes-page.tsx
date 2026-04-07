@@ -268,7 +268,8 @@ function InstancesList({
       {instances.map((inst) => {
         const coreStatus = statusMap.get(inst.scopeName);
         const connected = coreStatus?.connected ?? false;
-        const containerStatus = inst.containerStatus ?? "stopped";
+        const isBuiltIn = inst.deploymentType === "built-in" || !!(inst as any).builtIn;
+        const containerStatus = isBuiltIn ? "running" : (inst.containerStatus ?? "stopped");
         const isRunning = containerStatus === "running";
 
         return (
@@ -279,7 +280,8 @@ function InstancesList({
           >
             <div className={cn(
               "flex items-center justify-center size-10 rounded-lg",
-              isRunning && connected ? "bg-green-500/10 text-green-600"
+              isBuiltIn ? "bg-green-500/10 text-green-600"
+                : isRunning && connected ? "bg-green-500/10 text-green-600"
                 : isRunning ? "bg-blue-500/10 text-blue-500"
                 : "bg-muted text-muted-foreground",
             )}>
@@ -294,7 +296,11 @@ function InstancesList({
               </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <span className="text-xs text-muted-foreground">{inst.template.name}</span>
-                {inst.active ? (
+                {isBuiltIn ? (
+                  <span className="flex items-center gap-1 text-xs text-green-600">
+                    <CheckCircle2Icon className="size-3" /> Active
+                  </span>
+                ) : inst.active ? (
                   <ContainerStatusBadge status={containerStatus} connected={connected} />
                 ) : (
                   <span className="text-xs text-muted-foreground">Inactive</span>
@@ -587,8 +593,10 @@ hsafa scope init my-weather-scope
       <section className="space-y-3">
         <StepHeader n={4} title="Write Your Logic" />
         <p className="text-sm text-muted-foreground pl-9 leading-relaxed">
-          The generated <code className="text-[11px] bg-zinc-800/60 text-zinc-300 px-1.5 py-0.5 rounded font-mono">src/index.ts</code> is
-          a complete working starter. Here's what it looks like — tools are registered automatically when your service starts:
+          The scaffold splits code into <code className="text-[11px] bg-zinc-800/60 text-zinc-300 px-1.5 py-0.5 rounded font-mono">src/tools.ts</code>,{" "}
+          <code className="text-[11px] bg-zinc-800/60 text-zinc-300 px-1.5 py-0.5 rounded font-mono">src/handler.ts</code>, and{" "}
+          <code className="text-[11px] bg-zinc-800/60 text-zinc-300 px-1.5 py-0.5 rounded font-mono">src/index.ts</code>.
+          Here's a simplified single-file view of how it works:
         </p>
         <div className="pl-9">
           <CodeBlock lang="src/index.ts" code={`import { HsafaSDK } from "@hsafa/sdk";
@@ -600,51 +608,35 @@ const sdk = new HsafaSDK({
   scope: process.env.SCOPE_NAME!,
 });
 
-// ── Tools — registered automatically on startup ─────────────
+// ── Register tools ──────────────────────────────────────────
 await sdk.registerTools([
   {
     name: "get_weather",
     description: "Get current weather for a city",
-    inputSchema: {
-      type: "object",
-      properties: {
-        city: { type: "string", description: "City name" },
-      },
-      required: ["city"],
-    },
-  },
-  {
-    name: "get_forecast",
-    description: "Get 5-day weather forecast",
-    inputSchema: {
-      type: "object",
-      properties: {
-        city: { type: "string", description: "City name" },
-        days: { type: "number", description: "Number of days (1-5)" },
-      },
-      required: ["city"],
-    },
+    input: { city: "string" },
   },
 ]);
 
-// ── Handlers — your custom logic ────────────────────────────
+// ── Handle tool calls ───────────────────────────────────────
 sdk.onToolCall("get_weather", async (args, ctx) => {
-  const { city } = args;
   const res = await fetch(
-    \`https://api.weather.example/current?city=\${city}\`
+    \`https://api.weather.example/current?city=\${args.city}\`
   );
   return await res.json();
 });
 
-// ── Events — notify haseefs proactively ─────────────────────
-// Push sense events to wake a haseef and give it context.
-// Target by haseefId, or by phone/email:
-await sdk.pushEvent({
-  type: "weather_alert",
-  data: { city: "Riyadh", alert: "Sandstorm warning" },
-  target: { phone: "+966501234567" },  // or { email: "user@example.com" }
-  // haseefId: "specific-haseef-id",   // alternative: target by ID
-});
+// ── Push events — notify haseefs proactively ────────────────
+// Call pushEvent from anywhere: a handler, a cron job, a webhook, etc.
+// Target by haseefId, phone, or email.
+async function alertHaseef(city: string, alert: string) {
+  await sdk.pushEvent({
+    type: "weather_alert",
+    data: { city, alert },
+    target: { phone: "+966501234567" },
+    // or: target: { email: "user@example.com" }
+    // or: haseefId: "specific-haseef-id"
+  });
+}
 
 // ── Connect — starts SSE listener for tool calls ────────────
 sdk.connect();`} />

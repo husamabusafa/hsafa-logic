@@ -873,8 +873,18 @@ function LogsTab({ instance }: { instance: ScopeInstance }) {
     );
   }
 
+  const isStopped = instance.containerStatus === "stopped" || instance.containerStatus === "error";
+
   return (
     <div className="flex flex-col gap-3 h-full">
+      {/* Stopped/error banner */}
+      {isStopped && (
+        <div className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400">
+          <AlertTriangleIcon className="size-3.5 shrink-0" />
+          Container is {instance.containerStatus}. Showing last available logs.
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
         <button
@@ -1281,6 +1291,8 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   }, [setSearchParams]);
 
   const [acting, setActing] = useState<string | null>(null);
+  const [logsKey, setLogsKey] = useState(0);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -1302,7 +1314,10 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
     setActing(action);
     try {
       await fn();
-      load(true);
+      await load(true);
+      const labels: Record<string, string> = { restart: "Restarted successfully", start: "Started successfully", stop: "Stopped" };
+      setActionSuccess(labels[action] ?? "Done");
+      setTimeout(() => setActionSuccess(null), 3000);
     } catch (err: any) {
       console.error(`Action ${action} failed:`, err);
     } finally {
@@ -1346,7 +1361,8 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
     );
   }
 
-  const containerStatus = instance.containerStatus ?? "stopped";
+  const isBuiltIn = instance.deploymentType === "built-in" || !!(instance as any).builtIn;
+  const containerStatus = isBuiltIn ? "running" : (instance.containerStatus ?? "stopped");
   const isRunning = containerStatus === "running";
   const isStopped = containerStatus === "stopped";
   const isError = containerStatus === "error";
@@ -1356,14 +1372,13 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
 
   const tabs: { key: InstanceTab; label: string; icon: React.ReactNode }[] = [
     { key: "general", label: "General", icon: <SettingsIcon className="size-3.5" /> },
-    ...(!isExternal ? [{ key: "configuration" as InstanceTab, label: "Configuration", icon: <WrenchIcon className="size-3.5" /> }] : []),
-    ...(!isExternal && hasContainer && isRunning ? [{ key: "logs" as InstanceTab, label: "Logs", icon: <TerminalIcon className="size-3.5" /> }] : []),
-    ...(isManaged ? [{ key: "deployments" as InstanceTab, label: "Deployments", icon: <RocketIcon className="size-3.5" /> }] : []),
+    ...(!isExternal && !isBuiltIn ? [{ key: "configuration" as InstanceTab, label: "Configuration", icon: <WrenchIcon className="size-3.5" /> }] : []),
+    ...(!isExternal && hasContainer ? [{ key: "logs" as InstanceTab, label: "Logs", icon: <TerminalIcon className="size-3.5" /> }] : []),
+    ...(isManaged && !isBuiltIn ? [{ key: "deployments" as InstanceTab, label: "Deployments", icon: <RocketIcon className="size-3.5" /> }] : []),
   ];
 
   return (
     <div className="flex flex-col h-full">
-      {/* ── Top bar: breadcrumb + status + actions ─────────────────────── */}
       <div className="px-6 py-3 border-b border-border space-y-3">
         {/* Breadcrumb row */}
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1388,7 +1403,12 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2.5">
               <h1 className="font-semibold text-lg truncate">{instance.name}</h1>
-              {isExternal ? (
+              {isBuiltIn ? (
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full text-green-600 bg-green-500/10">
+                  <div className="size-2.5 rounded-full bg-green-500" />
+                  Active
+                </span>
+              ) : isExternal ? (
                 <span className={cn(
                   "inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full",
                   instance.connected ? "text-green-600 bg-green-500/10" : "text-muted-foreground bg-muted",
@@ -1403,10 +1423,10 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
             <p className="text-xs text-muted-foreground font-mono">{instance.scopeName}</p>
           </div>
 
-          {/* Action buttons - Coolify style */}
-          {isManaged && (
+          {/* Action buttons - Coolify style (not for built-in scopes) */}
+          {isManaged && !isBuiltIn && (
             <div className="flex items-center gap-1.5">
-              {(!hasContainer || isStopped || isError) && instance.imageUrl && (
+              {(!hasContainer || isStopped || isError || isRunning) && instance.imageUrl && (
                 <HeaderAction
                   label={hasContainer ? "Redeploy" : "Deploy"}
                   icon={<RocketIcon className="size-3.5" />}
@@ -1419,7 +1439,11 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
                 <HeaderAction
                   label="Start"
                   icon={<PlayIcon className="size-3.5" />}
-                  onClick={() => act("start", () => scopesApi.startInstance(instance.id))}
+                  onClick={async () => {
+                    await act("start", () => scopesApi.startInstance(instance.id));
+                    setLogsKey((k) => k + 1);
+                    setTab("logs");
+                  }}
                   disabled={!!acting}
                   loading={acting === "start"}
                   variant="success"
@@ -1430,7 +1454,11 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
                   <HeaderAction
                     label="Restart"
                     icon={<RotateCwIcon className="size-3.5" />}
-                    onClick={() => act("restart", () => scopesApi.restartInstance(instance.id))}
+                    onClick={async () => {
+                      await act("restart", () => scopesApi.restartInstance(instance.id));
+                      setLogsKey((k) => k + 1);
+                      setTab("logs");
+                    }}
                     disabled={!!acting}
                     loading={acting === "restart"}
                   />
@@ -1473,7 +1501,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
         {error && <p className="text-xs text-red-500 mb-4">{error}</p>}
         {tab === "general" && <GeneralTab instance={instance} onSaved={() => load(true)} onDelete={onBack} />}
         {tab === "configuration" && <ConfigurationTab instance={instance} onSaved={() => load(true)} />}
-        {tab === "logs" && hasContainer && isRunning && <LogsTab key={instance.containerId} instance={instance} />}
+        {tab === "logs" && hasContainer && <LogsTab key={`${instance.containerId}-${logsKey}`} instance={instance} />}
         {tab === "deployments" && !activeDeploymentId && (
           <DeploymentsTab
             instance={instance}
@@ -1489,6 +1517,14 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
           />
         )}
       </div>
+
+      {/* Success toast */}
+      {actionSuccess && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg bg-green-600 text-white text-sm font-medium shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <CheckCircle2Icon className="size-4" />
+          {actionSuccess}
+        </div>
+      )}
     </div>
   );
 }
