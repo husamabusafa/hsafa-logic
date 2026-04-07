@@ -300,7 +300,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 function RequireUnauth({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, token } = useAuth();
   const [searchParams] = useSearchParams();
 
   if (isLoading) {
@@ -312,6 +312,17 @@ function RequireUnauth({ children }: { children: React.ReactNode }) {
   }
 
   if (isAuthenticated) {
+    // CLI callback: send existing token back to CLI instead of redirecting
+    const cliCallback = searchParams.get("cli_callback");
+    if (cliCallback && token) {
+      window.location.href = `${cliCallback}?token=${encodeURIComponent(token)}`;
+      return (
+        <div className="flex min-h-dvh items-center justify-center bg-background">
+          <LoaderIcon className="size-8 animate-spin text-primary" />
+        </div>
+      );
+    }
+
     const redirect = searchParams.get("redirect") || "/spaces";
     return <Navigate to={redirect} replace />;
   }

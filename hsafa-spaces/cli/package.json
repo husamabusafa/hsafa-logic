@@ -1,10 +1,10 @@
 {
   "name": "@hsafa/cli",
-  "version": "2.0.0",
+  "version": "2.0.3",
   "description": "Hsafa CLI — build, deploy, and manage scopes for your haseefs",
   "type": "module",
   "bin": {
-    "hsafa": "./dist/index.js"
+    "hsafa": "dist/index.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -28,6 +28,11 @@
     "@types/prompts": "^2.4.9",
     "typescript": "^5"
   },
-  "keywords": ["hsafa", "cli", "scopes", "haseef"],
+  "keywords": [
+    "hsafa",
+    "cli",
+    "scopes",
+    "haseef"
+  ],
   "license": "MIT"
 }

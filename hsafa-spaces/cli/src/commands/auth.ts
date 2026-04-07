@@ -117,7 +117,7 @@ export function registerAuthCommands(program: Command) {
 
       // ── Browser flow ──────────────────────────────────────────────────
       if (method === "browser") {
-        const serverUrl = config.serverUrl;
+        const frontendUrl = config.frontendUrl;
 
         // Start local HTTP server to receive the token callback
         let resolveToken: (token: string) => void;
@@ -129,8 +129,10 @@ export function registerAuthCommands(program: Command) {
             const token = url.searchParams.get("token");
             if (token) {
               res.writeHead(200, { "Content-Type": "text/html" });
-              res.end(`<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#fff"><div style="text-align:center"><h1>&#10003; Authenticated</h1><p style="color:#888">You can close this window and return to the terminal.</p></div></body></html>`);
-              tokenServer.close();
+              res.end(`<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#fff"><div style="text-align:center"><h1>&#10003; Authenticated</h1><p style="color:#888">You can close this window and return to the terminal.</p></div></body></html>`, () => {
+                // Close server after response is fully sent
+                setTimeout(() => tokenServer.close(), 500);
+              });
               resolveToken!(token);
             } else {
               res.writeHead(400, { "Content-Type": "text/plain" });
@@ -157,7 +159,7 @@ export function registerAuthCommands(program: Command) {
         }, 5 * 60 * 1000);
 
         const callbackUrl = `http://localhost:${port}/callback`;
-        const loginUrl = `${serverUrl}/auth?cli_callback=${encodeURIComponent(callbackUrl)}`;
+        const loginUrl = `${frontendUrl}/auth?cli_callback=${encodeURIComponent(callbackUrl)}`;
 
         console.log(chalk.dim("Opening browser...\n"));
         openBrowser(loginUrl);
@@ -287,19 +289,4 @@ export function registerAuthCommands(program: Command) {
       }
     });
 
-  // ── set-server ────────────────────────────────────────────────────────────
-
-  auth
-    .command("set-server")
-    .description("Set the Hsafa server URL")
-    .argument("<url>", "Server URL (e.g. https://spaces.hsafa.io)")
-    .action((url: string) => {
-      const config = loadConfig();
-      config.serverUrl = url.replace(/\/$/, "");
-      config.token = null;
-      config.user = null;
-      saveConfig(config);
-      console.log(chalk.green(`Server set to ${config.serverUrl}`));
-      console.log(chalk.dim("You'll need to log in again: hsafa auth login"));
-    });
 }

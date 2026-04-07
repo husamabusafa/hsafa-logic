@@ -11,6 +11,7 @@ const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 
 export interface CliConfig {
   serverUrl: string;
+  frontendUrl: string;
   token: string | null;
   user: {
     id: string;
@@ -21,7 +22,8 @@ export interface CliConfig {
 }
 
 const DEFAULT_CONFIG: CliConfig = {
-  serverUrl: "http://localhost:3005",
+  serverUrl: "https://spaces.hsafa.com",
+  frontendUrl: "https://spaces.hsafa.com",
   token: null,
   user: null,
 };
