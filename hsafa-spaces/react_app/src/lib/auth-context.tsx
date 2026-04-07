@@ -16,7 +16,7 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  login: (email: string, password: string) => Promise<{ verificationRequired?: boolean }>;
+  login: (email: string, password: string) => Promise<{ verificationRequired?: boolean; token?: string }>;
   register: (name: string, email: string, password: string) => Promise<void>;
   loginWithToken: (token: string) => Promise<void>;
   logout: () => void;
@@ -71,7 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (email: string, password: string) => {
       const data = await authApi.login(email, password);
       setAuth(data.token, data.user);
-      return { verificationRequired: !data.user.emailVerified };
+      return { verificationRequired: !data.user.emailVerified, token: data.token };
     },
     [setAuth]
   );

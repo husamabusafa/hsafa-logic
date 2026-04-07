@@ -20,6 +20,14 @@ export function AuthCallback() {
 
     loginWithToken(token)
       .then(() => {
+        // CLI callback: redirect token to local CLI server
+        const cliCallback = localStorage.getItem("hsafa_cli_callback");
+        if (cliCallback) {
+          localStorage.removeItem("hsafa_cli_callback");
+          window.location.href = `${cliCallback}?token=${encodeURIComponent(token)}`;
+          return;
+        }
+
         const redirect = localStorage.getItem("hsafa_auth_redirect") || "/spaces";
         localStorage.removeItem("hsafa_auth_redirect");
         navigate(redirect, { replace: true });

@@ -41,10 +41,16 @@ export function AuthPage() {
 
     try {
       if (isLogin) {
-        const { verificationRequired } = await login(email, password);
+        const { verificationRequired, token } = await login(email, password);
         if (verificationRequired) {
           navigate("/auth/verify");
         } else {
+          // CLI callback: redirect token to local CLI server
+          const cliCallback = searchParams.get("cli_callback");
+          if (cliCallback && token) {
+            window.location.href = `${cliCallback}?token=${encodeURIComponent(token)}`;
+            return;
+          }
           const redirect = searchParams.get("redirect") || "/spaces";
           navigate(redirect);
         }
@@ -62,8 +68,12 @@ export function AuthPage() {
   const handleGoogleLogin = () => {
     setIsGoogleLoading(true);
     const redirect = searchParams.get("redirect");
+    const cliCallback = searchParams.get("cli_callback");
     if (redirect) {
       localStorage.setItem("hsafa_auth_redirect", redirect);
+    }
+    if (cliCallback) {
+      localStorage.setItem("hsafa_cli_callback", cliCallback);
     }
     const serverBase = import.meta.env.VITE_HSAFA_GATEWAY_URL
       ? import.meta.env.VITE_HSAFA_GATEWAY_URL.replace(/\/+$/, "")
