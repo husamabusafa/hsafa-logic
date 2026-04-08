@@ -23,6 +23,7 @@ import { ApiKeysPage } from "@/components/api-keys-page";
 import { BasesPage, JoinByLinkPage, JoinSpaceByLinkPage } from "@/components/bases-page";
 import { ScopesPage } from "@/components/scopes-page";
 import { ScopeInstancePage } from "@/components/scope-instance-page";
+import { ScopeTemplatePage } from "@/components/scope-template-page";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { haseefsApi, spacesApi, invitationsApi, basesApi, type HaseefListItem, type SmartSpace, type SpaceMember } from "@/lib/api";
 import type { MockMember } from "@/lib/mock-data";
@@ -273,6 +274,15 @@ function ScopeInstanceRoute() {
   return <ScopeInstancePage instanceId={instanceId} onBack={() => navigate("/scopes")} />;
 }
 
+// ─── Scope Template Route (extracts param) ──────────────────────────────────
+
+function ScopeTemplateRoute() {
+  const { templateId } = useParams<{ templateId: string }>();
+  const navigate = useNavigate();
+  if (!templateId) return <Navigate to="/scopes?tab=my-templates" replace />;
+  return <ScopeTemplatePage templateId={templateId} onBack={() => navigate("/scopes?tab=my-templates")} />;
+}
+
 // ─── Auth Guard ─────────────────────────────────────────────────────────────
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -508,6 +518,7 @@ function AppContent() {
               />
             } />
             <Route path="/scopes/instances/:instanceId" element={<ScopeInstanceRoute />} />
+            <Route path="/scopes/templates/:templateId" element={<ScopeTemplateRoute />} />
 
             {/* Bases */}
             <Route path="/bases" element={<BasesPage />} />

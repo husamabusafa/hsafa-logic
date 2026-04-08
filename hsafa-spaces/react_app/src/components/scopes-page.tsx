@@ -20,6 +20,11 @@ import {
   FolderTreeIcon,
   GlobeIcon,
   DatabaseIcon,
+  PackageIcon,
+  TrashIcon,
+  EditIcon,
+  EyeIcon,
+  EyeOffIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -52,8 +57,8 @@ interface ScopesPageProps {
 export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: ScopesPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const tab = (tabParam === "templates" || tabParam === "developer") ? tabParam : "instances";
-  const setTab = useCallback((t: "instances" | "templates" | "developer") => {
+  const tab = (tabParam === "templates" || tabParam === "my-templates" || tabParam === "developer") ? tabParam : "instances";
+  const setTab = useCallback((t: "instances" | "templates" | "my-templates" | "developer") => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       if (t === "instances") next.delete("tab"); else next.set("tab", t);
@@ -61,6 +66,7 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
     }, { replace: true });
   }, [setSearchParams]);
   const [templates, setTemplates] = useState<ScopeTemplate[]>([]);
+  const [myTemplates, setMyTemplates] = useState<ScopeTemplate[]>([]);
   const [instances, setInstances] = useState<ScopeInstance[]>([]);
   const [statuses, setStatuses] = useState<CoreScopeStatus[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,12 +77,14 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [tRes, iRes, sRes] = await Promise.all([
+      const [tRes, mRes, iRes, sRes] = await Promise.all([
         scopesApi.listTemplates(),
+        scopesApi.listMyTemplates(),
         scopesApi.listInstances(),
         scopesApi.getStatus().catch(() => ({ scopes: [] })),
       ]);
       setTemplates(tRes.templates);
+      setMyTemplates(mRes.templates);
       setInstances(iRes.instances);
       setStatuses(sRes.scopes);
     } catch (err) {
@@ -95,6 +103,9 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
     !search || i.name.toLowerCase().includes(search.toLowerCase()) || i.scopeName.toLowerCase().includes(search.toLowerCase()),
   );
   const filteredTemplates = templates.filter((t) =>
+    !search || t.name.toLowerCase().includes(search.toLowerCase()) || t.slug.toLowerCase().includes(search.toLowerCase()),
+  );
+  const filteredMyTemplates = myTemplates.filter((t) =>
     !search || t.name.toLowerCase().includes(search.toLowerCase()) || t.slug.toLowerCase().includes(search.toLowerCase()),
   );
 
@@ -157,6 +168,15 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
             Templates
           </button>
           <button
+            onClick={() => setTab("my-templates")}
+            className={cn(
+              "px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+              tab === "my-templates" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            My Templates
+          </button>
+          <button
             onClick={() => setTab("developer")}
             className={cn(
               "px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
@@ -199,6 +219,12 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
             creatingId={creating}
             onNavigate={onNavigateToTemplate}
           />
+        ) : tab === "my-templates" ? (
+          <MyTemplatesList
+            templates={filteredMyTemplates}
+            onNavigate={onNavigateToTemplate}
+            onRefresh={load}
+          />
         ) : (
           <DeveloperTab onRegistered={load} />
         )}
@@ -214,6 +240,7 @@ export function ScopesPage({ onNavigateToInstance, onNavigateToTemplate }: Scope
           </button>
         </div>
       )}
+
     </div>
   );
 }
@@ -388,6 +415,128 @@ function TemplatesList({
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── My Templates List ─────────────────────────────────────────────────────────
+
+function MyTemplatesList({
+  templates,
+  onNavigate,
+  onRefresh,
+}: {
+  templates: ScopeTemplate[];
+  onNavigate?: (id: string) => void;
+  onRefresh: () => void;
+}) {
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+
+  async function handleDelete(id: string) {
+    setDeleting(id);
+    setDeleteError("");
+    try {
+      await scopesApi.deleteTemplate(id);
+      onRefresh();
+    } catch (err: any) {
+      setDeleteError(err.message || "Failed to delete");
+      setTimeout(() => setDeleteError(""), 5000);
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div>
+        <h2 className="text-base font-semibold">My Templates</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Custom scope templates you've deployed via the CLI. Edit metadata, manage tools, or publish to the marketplace.
+        </p>
+      </div>
+
+      {deleteError && (
+        <p className="text-xs text-red-500 bg-red-50 dark:bg-red-950/20 px-3 py-2 rounded-lg">{deleteError}</p>
+      )}
+
+      {templates.length === 0 ? (
+        <div className="text-center py-16 border border-dashed border-border rounded-xl">
+          <TerminalIcon className="size-10 mx-auto mb-3 text-muted-foreground/40" />
+          <p className="text-sm text-muted-foreground">No custom templates yet.</p>
+          <p className="text-xs text-muted-foreground mt-2 max-w-sm mx-auto leading-relaxed">
+            Use the CLI to scaffold and deploy a scope. Your templates will appear here.
+          </p>
+          <div className="mt-4 inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-300 text-xs font-mono">
+            <TerminalIcon className="size-3.5 text-zinc-500" />
+            hsafa scope init my-scope && hsafa scope deploy
+          </div>
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {templates.map((tmpl) => (
+            <div
+              key={tmpl.id}
+              className="flex flex-col p-4 rounded-xl border border-border bg-card hover:border-primary/30 transition-colors"
+            >
+              <div className="flex items-start gap-3">
+                <div className="flex items-center justify-center size-10 rounded-lg bg-primary/10 text-primary shrink-0">
+                  <ScopeIcon icon={tmpl.icon} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-medium text-sm truncate">{tmpl.name}</h3>
+                    {tmpl.published ? (
+                      <span className="flex items-center gap-1 text-[10px] font-medium text-green-600 bg-green-500/10 px-1.5 py-0.5 rounded-full">
+                        <EyeIcon className="size-3" /> Published
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">
+                        <EyeOffIcon className="size-3" /> Draft
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                    {tmpl.description || "No description"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <WrenchIcon className="size-3" /> {tmpl.tools.length} tools
+                </span>
+                {tmpl._count?.instances !== undefined && (
+                  <span className="flex items-center gap-1">
+                    <PackageIcon className="size-3" /> {tmpl._count.instances} instance{tmpl._count.instances !== 1 ? "s" : ""}
+                  </span>
+                )}
+                <span className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded">{tmpl.slug}</span>
+              </div>
+
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
+                <button
+                  onClick={() => onNavigate?.(tmpl.id)}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <EditIcon className="size-3" />
+                  Edit
+                </button>
+                <div className="flex-1" />
+                <button
+                  onClick={() => handleDelete(tmpl.id)}
+                  disabled={deleting === tmpl.id}
+                  className="flex items-center gap-1 text-xs text-red-500 hover:text-red-600 transition-colors disabled:opacity-50"
+                >
+                  {deleting === tmpl.id ? <Loader2Icon className="size-3 animate-spin" /> : <TrashIcon className="size-3" />}
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

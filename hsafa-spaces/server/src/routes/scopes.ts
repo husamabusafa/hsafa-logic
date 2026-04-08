@@ -72,26 +72,235 @@ function isJwtError(r: any): r is { status: number; error: string } {
 // TEMPLATES
 // =============================================================================
 
-// GET /api/scopes/templates — List all prebuilt templates (from code, not DB)
+// Helper: convert a DB ScopeTemplate row to the API shape
+function dbTemplateToApi(t: any) {
+  return {
+    id: t.id,
+    slug: t.slug,
+    name: t.name,
+    description: t.description ?? "",
+    icon: t.icon ?? null,
+    category: t.category ?? "custom",
+    requiredProfileFields: t.requiredProfileFields ?? [],
+    tools: (t.tools as any[]) ?? [],
+    instructions: t.instructions ?? null,
+    imageUrl: t.imageUrl ?? null,
+    published: t.published ?? false,
+    authorId: t.authorId ?? null,
+    createdAt: t.createdAt?.toISOString?.() ?? t.createdAt,
+    _count: t._count ?? undefined,
+  };
+}
+
+// GET /api/scopes/templates — List all templates (prebuilt from code + custom from DB)
 router.get("/templates", async (req: Request, res: Response) => {
   const auth = await requireJwtUser(req);
   if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
 
-  res.json({ templates: SCOPE_TEMPLATES });
+  try {
+    // Fetch custom templates from DB (published OR authored by this user)
+    const dbTemplates = await prisma.scopeTemplate.findMany({
+      where: {
+        OR: [
+          { published: true },
+          { authorId: auth.userId },
+        ],
+        // Exclude prebuilt template IDs that are defined in code
+        id: { notIn: SCOPE_TEMPLATES.map((t) => t.id) },
+      },
+      include: { _count: { select: { instances: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const customTemplates = dbTemplates.map(dbTemplateToApi);
+    res.json({ templates: [...SCOPE_TEMPLATES, ...customTemplates] });
+  } catch (error) {
+    console.error("List templates error:", error);
+    res.json({ templates: SCOPE_TEMPLATES });
+  }
 });
 
-// GET /api/scopes/templates/:id — Get template details (from code)
+// GET /api/scopes/templates/mine — List only user's custom templates
+router.get("/templates/mine", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const templates = await prisma.scopeTemplate.findMany({
+      where: { authorId: auth.userId },
+      include: { _count: { select: { instances: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+
+    res.json({ templates: templates.map(dbTemplateToApi) });
+  } catch (error) {
+    console.error("List my templates error:", error);
+    res.status(500).json({ error: "Failed to list templates" });
+  }
+});
+
+// POST /api/scopes/templates — Create a custom template
+router.post("/templates", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const { name, slug, description, icon, tools, instructions, imageUrl, defaultEnv, published } = req.body;
+
+    if (!name || !slug) {
+      res.status(400).json({ error: "name and slug are required" });
+      return;
+    }
+
+    // Validate slug format
+    if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(slug) && slug.length > 1 || !/^[a-z0-9]$/.test(slug) && slug.length === 1) {
+      res.status(400).json({ error: "Slug must be lowercase alphanumeric with hyphens (e.g. 'my-scope')" });
+      return;
+    }
+
+    // Check uniqueness
+    const existing = await prisma.scopeTemplate.findUnique({ where: { slug } });
+    if (existing || SCOPE_TEMPLATES.some((t) => t.slug === slug)) {
+      res.status(409).json({ error: `Slug "${slug}" is already taken` });
+      return;
+    }
+
+    const template = await prisma.scopeTemplate.create({
+      data: {
+        name,
+        slug,
+        description: description || "",
+        icon: icon || null,
+        category: "custom",
+        tools: tools || [],
+        instructions: instructions || null,
+        imageUrl: imageUrl || null,
+        configSchema: defaultEnv ? { defaultEnv } : {},
+        authorId: auth.userId,
+        published: published ?? false,
+      },
+      include: { _count: { select: { instances: true } } },
+    });
+
+    res.status(201).json({ template: dbTemplateToApi(template) });
+  } catch (error) {
+    console.error("Create template error:", error);
+    res.status(500).json({ error: "Failed to create template" });
+  }
+});
+
+// GET /api/scopes/templates/:id — Get template details (code-defined or DB)
 router.get("/templates/:id", async (req: Request, res: Response) => {
   const auth = await requireJwtUser(req);
   if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
 
-  const template = getTemplateById(req.params.id as string);
-  if (!template) {
-    res.status(404).json({ error: "Template not found" });
+  // Check code-defined templates first
+  const codeTemplate = getTemplateById(req.params.id as string);
+  if (codeTemplate) {
+    res.json({ template: codeTemplate });
     return;
   }
 
-  res.json({ template });
+  // Check DB
+  try {
+    const dbTemplate = await prisma.scopeTemplate.findUnique({
+      where: { id: req.params.id as string },
+      include: { _count: { select: { instances: true } } },
+    });
+
+    if (!dbTemplate) {
+      res.status(404).json({ error: "Template not found" });
+      return;
+    }
+
+    // Only author or published templates are visible
+    if (!dbTemplate.published && dbTemplate.authorId !== auth.userId) {
+      res.status(404).json({ error: "Template not found" });
+      return;
+    }
+
+    res.json({ template: dbTemplateToApi(dbTemplate) });
+  } catch (error) {
+    console.error("Get template error:", error);
+    res.status(500).json({ error: "Failed to get template" });
+  }
+});
+
+// PATCH /api/scopes/templates/:id — Update a custom template (author only)
+router.patch("/templates/:id", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  // Prevent editing code-defined templates
+  if (getTemplateById(req.params.id as string)) {
+    res.status(403).json({ error: "Cannot edit prebuilt templates" });
+    return;
+  }
+
+  try {
+    const template = await prisma.scopeTemplate.findUnique({ where: { id: req.params.id as string } });
+    if (!template) { res.status(404).json({ error: "Template not found" }); return; }
+    if (template.authorId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
+
+    const { name, description, icon, tools, instructions, imageUrl, defaultEnv, published } = req.body;
+
+    const updated = await prisma.scopeTemplate.update({
+      where: { id: req.params.id as string },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(description !== undefined && { description }),
+        ...(icon !== undefined && { icon }),
+        ...(tools !== undefined && { tools }),
+        ...(instructions !== undefined && { instructions }),
+        ...(imageUrl !== undefined && { imageUrl }),
+        ...(defaultEnv !== undefined && { configSchema: { defaultEnv } }),
+        ...(published !== undefined && { published }),
+      },
+      include: { _count: { select: { instances: true } } },
+    });
+
+    res.json({ template: dbTemplateToApi(updated) });
+  } catch (error) {
+    console.error("Update template error:", error);
+    res.status(500).json({ error: "Failed to update template" });
+  }
+});
+
+// DELETE /api/scopes/templates/:id — Delete a custom template (author only, cascades instances)
+router.delete("/templates/:id", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  // Prevent deleting code-defined templates
+  if (getTemplateById(req.params.id as string)) {
+    res.status(403).json({ error: "Cannot delete prebuilt templates" });
+    return;
+  }
+
+  try {
+    const template = await prisma.scopeTemplate.findUnique({ where: { id: req.params.id as string } });
+    if (!template) { res.status(404).json({ error: "Template not found" }); return; }
+    if (template.authorId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
+
+    // Remove associated containers first
+    const instances = await prisma.scopeInstance.findMany({
+      where: { templateId: template.id },
+      select: { id: true, containerId: true },
+    });
+    for (const inst of instances) {
+      if (inst.containerId) {
+        try { await removeInstance(inst.id); } catch { /* best-effort */ }
+      }
+    }
+
+    // Delete template (cascades to instances via schema)
+    await prisma.scopeTemplate.delete({ where: { id: template.id } });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Delete template error:", error);
+    res.status(500).json({ error: "Failed to delete template" });
+  }
 });
 
 // =============================================================================

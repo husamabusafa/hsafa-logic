@@ -661,6 +661,7 @@ export interface ScopeTemplate {
   instructions: string | null;
   imageUrl: string | null;
   published: boolean;
+  authorId: string | null;
   createdAt: string;
   _count?: { instances: number };
 }
@@ -736,6 +737,47 @@ export const scopesApi = {
 
   getTemplate(id: string) {
     return request<{ template: ScopeTemplate }>(`/scopes/templates/${id}`);
+  },
+
+  listMyTemplates() {
+    return request<{ templates: ScopeTemplate[] }>("/scopes/templates/mine");
+  },
+
+  createTemplate(data: {
+    name: string;
+    slug: string;
+    description?: string;
+    icon?: string;
+    tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+    instructions?: string;
+    imageUrl?: string;
+    defaultEnv?: Array<{ key: string; value: string; isSecret?: boolean }>;
+    published?: boolean;
+  }) {
+    return request<{ template: ScopeTemplate }>("/scopes/templates", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateTemplate(id: string, data: {
+    name?: string;
+    description?: string;
+    icon?: string;
+    tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+    instructions?: string;
+    imageUrl?: string;
+    defaultEnv?: Array<{ key: string; value: string; isSecret?: boolean }>;
+    published?: boolean;
+  }) {
+    return request<{ template: ScopeTemplate }>(`/scopes/templates/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteTemplate(id: string) {
+    return request<{ success: boolean }>(`/scopes/templates/${id}`, { method: "DELETE" });
   },
 
   // Instances
