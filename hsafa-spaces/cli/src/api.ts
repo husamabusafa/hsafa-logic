@@ -161,7 +161,6 @@ export class ApiClient {
     description?: string;
   }) {
     return this.request<{
-      template: Record<string, unknown>;
       instance: ScopeInstance;
     }>("POST", "/api/scopes/external", data);
   }
@@ -178,10 +177,32 @@ export class ApiClient {
   // ── Haseefs ─────────────────────────────────────────────────────────────────
 
   async listHaseefs() {
-    return this.request<{ haseefs: Array<{ id: string; haseefId: string; haseefName?: string }> }>(
+    return this.request<{ haseefs: Array<{ id: string; haseefId: string; haseefName?: string; name?: string }> }>(
       "GET",
       "/api/haseefs",
     );
+  }
+
+  async resolveHaseef(nameOrId: string) {
+    // UUID format → use directly
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(nameOrId)) {
+      return { haseef: { id: nameOrId, name: nameOrId } };
+    }
+    return this.request<{ haseef: { id: string; name: string } }>(
+      "GET",
+      `/api/scopes/resolve-haseef?name=${encodeURIComponent(nameOrId)}`,
+    );
+  }
+
+  // ── Quick Create ───────────────────────────────────────────────────────────
+
+  async quickCreateScope(data: { scopeName: string; displayName?: string; description?: string }) {
+    return this.request<{
+      instance: { id: string; scopeName: string; name: string; deploymentType: string };
+      scopeKey: string;
+      coreUrl: string;
+      alreadyExisted: boolean;
+    }>("POST", "/api/scopes/quick-create", data);
   }
 
   // ── Deployments ─────────────────────────────────────────────────────────────
@@ -207,7 +228,7 @@ export interface ScopeTemplate {
 
 export interface ScopeInstance {
   id: string;
-  templateId: string;
+  templateId: string | null;
   name: string;
   scopeName: string;
   description?: string;

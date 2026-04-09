@@ -14,7 +14,7 @@ const program = new Command();
 program
   .name("hsafa")
   .description("Hsafa CLI — build, deploy, and manage scopes for your haseefs")
-  .version("2.0.0");
+  .version("2.1.2");
 
 registerConfigCommands(program);
 registerAuthCommands(program);

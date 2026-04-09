@@ -366,10 +366,20 @@ router.get("/instances", async (req: Request, res: Response) => {
 
     const spacesConnected = coreConnectionMap.get("spaces") ?? false;
 
-    // Mask secret config values and add connected status for external instances
+    // Mask secret config values, synthesize template for templateless instances,
+    // and add connected status for external instances
     const pluginInstances = instances.map((inst) => ({
       ...inst,
       builtIn: false,
+      // For templateless instances (local/external), synthesize a minimal template object
+      template: inst.template ?? {
+        id: null,
+        slug: inst.scopeName,
+        name: inst.name,
+        icon: "Plug",
+        category: inst.deploymentType === "external" ? "external" : "custom",
+        requiredProfileFields: [],
+      },
       configs: inst.configs.map((c) => ({
         id: c.id,
         key: c.key,
@@ -550,6 +560,18 @@ router.get("/instances/:id", async (req: Request, res: Response) => {
     res.json({
       instance: {
         ...instance,
+        // Synthesize template for templateless instances
+        template: instance.template ?? {
+          id: null,
+          slug: instance.scopeName,
+          name: instance.name,
+          description: instance.description || null,
+          icon: "Plug",
+          category: instance.deploymentType === "external" ? "external" : "custom",
+          requiredProfileFields: [],
+          tools: [],
+          instructions: null,
+        },
         configs,
         coreScopeKey: scopeKeyDecrypted,
         ...(connected !== undefined ? { connected } : {}),
@@ -776,7 +798,19 @@ router.patch("/instances/:id", async (req: Request, res: Response) => {
       return { id: c.id, key: c.key, isSecret: c.isSecret, value, hasValue: !!c.value };
     });
 
-    res.json({ instance: { ...updated, configs: decryptedConfigs } });
+    res.json({
+      instance: {
+        ...updated,
+        template: updated.template ?? {
+          id: null,
+          slug: updated.scopeName,
+          name: updated.name,
+          icon: "Plug",
+          category: updated.deploymentType === "external" ? "external" : "custom",
+        },
+        configs: decryptedConfigs,
+      },
+    });
   } catch (error) {
     console.error("Update instance error:", error);
     res.status(500).json({ error: "Failed to update instance" });
@@ -1174,6 +1208,14 @@ router.get("/haseef/:haseefId", async (req: Request, res: Response) => {
       result.push({
         ...inst,
         builtIn: false,
+        template: inst.template ?? {
+          id: null,
+          slug: inst.scopeName,
+          name: inst.name,
+          icon: "Plug",
+          category: inst.deploymentType === "external" ? "external" : "custom",
+          requiredProfileFields: [],
+        },
         connected: connectionMap.get(inst.scopeName) ?? false,
       });
     }
@@ -1294,7 +1336,7 @@ router.post("/haseef/:haseefId/attach", async (req: Request, res: Response) => {
     }
     const { haseef } = await coreRes.json();
     const profile = haseef.profileJson ?? {};
-    const requiredFields = instance.template.requiredProfileFields ?? [];
+    const requiredFields = instance.template?.requiredProfileFields ?? [];
 
     const missingFields = requiredFields.filter((f: string) => !profile[f]);
     if (missingFields.length > 0) {
@@ -1636,48 +1678,169 @@ router.post("/external", async (req: Request, res: Response) => {
       return;
     }
 
-    // Create template + instance in a transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // Create a minimal template for external scopes
-      const template = await tx.scopeTemplate.create({
-        data: {
-          slug: scopeName,
-          name: displayName,
-          description: description || `External scope: ${displayName}`,
-          icon: "Plug",
-          category: "external",
-          published: false,
-          authorId: auth.userId,
-        },
-      });
-
-      // Create the instance
-      const instance = await tx.scopeInstance.create({
-        data: {
-          templateId: template.id,
-          name: displayName,
-          scopeName,
-          description: description || null,
-          ownerId: auth.userId,
-          active: true,
-          deploymentType: "external",
-          containerStatus: "stopped",
-          coreScopeKey: encrypt(scopeKey),
-        },
-        include: {
-          template: {
-            select: { id: true, slug: true, name: true, icon: true, category: true },
-          },
-        },
-      });
-
-      return { template, instance };
+    // Create a templateless instance for the external scope
+    const instance = await prisma.scopeInstance.create({
+      data: {
+        name: displayName,
+        scopeName,
+        description: description || null,
+        ownerId: auth.userId,
+        active: true,
+        deploymentType: "external",
+        containerStatus: "stopped",
+        coreScopeKey: encrypt(scopeKey),
+      },
     });
 
-    res.status(201).json({ template: result.template, instance: result.instance });
+    res.status(201).json({ instance });
   } catch (error) {
     console.error("Register external scope error:", error);
     res.status(500).json({ error: "Failed to register external scope" });
+  }
+});
+
+// =============================================================================
+// POST /api/scopes/quick-create — One-shot scope creation for CLI
+//
+// Creates a templateless ScopeInstance + provisions scope key synchronously.
+// Returns the plaintext scope key so the CLI can write it to .env.
+// =============================================================================
+router.post("/quick-create", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const { scopeName, displayName, description } = req.body;
+
+    if (!scopeName) {
+      res.status(400).json({ error: "scopeName is required" });
+      return;
+    }
+
+    // Validate scope name format
+    const finalName = scopeName.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "");
+    if (!finalName || finalName.length < 2) {
+      res.status(400).json({ error: "Scope name must be at least 2 characters (lowercase letters, numbers, hyphens)" });
+      return;
+    }
+
+    // Check if already exists — if so, return existing + re-provision key
+    const existing = await prisma.scopeInstance.findUnique({ where: { scopeName: finalName } });
+    if (existing) {
+      // Re-provision key for the existing instance
+      const scopeKey = await provisionAndStoreScopeKey(existing.id, existing.scopeName);
+      if (!scopeKey) {
+        res.status(502).json({ error: "Scope exists but failed to provision key from Core" });
+        return;
+      }
+
+      const { coreUrl } = getCoreConfig();
+      res.json({
+        instance: {
+          id: existing.id,
+          scopeName: existing.scopeName,
+          name: existing.name,
+          deploymentType: existing.deploymentType,
+        },
+        scopeKey,
+        coreUrl,
+        alreadyExisted: true,
+      });
+      return;
+    }
+
+    // Create instance (no template — local/external scopes are templateless)
+    const instance = await prisma.scopeInstance.create({
+      data: {
+        name: displayName || scopeName,
+        scopeName: finalName,
+        description: description || null,
+        ownerId: auth.userId,
+        active: true,
+        deploymentType: "external",
+        containerStatus: "stopped",
+      },
+    });
+
+    // Provision scope key synchronously
+    const scopeKey = await provisionAndStoreScopeKey(instance.id, instance.scopeName);
+    if (!scopeKey) {
+      res.status(502).json({ error: "Scope created but failed to provision key from Core. Check CORE_SERVICE_KEY." });
+      return;
+    }
+
+    const { coreUrl } = getCoreConfig();
+
+    res.status(201).json({
+      instance: {
+        id: instance.id,
+        scopeName: instance.scopeName,
+        name: instance.name,
+        deploymentType: instance.deploymentType,
+      },
+      scopeKey,
+      coreUrl,
+      alreadyExisted: false,
+    });
+  } catch (error) {
+    console.error("Quick create scope error:", error);
+    res.status(500).json({ error: "Failed to create scope" });
+  }
+});
+
+// =============================================================================
+// GET /api/scopes/resolve-haseef?name=atlas — Resolve haseef by name
+// =============================================================================
+router.get("/resolve-haseef", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const nameQuery = (req.query.name as string || "").trim().toLowerCase();
+    if (!nameQuery) {
+      res.status(400).json({ error: "name query parameter is required" });
+      return;
+    }
+
+    // Search user's haseefs by name
+    const ownerships = await prisma.haseefOwnership.findMany({
+      where: { userId: auth.userId },
+      include: { entity: { select: { displayName: true } } },
+    });
+
+    const matches = ownerships.filter(o =>
+      o.entity.displayName?.toLowerCase() === nameQuery
+    );
+
+    if (matches.length === 0) {
+      // Try partial match for better UX
+      const partial = ownerships.filter(o =>
+        o.entity.displayName?.toLowerCase().includes(nameQuery)
+      );
+      if (partial.length > 0) {
+        const names = partial.map(o => o.entity.displayName).join(", ");
+        res.status(404).json({ error: `No exact match for "${nameQuery}". Did you mean: ${names}?` });
+      } else {
+        const allNames = ownerships.map(o => o.entity.displayName).join(", ");
+        res.status(404).json({ error: `Haseef "${nameQuery}" not found. Available: ${allNames || "(none)"}` });
+      }
+      return;
+    }
+
+    if (matches.length > 1) {
+      res.status(409).json({ error: `Multiple haseefs named "${nameQuery}". Use the haseef ID instead.` });
+      return;
+    }
+
+    res.json({
+      haseef: {
+        id: matches[0].haseefId,
+        name: matches[0].entity.displayName,
+      },
+    });
+  } catch (error) {
+    console.error("Resolve haseef error:", error);
+    res.status(500).json({ error: "Failed to resolve haseef" });
   }
 });
 

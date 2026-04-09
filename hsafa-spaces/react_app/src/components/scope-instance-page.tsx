@@ -346,12 +346,14 @@ function GeneralTab({
         {[
           { label: "Scope Name", value: <span className="font-mono text-sm">{instance.scopeName}</span> },
           { label: "Deployment Type", value: <span className="text-sm capitalize">{instance.deploymentType}</span> },
-          { label: "Template", value: (
+          { label: "Template", value: instance.templateId ? (
             <div className="flex items-center gap-2">
               <ScopeIcon icon={instance.template.icon} className="size-4" />
               <span className="text-sm">{instance.template.name}</span>
               <span className="text-xs text-muted-foreground">({instance.template.slug})</span>
             </div>
+          ) : (
+            <span className="text-sm text-muted-foreground">None (local scope)</span>
           )},
           { label: "Created", value: <span className="text-sm">{new Date(instance.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span> },
           ...(instance.containerId ? [{ label: "Container ID", value: <span className="text-xs font-mono text-muted-foreground">{instance.containerId.slice(0, 12)}</span> }] : []),

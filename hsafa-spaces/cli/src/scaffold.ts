@@ -41,6 +41,7 @@ function scaffoldNode(dir: string, name: string, lang: string, starter: string) 
     },
     dependencies: {
       "@hsafa/sdk": "^0.0.1",
+      dotenv: "^16.4.5",
     },
     ...(isTs
       ? {
@@ -101,7 +102,7 @@ function scaffoldNode(dir: string, name: string, lang: string, starter: string) 
   writeFile(
     dir,
     "README.md",
-    `# ${name}\n\nHsafa scope — built with @hsafa/sdk.\n\n## Setup\n\n\`\`\`bash\nnpm install\nhsafa scope create ${name}\n# Copy the scope key to .env\nnpm run dev\nhsafa scope attach ${name} --haseef <haseef-id>\n\`\`\`\n`,
+    `# ${name}\n\nHsafa scope — built with @hsafa/sdk.\n\n## Setup\n\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n\nEnvironment variables (\`.env\`) are auto-configured by \`hsafa scope init\`.\n`,
   );
 
   // .hsafa/ AI context folder
@@ -145,7 +146,7 @@ function scaffoldPython(dir: string, name: string, _starter: string) {
 
 function getIndexContent(name: string, ext: string): string {
   const isTs = ext === "ts";
-  return `${isTs ? 'import { HsafaSDK } from "@hsafa/sdk";\n' : 'const { HsafaSDK } = require("@hsafa/sdk");\n'}import { tools } from "./tools.${ext === "ts" ? "js" : ext}";\nimport { handlers } from "./handler.${ext === "ts" ? "js" : ext}";\n
+  return `${isTs ? 'import "dotenv/config";\nimport { HsafaSDK } from "@hsafa/sdk";\n' : 'require("dotenv/config");\nconst { HsafaSDK } = require("@hsafa/sdk");\n'}import { tools } from "./tools.${ext === "ts" ? "js" : ext}";\nimport { handlers } from "./handler.${ext === "ts" ? "js" : ext}";\n
 const sdk = new HsafaSDK({
   coreUrl: process.env.CORE_URL || "http://localhost:3001",
   apiKey: process.env.SCOPE_KEY || "",

@@ -678,7 +678,7 @@ export type ContainerStatus = "stopped" | "starting" | "running" | "error" | "bu
 
 export interface ScopeInstance {
   id: string;
-  templateId: string;
+  templateId: string | null;
   name: string;
   scopeName: string;
   description: string | null;
@@ -693,7 +693,7 @@ export interface ScopeInstance {
   statusMessage?: string | null;
   createdAt: string;
   template: {
-    id: string;
+    id: string | null;
     slug: string;
     name: string;
     icon: string | null;
@@ -843,7 +843,7 @@ export const scopesApi = {
 
   // External scopes
   registerExternal(data: { scopeName: string; displayName: string; scopeKey: string; description?: string }) {
-    return request<{ template: ScopeTemplate; instance: ScopeInstance }>("/scopes/external", {
+    return request<{ instance: ScopeInstance }>("/scopes/external", {
       method: "POST",
       body: JSON.stringify(data),
     });

@@ -440,28 +440,38 @@ npm install -g @hsafa/cli
 ## Authentication
 
 \`\`\`bash
-hsafa auth login          # Interactive login
-hsafa auth login --token <token>         # Auth with token
-hsafa auth login --email e --password p  # Non-interactive (CI)
-hsafa auth logout         # Clear credentials
-hsafa auth whoami         # Show current user
+hsafa auth login                              # Interactive (browser)
+hsafa auth login --token <token>              # With existing token
+hsafa auth login --email e --password p       # Non-interactive (CI)
+hsafa auth whoami                             # Show current user
+hsafa auth logout                             # Clear credentials
 \`\`\`
 
 ## Scope Commands
 
-### Scaffold a New Scope
+### New Scope (scaffold + register + configure)
 
 \`\`\`bash
-hsafa scope init <name> [--lang typescript|javascript|python] [--starter blank|api|database|webhook]
+hsafa scope init <name> [--lang typescript|javascript|python] [--starter blank|api|database|webhook] [--haseef <name>]
 \`\`\`
 
-### Register a Scope (No Deploy)
+Scaffolds project, registers scope, provisions key, writes \`.env\`, and optionally attaches to a haseef. One command does everything.
+
+### Register Existing Project
 
 \`\`\`bash
-hsafa scope create <name> [--deployment platform|external]
+hsafa scope create [--name <name>] [--haseef <name>]
 \`\`\`
 
-Outputs a **scope key** (\`hsk_scope_*\`). Save it — shown once.
+Run from a project directory. Reads scope name from \`package.json\`, registers, provisions key, writes \`.env\`.
+
+### Quick Dev (auto-create + run)
+
+\`\`\`bash
+hsafa scope dev [--haseef <name>]
+\`\`\`
+
+Auto-creates scope if needed, attaches to haseef, starts dev server (\`tsx watch\`).
 
 ### Deploy to Platform
 
@@ -469,43 +479,45 @@ Outputs a **scope key** (\`hsk_scope_*\`). Save it — shown once.
 hsafa scope deploy [--image <url>]
 \`\`\`
 
-Run from project directory. Builds Docker image, pushes, and launches.
+Builds Docker image, pushes, and launches container.
+
+### Register External Scope
+
+\`\`\`bash
+hsafa scope register --key hsk_scope_... --name <name>
+\`\`\`
+
+For self-hosted scopes that already have a key.
+
+### Attach / Detach (by name!)
+
+\`\`\`bash
+hsafa scope attach <scope-name> --haseef <haseef-name>
+hsafa scope detach <scope-name> --haseef <haseef-name>
+\`\`\`
+
+Haseefs can be referenced by **name** (case-insensitive) or UUID.
 
 ### List / Logs / Lifecycle
 
 \`\`\`bash
 hsafa scope list
-hsafa scope logs <name> [--instance <name>] [--tail <n>]
-hsafa scope start|stop|restart <name> [--instance <name>]
+hsafa scope logs <name> [--tail <n>]
+hsafa scope start|stop|restart <name>
 hsafa scope delete <name> [-y]
-\`\`\`
-
-### Attach / Detach from Haseef
-
-\`\`\`bash
-hsafa scope attach <name> --haseef <haseef-id>
-hsafa scope detach <name> --haseef <haseef-id>
-\`\`\`
-
-### Instance Management
-
-\`\`\`bash
-hsafa scope instance create <template> --name <n> --config KEY=VALUE
-hsafa scope instance delete <name> [-y]
 \`\`\`
 
 ## Local Development Workflow
 
 \`\`\`bash
-hsafa scope init my-scope --lang typescript
+hsafa scope init my-scope --haseef atlas     # scaffold + register + attach
 cd my-scope && npm install
-hsafa scope create my-scope        # get scope key
-# add SCOPE_KEY to .env
-npm run dev                         # registers tools, connects SSE
-hsafa scope attach my-scope --haseef <id>
-# chat with haseef — tools are live
-hsafa scope deploy                  # when ready
+npm run dev                                   # tools are live!
+# edit code → auto-restart → tools update
+hsafa scope deploy                            # when ready for production
 \`\`\`
+
+Environment variables (\`SCOPE_NAME\`, \`SCOPE_KEY\`, \`CORE_URL\`) are auto-written to \`.env\` by \`init\` and \`create\`. No manual configuration needed.
 `,
   },
   {

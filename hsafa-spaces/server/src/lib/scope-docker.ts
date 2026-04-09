@@ -71,7 +71,7 @@ export async function deployInstance(instanceId: string, triggeredBy?: string): 
 
   if (!instance) throw new Error(`Instance ${instanceId} not found`);
 
-  const imageUrl = instance.imageUrl || instance.template.imageUrl;
+  const imageUrl = instance.imageUrl || instance.template?.imageUrl;
   if (!imageUrl) throw new Error(`No Docker image URL for instance ${instanceId}`);
 
   // Create deployment record

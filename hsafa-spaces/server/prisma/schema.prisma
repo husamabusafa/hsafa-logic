@@ -354,12 +354,12 @@ model ScopeTemplate {
 }
 
 // =============================================================================
-// SCOPE INSTANCE — A configured, named instance of a template
+// SCOPE INSTANCE — A registered scope (may or may not be based on a template)
 // =============================================================================
 
 model ScopeInstance {
   id          String   @id @default(uuid()) @db.Uuid
-  templateId  String   @map("template_id") @db.Uuid
+  templateId  String?  @map("template_id") @db.Uuid
   name        String                                    // User-chosen name ("personal-whatsapp")
   scopeName   String   @unique @map("scope_name")       // Scope name registered in Core (same as name by default)
   description String?
@@ -381,7 +381,7 @@ model ScopeInstance {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  template ScopeTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  template ScopeTemplate?      @relation(fields: [templateId], references: [id], onDelete: Cascade)
   base     Base?               @relation(fields: [baseId], references: [id], onDelete: SetNull)
   configs      ScopeInstanceConfig[]
   deployments  ScopeDeployment[]
