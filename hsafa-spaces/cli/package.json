@@ -1,6 +1,6 @@
 {
   "name": "@hsafa/cli",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Hsafa CLI — build, deploy, and manage scopes for your haseefs",
   "type": "module",
   "bin": {

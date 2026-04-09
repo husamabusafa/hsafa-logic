@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { writeHsafaContext } from "./hsafa-context.js";
 
 export function scaffoldScope(
   dir: string,
@@ -102,6 +103,9 @@ function scaffoldNode(dir: string, name: string, lang: string, starter: string) 
     "README.md",
     `# ${name}\n\nHsafa scope — built with @hsafa/sdk.\n\n## Setup\n\n\`\`\`bash\nnpm install\nhsafa scope create ${name}\n# Copy the scope key to .env\nnpm run dev\nhsafa scope attach ${name} --haseef <haseef-id>\n\`\`\`\n`,
   );
+
+  // .hsafa/ AI context folder
+  writeHsafaContext(dir);
 }
 
 // ── Python ──────────────────────────────────────────────────────────────────
@@ -132,6 +136,9 @@ function scaffoldPython(dir: string, name: string, _starter: string) {
     "README.md",
     `# ${name}\n\nHsafa scope (Python).\n\n## Setup\n\n\`\`\`bash\npip install -r requirements.txt\nhsafa scope create ${name}\n# Copy the scope key to .env\npython main.py\nhsafa scope attach ${name} --haseef <haseef-id>\n\`\`\`\n`,
   );
+
+  // .hsafa/ AI context folder
+  writeHsafaContext(dir);
 }
 
 // ── Content generators ──────────────────────────────────────────────────────
