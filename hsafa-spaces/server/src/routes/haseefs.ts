@@ -373,25 +373,55 @@ router.delete("/:id", async (req: Request, res: Response) => {
       return;
     }
 
-    // Delete from Core first
+    const entityId = ownership.entityId;
+
+    // 1. Remove from in-memory state so the haseef stops processing immediately
+    state.connections.delete(haseefId);
+
+    // 2. Delete from Core (cascades runs, memories, etc.)
     await coreDeleteHaseef(haseefId);
 
-    // Remove all space memberships for this entity
+    // 3. Remove all space memberships for this entity
     const memberships = await prisma.smartSpaceMembership.findMany({
-      where: { entityId: ownership.entityId },
+      where: { entityId },
       select: { smartSpaceId: true },
     });
     await prisma.smartSpaceMembership.deleteMany({
-      where: { entityId: ownership.entityId },
+      where: { entityId },
     });
     for (const m of memberships) {
       invalidateSpace(m.smartSpaceId);
-      handleMembershipChanged(ownership.entityId, m.smartSpaceId, "removed");
+      handleMembershipChanged(entityId, m.smartSpaceId, "removed");
     }
 
-    // Delete ownership + entity
+    // 4. Remove base memberships
+    await prisma.baseMember.deleteMany({ where: { entityId } });
+
+    // 5. Remove schedules
+    await prisma.haseefSchedule.deleteMany({ where: { haseefId } });
+
+    // 6. Remove invitations sent by or to this entity
+    await prisma.invitation.deleteMany({
+      where: { OR: [{ inviterId: entityId }, { inviteeId: entityId }] },
+    });
+
+    // 7. Remove message responses by this entity
+    await prisma.messageResponse.deleteMany({ where: { entityId } });
+
+    // 8. Delete ownership
     await prisma.haseefOwnership.delete({ where: { id: ownership.id } });
-    await prisma.entity.delete({ where: { id: ownership.entityId } });
+
+    // 9. Try to delete entity — may fail if messages reference it (FK constraint).
+    //    That's OK: the entity stays as a tombstone so message history is preserved.
+    try {
+      await prisma.entity.delete({ where: { id: entityId } });
+    } catch (entityErr: any) {
+      if (entityErr?.code === "P2003") {
+        console.log(`[haseefs] Entity ${entityId} kept (messages still reference it)`);
+      } else {
+        console.warn("[haseefs] Entity delete warning:", entityErr);
+      }
+    }
 
     res.json({ success: true });
   } catch (error: any) {

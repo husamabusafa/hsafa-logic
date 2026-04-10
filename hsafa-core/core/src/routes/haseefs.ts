@@ -154,7 +154,19 @@ haseefsRouter.delete('/:id', async (req, res) => {
       return;
     }
 
-    await prisma.haseef.delete({ where: { id: req.params.id } });
+    const haseefId = req.params.id;
+
+    // Delete the haseef (cascades runs, memories)
+    await prisma.haseef.delete({ where: { id: haseefId } });
+
+    // Clean up API keys for this haseef (not FK-linked, must delete explicitly)
+    await prisma.coreApiKey.deleteMany({
+      where: { keyType: 'haseef', resourceId: haseefId },
+    });
+
+    // Clean up Redis state
+    await redis.del(`inbox:${haseefId}`).catch(() => {});
+
     res.json({ success: true });
   } catch (err: any) {
     if (err.code === 'P2025') {
