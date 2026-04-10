@@ -1,7 +1,7 @@
 {
   "name": "@hsafa/cli",
-  "version": "2.1.3",
-  "description": "Hsafa CLI — build, deploy, and manage scopes for your haseefs",
+  "version": "3.0.0",
+  "description": "Hsafa CLI — build and manage skills for your haseefs",
   "type": "module",
   "bin": {
     "hsafa": "dist/index.js"

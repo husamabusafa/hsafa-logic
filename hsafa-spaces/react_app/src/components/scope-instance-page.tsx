@@ -30,6 +30,7 @@ import {
   EyeIcon,
   EyeOffIcon,
   KeyIcon,
+  UploadIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CodeTerminal, type CodeTerminalHandle, EnvEditor } from "@/components/env-editor";
@@ -1295,6 +1296,8 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   const [acting, setActing] = useState<string | null>(null);
   const [logsKey, setLogsKey] = useState(0);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [publishSuccess, setPublishSuccess] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -1384,7 +1387,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
       <div className="px-6 py-3 border-b border-border space-y-3">
         {/* Breadcrumb row */}
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <button onClick={onBack} className="hover:text-foreground transition-colors">Scopes</button>
+          <button onClick={onBack} className="hover:text-foreground transition-colors">Skills</button>
           <ChevronRightIcon className="size-3" />
           <span className="text-foreground font-medium truncate">{instance.name}</span>
         </div>
@@ -1476,6 +1479,31 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
               )}
             </div>
           )}
+
+          {/* Clone + Publish — only for managed skills with an image */}
+          {isManaged && !isBuiltIn && instance.imageUrl && (
+            <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-border">
+              <HeaderAction
+                label="Publish"
+                icon={<UploadIcon className="size-3.5" />}
+                onClick={async () => {
+                  setPublishing(true);
+                  try {
+                    const res = await scopesApi.publishInstance(instance.id);
+                    setPublishSuccess(res.action === "created" ? "Published to marketplace!" : "Marketplace listing updated!");
+                    setTimeout(() => setPublishSuccess(null), 3000);
+                    load(true);
+                  } catch (err: any) {
+                    console.error("Publish failed:", err);
+                  } finally {
+                    setPublishing(false);
+                  }
+                }}
+                disabled={publishing}
+                loading={publishing}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -1521,10 +1549,10 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
       </div>
 
       {/* Success toast */}
-      {actionSuccess && (
+      {(actionSuccess || publishSuccess) && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg bg-green-600 text-white text-sm font-medium shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200">
           <CheckCircle2Icon className="size-4" />
-          {actionSuccess}
+          {actionSuccess || publishSuccess}
         </div>
       )}
     </div>

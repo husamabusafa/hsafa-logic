@@ -1,6 +1,7 @@
 // =============================================================================
-// hsafa scope — init, create, dev, deploy, register, list, logs,
-//               start/stop/restart, delete, attach, detach, instance
+// hsafa skill — simplified skill management
+//   Commands: init, create, dev, install, publish, register,
+//             list, delete, attach, detach
 // =============================================================================
 
 import { Command } from "commander";
@@ -36,16 +37,14 @@ function makeApi(): ApiClient {
 async function resolveInstance(
   api: ApiClient,
   nameOrScope: string,
-  instanceName?: string,
 ): Promise<ScopeInstance | null> {
   const { instances } = await api.listInstances();
-  const target = instanceName || nameOrScope;
   return (
     instances.find(
       (i) =>
-        i.scopeName === target ||
-        i.name === target ||
-        i.template?.slug === target,
+        i.scopeName === nameOrScope ||
+        i.name === nameOrScope ||
+        i.template?.slug === nameOrScope,
     ) ?? null
   );
 }
@@ -59,7 +58,6 @@ function padRight(str: string, len: number): string {
   return str.length >= len ? str : str + " ".repeat(len - str.length);
 }
 
-/** Read scope name from package.json in a directory */
 function readScopeNameFromDir(dir: string): string | null {
   const pkgPath = path.join(dir, "package.json");
   if (fs.existsSync(pkgPath)) {
@@ -73,7 +71,6 @@ function readScopeNameFromDir(dir: string): string | null {
   return null;
 }
 
-/** Write or update .env file with scope vars */
 function writeEnvFile(dir: string, scopeName: string, scopeKey: string, coreUrl: string): void {
   const envPath = path.join(dir, ".env");
   const vars: Record<string, string> = {
@@ -99,28 +96,25 @@ function writeEnvFile(dir: string, scopeName: string, scopeKey: string, coreUrl:
   }
 }
 
-/** Quick-create scope + write .env + optionally attach to haseef */
 async function quickSetup(
   api: ApiClient,
   scopeName: string,
   dir: string,
   haseefNameOrId?: string,
 ): Promise<{ scopeKey: string; coreUrl: string; instanceId: string } | null> {
-  const spinner = ora("Registering scope...").start();
+  const spinner = ora("Registering skill...").start();
 
   try {
     const result = await api.quickCreateScope({ scopeName });
     spinner.succeed(
       result.alreadyExisted
-        ? chalk.green(`Scope "${scopeName}" already exists — key refreshed`)
-        : chalk.green(`Scope "${scopeName}" registered`),
+        ? chalk.green(`Skill "${scopeName}" already exists — key refreshed`)
+        : chalk.green(`Skill "${scopeName}" registered`),
     );
 
-    // Write .env
     writeEnvFile(dir, scopeName, result.scopeKey, result.coreUrl);
     console.log(chalk.dim(`  .env written (SCOPE_NAME, SCOPE_KEY, CORE_URL)`));
 
-    // Attach to haseef if requested
     if (haseefNameOrId) {
       const attachSpinner = ora(`Attaching to haseef "${haseefNameOrId}"...`).start();
       try {
@@ -134,28 +128,24 @@ async function quickSetup(
       }
     }
 
-    return {
-      scopeKey: result.scopeKey,
-      coreUrl: result.coreUrl,
-      instanceId: result.instance.id,
-    };
+    return { scopeKey: result.scopeKey, coreUrl: result.coreUrl, instanceId: result.instance.id };
   } catch (err) {
-    spinner.fail(chalk.red(err instanceof ApiError ? err.message : "Failed to register scope."));
+    spinner.fail(chalk.red(err instanceof ApiError ? err.message : "Failed to register skill."));
     return null;
   }
 }
 
-// ── Register ────────────────────────────────────────────────────────────────
+// ── Register commands ───────────────────────────────────────────────────────
 
-export function registerScopeCommands(program: Command) {
-  const scope = program.command("scope").description("Manage scopes");
+export function registerSkillCommands(program: Command) {
+  const skill = program.command("skill").alias("scope").description("Manage skills");
 
   // ── init ──────────────────────────────────────────────────────────────────
 
-  scope
+  skill
     .command("init")
-    .description("Scaffold + register + configure a new scope")
-    .argument("<name>", "Scope name")
+    .description("Scaffold a new skill project + register + configure")
+    .argument("<name>", "Skill name")
     .option("--lang <language>", "Language: typescript, javascript, python", "typescript")
     .option("--starter <template>", "Starter: blank, api, database, webhook", "blank")
     .option("--haseef <name>", "Attach to a haseef (by name or ID)")
@@ -166,7 +156,6 @@ export function registerScopeCommands(program: Command) {
         process.exit(1);
       }
 
-      // 1. Scaffold
       const spinner = ora("Scaffolding project...").start();
       try {
         scaffoldScope(dir, name, opts.lang, opts.starter);
@@ -176,39 +165,37 @@ export function registerScopeCommands(program: Command) {
         return;
       }
 
-      // 2. Register + provision key + write .env + attach
       const api = makeApi();
       const setup = await quickSetup(api, name, dir, opts.haseef);
 
-      // 3. Print next steps
       console.log();
       if (setup) {
         console.log(chalk.dim("  Next:"));
         console.log(chalk.dim(`  cd ${name}`));
         console.log(chalk.dim("  npm install"));
-        console.log(chalk.dim("  npm run dev"));
+        console.log(chalk.dim("  hsafa skill dev"));
       } else {
         console.log(chalk.dim("  Next:"));
         console.log(chalk.dim(`  cd ${name}`));
         console.log(chalk.dim("  npm install"));
-        console.log(chalk.dim("  hsafa scope create"));
-        console.log(chalk.dim("  npm run dev"));
+        console.log(chalk.dim("  hsafa skill create"));
+        console.log(chalk.dim("  hsafa skill dev"));
       }
     });
 
   // ── create ────────────────────────────────────────────────────────────────
 
-  scope
+  skill
     .command("create")
-    .description("Register an existing project as a scope")
-    .option("--name <name>", "Scope name (reads from package.json if omitted)")
+    .description("Register an existing project as a skill (get a scope key)")
+    .option("--name <name>", "Skill name (reads from package.json if omitted)")
     .option("--haseef <name>", "Attach to a haseef (by name or ID)")
     .action(async (opts: { name?: string; haseef?: string }) => {
       const cwd = process.cwd();
       const scopeName = opts.name || readScopeNameFromDir(cwd);
 
       if (!scopeName) {
-        console.error(chalk.red("Could not determine scope name."));
+        console.error(chalk.red("Could not determine skill name."));
         console.error(chalk.dim("Run from a project directory with package.json, or use --name."));
         process.exit(1);
       }
@@ -219,18 +206,17 @@ export function registerScopeCommands(program: Command) {
 
   // ── dev ────────────────────────────────────────────────────────────────────
 
-  scope
+  skill
     .command("dev")
-    .description("Auto-create scope if needed + start dev server")
+    .description("Auto-create skill if needed + start local dev server")
     .option("--haseef <name>", "Attach to a haseef (by name or ID)")
-    .option("--port <port>", "Port for webhook scopes")
-    .action(async (opts: { haseef?: string; port?: string }) => {
+    .action(async (opts: { haseef?: string }) => {
       const cwd = process.cwd();
       const scopeName = readScopeNameFromDir(cwd);
 
       if (!scopeName) {
-        console.error(chalk.red("Could not determine scope name."));
-        console.error(chalk.dim("Run from a scope project directory."));
+        console.error(chalk.red("Could not determine skill name."));
+        console.error(chalk.dim("Run from a skill project directory."));
         process.exit(1);
       }
 
@@ -252,7 +238,6 @@ export function registerScopeCommands(program: Command) {
           process.exit(1);
         }
       } else if (opts.haseef) {
-        // Already set up, but user wants to attach
         const api = makeApi();
         const inst = await resolveInstance(api, scopeName);
         if (inst) {
@@ -278,43 +263,148 @@ export function registerScopeCommands(program: Command) {
       let args: string[];
 
       if (fs.existsSync(pkgPath)) {
-        cmd = "npx";
-        args = ["tsx", "watch", "src/index.ts"];
+        cmd = "npm";
+        args = ["run", "dev"];
       } else if (fs.existsSync(reqPath)) {
-        cmd = "python3";
+        cmd = "python";
         args = ["main.py"];
       } else {
-        console.error(chalk.red("Cannot detect project type."));
+        console.error(chalk.red("Could not detect project type."));
         process.exit(1);
       }
 
-      const child = spawn(cmd, args, {
-        cwd,
-        stdio: "inherit",
-        env: { ...process.env, ...(opts.port ? { PORT: opts.port } : {}) },
-      });
-
+      const child = spawn(cmd, args, { cwd, stdio: "inherit", env: { ...process.env } });
       child.on("exit", (code) => process.exit(code ?? 0));
       process.on("SIGINT", () => child.kill("SIGINT"));
       process.on("SIGTERM", () => child.kill("SIGTERM"));
     });
 
-  // ── register (external scope with existing key) ────────────────────────────
+  // ── install (marketplace) ─────────────────────────────────────────────────
 
-  scope
-    .command("register")
-    .description("Register a self-hosted scope that already has a key")
-    .requiredOption("--key <scopeKey>", "Scope key (hsk_scope_...)")
-    .requiredOption("--name <name>", "Scope name")
-    .option("--description <desc>", "Description")
-    .action(async (opts: { key: string; name: string; description?: string }) => {
-      if (!opts.key.startsWith("hsk_scope_")) {
-        console.error(chalk.red("Scope key must start with hsk_scope_"));
+  skill
+    .command("install")
+    .description("Install a skill from the marketplace as a local project")
+    .argument("<slug>", "Marketplace skill slug")
+    .option("--dir <path>", "Directory name (defaults to slug)")
+    .option("--haseef <name>", "Attach to a haseef after install")
+    .action(async (slug: string, opts: { dir?: string; haseef?: string }) => {
+      const api = makeApi();
+      const spinner = ora(`Fetching marketplace skill "${slug}"...`).start();
+
+      try {
+        const { templates } = await api.listTemplates();
+        const template = templates.find((t) => t.slug === slug);
+
+        if (!template) {
+          spinner.fail(chalk.red(`Skill "${slug}" not found in marketplace.`));
+          console.log(chalk.dim("  Use `hsafa skill list --marketplace` to browse available skills."));
+          return;
+        }
+
+        // Scaffold a local project from this template
+        const dirName = opts.dir || slug;
+        const dir = path.resolve(process.cwd(), dirName);
+        if (fs.existsSync(dir)) {
+          spinner.fail(chalk.red(`Directory "${dirName}" already exists.`));
+          return;
+        }
+
+        spinner.text = "Scaffolding project...";
+        scaffoldScope(dir, slug, "typescript", "blank");
+        spinner.succeed(chalk.green(`Created ${chalk.bold(dirName)}/ from marketplace template "${template.name}"`));
+
+        // Register + provision key
+        const setup = await quickSetup(api, slug, dir, opts.haseef);
+
+        console.log();
+        if (setup) {
+          console.log(chalk.dim("  Next:"));
+          console.log(chalk.dim(`  cd ${dirName}`));
+          console.log(chalk.dim("  npm install"));
+          console.log(chalk.dim("  hsafa skill dev"));
+        }
+      } catch (err) {
+        if (err instanceof ApiError) {
+          spinner.fail(chalk.red(err.message));
+        } else {
+          spinner.fail(chalk.red("Failed to install skill."));
+        }
+      }
+    });
+
+  // ── publish ───────────────────────────────────────────────────────────────
+
+  skill
+    .command("publish")
+    .description("Publish your skill to the marketplace")
+    .option("--name <name>", "Skill name (reads from project if omitted)")
+    .option("--slug <slug>", "Marketplace slug")
+    .option("--description <text>", "Description")
+    .option("--icon <icon>", "Icon name (e.g. Database, Plug)")
+    .option("--private", "Only visible to you")
+    .action(async (opts: { name?: string; slug?: string; description?: string; icon?: string; private?: boolean }) => {
+      const cwd = process.cwd();
+      const scopeName = opts.name || readScopeNameFromDir(cwd);
+
+      if (!scopeName) {
+        console.error(chalk.red("Could not determine skill name."));
+        console.error(chalk.dim("Run from a skill project directory, or use --name."));
         process.exit(1);
       }
 
       const api = makeApi();
-      const spinner = ora("Registering external scope...").start();
+      const spinner = ora(`Publishing "${scopeName}" to marketplace...`).start();
+
+      try {
+        const inst = await resolveInstance(api, scopeName);
+        if (!inst) {
+          spinner.fail(chalk.red(`Skill "${scopeName}" not found. Create it first with \`hsafa skill create\`.`));
+          return;
+        }
+
+        const result = await api.publishInstance(inst.id, {
+          name: opts.name,
+          slug: opts.slug,
+          description: opts.description,
+          icon: opts.icon,
+          isPublic: opts.private ? false : true,
+        });
+
+        spinner.succeed(chalk.green(`Published "${scopeName}" to marketplace!`));
+        console.log();
+        console.log(`  ${chalk.bold("Template:")}  ${result.template.name}`);
+        console.log(`  ${chalk.bold("Slug:")}      ${result.template.slug}`);
+        console.log(`  ${chalk.bold("Action:")}    ${result.action}`);
+        if (opts.private) {
+          console.log(`  ${chalk.bold("Visibility:")} ${chalk.yellow("Private (only you)")}`);
+        } else {
+          console.log(`  ${chalk.bold("Visibility:")} ${chalk.green("Public")}`);
+        }
+      } catch (err) {
+        if (err instanceof ApiError) {
+          spinner.fail(chalk.red(err.message));
+        } else {
+          spinner.fail(chalk.red("Failed to publish skill."));
+        }
+      }
+    });
+
+  // ── register (external skill with existing key) ───────────────────────────
+
+  skill
+    .command("register")
+    .description("Register a self-hosted skill that already has a key")
+    .requiredOption("--key <scopeKey>", "Skill key (hsk_scope_...)")
+    .requiredOption("--name <name>", "Skill name")
+    .option("--description <desc>", "Description")
+    .action(async (opts: { key: string; name: string; description?: string }) => {
+      if (!opts.key.startsWith("hsk_scope_")) {
+        console.error(chalk.red("Skill key must start with hsk_scope_"));
+        process.exit(1);
+      }
+
+      const api = makeApi();
+      const spinner = ora("Registering external skill...").start();
 
       try {
         const result = await api.registerExternalScope({
@@ -324,240 +414,69 @@ export function registerScopeCommands(program: Command) {
           description: opts.description,
         });
 
-        spinner.succeed(chalk.green("Scope registered!"));
+        spinner.succeed(chalk.green("Skill registered!"));
         console.log();
-        console.log(`  ${chalk.bold("Scope:")}     ${result.instance.scopeName}`);
-        console.log(`  ${chalk.bold("Instance:")}  ${result.instance.name}`);
-        console.log(`  ${chalk.bold("Type:")}      external`);
-      } catch (err) {
-        spinner.fail(chalk.red(err instanceof ApiError ? err.message : "Failed to register scope."));
-      }
-    });
-
-  // ── deploy ────────────────────────────────────────────────────────────────
-
-  scope
-    .command("deploy")
-    .description("Build + deploy scope to the platform")
-    .option("--image <url>", "Use existing Docker image (skip build)")
-    .action(async (opts: { image?: string }) => {
-      const api = makeApi();
-
-      // Read scope metadata from current directory
-      const cwd = process.cwd();
-      const pkgPath = path.join(cwd, "package.json");
-      const reqPath = path.join(cwd, "requirements.txt");
-      const goModPath = path.join(cwd, "go.mod");
-
-      let scopeName: string | undefined;
-      let imageUrl = opts.image;
-
-      // Detect language and read name
-      if (fs.existsSync(pkgPath)) {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-        scopeName = pkg.hsafa?.scope || pkg.name?.replace(/^@.*\//, "");
-      } else if (fs.existsSync(reqPath)) {
-        scopeName = path.basename(cwd);
-      } else if (fs.existsSync(goModPath)) {
-        scopeName = path.basename(cwd);
-      } else {
-        console.error(chalk.red("No package.json, requirements.txt, or go.mod found."));
-        console.error(chalk.dim("Run this command from your scope project directory."));
-        process.exit(1);
-      }
-
-      if (!scopeName) {
-        console.error(chalk.red("Could not determine scope name from project."));
-        process.exit(1);
-      }
-
-      console.log(chalk.bold(`\nDeploying scope: ${scopeName}\n`));
-
-      const spinner = ora("Looking for existing instance...").start();
-
-      try {
-        const { instances } = await api.listInstances();
-        let instance = instances.find(
-          (i) => i.scopeName === scopeName && !i.builtIn,
-        );
-
-        if (!instance) {
-          // Find or prompt for template
-          spinner.text = "Creating template + instance...";
-          const { templates } = await api.listTemplates();
-          const template = templates.find((t) => t.slug === scopeName);
-
-          if (!template) {
-            spinner.fail(
-              chalk.red(
-                `No template "${scopeName}" found. Create one first via the Spaces UI, or use --image with a prebuilt template.`,
-              ),
-            );
-            return;
-          }
-
-          const created = await api.createInstance({
-            templateId: template.id,
-            name: scopeName!,
-            scopeName: scopeName!,
-            deploymentType: imageUrl ? "custom" : "platform",
-            imageUrl: imageUrl || undefined,
-            autoDeploy: true,
-          });
-          instance = created.instance;
-        }
-
-        if (imageUrl) {
-          spinner.text = "Deploying with provided image...";
-        } else {
-          spinner.text = "Deploying container...";
-        }
-
-        await api.deployInstance(instance.id);
-
-        spinner.succeed(chalk.green(`Deployed "${scopeName}"`));
-        console.log();
-        console.log(`  ${chalk.bold("Scope:")}       ${instance.scopeName}`);
-        console.log(`  ${chalk.bold("Instance:")}    ${instance.name}`);
-        if (instance.coreScopeKey) {
-          console.log(`  ${chalk.bold("Scope Key:")}  ${instance.coreScopeKey}`);
-        }
-        if (instance.imageUrl) {
-          console.log(`  ${chalk.bold("Image:")}      ${instance.imageUrl}`);
-        }
-        console.log(`  ${chalk.bold("Status:")}     ${chalk.green("deploying")}`);
+        console.log(`  ${chalk.bold("Name:")}       ${result.instance.name}`);
+        console.log(`  ${chalk.bold("Scope:")}      ${result.instance.scopeName}`);
+        console.log(chalk.dim("\n  Attach to a haseef: hsafa skill attach " + opts.name + " --haseef <name>"));
       } catch (err) {
         if (err instanceof ApiError) {
           spinner.fail(chalk.red(err.message));
         } else {
-          spinner.fail(chalk.red("Deploy failed."));
+          spinner.fail(chalk.red("Failed to register skill."));
         }
       }
     });
 
   // ── list ──────────────────────────────────────────────────────────────────
 
-  scope
+  skill
     .command("list")
     .alias("ls")
-    .description("List all scope instances")
+    .description("List all skills")
     .action(async () => {
       const api = makeApi();
-      const spinner = ora("Fetching scopes...").start();
+      const spinner = ora("Fetching skills...").start();
 
       try {
         const { instances } = await api.listInstances();
         spinner.stop();
 
         if (instances.length === 0) {
-          console.log(chalk.dim("No scopes found."));
+          console.log(chalk.dim("No skills found."));
           return;
         }
 
-        // Table header
         console.log(
           chalk.bold(
-            `${padRight("SCOPE", 16)} ${padRight("NAME", 16)} ${padRight("STATUS", 12)} ${padRight("TYPE", 10)} ${padRight("CREATED", 10)}`,
+            `${padRight("SKILL", 20)} ${padRight("STATUS", 14)} ${padRight("CREATED", 10)}`,
           ),
         );
-        console.log(chalk.dim("-".repeat(70)));
+        console.log(chalk.dim("-".repeat(50)));
 
         for (const inst of instances) {
-          const tpl = inst.scopeName;
-          const status = inst.containerStatus || (inst.connected ? "connected" : "unknown");
-          const statusColor =
-            status === "running" || inst.connected
-              ? chalk.green
-              : status === "stopped"
-                ? chalk.yellow
-                : chalk.dim;
-          const type = inst.builtIn ? "built-in" : inst.deploymentType;
-          const created = inst.createdAt ? formatTime(inst.createdAt) : "-";
+          const status = inst.connected ? "connected" : "disconnected";
+          const statusColor = inst.connected ? chalk.green : chalk.dim;
 
           console.log(
-            `${padRight(tpl, 16)} ${padRight(inst.name, 16)} ${statusColor(padRight(status, 12))} ${padRight(type, 10)} ${chalk.dim(padRight(created, 10))}`,
+            `${padRight(inst.scopeName || inst.name, 20)} ${statusColor(padRight(status, 14))} ${chalk.dim(padRight(formatTime(inst.createdAt), 10))}`,
           );
         }
       } catch (err) {
         if (err instanceof ApiError) {
           spinner.fail(chalk.red(err.message));
         } else {
-          spinner.fail(chalk.red("Failed to list scopes."));
+          spinner.fail(chalk.red("Failed to list skills."));
         }
       }
     });
-
-  // ── logs ──────────────────────────────────────────────────────────────────
-
-  scope
-    .command("logs")
-    .description("View container logs for a scope")
-    .argument("<name>", "Scope or instance name")
-    .option("--instance <name>", "Target a specific instance")
-    .option("--tail <n>", "Number of lines", "200")
-    .action(async (name: string, opts: { instance?: string; tail: string }) => {
-      const api = makeApi();
-      const spinner = ora("Fetching logs...").start();
-
-      try {
-        const inst = await resolveInstance(api, name, opts.instance);
-        if (!inst) {
-          spinner.fail(chalk.red(`Scope "${name}" not found.`));
-          return;
-        }
-
-        const { logs } = await api.getLogs(inst.id, parseInt(opts.tail));
-        spinner.stop();
-        console.log(logs || chalk.dim("(no logs)"));
-      } catch (err) {
-        if (err instanceof ApiError) {
-          spinner.fail(chalk.red(err.message));
-        } else {
-          spinner.fail(chalk.red("Failed to get logs."));
-        }
-      }
-    });
-
-  // ── start / stop / restart ────────────────────────────────────────────────
-
-  for (const action of ["start", "stop", "restart"] as const) {
-    scope
-      .command(action)
-      .description(`${action.charAt(0).toUpperCase() + action.slice(1)} a scope container`)
-      .argument("<name>", "Scope or instance name")
-      .option("--instance <name>", "Target a specific instance")
-      .action(async (name: string, opts: { instance?: string }) => {
-        const api = makeApi();
-        const spinner = ora(`${action}ing...`).start();
-
-        try {
-          const inst = await resolveInstance(api, name, opts.instance);
-          if (!inst) {
-            spinner.fail(chalk.red(`Scope "${name}" not found.`));
-            return;
-          }
-
-          if (action === "start") await api.startInstance(inst.id);
-          else if (action === "stop") await api.stopInstance(inst.id);
-          else await api.restartInstance(inst.id);
-
-          spinner.succeed(chalk.green(`${action}ed "${inst.scopeName}"`));
-        } catch (err) {
-          if (err instanceof ApiError) {
-            spinner.fail(chalk.red(err.message));
-          } else {
-            spinner.fail(chalk.red(`Failed to ${action}.`));
-          }
-        }
-      });
-  }
 
   // ── delete ────────────────────────────────────────────────────────────────
 
-  scope
+  skill
     .command("delete")
-    .description("Delete a scope instance")
-    .argument("<name>", "Scope or instance name")
+    .description("Delete a skill")
+    .argument("<name>", "Skill name")
     .option("-y, --yes", "Skip confirmation")
     .action(async (name: string, opts: { yes?: boolean }) => {
       const api = makeApi();
@@ -566,7 +485,7 @@ export function registerScopeCommands(program: Command) {
         const confirm = await prompts({
           type: "confirm",
           name: "value",
-          message: `Delete scope "${name}"?`,
+          message: `Delete skill "${name}"?`,
           initial: false,
         });
         if (!confirm.value) {
@@ -575,12 +494,12 @@ export function registerScopeCommands(program: Command) {
         }
       }
 
-      const spinner = ora("Deleting scope...").start();
+      const spinner = ora("Deleting skill...").start();
 
       try {
         const inst = await resolveInstance(api, name);
         if (!inst) {
-          spinner.fail(chalk.red(`Scope "${name}" not found.`));
+          spinner.fail(chalk.red(`Skill "${name}" not found.`));
           return;
         }
 
@@ -590,52 +509,51 @@ export function registerScopeCommands(program: Command) {
         if (err instanceof ApiError) {
           spinner.fail(chalk.red(err.message));
         } else {
-          spinner.fail(chalk.red("Failed to delete scope."));
+          spinner.fail(chalk.red("Failed to delete skill."));
         }
       }
     });
 
   // ── attach ────────────────────────────────────────────────────────────────
 
-  scope
+  skill
     .command("attach")
-    .description("Attach a scope to a haseef")
-    .argument("<name>", "Scope or instance name")
-    .requiredOption("--haseef <nameOrId>", "Haseef name or ID")
-    .option("--instance <name>", "Target a specific instance")
-    .action(async (name: string, opts: { haseef: string; instance?: string }) => {
+    .description("Attach a skill to a haseef")
+    .argument("<name>", "Skill name")
+    .requiredOption("--haseef <name>", "Haseef name or ID")
+    .action(async (name: string, opts: { haseef: string }) => {
       const api = makeApi();
-      const spinner = ora("Attaching scope...").start();
+      const spinner = ora("Attaching skill...").start();
 
       try {
-        const inst = await resolveInstance(api, name, opts.instance);
+        const inst = await resolveInstance(api, name);
         if (!inst) {
-          spinner.fail(chalk.red(`Scope "${name}" not found.`));
+          spinner.fail(chalk.red(`Skill "${name}" not found.`));
           return;
         }
 
         const haseef = await resolveHaseefId(api, opts.haseef);
         await api.attachScope(haseef.id, inst.id);
-        spinner.succeed(chalk.green(`Attached "${inst.scopeName}" to ${haseef.name}`));
+        spinner.succeed(chalk.green(`Attached "${name}" to ${haseef.name}`));
       } catch (err) {
         if (err instanceof ApiError) {
           spinner.fail(chalk.red(err.message));
         } else {
-          spinner.fail(chalk.red("Failed to attach scope."));
+          spinner.fail(chalk.red("Failed to attach skill."));
         }
       }
     });
 
   // ── detach ────────────────────────────────────────────────────────────────
 
-  scope
+  skill
     .command("detach")
-    .description("Detach a scope from a haseef")
-    .argument("<name>", "Scope name")
-    .requiredOption("--haseef <nameOrId>", "Haseef name or ID")
+    .description("Detach a skill from a haseef")
+    .argument("<name>", "Skill name")
+    .requiredOption("--haseef <name>", "Haseef name or ID")
     .action(async (name: string, opts: { haseef: string }) => {
       const api = makeApi();
-      const spinner = ora("Detaching scope...").start();
+      const spinner = ora("Detaching skill...").start();
 
       try {
         const haseef = await resolveHaseefId(api, opts.haseef);
@@ -645,111 +563,7 @@ export function registerScopeCommands(program: Command) {
         if (err instanceof ApiError) {
           spinner.fail(chalk.red(err.message));
         } else {
-          spinner.fail(chalk.red("Failed to detach scope."));
-        }
-      }
-    });
-
-  // ── instance create ───────────────────────────────────────────────────────
-
-  const instance = scope
-    .command("instance")
-    .description("Manage scope instances");
-
-  instance
-    .command("create")
-    .description("Create a new instance of an existing template")
-    .argument("<template>", "Template slug")
-    .requiredOption("--name <name>", "Instance name")
-    .option("--config <pairs...>", "Config key=value pairs")
-    .action(
-      async (
-        templateSlug: string,
-        opts: { name: string; config?: string[] },
-      ) => {
-        const api = makeApi();
-        const spinner = ora("Creating instance...").start();
-
-        try {
-          const { templates } = await api.listTemplates();
-          const template = templates.find((t) => t.slug === templateSlug);
-
-          if (!template) {
-            spinner.fail(chalk.red(`Template "${templateSlug}" not found.`));
-            return;
-          }
-
-          const configs = (opts.config || []).map((pair) => {
-            const eq = pair.indexOf("=");
-            return {
-              key: eq > 0 ? pair.slice(0, eq) : pair,
-              value: eq > 0 ? pair.slice(eq + 1) : "",
-              isSecret: false,
-            };
-          });
-
-          const { instance: inst } = await api.createInstance({
-            templateId: template.id,
-            name: opts.name,
-            configs: configs.length > 0 ? configs : undefined,
-          });
-
-          spinner.succeed(chalk.green(`Instance created!`));
-          console.log();
-          console.log(
-            `  ${chalk.bold("Instance:")} ${inst.name} (from template: ${templateSlug})`,
-          );
-          console.log(`  ${chalk.bold("Scope:")}    ${inst.scopeName}`);
-          if (inst.coreScopeKey) {
-            console.log(`  ${chalk.bold("Scope Key:")} ${inst.coreScopeKey}`);
-          }
-        } catch (err) {
-          if (err instanceof ApiError) {
-            spinner.fail(chalk.red(err.message));
-          } else {
-            spinner.fail(chalk.red("Failed to create instance."));
-          }
-        }
-      },
-    );
-
-  instance
-    .command("delete")
-    .description("Delete a specific scope instance")
-    .argument("<name>", "Instance name")
-    .option("-y, --yes", "Skip confirmation")
-    .action(async (name: string, opts: { yes?: boolean }) => {
-      const api = makeApi();
-
-      if (!opts.yes) {
-        const confirm = await prompts({
-          type: "confirm",
-          name: "value",
-          message: `Delete instance "${name}"?`,
-          initial: false,
-        });
-        if (!confirm.value) {
-          console.log(chalk.dim("Cancelled."));
-          return;
-        }
-      }
-
-      const spinner = ora("Deleting instance...").start();
-
-      try {
-        const inst = await resolveInstance(api, name);
-        if (!inst) {
-          spinner.fail(chalk.red(`Instance "${name}" not found.`));
-          return;
-        }
-
-        await api.deleteInstance(inst.id);
-        spinner.succeed(chalk.green(`Deleted instance "${name}"`));
-      } catch (err) {
-        if (err instanceof ApiError) {
-          spinner.fail(chalk.red(err.message));
-        } else {
-          spinner.fail(chalk.red("Failed to delete instance."));
+          spinner.fail(chalk.red("Failed to detach skill."));
         }
       }
     });

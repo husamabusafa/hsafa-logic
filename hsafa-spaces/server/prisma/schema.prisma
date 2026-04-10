@@ -345,6 +345,7 @@ model ScopeTemplate {
   imageUrl              String?  @map("image_url")                // Default Docker image (e.g. "hsafa/scope-postgres:latest")
   authorId              String?  @map("author_id")                // userId of developer (null for prebuilt)
   published             Boolean  @default(false)
+  isPublic              Boolean  @default(true) @map("is_public") // false = private template (only owner can see/install)
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -360,6 +361,7 @@ model ScopeTemplate {
 model ScopeInstance {
   id          String   @id @default(uuid()) @db.Uuid
   templateId  String?  @map("template_id") @db.Uuid
+  clonedFromId String? @map("cloned_from_id") @db.Uuid  // ID of the instance this was cloned from (null = original)
   name        String                                    // User-chosen name ("personal-whatsapp")
   scopeName   String   @unique @map("scope_name")       // Scope name registered in Core (same as name by default)
   description String?
@@ -381,13 +383,16 @@ model ScopeInstance {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  template ScopeTemplate?      @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  base     Base?               @relation(fields: [baseId], references: [id], onDelete: SetNull)
-  configs      ScopeInstanceConfig[]
-  deployments  ScopeDeployment[]
+  template    ScopeTemplate?      @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  clonedFrom  ScopeInstance?      @relation("SkillClone", fields: [clonedFromId], references: [id], onDelete: SetNull)
+  clones      ScopeInstance[]     @relation("SkillClone")
+  base        Base?               @relation(fields: [baseId], references: [id], onDelete: SetNull)
+  configs     ScopeInstanceConfig[]
+  deployments ScopeDeployment[]
 
   @@index([templateId])
   @@index([ownerId])
+  @@index([clonedFromId])
   @@map("scope_instances")
 }
 

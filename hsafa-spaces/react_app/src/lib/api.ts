@@ -679,6 +679,7 @@ export type ContainerStatus = "stopped" | "starting" | "running" | "error" | "bu
 export interface ScopeInstance {
   id: string;
   templateId: string | null;
+  clonedFromId: string | null;
   name: string;
   scopeName: string;
   description: string | null;
@@ -895,6 +896,33 @@ export const scopesApi = {
     const base = API_BASE;
     const url = `${base}/scopes/instances/${instanceId}/deployments/${deploymentId}/stream?token=${encodeURIComponent(token || "")}`;
     return new EventSource(url);
+  },
+
+  // Clone — create new instance from an existing deployed skill
+  cloneInstance(id: string, data: {
+    name: string;
+    scopeName?: string;
+    description?: string;
+    configs?: Array<{ key: string; value: string; isSecret?: boolean }>;
+  }) {
+    return request<{ instance: ScopeInstance }>(`/scopes/instances/${id}/clone`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Publish — create a marketplace template from a deployed skill
+  publishInstance(id: string, data?: {
+    name?: string;
+    slug?: string;
+    description?: string;
+    icon?: string;
+    isPublic?: boolean;
+  }) {
+    return request<{ template: ScopeTemplate; action: "created" | "updated" }>(`/scopes/instances/${id}/publish`, {
+      method: "POST",
+      body: JSON.stringify(data ?? {}),
+    });
   },
 
   // Connection status

@@ -1,5 +1,5 @@
 // =============================================================================
-// Scaffold — generates starter scope projects
+// Scaffold — generates starter skill projects
 // =============================================================================
 
 import fs from "node:fs";
@@ -102,7 +102,7 @@ function scaffoldNode(dir: string, name: string, lang: string, starter: string) 
   writeFile(
     dir,
     "README.md",
-    `# ${name}\n\nHsafa scope — built with @hsafa/sdk.\n\n## Setup\n\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n\nEnvironment variables (\`.env\`) are auto-configured by \`hsafa scope init\`.\n`,
+    `# ${name}\n\nHsafa skill — built with @hsafa/sdk.\n\n## Setup\n\n\`\`\`bash\nnpm install\nhsafa skill dev\n\`\`\`\n\nEnvironment variables (\`.env\`) are auto-configured by \`hsafa skill init\`.\n`,
   );
 
   // .hsafa/ AI context folder
@@ -135,7 +135,7 @@ function scaffoldPython(dir: string, name: string, _starter: string) {
   writeFile(
     dir,
     "README.md",
-    `# ${name}\n\nHsafa scope (Python).\n\n## Setup\n\n\`\`\`bash\npip install -r requirements.txt\nhsafa scope create ${name}\n# Copy the scope key to .env\npython main.py\nhsafa scope attach ${name} --haseef <haseef-id>\n\`\`\`\n`,
+    `# ${name}\n\nHsafa skill (Python).\n\n## Setup\n\n\`\`\`bash\npip install -r requirements.txt\nhsafa skill dev\n# Or manually:\nhsafa skill create --name ${name}\npython main.py\nhsafa skill attach ${name} --haseef <haseef-name>\n\`\`\`\n`,
   );
 
   // .hsafa/ AI context folder

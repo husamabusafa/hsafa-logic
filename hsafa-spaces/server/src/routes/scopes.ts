@@ -855,6 +855,231 @@ router.delete("/instances/:id", async (req: Request, res: Response) => {
 });
 
 // =============================================================================
+// CLONE — Create a new instance from an existing deployed skill (same image, new env)
+// =============================================================================
+
+// POST /api/scopes/instances/:id/clone — Clone a deployed skill
+router.post("/instances/:id/clone", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const sourceId = req.params.id as string;
+    const source = await prisma.scopeInstance.findUnique({
+      where: { id: sourceId },
+      include: { configs: true },
+    });
+    if (!source) { res.status(404).json({ error: "Instance not found" }); return; }
+    if (source.ownerId !== auth.userId) { res.status(403).json({ error: "Not authorized to clone this skill" }); return; }
+
+    // Only custom (user-deployed) skills can be cloned — marketplace skills should just be reinstalled
+    if (source.deploymentType !== "custom") {
+      res.status(400).json({ error: `Cannot clone ${source.deploymentType} skills. Only custom deployed skills can be cloned. For marketplace skills, install another instance from the marketplace.` });
+      return;
+    }
+    if (!source.imageUrl) {
+      res.status(400).json({ error: "Cannot clone a skill without a Docker image" });
+      return;
+    }
+
+    const { name, scopeName, description, configs: overrideConfigs } = req.body;
+    if (!name) { res.status(400).json({ error: "name is required" }); return; }
+
+    const finalScopeName = scopeName || name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+    // Check uniqueness
+    const existing = await prisma.scopeInstance.findUnique({ where: { scopeName: finalScopeName } });
+    if (existing) { res.status(409).json({ error: `Scope name "${finalScopeName}" is already taken` }); return; }
+
+    // Clone in a transaction
+    const instance = await prisma.$transaction(async (tx) => {
+      const inst = await tx.scopeInstance.create({
+        data: {
+          templateId: source.templateId,
+          clonedFromId: sourceId,
+          name,
+          scopeName: finalScopeName,
+          description: description ?? source.description,
+          ownerId: auth.userId,
+          active: true,
+          deploymentType: source.deploymentType,
+          imageUrl: source.imageUrl,
+          containerStatus: "stopped",
+        },
+        include: {
+          template: {
+            select: { id: true, slug: true, name: true, icon: true, category: true },
+          },
+        },
+      });
+
+      // Copy configs from source, with optional overrides
+      type CfgOverride = { key: string; value: string; isSecret?: boolean };
+      const overrideMap = new Map<string, CfgOverride>((overrideConfigs ?? []).map((c: CfgOverride) => [c.key, c] as [string, CfgOverride]));
+      for (const cfg of source.configs) {
+        const override = overrideMap.get(cfg.key);
+        await tx.scopeInstanceConfig.create({
+          data: {
+            instanceId: inst.id,
+            key: cfg.key,
+            value: override ? (override.isSecret ? encrypt(override.value) : override.value) : cfg.value,
+            isSecret: override ? !!override.isSecret : cfg.isSecret,
+          },
+        });
+      }
+      // Add any new configs from overrides that weren't in source
+      for (const [key, override] of overrideMap.entries()) {
+        if (!source.configs.some((c) => c.key === key)) {
+          await tx.scopeInstanceConfig.create({
+            data: {
+              instanceId: inst.id,
+              key,
+              value: override.isSecret ? encrypt(override.value) : override.value,
+              isSecret: !!override.isSecret,
+            },
+          });
+        }
+      }
+
+      return inst;
+    });
+
+    // Provision a Core scope key for the clone
+    provisionAndStoreScopeKey(instance.id, instance.scopeName).catch((err) => {
+      console.error(`[scopes] Scope key provisioning failed for clone ${instance.scopeName}:`, err);
+    });
+
+    res.status(201).json({
+      instance: {
+        ...instance,
+        template: instance.template ?? {
+          id: null,
+          slug: instance.scopeName,
+          name: instance.name,
+          icon: "Plug",
+          category: "custom",
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Clone instance error:", error);
+    res.status(500).json({ error: "Failed to clone skill" });
+  }
+});
+
+// =============================================================================
+// PUBLISH — Create a marketplace template from a deployed skill
+// =============================================================================
+
+// POST /api/scopes/instances/:id/publish — Publish a skill to the marketplace
+router.post("/instances/:id/publish", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) { res.status(auth.status).json({ error: auth.error }); return; }
+
+  try {
+    const instanceId = req.params.id as string;
+    const instance = await prisma.scopeInstance.findUnique({
+      where: { id: instanceId },
+      include: { configs: true },
+    });
+    if (!instance) { res.status(404).json({ error: "Instance not found" }); return; }
+    if (instance.ownerId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
+
+    // Only deployed skills with an image can be published
+    if (instance.deploymentType === "built-in" || instance.deploymentType === "external") {
+      res.status(400).json({ error: `Cannot publish ${instance.deploymentType} skills` });
+      return;
+    }
+    if (!instance.imageUrl) {
+      res.status(400).json({ error: "Cannot publish a skill without a Docker image" });
+      return;
+    }
+
+    // If already linked to a template, update it
+    if (instance.templateId) {
+      const existingTemplate = await prisma.scopeTemplate.findUnique({ where: { id: instance.templateId } });
+      if (existingTemplate && existingTemplate.authorId === auth.userId) {
+        const updated = await prisma.scopeTemplate.update({
+          where: { id: instance.templateId },
+          data: {
+            name: req.body.name || instance.name,
+            description: req.body.description || instance.description || "",
+            icon: req.body.icon || existingTemplate.icon,
+            imageUrl: instance.imageUrl,
+            isPublic: req.body.isPublic !== false, // default true
+            published: true,
+          },
+        });
+        res.json({ template: updated, action: "updated" });
+        return;
+      }
+    }
+
+    // Create a new template from this instance
+    const slug = req.body.slug || instance.scopeName;
+
+    // Check slug uniqueness
+    const existingSlug = await prisma.scopeTemplate.findUnique({ where: { slug } });
+    if (existingSlug) {
+      res.status(409).json({ error: `Template slug "${slug}" is already taken` });
+      return;
+    }
+
+    // Fetch tools from Core to include in template
+    let tools: unknown[] = [];
+    try {
+      const { coreUrl, serviceKey } = getCoreConfig();
+      const scopeKey = instance.coreScopeKey ? decrypt(instance.coreScopeKey) : null;
+      if (scopeKey) {
+        const toolsRes = await fetch(`${coreUrl}/api/scopes/${instance.scopeName}/tools`, {
+          headers: { Authorization: `Bearer ${serviceKey}` },
+        });
+        if (toolsRes.ok) {
+          const data = await toolsRes.json();
+          tools = data.tools || [];
+        }
+      }
+    } catch { /* best-effort tool fetch */ }
+
+    // Build default env from non-secret configs
+    const defaultEnv = instance.configs
+      .filter((c) => !c.isSecret)
+      .map((c) => ({ key: c.key, value: "", isSecret: false }));
+    // Add secret keys as empty placeholders
+    instance.configs
+      .filter((c) => c.isSecret)
+      .forEach((c) => defaultEnv.push({ key: c.key, value: "", isSecret: true }));
+
+    const template = await prisma.scopeTemplate.create({
+      data: {
+        slug,
+        name: req.body.name || instance.name,
+        description: req.body.description || instance.description || "",
+        icon: req.body.icon || "Plug",
+        category: "custom",
+        imageUrl: instance.imageUrl,
+        authorId: auth.userId,
+        published: true,
+        isPublic: req.body.isPublic !== false,
+        tools: tools as any,
+        configSchema: JSON.stringify(defaultEnv),
+      },
+    });
+
+    // Link the instance to the new template
+    await prisma.scopeInstance.update({
+      where: { id: instanceId },
+      data: { templateId: template.id },
+    });
+
+    res.status(201).json({ template, action: "created" });
+  } catch (error) {
+    console.error("Publish instance error:", error);
+    res.status(500).json({ error: "Failed to publish skill" });
+  }
+});
+
+// =============================================================================
 // INSTANCE LIFECYCLE — deploy, start, stop, restart, logs
 // =============================================================================
 
@@ -867,9 +1092,28 @@ router.post("/instances/:id/deploy", async (req: Request, res: Response) => {
     const instance = await prisma.scopeInstance.findUnique({ where: { id: req.params.id as string } });
     if (!instance) { res.status(404).json({ error: "Instance not found" }); return; }
     if (instance.ownerId !== auth.userId) { res.status(403).json({ error: "Not authorized" }); return; }
-    if (instance.deploymentType === "built-in" || instance.deploymentType === "external") {
-      res.status(400).json({ error: `Cannot deploy ${instance.deploymentType} instances` });
+    if (instance.deploymentType === "built-in") {
+      res.status(400).json({ error: "Cannot deploy built-in instances" });
       return;
+    }
+
+    // Allow upgrading external → custom when an image is provided
+    if (instance.deploymentType === "external") {
+      const imageUrl = req.body.imageUrl;
+      if (!imageUrl) {
+        res.status(400).json({ error: "Cannot deploy external instances. Provide an imageUrl to upgrade to a managed deployment." });
+        return;
+      }
+      await prisma.scopeInstance.update({
+        where: { id: instance.id },
+        data: { deploymentType: "custom", imageUrl },
+      });
+    } else if (req.body.imageUrl) {
+      // Update image for existing custom/platform instances
+      await prisma.scopeInstance.update({
+        where: { id: instance.id },
+        data: { imageUrl: req.body.imageUrl },
+      });
     }
 
     const dockerOk = await isDockerAvailable();

@@ -93,34 +93,6 @@ export class ApiClient {
     return this.request("DELETE", `/api/scopes/instances/${id}`);
   }
 
-  // ── Lifecycle ───────────────────────────────────────────────────────────────
-
-  async deployInstance(id: string) {
-    return this.request("POST", `/api/scopes/instances/${id}/deploy`);
-  }
-
-  async startInstance(id: string) {
-    return this.request("POST", `/api/scopes/instances/${id}/start`);
-  }
-
-  async stopInstance(id: string) {
-    return this.request("POST", `/api/scopes/instances/${id}/stop`);
-  }
-
-  async restartInstance(id: string) {
-    return this.request("POST", `/api/scopes/instances/${id}/restart`);
-  }
-
-  async getLogs(id: string, tail = 200) {
-    return this.request<{ logs: string }>(
-      "GET",
-      `/api/scopes/instances/${id}/logs?tail=${tail}`,
-    );
-  }
-
-  async getContainerStatus(id: string) {
-    return this.request("GET", `/api/scopes/instances/${id}/container-status`);
-  }
 
   // ── Haseef Attachment ───────────────────────────────────────────────────────
 
@@ -165,6 +137,20 @@ export class ApiClient {
     }>("POST", "/api/scopes/external", data);
   }
 
+  // ── Publish ────────────────────────────────────────────────────────────────
+
+  async publishInstance(id: string, data?: {
+    name?: string;
+    slug?: string;
+    description?: string;
+    icon?: string;
+    isPublic?: boolean;
+  }) {
+    return this.request<{ template: ScopeTemplate; action: "created" | "updated" }>(
+      "POST", `/api/scopes/instances/${id}/publish`, data ?? {},
+    );
+  }
+
   // ── Key Rotation ────────────────────────────────────────────────────────────
 
   async rotateKey(instanceId: string) {
@@ -205,14 +191,6 @@ export class ApiClient {
     }>("POST", "/api/scopes/quick-create", data);
   }
 
-  // ── Deployments ─────────────────────────────────────────────────────────────
-
-  async listDeployments(instanceId: string) {
-    return this.request<{
-      deployments: Array<Record<string, unknown>>;
-      total: number;
-    }>("GET", `/api/scopes/instances/${instanceId}/deployments`);
-  }
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -236,9 +214,6 @@ export interface ScopeInstance {
   active: boolean;
   builtIn?: boolean;
   deploymentType: string;
-  containerStatus?: string;
-  containerId?: string | null;
-  imageUrl?: string | null;
   coreScopeKey?: string | null;
   createdAt: string;
   template?: ScopeTemplate;

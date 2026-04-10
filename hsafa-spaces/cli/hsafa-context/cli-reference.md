@@ -1,6 +1,6 @@
 # Hsafa CLI Reference
 
-> All CLI commands for managing scopes — the plugin system that gives Haseefs new capabilities.
+> Build and manage skills — the plugin system that gives Haseefs new capabilities.
 
 ## Install
 
@@ -19,18 +19,21 @@ hsafa auth logout         # Clear stored credentials
 hsafa auth whoami         # Show current user
 ```
 
-## Scope Commands
+## Skill Commands
 
-### Scaffold a New Scope
+### Scaffold a New Skill
 
 ```bash
-hsafa scope init <name> [--lang <language>] [--starter <template>]
+hsafa skill init <name> [--lang <language>] [--starter <template>] [--haseef <name>]
 ```
+
+Creates a project directory, registers the skill, provisions a scope key, and writes `.env`. Ready to run immediately.
 
 | Option | Values | Default |
 |--------|--------|---------|
 | `--lang` | `typescript`, `javascript`, `python` | `typescript` |
 | `--starter` | `blank`, `api`, `database`, `webhook` | `blank` |
+| `--haseef` | Attach to a haseef by name or ID | — |
 
 **Starters:**
 
@@ -41,138 +44,124 @@ hsafa scope init <name> [--lang <language>] [--starter <template>]
 | `database` | Connects to a database (connection pool, query tools) |
 | `webhook` | Listens for incoming webhooks and pushes sense events |
 
-### Register a Scope (No Deploy)
+### Register an Existing Project
 
 ```bash
-hsafa scope create <name> [--deployment <type>]
+hsafa skill create [--name <name>] [--haseef <name>]
 ```
 
-- `--deployment platform` (default) — Platform-managed scope
-- `--deployment external` — Self-hosted scope (you provide the scope key)
+Run from inside an existing project directory. Reads the skill name from `package.json` (or use `--name`). Provisions a scope key and writes `.env`.
 
-Outputs a **scope key** (`hsk_scope_*`). Save it — shown once.
-
-### Deploy to Platform
+### Run Locally
 
 ```bash
-hsafa scope deploy [--image <url>]
+hsafa skill dev [--haseef <name>]
 ```
 
-Run from inside your scope project directory. It:
-1. Detects language (package.json → Node, requirements.txt → Python, go.mod → Go)
-2. Generates Dockerfile if missing
-3. Builds + pushes Docker image
-4. Creates/updates template + instance
-5. Launches container
+Auto-registers the skill if needed, then starts the dev server (`npm run dev` or `python main.py`). Your skill connects to Core via SSE — tools are live immediately.
 
-Use `--image` to skip build and deploy an existing Docker image.
-
-### List Scopes
+### Install from Marketplace
 
 ```bash
-hsafa scope list
+hsafa skill install <slug> [--dir <path>] [--haseef <name>]
 ```
 
-Shows all templates and instances with status.
+Downloads a marketplace skill template as a local project. You run it yourself with `hsafa skill dev`.
 
-### View Logs
+### Publish to Marketplace
 
 ```bash
-hsafa scope logs <name> [--instance <name>] [--tail <n>]
+hsafa skill publish [--name <name>] [--slug <slug>] [--description <text>] [--icon <icon>] [--private]
 ```
 
-### Container Lifecycle
+Publishes your skill so others can install it via `hsafa skill install`.
+
+| Option | Description |
+|--------|-------------|
+| `--slug` | Marketplace slug (defaults to skill name) |
+| `--description` | Description |
+| `--icon` | Icon name (e.g. Database, Plug) |
+| `--private` | Only visible to you |
+
+### Register External Skill
 
 ```bash
-hsafa scope start <name>   [--instance <name>]
-hsafa scope stop <name>    [--instance <name>]
-hsafa scope restart <name> [--instance <name>]
+hsafa skill register --key <hsk_scope_...> --name <name> [--description <text>]
 ```
 
-### Delete a Scope
+Register a skill that's already running on your own server. You manage it — Spaces just knows about it.
+
+### List Skills
 
 ```bash
-hsafa scope delete <name> [-y]
+hsafa skill list
 ```
 
-Deletes template and ALL instances.
+Shows all your skills with connection status.
+
+### Delete a Skill
+
+```bash
+hsafa skill delete <name> [-y]
+```
 
 ### Attach / Detach from Haseef
 
-A Haseef can only use a scope's tools after the scope is attached to it.
+A haseef can only use a skill's tools after the skill is attached to it.
 
 ```bash
-hsafa scope attach <name> --haseef <haseef-id> [--instance <name>]
-hsafa scope detach <name> --haseef <haseef-id>
+hsafa skill attach <name> --haseef <name>
+hsafa skill detach <name> --haseef <name>
 ```
 
-### Instance Management
+Haseefs can be referenced by name (case-insensitive) or UUID.
 
-Create additional instances of an existing template with different config:
-
-```bash
-hsafa scope instance create <template> --name <instance-name> --config KEY=VALUE [KEY=VALUE ...]
-hsafa scope instance delete <instance-name> [-y]
-```
-
-Each instance gets its own scope key, container, and config.
-
-## Local Development Workflow
+## Getting Started
 
 ```bash
-# 1. Scaffold
-hsafa scope init my-weather --lang typescript
+# 1. Scaffold + register
+hsafa skill init my-weather --lang typescript
 
-# 2. Enter project
-cd my-weather
+# 2. Enter project + install
+cd my-weather && npm install
 
-# 3. Install dependencies
-npm install
+# 3. Run locally (auto-connects to Core)
+hsafa skill dev
 
-# 4. Register scope on Core (get a scope key)
-hsafa scope create my-weather
+# 4. Attach to a haseef
+hsafa skill attach my-weather --haseef atlas
 
-# 5. Configure .env with the scope key
-#    SCOPE_NAME=my-weather
-#    SCOPE_KEY=hsk_scope_...
-#    CORE_URL=http://localhost:3001
-
-# 6. Run locally
-npm run dev
-#    → Registers tools with Core
-#    → Opens SSE stream for tool calls
-#    → Console: [my-weather] Connected to Core — ready for tool calls
-
-# 7. Attach to a haseef
-hsafa scope attach my-weather --haseef <haseef-id>
-
-# 8. Chat with the haseef — your tools are live
-
-# 9. Edit code → restart npm run dev → changes take effect immediately
-
-# 10. When ready, deploy to platform
-hsafa scope deploy
+# 5. Chat with the haseef — your tools are live!
+# 6. Edit code → auto-restarts → changes take effect immediately
 ```
 
 **Tips:**
-- Use `tsx watch src/index.ts` for auto-restart on file changes
+- `hsafa skill dev` handles everything: registration, key provisioning, dev server
 - Attach to a **test haseef** during development
-- The same scope key works for both local dev and production
-- Never commit your scope key to git
+- Never commit your `.env` (scope key) to git
+
+## Environment Variables
+
+Every skill needs these (auto-configured by `init` / `create` / `dev`):
+
+| Variable | Description |
+|----------|-------------|
+| `SCOPE_NAME` | Skill name |
+| `SCOPE_KEY` | Auth key (`hsk_scope_*`) — auto-provisioned |
+| `CORE_URL` | Core API URL — auto from Spaces config |
 
 ## Quick Reference
 
 ```
 hsafa auth login                              # authenticate
-hsafa scope init <name> [--lang] [--starter]  # scaffold new scope
-hsafa scope create <name> [--deployment]      # register without deploying
-hsafa scope deploy [--image]                  # build + deploy to platform
-hsafa scope list                              # show all templates + instances
-hsafa scope logs <name> [--instance]          # view container logs
-hsafa scope start|stop|restart <name>         # container lifecycle
-hsafa scope attach <name> --haseef <id>       # connect scope to haseef
-hsafa scope detach <name> --haseef <id>       # disconnect scope from haseef
-hsafa scope instance create <tpl> --name <n>  # add instance with config
-hsafa scope instance delete <name>            # remove instance
-hsafa scope delete <name>                     # remove template + all instances
+hsafa skill init <name> [--lang] [--starter]  # scaffold + register new skill
+hsafa skill create [--name]                   # register existing project
+hsafa skill dev [--haseef]                    # auto-setup + run locally
+hsafa skill install <slug>                    # install from marketplace
+hsafa skill publish [--name]                  # publish to marketplace
+hsafa skill register --key --name             # register external skill
+hsafa skill list                              # show all skills
+hsafa skill attach <name> --haseef <name>     # connect to haseef
+hsafa skill detach <name> --haseef <name>     # disconnect from haseef
+hsafa skill delete <name>                     # remove skill
 ```

@@ -5,21 +5,19 @@
 
 import { Command } from "commander";
 import { registerAuthCommands } from "./commands/auth.js";
-import { registerScopeCommands } from "./commands/scope.js";
-import { registerMarketplaceCommands } from "./commands/marketplace.js";
+import { registerSkillCommands } from "./commands/scope.js";
 import { registerConfigCommands } from "./commands/config.js";
 
 const program = new Command();
 
 program
   .name("hsafa")
-  .description("Hsafa CLI — build, deploy, and manage scopes for your haseefs")
-  .version("2.1.2");
+  .description("Hsafa CLI — build and manage skills for your haseefs")
+  .version("3.0.0");
 
 registerConfigCommands(program);
 registerAuthCommands(program);
-registerScopeCommands(program);
-registerMarketplaceCommands(program);
+registerSkillCommands(program);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   console.error(err);
