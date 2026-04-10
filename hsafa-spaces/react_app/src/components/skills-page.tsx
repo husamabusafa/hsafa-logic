@@ -110,9 +110,7 @@ export function SkillsPage({ onNavigateToInstance }: SkillsPageProps) {
     return (
       <AddSkillView
         onBack={() => setView("list")}
-        onCreated={(id) => { setView("list"); load(); onNavigateToInstance?.(id); }}
         onRegistered={() => { setView("list"); load(); }}
-        existingInstances={instances}
       />
     );
   }
@@ -260,21 +258,16 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
 
 function AddSkillView({
   onBack,
-  onCreated,
   onRegistered,
-  existingInstances,
 }: {
   onBack: () => void;
-  onCreated: (instanceId: string) => void;
   onRegistered: () => void;
-  existingInstances: ScopeInstance[];
 }) {
   const [tab, setTab] = useState<"marketplace" | "developer">("marketplace");
   const [templates, setTemplates] = useState<ScopeTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [creating, setCreating] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [selectedTemplate, setSelectedTemplate] = useState<ScopeTemplate | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -293,31 +286,6 @@ function AddSkillView({
     !search || t.name.toLowerCase().includes(search.toLowerCase()) || t.slug.toLowerCase().includes(search.toLowerCase()),
   );
 
-  async function installSkill(template: ScopeTemplate) {
-    if (creating) return;
-    setCreating(template.id);
-    setError("");
-    try {
-      const baseSlug = template.slug;
-      const existing = existingInstances.filter((i) => i.scopeName === baseSlug || i.scopeName.match(new RegExp(`^${baseSlug}-\\d+$`)));
-      const idx = existing.length;
-      const name = idx === 0 ? template.name : `${template.name} ${idx + 1}`;
-      const scopeName = idx === 0 ? baseSlug : `${baseSlug}-${idx + 1}`;
-
-      const { instance } = await scopesApi.createInstance({
-        templateId: template.id,
-        name,
-        scopeName,
-      });
-      onCreated(instance.id);
-    } catch (err: any) {
-      setError(err.message || "Failed to install skill");
-      setTimeout(() => setError(""), 5000);
-    } finally {
-      setCreating(null);
-    }
-  }
-
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -330,7 +298,7 @@ function AddSkillView({
         </button>
         <div>
           <h1 className="text-xl font-semibold">Add Skill</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">Choose from the marketplace or build your own</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Browse templates or build a custom skill</p>
         </div>
       </div>
 
@@ -354,8 +322,8 @@ function AddSkillView({
               tab === "developer" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
-            <CodeIcon className="size-4" />
-            Developer
+            <WrenchIcon className="size-4" />
+            Build Your Own
           </button>
         </div>
 
@@ -376,24 +344,19 @@ function AddSkillView({
         )}
       </div>
 
-      {/* Error toast */}
-      {error && (
-        <div className="mx-6 mt-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50">
-          <XCircleIcon className="size-3.5 text-red-500 shrink-0" />
-          <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
-        </div>
-      )}
-
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         {tab === "marketplace" ? (
-          <MarketplaceGrid
-            templates={filteredTemplates}
-            loading={loading}
-            search={search}
-            onInstall={installSkill}
-            creatingId={creating}
-          />
+          selectedTemplate ? (
+            <TemplateSetupGuide template={selectedTemplate} onBack={() => setSelectedTemplate(null)} />
+          ) : (
+            <MarketplaceGrid
+              templates={filteredTemplates}
+              loading={loading}
+              search={search}
+              onSelect={setSelectedTemplate}
+            />
+          )
         ) : (
           <DeveloperTab onRegistered={onRegistered} />
         )}
@@ -408,14 +371,12 @@ function MarketplaceGrid({
   templates,
   loading,
   search,
-  onInstall,
-  creatingId,
+  onSelect,
 }: {
   templates: ScopeTemplate[];
   loading: boolean;
   search: string;
-  onInstall: (t: ScopeTemplate) => void;
-  creatingId: string | null;
+  onSelect: (t: ScopeTemplate) => void;
 }) {
   if (loading) {
     return (
@@ -467,16 +428,119 @@ function MarketplaceGrid({
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
             <div className="flex-1" />
             <button
-              onClick={() => onInstall(tmpl)}
-              disabled={!!creatingId}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              onClick={() => onSelect(tmpl)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
             >
-              {creatingId === tmpl.id ? <Loader2Icon className="size-3 animate-spin" /> : <PlusIcon className="size-3" />}
-              {creatingId === tmpl.id ? "Adding..." : "Add"}
+              <ChevronRightIcon className="size-3" />
+              Setup Guide
             </button>
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── Template Setup Guide ─────────────────────────────────────────────────────
+
+function TemplateSetupGuide({ template, onBack }: { template: ScopeTemplate; onBack: () => void }) {
+  return (
+    <div className="max-w-3xl space-y-6">
+      {/* Back + Template Info */}
+      <div className="flex items-start gap-4 p-5 rounded-xl border border-primary/20 bg-primary/5">
+        <button onClick={onBack} className="p-1 rounded-lg hover:bg-muted transition-colors mt-0.5">
+          <ArrowLeftIcon className="size-4" />
+        </button>
+        <div className="flex items-center justify-center size-10 rounded-xl bg-primary/10 text-primary shrink-0">
+          <SkillIcon icon={template.icon} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h2 className="font-semibold text-base">{template.name}</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">{template.description}</p>
+          <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1"><WrenchIcon className="size-3" /> {template.tools.length} tools</span>
+            <span className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-medium uppercase">{template.category}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Setup Steps */}
+      <div className="space-y-8">
+        {/* Step 1: Install CLI */}
+        <section className="space-y-3">
+          <StepHeader n={1} title="Install the Hsafa CLI" />
+          <div className="pl-9">
+            <CodeBlock code="npm install -g @hsafa/cli" />
+          </div>
+        </section>
+
+        {/* Step 2: Authenticate */}
+        <section className="space-y-3">
+          <StepHeader n={2} title="Authenticate" />
+          <div className="pl-9 space-y-3">
+            <CodeBlock code={`hsafa auth login`} />
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Get your API key from <span className="font-medium text-foreground">Settings → API Keys</span>.
+            </p>
+          </div>
+        </section>
+
+        {/* Step 3: Clone from template */}
+        <section className="space-y-3">
+          <StepHeader n={3} title={`Clone the "${template.name}" template`} />
+          <div className="pl-9 space-y-3">
+            <CodeBlock code={`hsafa skill init --template ${template.slug} my-${template.slug}`} />
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40 border border-border">
+              <FolderTreeIcon className="size-4 text-primary shrink-0" />
+              <p className="text-xs text-muted-foreground">
+                This scaffolds a working project pre-configured with the <strong className="text-foreground">{template.name}</strong> tools and handler stubs.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Step 4: Install deps & configure */}
+        <section className="space-y-3">
+          <StepHeader n={4} title="Install dependencies & configure" />
+          <div className="pl-9 space-y-3">
+            <CodeBlock code={`cd my-${template.slug}
+npm install
+
+# Edit .env with your settings
+# SCOPE_NAME, SCOPE_KEY, CORE_URL are auto-provisioned by the CLI`} />
+          </div>
+        </section>
+
+        {/* Step 5: Run in dev mode */}
+        <section className="space-y-3">
+          <StepHeader n={5} title="Run locally" />
+          <div className="pl-9 space-y-3">
+            <CodeBlock code={`hsafa skill dev`} />
+            <div className="p-3 rounded-lg bg-muted/40 border border-border space-y-2">
+              <p className="text-xs text-muted-foreground font-medium">
+                This will:
+              </p>
+              <ul className="text-xs text-muted-foreground space-y-1.5 pl-1">
+                <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> Register the skill and its tools with Hsafa</li>
+                <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> Connect to Core via SSE to receive tool calls</li>
+                <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> The skill appears in your <strong className="text-foreground">Skills</strong> list — ready to use</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        {/* Step 6: Customize */}
+        <section className="space-y-3">
+          <StepHeader n={6} title="Customize & extend" />
+          <div className="pl-9 space-y-3">
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Edit <code className="text-[11px] bg-zinc-800/60 text-zinc-300 px-1.5 py-0.5 rounded font-mono">src/handler.ts</code> to implement your logic,
+              and <code className="text-[11px] bg-zinc-800/60 text-zinc-300 px-1.5 py-0.5 rounded font-mono">src/tools.ts</code> to add or modify tool definitions.
+              Changes are picked up automatically in dev mode.
+            </p>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -575,7 +639,6 @@ hsafa skill init my-weather-skill
 #     src/tools.ts      ← tool definitions
 #     src/handler.ts    ← your business logic
 #     package.json
-#     Dockerfile
 #     tsconfig.json`} />
           <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40 border border-border">
             <FolderTreeIcon className="size-4 text-primary shrink-0" />
@@ -636,40 +699,19 @@ sdk.connect();`} />
         </div>
       </section>
 
-      {/* Step 5: Deploy */}
+      {/* Step 5: Run */}
       <section className="space-y-3">
-        <StepHeader n={5} title="Deploy" />
+        <StepHeader n={5} title="Run Your Skill" />
         <div className="pl-9 space-y-3">
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            Deploy your skill to the platform. The CLI builds a Docker image, pushes it, and makes it available:
-          </p>
-          <CodeBlock code={`# Deploy to the Hsafa platform
-hsafa skill deploy`} />
+          <CodeBlock code={`hsafa skill dev`} />
           <div className="p-3 rounded-lg bg-muted/40 border border-border space-y-2">
             <p className="text-xs text-muted-foreground font-medium">
-              When you run <code className="text-[11px] bg-zinc-800/60 text-zinc-300 px-1.5 py-0.5 rounded font-mono">hsafa skill deploy</code>, it:
+              This will:
             </p>
             <ul className="text-xs text-muted-foreground space-y-1.5 pl-1">
-              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> Builds a Docker image from your project</li>
-              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> Pushes the image to the Hsafa registry</li>
-              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> Registers your skill with tool definitions</li>
-              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> The skill appears in <strong className="text-foreground">Marketplace</strong> — ready to add</li>
-            </ul>
-          </div>
-        </div>
-      </section>
-
-      {/* Step 6: Attach */}
-      <section className="space-y-3">
-        <StepHeader n={6} title="Attach to a Haseef" />
-        <div className="pl-9 space-y-3">
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            Once added, go back to <strong className="text-foreground">Skills</strong> and click on your skill to configure and attach it to your haseefs.
-          </p>
-          <div className="p-3 rounded-lg bg-muted/40 border border-border space-y-2">
-            <ul className="text-xs text-muted-foreground space-y-1.5 pl-1">
-              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> <strong className="text-foreground">Skills</strong> → select your skill → <strong className="text-foreground">Attach</strong> to a haseef</li>
-              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> The haseef now has access to your skill's tools</li>
+              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> Register your skill and its tools with Hsafa</li>
+              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> Connect to Core via SSE to receive tool calls</li>
+              <li className="flex items-start gap-2"><span className="text-emerald-500 mt-0.5">→</span> The skill appears in <strong className="text-foreground">Skills</strong> — ready to use</li>
             </ul>
           </div>
         </div>

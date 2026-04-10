@@ -13,7 +13,7 @@ const program = new Command();
 program
   .name("hsafa")
   .description("Hsafa CLI — build and manage skills for your haseefs")
-  .version("3.0.0");
+  .version("3.0.2");
 
 registerConfigCommands(program);
 registerAuthCommands(program);

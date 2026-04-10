@@ -1,6 +1,6 @@
 {
   "name": "@hsafa/cli",
-  "version": "3.0.0",
+  "version": "3.0.2",
   "description": "Hsafa CLI — build and manage skills for your haseefs",
   "type": "module",
   "bin": {
