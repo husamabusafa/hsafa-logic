@@ -659,7 +659,6 @@ export interface ScopeTemplate {
   requiredProfileFields: string[];
   tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
   instructions: string | null;
-  imageUrl: string | null;
   published: boolean;
   authorId: string | null;
   createdAt: string;
@@ -674,12 +673,9 @@ export interface ScopeInstanceConfig {
   hasValue: boolean;
 }
 
-export type ContainerStatus = "stopped" | "starting" | "running" | "error" | "building" | "removing";
-
 export interface ScopeInstance {
   id: string;
   templateId: string | null;
-  clonedFromId: string | null;
   name: string;
   scopeName: string;
   description: string | null;
@@ -687,11 +683,8 @@ export interface ScopeInstance {
   baseId: string | null;
   active: boolean;
   builtIn?: boolean;
-  deploymentType: string; // "platform" | "custom" | "external" | "built-in"
-  imageUrl: string | null;
-  containerId: string | null;
-  containerStatus: ContainerStatus;
-  statusMessage?: string | null;
+  deploymentType: string; // "external" | "built-in"
+  containerStatus: string;
   createdAt: string;
   template: {
     id: string | null;
@@ -706,19 +699,6 @@ export interface ScopeInstance {
   configs: ScopeInstanceConfig[];
   connected?: boolean;
   coreScopeKey?: string | null;
-}
-
-export interface ScopeDeployment {
-  id: string;
-  instanceId: string;
-  status: "running" | "success" | "failed" | "stopped";
-  triggeredBy: string | null;
-  imageUrl: string | null;
-  containerId: string | null;
-  logs?: string;
-  errorMessage: string | null;
-  startedAt: string;
-  finishedAt: string | null;
 }
 
 export interface CoreScopeStatus {
@@ -796,8 +776,6 @@ export const scopesApi = {
     scopeName?: string;
     description?: string;
     baseId?: string;
-    deploymentType?: string;
-    imageUrl?: string;
     configs?: Array<{ key: string; value: string; isSecret?: boolean }>;
   }) {
     return request<{ instance: ScopeInstance }>("/scopes/instances", {
@@ -854,74 +832,6 @@ export const scopesApi = {
     return request<{ valid: boolean; scopeName: string; connected: boolean; toolCount: number }>("/scopes/external/verify", {
       method: "POST",
       body: JSON.stringify({ scopeKey }),
-    });
-  },
-
-  // Instance lifecycle
-  deployInstance(id: string) {
-    return request<{ success: boolean; containerId: string; containerStatus: ContainerStatus; statusMessage?: string; deploymentId: string }>(`/scopes/instances/${id}/deploy`, { method: "POST" });
-  },
-
-  startInstance(id: string) {
-    return request<{ success: boolean; containerStatus: ContainerStatus }>(`/scopes/instances/${id}/start`, { method: "POST" });
-  },
-
-  stopInstance(id: string) {
-    return request<{ success: boolean; containerStatus: ContainerStatus }>(`/scopes/instances/${id}/stop`, { method: "POST" });
-  },
-
-  restartInstance(id: string) {
-    return request<{ success: boolean; containerStatus: ContainerStatus }>(`/scopes/instances/${id}/restart`, { method: "POST" });
-  },
-
-  getInstanceLogs(id: string, tail = 200) {
-    return request<{ logs: string }>(`/scopes/instances/${id}/logs?tail=${tail}`);
-  },
-
-  getContainerStatus(id: string) {
-    return request<{ containerStatus: ContainerStatus; statusMessage?: string }>(`/scopes/instances/${id}/container-status`);
-  },
-
-  // Deployment history
-  listDeployments(instanceId: string, limit = 20, offset = 0) {
-    return request<{ deployments: ScopeDeployment[]; total: number }>(`/scopes/instances/${instanceId}/deployments?limit=${limit}&offset=${offset}`);
-  },
-
-  getDeployment(instanceId: string, deploymentId: string) {
-    return request<{ deployment: ScopeDeployment }>(`/scopes/instances/${instanceId}/deployments/${deploymentId}`);
-  },
-
-  streamDeploymentLogs(instanceId: string, deploymentId: string): EventSource {
-    const token = localStorage.getItem("hsafa_token");
-    const base = API_BASE;
-    const url = `${base}/scopes/instances/${instanceId}/deployments/${deploymentId}/stream?token=${encodeURIComponent(token || "")}`;
-    return new EventSource(url);
-  },
-
-  // Clone — create new instance from an existing deployed skill
-  cloneInstance(id: string, data: {
-    name: string;
-    scopeName?: string;
-    description?: string;
-    configs?: Array<{ key: string; value: string; isSecret?: boolean }>;
-  }) {
-    return request<{ instance: ScopeInstance }>(`/scopes/instances/${id}/clone`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  },
-
-  // Publish — create a marketplace template from a deployed skill
-  publishInstance(id: string, data?: {
-    name?: string;
-    slug?: string;
-    description?: string;
-    icon?: string;
-    isPublic?: boolean;
-  }) {
-    return request<{ template: ScopeTemplate; action: "created" | "updated" }>(`/scopes/instances/${id}/publish`, {
-      method: "POST",
-      body: JSON.stringify(data ?? {}),
     });
   },
 

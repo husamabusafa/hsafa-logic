@@ -209,7 +209,7 @@ export function ScopeTemplatePage({ templateId, onBack }: ScopeTemplatePageProps
       setEditName(t.name);
       setEditDescription(t.description || "");
       setEditIcon(t.icon || "");
-      setEditImageUrl(t.imageUrl || "");
+      setEditImageUrl("");
       setEditInstructions(t.instructions || "");
       setEditTools(t.tools || []);
       setEditPublished(t.published);
@@ -354,7 +354,6 @@ export function ScopeTemplatePage({ templateId, onBack }: ScopeTemplatePageProps
               { label: "Category", value: <span className="text-sm capitalize">{template.category}</span> },
               { label: "Tools", value: <span className="text-sm">{template.tools.length} tool{template.tools.length !== 1 ? "s" : ""}</span> },
               ...(template._count?.instances !== undefined ? [{ label: "Instances", value: <span className="text-sm">{template._count.instances}</span> }] : []),
-              ...(template.imageUrl ? [{ label: "Image", value: <span className="text-xs font-mono text-muted-foreground break-all">{template.imageUrl}</span> }] : []),
               ...(template.createdAt ? [{ label: "Created", value: <span className="text-sm">{new Date(template.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</span> }] : []),
             ].map((row, i) => (
               <div key={i} className="flex items-center bg-card">

@@ -269,7 +269,7 @@ function AddSkillView({
   onRegistered: () => void;
   existingInstances: ScopeInstance[];
 }) {
-  const [tab, setTab] = useState<"marketplace" | "clone" | "developer">("marketplace");
+  const [tab, setTab] = useState<"marketplace" | "developer">("marketplace");
   const [templates, setTemplates] = useState<ScopeTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -348,16 +348,6 @@ function AddSkillView({
             Marketplace
           </button>
           <button
-            onClick={() => setTab("clone")}
-            className={cn(
-              "flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors",
-              tab === "clone" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <CopyIcon className="size-4" />
-            Clone
-          </button>
-          <button
             onClick={() => setTab("developer")}
             className={cn(
               "flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors",
@@ -403,11 +393,6 @@ function AddSkillView({
             search={search}
             onInstall={installSkill}
             creatingId={creating}
-          />
-        ) : tab === "clone" ? (
-          <CloneTab
-            instances={existingInstances}
-            onCloned={(id) => onCreated(id)}
           />
         ) : (
           <DeveloperTab onRegistered={onRegistered} />
@@ -492,143 +477,6 @@ function MarketplaceGrid({
           </div>
         </div>
       ))}
-    </div>
-  );
-}
-
-// ── Clone Tab ─────────────────────────────────────────────────────────────────
-
-function CloneTab({
-  instances,
-  onCloned,
-}: {
-  instances: ScopeInstance[];
-  onCloned: (instanceId: string) => void;
-}) {
-  // Only custom (user-deployed) skills can be cloned — marketplace skills just reinstall
-  const cloneable = instances.filter(
-    (i) => i.deploymentType === "custom" && i.imageUrl,
-  );
-  const [cloning, setCloning] = useState<string | null>(null);
-  const [cloneForm, setCloneForm] = useState<{ sourceId: string; sourceName: string } | null>(null);
-  const [cloneName, setCloneName] = useState("");
-  const [cloneError, setCloneError] = useState("");
-
-  async function handleClone() {
-    if (!cloneForm || !cloneName.trim()) return;
-    setCloning(cloneForm.sourceId);
-    setCloneError("");
-    try {
-      const { instance } = await scopesApi.cloneInstance(cloneForm.sourceId, {
-        name: cloneName.trim(),
-      });
-      setCloneForm(null);
-      setCloneName("");
-      onCloned(instance.id);
-    } catch (err: any) {
-      setCloneError(err.message || "Failed to clone skill");
-    } finally {
-      setCloning(null);
-    }
-  }
-
-  if (cloneable.length === 0) {
-    return (
-      <div className="text-center py-16 text-muted-foreground">
-        <CopyIcon className="size-10 mx-auto mb-3 opacity-40" />
-        <p className="text-sm font-medium">No cloneable skills</p>
-        <p className="text-xs mt-1 max-w-sm mx-auto">
-          Only deployed skills (with a Docker image) can be cloned.
-          Deploy a skill first, then come back here to create copies with different configurations.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="max-w-3xl space-y-4">
-      <div className="flex items-start gap-3 p-4 rounded-xl border border-border bg-muted/30">
-        <CopyIcon className="size-4 text-muted-foreground mt-0.5 shrink-0" />
-        <div>
-          <p className="text-sm font-medium">Clone an existing skill</p>
-          <p className="text-xs text-muted-foreground mt-1">
-            Create a copy of a deployed skill with the same Docker image but different environment variables.
-            Useful for running multiple instances with different configurations (e.g. different databases).
-          </p>
-        </div>
-      </div>
-
-      {/* Clone form dialog */}
-      {cloneForm && (
-        <div className="p-4 rounded-xl border border-primary/30 bg-primary/5 space-y-3">
-          <p className="text-sm font-medium">
-            Clone "{cloneForm.sourceName}"
-          </p>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">New skill name</label>
-            <input
-              type="text"
-              value={cloneName}
-              onChange={(e) => setCloneName(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 mt-1"
-              placeholder={`${cloneForm.sourceName} (copy)`}
-              autoFocus
-            />
-          </div>
-          {cloneError && (
-            <p className="text-xs text-red-500 bg-red-50 dark:bg-red-950/20 px-3 py-2 rounded-lg">{cloneError}</p>
-          )}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => { setCloneForm(null); setCloneName(""); setCloneError(""); }}
-              className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleClone}
-              disabled={!cloneName.trim() || !!cloning}
-              className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-            >
-              {cloning && <Loader2Icon className="size-4 animate-spin" />}
-              Clone Skill
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="grid gap-3">
-        {cloneable.map((inst) => (
-          <div
-            key={inst.id}
-            className="flex items-center gap-4 p-4 rounded-xl border border-border bg-card hover:border-primary/20 transition-colors"
-          >
-            <div className="flex items-center justify-center size-10 rounded-xl bg-muted text-muted-foreground shrink-0">
-              <SkillIcon icon={inst.template.icon} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-medium text-sm">{inst.name}</span>
-                <span className="text-xs text-muted-foreground font-mono">({inst.scopeName})</span>
-              </div>
-              <div className="flex items-center gap-2 mt-1">
-                <span className="text-xs text-muted-foreground">{inst.deploymentType}</span>
-                {inst.description && (
-                  <span className="text-xs text-muted-foreground truncate max-w-64">· {inst.description}</span>
-                )}
-              </div>
-            </div>
-            <button
-              onClick={() => { setCloneForm({ sourceId: inst.id, sourceName: inst.name }); setCloneName(`${inst.name} (copy)`); }}
-              disabled={!!cloning}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-muted text-foreground text-xs font-medium hover:bg-muted/80 transition-colors border border-border disabled:opacity-50 shrink-0"
-            >
-              <CopyIcon className="size-3" />
-              Clone
-            </button>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

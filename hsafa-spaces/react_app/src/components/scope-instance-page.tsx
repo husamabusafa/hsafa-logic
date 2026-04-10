@@ -4,7 +4,6 @@ import {
   PuzzleIcon,
   WrenchIcon,
   CheckCircle2Icon,
-  XCircleIcon,
   Loader2Icon,
   TrashIcon,
   SaveIcon,
@@ -14,27 +13,18 @@ import {
   CalendarIcon,
   PlugIcon,
   DatabaseIcon,
-  TerminalIcon,
   SettingsIcon,
-  PlayIcon,
-  SquareIcon,
-  RotateCwIcon,
-  RocketIcon,
-  RefreshCwIcon,
   CopyIcon,
   CheckIcon,
   ChevronRightIcon,
-  CircleDotIcon,
   AlertTriangleIcon,
-  ClockIcon,
   EyeIcon,
   EyeOffIcon,
   KeyIcon,
-  UploadIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CodeTerminal, type CodeTerminalHandle, EnvEditor } from "@/components/env-editor";
-import { scopesApi, type ScopeInstance, type ScopeInstanceConfig, type ScopeDeployment } from "@/lib/api";
+import { EnvEditor } from "@/components/env-editor";
+import { scopesApi, type ScopeInstance, type ScopeInstanceConfig } from "@/lib/api";
 
 function ScopeIcon({ icon, className }: { icon: string | null; className?: string }) {
   const cls = cn("size-5", className);
@@ -170,7 +160,7 @@ function ConfirmModal({
 
 // ── Tab types ─────────────────────────────────────────────────────────────────
 
-type InstanceTab = "general" | "configuration" | "logs" | "deployments";
+type InstanceTab = "general" | "configuration";
 
 // ── Status dot (Coolify-style) ───────────────────────────────────────────────
 
@@ -357,8 +347,6 @@ function GeneralTab({
             <span className="text-sm text-muted-foreground">None (local scope)</span>
           )},
           { label: "Created", value: <span className="text-sm">{new Date(instance.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span> },
-          ...(instance.containerId ? [{ label: "Container ID", value: <span className="text-xs font-mono text-muted-foreground">{instance.containerId.slice(0, 12)}</span> }] : []),
-          ...(instance.imageUrl ? [{ label: "Image", value: <span className="text-xs font-mono text-muted-foreground break-all">{instance.imageUrl}</span> }] : []),
         ].map((row, i) => (
           <div key={i} className="flex items-center bg-card">
             <div className="w-40 shrink-0 px-4 py-3 text-xs font-medium text-muted-foreground bg-muted/50">{row.label}</div>
@@ -810,456 +798,6 @@ function ConfigurationTab({
   );
 }
 
-// ── Logs Tab ──────────────────────────────────────────────────────────────────
-
-function LogsTab({ instance }: { instance: ScopeInstance }) {
-  const [logs, setLogs] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [tail, setTail] = useState(200);
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
-  const [copied, setCopied] = useState(false);
-  const terminalRef = useRef<CodeTerminalHandle>(null);
-
-  const isManaged = instance.deploymentType === "platform" || instance.deploymentType === "custom";
-  const hasContainer = !!instance.containerId;
-
-  const fetchLogs = useCallback(async () => {
-    if (!hasContainer) return;
-    setLoading(true);
-    setError("");
-    try {
-      const res = await scopesApi.getInstanceLogs(instance.id, tail);
-      setLogs(res.logs || "(no logs)");
-      setTimeout(() => terminalRef.current?.scrollToBottom(), 50);
-    } catch (err: any) {
-      setError(err.message || "Failed to fetch logs");
-    } finally {
-      setLoading(false);
-    }
-  }, [instance.id, tail, hasContainer]);
-
-  useEffect(() => { fetchLogs(); }, [fetchLogs]);
-
-  useEffect(() => {
-    if (autoRefresh) {
-      intervalRef.current = setInterval(fetchLogs, 5000);
-    }
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [autoRefresh, fetchLogs]);
-
-  function handleCopy() {
-    if (logs) {
-      navigator.clipboard.writeText(logs);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  }
-
-  if (!isManaged && instance.deploymentType !== "external") {
-    return (
-      <div className="text-center py-16 text-muted-foreground">
-        <TerminalIcon className="size-10 mx-auto mb-3 opacity-30" />
-        <p className="text-sm">Logs are not available for this deployment type.</p>
-      </div>
-    );
-  }
-
-  if (!hasContainer) {
-    return (
-      <div className="text-center py-16 text-muted-foreground">
-        <TerminalIcon className="size-10 mx-auto mb-3 opacity-30" />
-        <p className="text-sm">No container running.</p>
-        <p className="text-xs mt-1">Deploy the instance first to see logs.</p>
-      </div>
-    );
-  }
-
-  const isStopped = instance.containerStatus === "stopped" || instance.containerStatus === "error";
-
-  return (
-    <div className="flex flex-col gap-3 h-full">
-      {/* Stopped/error banner */}
-      {isStopped && (
-        <div className="flex items-center gap-2 px-3 py-2 text-xs rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400">
-          <AlertTriangleIcon className="size-3.5 shrink-0" />
-          Container is {instance.containerStatus}. Showing last available logs.
-        </div>
-      )}
-
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <button
-          onClick={fetchLogs}
-          disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-border bg-card text-foreground hover:bg-muted transition-colors disabled:opacity-50"
-        >
-          {loading ? <Loader2Icon className="size-3 animate-spin" /> : <RefreshCwIcon className="size-3" />}
-          Refresh
-        </button>
-        <button
-          onClick={() => setAutoRefresh(!autoRefresh)}
-          className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors",
-            autoRefresh ? "border-green-300 dark:border-green-800 bg-green-500/10 text-green-600" : "border-border bg-card text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <CircleDotIcon className={cn("size-3", autoRefresh && "animate-pulse")} />
-          {autoRefresh ? "Live" : "Auto"}
-        </button>
-        <select
-          value={tail}
-          onChange={(e) => setTail(Number(e.target.value))}
-          className="px-2.5 py-1.5 text-xs rounded-lg border border-border bg-card text-foreground"
-        >
-          <option value={50}>50 lines</option>
-          <option value={100}>100 lines</option>
-          <option value={200}>200 lines</option>
-          <option value={500}>500 lines</option>
-        </select>
-        <div className="flex-1" />
-        <button
-          onClick={handleCopy}
-          disabled={!logs}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-        >
-          {copied ? <CheckIcon className="size-3 text-green-500" /> : <CopyIcon className="size-3" />}
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
-
-      {error && <p className="text-xs text-red-500">{error}</p>}
-
-      <CodeTerminal
-        ref={terminalRef}
-        value={logs ?? ""}
-        highlight="log"
-        loading={logs === null}
-        title={`${instance.scopeName} — logs`}
-        titleRight={autoRefresh ? <span className="text-[9px] text-green-500 font-mono animate-pulse">LIVE</span> : undefined}
-        minRows={20}
-        maxRows={30}
-        className="flex-1 min-h-0"
-      />
-    </div>
-  );
-}
-
-// ── Main Component ───────────────────────────────────────────────────────────
-
-// ── Deployment Status Badge ───────────────────────────────────────────────────
-
-function DeploymentStatusBadge({ status }: { status: string }) {
-  const map: Record<string, { label: string; cls: string; icon: React.ReactNode }> = {
-    running: { label: "Running", cls: "text-blue-500 bg-blue-500/10", icon: <Loader2Icon className="size-3 animate-spin" /> },
-    success: { label: "Success", cls: "text-green-600 bg-green-500/10", icon: <CheckCircle2Icon className="size-3" /> },
-    failed: { label: "Failed", cls: "text-red-500 bg-red-500/10", icon: <XCircleIcon className="size-3" /> },
-    stopped: { label: "Stopped", cls: "text-zinc-500 bg-zinc-500/10", icon: <SquareIcon className="size-3" /> },
-  };
-  const cfg = map[status] ?? map.stopped;
-  return (
-    <span className={cn("inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full", cfg.cls)}>
-      {cfg.icon}
-      {cfg.label}
-    </span>
-  );
-}
-
-// ── Deployments Tab ──────────────────────────────────────────────────────────
-
-function DeploymentsTab({
-  instance,
-  activeDeploymentId,
-  onSelectDeployment,
-}: {
-  instance: ScopeInstance;
-  activeDeploymentId: string | null;
-  onSelectDeployment: (deploymentId: string) => void;
-}) {
-  const [deployments, setDeployments] = useState<ScopeDeployment[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const fetchDeployments = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const res = await scopesApi.listDeployments(instance.id);
-      setDeployments(res.deployments);
-      setTotal(res.total);
-    } catch (err: any) {
-      setError(err.message || "Failed to load deployments");
-    } finally {
-      setLoading(false);
-    }
-  }, [instance.id]);
-
-  useEffect(() => { fetchDeployments(); }, [fetchDeployments]);
-
-  // Auto-refresh while there's a running deployment
-  useEffect(() => {
-    const hasRunning = deployments.some((d) => d.status === "running");
-    if (!hasRunning) return;
-    const interval = setInterval(fetchDeployments, 5000);
-    return () => clearInterval(interval);
-  }, [deployments, fetchDeployments]);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return <p className="text-xs text-red-500 py-8 text-center">{error}</p>;
-  }
-
-  if (deployments.length === 0) {
-    return (
-      <div className="text-center py-16 text-muted-foreground">
-        <RocketIcon className="size-10 mx-auto mb-3 opacity-30" />
-        <p className="text-sm">No deployments yet.</p>
-        <p className="text-xs mt-1">Deploy this scope instance to see history here.</p>
-      </div>
-    );
-  }
-
-  function formatDuration(start: string, end: string | null) {
-    if (!end) return "—";
-    const ms = new Date(end).getTime() - new Date(start).getTime();
-    if (ms < 1000) return `${ms}ms`;
-    const s = Math.floor(ms / 1000);
-    if (s < 60) return `${s}s`;
-    return `${Math.floor(s / 60)}m ${s % 60}s`;
-  }
-
-  function formatTime(iso: string) {
-    const d = new Date(iso);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  }
-
-  return (
-    <div className="space-y-3 max-w-3xl">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">{total} deployment{total !== 1 ? "s" : ""}</p>
-        <button
-          onClick={fetchDeployments}
-          className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border border-border hover:bg-muted transition-colors"
-        >
-          <RefreshCwIcon className="size-3" />
-          Refresh
-        </button>
-      </div>
-
-      <div className="rounded-lg border border-border overflow-hidden bg-card divide-y divide-border">
-        {deployments.map((d) => (
-          <button
-            key={d.id}
-            onClick={() => onSelectDeployment(d.id)}
-            className={cn(
-              "w-full flex items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-muted/50",
-              activeDeploymentId === d.id && "bg-muted/70",
-            )}
-          >
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <DeploymentStatusBadge status={d.status} />
-                <span className="text-xs text-muted-foreground font-mono">{d.id.slice(0, 8)}</span>
-              </div>
-              <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
-                <span className="flex items-center gap-1">
-                  <ClockIcon className="size-3" />
-                  {formatTime(d.startedAt)}
-                </span>
-                <span>Duration: {formatDuration(d.startedAt, d.finishedAt)}</span>
-                {d.imageUrl && (
-                  <span className="font-mono truncate max-w-[200px]">{d.imageUrl.split("/").pop()}</span>
-                )}
-              </div>
-              {d.errorMessage && (
-                <p className="text-[11px] text-red-400 mt-1 truncate">{d.errorMessage}</p>
-              )}
-            </div>
-            <ChevronRightIcon className="size-4 text-muted-foreground shrink-0" />
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ── Deployment Detail View (real-time SSE logs) ──────────────────────────────
-
-function highlightDeployLine(line: string): React.ReactNode {
-  if (!line) return "\n";
-  const lower = line.toLowerCase();
-  const cls = cn(
-    "text-zinc-400",
-    lower.includes("error") && "text-red-400",
-    lower.includes("warn") && "text-yellow-400",
-    (lower.includes("successfully") || lower.includes("complete") || lower.includes("started")) && "text-green-400",
-    lower.includes("pulling") && "text-cyan-400",
-    lower.includes("image:") && "text-blue-400",
-  );
-  return <span className={cls}>{line}</span>;
-}
-
-function DeploymentDetailView({
-  instanceId,
-  deploymentId,
-  onBack,
-}: {
-  instanceId: string;
-  deploymentId: string;
-  onBack: () => void;
-}) {
-  const [deployment, setDeployment] = useState<ScopeDeployment | null>(null);
-  const [logLines, setLogLines] = useState<string[]>([]);
-  const [status, setStatus] = useState<string>("loading");
-  const [error, setError] = useState("");
-  const terminalRef = useRef<CodeTerminalHandle>(null);
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    let es: EventSource | null = null;
-
-    // Fetch deployment metadata first
-    scopesApi.getDeployment(instanceId, deploymentId).then(({ deployment: dep }) => {
-      setDeployment(dep);
-      setStatus(dep.status);
-
-      // Connect SSE for live streaming (also replays existing logs)
-      es = scopesApi.streamDeploymentLogs(instanceId, deploymentId);
-
-      es.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "log") {
-            setLogLines((prev) => [...prev, data.line]);
-            setTimeout(() => terminalRef.current?.scrollToBottom(), 50);
-          } else if (data.type === "done") {
-            setStatus(data.status);
-            // Re-fetch deployment for final metadata
-            scopesApi.getDeployment(instanceId, deploymentId).then(({ deployment: d }) => setDeployment(d)).catch(() => {});
-            es?.close();
-          } else if (data.type === "timeout") {
-            es?.close();
-          }
-        } catch { /* ignore parse errors */ }
-      };
-
-      es.onerror = () => {
-        // If the connection fails, fall back to fetched logs
-        if (dep.logs) {
-          setLogLines(dep.logs.split("\n").filter(Boolean));
-        }
-        es?.close();
-      };
-    }).catch((err) => {
-      setError(err.message || "Failed to load deployment");
-    });
-
-    return () => { es?.close(); };
-  }, [instanceId, deploymentId]);
-
-  function handleCopy() {
-    navigator.clipboard.writeText(logLines.join("\n"));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
-  if (error) {
-    return (
-      <div className="text-center py-16 text-muted-foreground">
-        <p className="text-sm text-red-500">{error}</p>
-        <button onClick={onBack} className="text-sm text-primary hover:underline mt-2">Go back</button>
-      </div>
-    );
-  }
-
-  const isLive = status === "running";
-
-  const titleRight = (
-    <div className="flex items-center gap-2">
-      {isLive && <span className="text-[9px] text-blue-400 font-mono animate-pulse">STREAMING</span>}
-      {status === "success" && <span className="text-[9px] text-green-400 font-mono">COMPLETE</span>}
-      {status === "failed" && <span className="text-[9px] text-red-400 font-mono">FAILED</span>}
-      <button
-        onClick={handleCopy}
-        disabled={logLines.length === 0}
-        className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors disabled:opacity-50"
-      >
-        {copied ? <CheckIcon className="size-3 text-green-500" /> : <CopyIcon className="size-3" />}
-        {copied ? "Copied" : "Copy"}
-      </button>
-    </div>
-  );
-
-  return (
-    <div className="flex flex-col gap-3 h-full">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ChevronRightIcon className="size-3 rotate-180" />
-          All Deployments
-        </button>
-        <div className="flex-1" />
-        {deployment && <DeploymentStatusBadge status={status} />}
-        {deployment && (
-          <span className="text-[11px] text-muted-foreground font-mono">{deployment.id.slice(0, 8)}</span>
-        )}
-      </div>
-
-      {/* Metadata row */}
-      {deployment && (
-        <div className="flex items-center gap-4 text-[11px] text-muted-foreground flex-wrap">
-          <span className="flex items-center gap-1">
-            <ClockIcon className="size-3" />
-            {new Date(deployment.startedAt).toLocaleString()}
-          </span>
-          {deployment.finishedAt && (
-            <span>Finished: {new Date(deployment.finishedAt).toLocaleString()}</span>
-          )}
-          {deployment.imageUrl && (
-            <span className="font-mono">{deployment.imageUrl}</span>
-          )}
-          {deployment.containerId && (
-            <span className="font-mono">Container: {deployment.containerId.slice(0, 12)}</span>
-          )}
-        </div>
-      )}
-
-      {/* Error banner */}
-      {deployment?.errorMessage && (
-        <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/20 p-3">
-          <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-1">Error</p>
-          <p className="text-xs text-red-600 dark:text-red-400 font-mono break-all leading-relaxed">{deployment.errorMessage}</p>
-        </div>
-      )}
-
-      {/* Terminal log viewer */}
-      <CodeTerminal
-        ref={terminalRef}
-        value={logLines.join("\n")}
-        highlight={highlightDeployLine}
-        title={`deployment ${deploymentId.slice(0, 8)}`}
-        titleRight={titleRight}
-        loading={logLines.length === 0 && status === "loading"}
-        minRows={20}
-        maxRows={30}
-        className="flex-1 min-h-0"
-      />
-    </div>
-  );
-}
-
 // ── Main Component ───────────────────────────────────────────────────────────
 
 interface ScopeInstancePageProps {
@@ -1273,31 +811,17 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   const [error, setError] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab") as InstanceTab | null;
-  const tab: InstanceTab = (tabParam === "configuration" || tabParam === "logs" || tabParam === "deployments") ? tabParam : "general";
-  const activeDeploymentId = searchParams.get("deployment");
+  const tab: InstanceTab = tabParam === "configuration" ? tabParam : "general";
 
   const setTab = useCallback((t: InstanceTab) => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       if (t === "general") next.delete("tab"); else next.set("tab", t);
-      if (t !== "deployments") next.delete("deployment");
       return next;
     }, { replace: true });
   }, [setSearchParams]);
 
-  const setActiveDeploymentId = useCallback((id: string | null) => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (id) next.set("deployment", id); else next.delete("deployment");
-      return next;
-    }, { replace: true });
-  }, [setSearchParams]);
-
-  const [acting, setActing] = useState<string | null>(null);
-  const [logsKey, setLogsKey] = useState(0);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
-  const [publishing, setPublishing] = useState(false);
-  const [publishSuccess, setPublishSuccess] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -1313,41 +837,6 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   }, [instanceId]);
 
   useEffect(() => { load(); }, [load]);
-
-  // ── Lifecycle actions (called from header) ────────────────────────────
-  async function act(action: string, fn: () => Promise<unknown>) {
-    setActing(action);
-    try {
-      await fn();
-      await load(true);
-      const labels: Record<string, string> = { restart: "Restarted successfully", start: "Started successfully", stop: "Stopped" };
-      setActionSuccess(labels[action] ?? "Done");
-      setTimeout(() => setActionSuccess(null), 3000);
-    } catch (err: any) {
-      console.error(`Action ${action} failed:`, err);
-    } finally {
-      setActing(null);
-    }
-  }
-
-  async function handleDeploy() {
-    setActing("deploy");
-    try {
-      const res = await scopesApi.deployInstance(instanceId);
-      // Navigate to the deployment detail view with real-time logs
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        next.set("tab", "deployments");
-        if (res.deploymentId) next.set("deployment", res.deploymentId);
-        return next;
-      }, { replace: true });
-      load(true);
-    } catch (err: any) {
-      console.error("Deploy failed:", err);
-    } finally {
-      setActing(null);
-    }
-  }
 
   if (loading) {
     return (
@@ -1367,19 +856,10 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
   }
 
   const isBuiltIn = instance.deploymentType === "built-in" || !!(instance as any).builtIn;
-  const containerStatus = isBuiltIn ? "running" : (instance.containerStatus ?? "stopped");
-  const isRunning = containerStatus === "running";
-  const isStopped = containerStatus === "stopped";
-  const isError = containerStatus === "error";
-  const hasContainer = !!instance.containerId;
-  const isManaged = instance.deploymentType === "platform" || instance.deploymentType === "custom";
-  const isExternal = instance.deploymentType === "external";
 
   const tabs: { key: InstanceTab; label: string; icon: React.ReactNode }[] = [
     { key: "general", label: "General", icon: <SettingsIcon className="size-3.5" /> },
-    ...(!isExternal && !isBuiltIn ? [{ key: "configuration" as InstanceTab, label: "Configuration", icon: <WrenchIcon className="size-3.5" /> }] : []),
-    ...(!isExternal && hasContainer ? [{ key: "logs" as InstanceTab, label: "Logs", icon: <TerminalIcon className="size-3.5" /> }] : []),
-    ...(isManaged && !isBuiltIn ? [{ key: "deployments" as InstanceTab, label: "Deployments", icon: <RocketIcon className="size-3.5" /> }] : []),
+    ...(!isBuiltIn ? [{ key: "configuration" as InstanceTab, label: "Configuration", icon: <WrenchIcon className="size-3.5" /> }] : []),
   ];
 
   return (
@@ -1392,15 +872,13 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
           <span className="text-foreground font-medium truncate">{instance.name}</span>
         </div>
 
-        {/* Name + status + actions row */}
+        {/* Name + status row */}
         <div className="flex items-center gap-3">
           <div className={cn(
             "flex items-center justify-center size-10 rounded-lg shrink-0",
-            isExternal
-              ? (instance.connected ? "bg-green-500/10 text-green-600" : "bg-muted text-muted-foreground")
-              : (isRunning && instance.connected ? "bg-green-500/10 text-green-600"
-                : isRunning ? "bg-blue-500/10 text-blue-500"
-                : "bg-muted text-muted-foreground"),
+            isBuiltIn || instance.connected
+              ? "bg-green-500/10 text-green-600"
+              : "bg-muted text-muted-foreground",
           )}>
             <ScopeIcon icon={instance.template.icon} />
           </div>
@@ -1413,7 +891,7 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
                   <div className="size-2.5 rounded-full bg-green-500" />
                   Active
                 </span>
-              ) : isExternal ? (
+              ) : (
                 <span className={cn(
                   "inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full",
                   instance.connected ? "text-green-600 bg-green-500/10" : "text-muted-foreground bg-muted",
@@ -1421,93 +899,14 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
                   <div className={cn("size-2.5 rounded-full", instance.connected ? "bg-green-500" : "bg-zinc-400")} />
                   {instance.connected ? "Connected" : "Disconnected"}
                 </span>
-              ) : (
-                <StatusLabel status={containerStatus} connected={instance.connected} />
               )}
             </div>
             <p className="text-xs text-muted-foreground font-mono">{instance.scopeName}</p>
           </div>
-
-          {/* Action buttons - Coolify style (not for built-in scopes) */}
-          {isManaged && !isBuiltIn && (
-            <div className="flex items-center gap-1.5">
-              {(!hasContainer || isStopped || isError || isRunning) && instance.imageUrl && (
-                <HeaderAction
-                  label={hasContainer ? "Redeploy" : "Deploy"}
-                  icon={<RocketIcon className="size-3.5" />}
-                  onClick={handleDeploy}
-                  disabled={!!acting}
-                  loading={acting === "deploy"}
-                />
-              )}
-              {hasContainer && isStopped && (
-                <HeaderAction
-                  label="Start"
-                  icon={<PlayIcon className="size-3.5" />}
-                  onClick={async () => {
-                    await act("start", () => scopesApi.startInstance(instance.id));
-                    setLogsKey((k) => k + 1);
-                    setTab("logs");
-                  }}
-                  disabled={!!acting}
-                  loading={acting === "start"}
-                  variant="success"
-                />
-              )}
-              {hasContainer && isRunning && (
-                <>
-                  <HeaderAction
-                    label="Restart"
-                    icon={<RotateCwIcon className="size-3.5" />}
-                    onClick={async () => {
-                      await act("restart", () => scopesApi.restartInstance(instance.id));
-                      setLogsKey((k) => k + 1);
-                      setTab("logs");
-                    }}
-                    disabled={!!acting}
-                    loading={acting === "restart"}
-                  />
-                  <HeaderAction
-                    label="Stop"
-                    icon={<SquareIcon className="size-3.5" />}
-                    onClick={() => act("stop", () => scopesApi.stopInstance(instance.id))}
-                    disabled={!!acting}
-                    loading={acting === "stop"}
-                    variant="danger"
-                  />
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Clone + Publish — only for managed skills with an image */}
-          {isManaged && !isBuiltIn && instance.imageUrl && (
-            <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-border">
-              <HeaderAction
-                label="Publish"
-                icon={<UploadIcon className="size-3.5" />}
-                onClick={async () => {
-                  setPublishing(true);
-                  try {
-                    const res = await scopesApi.publishInstance(instance.id);
-                    setPublishSuccess(res.action === "created" ? "Published to marketplace!" : "Marketplace listing updated!");
-                    setTimeout(() => setPublishSuccess(null), 3000);
-                    load(true);
-                  } catch (err: any) {
-                    console.error("Publish failed:", err);
-                  } finally {
-                    setPublishing(false);
-                  }
-                }}
-                disabled={publishing}
-                loading={publishing}
-              />
-            </div>
-          )}
         </div>
       </div>
 
-      {/* ── Tabs (Coolify-style underline tabs) ──────────────────────── */}
+      {/* ── Tabs ──────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-0 px-6 border-b border-border">
         {tabs.map((t) => (
           <button
@@ -1531,28 +930,13 @@ export function ScopeInstancePage({ instanceId, onBack }: ScopeInstancePageProps
         {error && <p className="text-xs text-red-500 mb-4">{error}</p>}
         {tab === "general" && <GeneralTab instance={instance} onSaved={() => load(true)} onDelete={onBack} />}
         {tab === "configuration" && <ConfigurationTab instance={instance} onSaved={() => load(true)} />}
-        {tab === "logs" && hasContainer && <LogsTab key={`${instance.containerId}-${logsKey}`} instance={instance} />}
-        {tab === "deployments" && !activeDeploymentId && (
-          <DeploymentsTab
-            instance={instance}
-            activeDeploymentId={activeDeploymentId}
-            onSelectDeployment={(id) => setActiveDeploymentId(id)}
-          />
-        )}
-        {tab === "deployments" && activeDeploymentId && (
-          <DeploymentDetailView
-            instanceId={instance.id}
-            deploymentId={activeDeploymentId}
-            onBack={() => setActiveDeploymentId(null)}
-          />
-        )}
       </div>
 
       {/* Success toast */}
-      {(actionSuccess || publishSuccess) && (
+      {actionSuccess && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg bg-green-600 text-white text-sm font-medium shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200">
           <CheckCircle2Icon className="size-4" />
-          {actionSuccess || publishSuccess}
+          {actionSuccess}
         </div>
       )}
     </div>

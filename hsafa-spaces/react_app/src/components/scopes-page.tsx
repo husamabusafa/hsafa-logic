@@ -332,8 +332,8 @@ function InstancesList({
                 ) : (
                   <span className="text-xs text-muted-foreground">Inactive</span>
                 )}
-                {inst.statusMessage && (
-                  <span className="text-[10px] text-red-400 truncate max-w-48">{inst.statusMessage}</span>
+                {(inst as any).statusMessage && (
+                  <span className="text-[10px] text-red-400 truncate max-w-48">{(inst as any).statusMessage}</span>
                 )}
               </div>
             </div>
