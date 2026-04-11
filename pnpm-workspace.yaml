@@ -4,11 +4,10 @@ packages:
   - hsafa-core/core
   - hsafa-core/sdks/service-node
   - hsafa-core/services/test-service
+  - hsafa-core/cli
   - hsafa-spaces/server
   - hsafa-spaces/react_app
   - hsafa-spaces/rn_app
-  - hsafa-spaces/cli
-  - hsafa-spaces/scope-images/postgres
   - hsafa-cases
   - hsafa-core/dashboard
 ignoredBuiltDependencies:

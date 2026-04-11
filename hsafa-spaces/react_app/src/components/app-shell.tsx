@@ -8,12 +8,11 @@ import {
   XIcon,
   KeyRoundIcon,
   UsersIcon,
-  ZapIcon,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
-export type AppPage = "spaces" | "haseefs" | "skills" | "bases" | "invitations" | "api-keys";
+export type AppPage = "spaces" | "haseefs" | "bases" | "invitations" | "api-keys";
 
 interface AppShellProps {
   activePage: AppPage;
@@ -31,7 +30,6 @@ interface AppShellProps {
 const navItems: { page: AppPage; icon: typeof MessageSquareIcon; label: string }[] = [
   { page: "spaces", icon: MessageSquareIcon, label: "Spaces" },
   { page: "haseefs", icon: BotIcon, label: "Haseefs" },
-  { page: "skills", icon: ZapIcon, label: "Skills" },
   { page: "bases", icon: UsersIcon, label: "Bases" },
   { page: "invitations", icon: MailIcon, label: "Invites" },
   { page: "api-keys", icon: KeyRoundIcon, label: "API Keys" },

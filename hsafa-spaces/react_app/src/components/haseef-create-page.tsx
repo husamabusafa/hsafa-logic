@@ -22,23 +22,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { haseefsApi, mediaApi, scopesApi, type ScopeInstance } from "@/lib/api";
+import { haseefsApi, mediaApi } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
 import { PRESET_MODELS, PROVIDER_OPTIONS, getProviderForModel } from "@/lib/models-config";
 import { PREBUILT_PERSONAS, type Persona } from "@/lib/personas";
-
-// ─── Scope Icon Helper ───────────────────────────────────────────────────────
-
-function ScopeIcon({ icon, className }: { icon: string | null; className?: string }) {
-  const cls = cn("size-5", className);
-  switch (icon) {
-    case "MessageSquare": return <MessageSquareIcon className={cls} />;
-    case "Calendar": return <CalendarIcon className={cls} />;
-    case "Database": return <DatabaseIcon className={cls} />;
-    case "Plug": return <PlugIcon className={cls} />;
-    default: return <PuzzleIcon className={cls} />;
-  }
-}
 
 // ─── Create Page ─────────────────────────────────────────────────────────────
 
@@ -69,29 +56,6 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
   const [keyError, setKeyError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Scope selection
-  const [allScopeInstances, setAllScopeInstances] = useState<ScopeInstance[]>([]);
-  const [selectedScopeIds, setSelectedScopeIds] = useState<Set<string>>(new Set());
-  const [scopesLoading, setScopesLoading] = useState(true);
-
-  // Load available scope instances
-  useEffect(() => {
-    setScopesLoading(true);
-    scopesApi.listInstances()
-      .then(({ instances }) => setAllScopeInstances(instances.filter(i => i.active)))
-      .catch(() => {})
-      .finally(() => setScopesLoading(false));
-  }, []);
-
-  const toggleScope = (id: string) => {
-    setSelectedScopeIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -209,19 +173,6 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
         ...(persona ? { persona } : {}),
         ...(profile ? { profile } : {}),
       });
-
-      // Attach selected scopes
-      if (selectedScopeIds.size > 0) {
-        const attachResults = await Promise.allSettled(
-          Array.from(selectedScopeIds).map(instanceId =>
-            scopesApi.attachScope(haseef.id, instanceId)
-          )
-        );
-        const failed = attachResults.filter(r => r.status === "rejected").length;
-        if (failed > 0) {
-          toast(`Haseef created but ${failed} scope(s) failed to attach`, "error");
-        }
-      }
 
       onCreated();
       toast("Haseef created", "success");
@@ -633,74 +584,6 @@ export function HaseefCreatePage({ onCreated }: HaseefCreatePageProps) {
                 <p className="text-xs text-destructive">{keyError}</p>
               )}
             </div>
-          </div>
-
-          {/* Scope Selection */}
-          <div className="space-y-3 border-t border-border pt-4">
-            <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
-              <PuzzleIcon className="size-4" />
-              Scopes
-            </label>
-            <p className="text-xs text-muted-foreground">
-              Select scope instances to attach to this Haseef. You can also manage scopes later from the details page.
-            </p>
-
-            {scopesLoading ? (
-              <div className="flex items-center justify-center py-6">
-                <LoaderIcon className="size-4 animate-spin text-muted-foreground" />
-              </div>
-            ) : allScopeInstances.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground border border-dashed border-border rounded-xl">
-                <PuzzleIcon className="size-6 mx-auto mb-1.5 opacity-40" />
-                <p className="text-xs">No active scope instances available.</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {allScopeInstances.map((inst) => {
-                  const selected = selectedScopeIds.has(inst.id);
-                  return (
-                    <button
-                      key={inst.id}
-                      type="button"
-                      onClick={() => toggleScope(inst.id)}
-                      className={cn(
-                        "w-full flex items-center gap-3 p-3 rounded-xl border-2 text-left transition-all",
-                        selected
-                          ? "border-primary bg-primary/5 shadow-sm"
-                          : "border-border hover:border-primary/30",
-                      )}
-                    >
-                      <div className={cn(
-                        "flex items-center justify-center size-9 rounded-lg",
-                        selected ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
-                      )}>
-                        <ScopeIcon icon={inst.template.icon} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium truncate">{inst.name}</span>
-                          <span className="text-[10px] font-mono text-muted-foreground">({inst.scopeName})</span>
-                        </div>
-                        <p className="text-xs text-muted-foreground">{inst.template.name}</p>
-                      </div>
-                      <div className={cn(
-                        "flex items-center justify-center size-5 rounded-md border-2 transition-all",
-                        selected
-                          ? "bg-primary border-primary"
-                          : "bg-background border-border",
-                      )}>
-                        {selected && <CheckIcon className="size-3.5 text-primary-foreground" />}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            {selectedScopeIds.size > 0 && (
-              <p className="text-xs text-primary font-medium">
-                {selectedScopeIds.size} scope{selectedScopeIds.size > 1 ? "s" : ""} selected
-              </p>
-            )}
           </div>
 
           <Textarea

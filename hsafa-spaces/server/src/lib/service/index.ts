@@ -22,6 +22,7 @@
 //   sense-events.ts    — inbox handler, seen watermark, interactive message events
 // =============================================================================
 
+import { HsafaSDK } from "@hsafa/sdk";
 import { prisma } from "../db.js";
 import { getSpacesForEntity, invalidateEntitySpacesCache } from "../membership-service.js";
 import { loadServiceConfig } from "./config.js";
@@ -31,7 +32,8 @@ import { coreHeaders, syncInstructions } from "./core-api.js";
 import { registerLifecycleHandlers } from "./stream-bridge.js";
 import { handleInboxMessage } from "./sense-events.js";
 import { startPresenceCleanup } from "../smartspace-events.js";
-import { ensurePrebuiltScopes, loadScopes } from "./scope-registry.js";
+import { SCOPE, TOOLS } from "./manifest.js";
+import { executeSpacesAction } from "./tools/index.js";
 
 // Re-export public API so existing imports from "./service/index.js" keep working
 export { getConnectionsForSpace, getConnectionForHaseef } from "./types.js";
@@ -58,15 +60,10 @@ export async function bootstrapExtension(): Promise<void> {
   // Register inbox handler
   setInboxHandler(handleInboxMessage);
 
-  // ── Ensure prebuilt scope templates + instances exist in DB (from code) ────
-  await ensurePrebuiltScopes();
-
-  // ── Load scopes: all plugins (spaces, scheduler, postgres, etc.) ──────────
-  // Unified loop: shouldLoad → create SDK → registerTools → init → connect
-  await loadScopes();
+  // ── Load spaces plugin directly (SDK creation + tool registration) ─────────
+  await loadSpacesPlugin();
 
   // ── Register lifecycle event handlers (stream bridge) ─────────────────────
-  // Must be called AFTER loadScopes() which sets state.spacesSDK.
   registerLifecycleHandlers();
 
   // ── Auto-discover haseefs from Core ───────────────────────────────────────
@@ -102,6 +99,86 @@ export async function bootstrapExtension(): Promise<void> {
   }
 
   console.log("[spaces-service] Bootstrap complete (v7 — SDK over SSE)");
+}
+
+// =============================================================================
+// Spaces Plugin — direct SDK setup (no scope-registry abstraction)
+// =============================================================================
+
+async function loadSpacesPlugin(): Promise<void> {
+  const config = state.config!;
+
+  // Request a scope key from Core
+  const scopeKey = await requestScopeKey(config, SCOPE);
+
+  // Create SDK
+  const sdk = new HsafaSDK({
+    coreUrl: config.coreUrl,
+    apiKey: scopeKey,
+    scope: SCOPE,
+  });
+
+  // Register tools
+  const toolDefs = TOOLS.map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+  }));
+  await sdk.registerTools(toolDefs);
+  console.log(`[spaces-service] Registered ${toolDefs.length} tools for scope "${SCOPE}"`);
+
+  // Wire tool handlers
+  for (const tool of TOOLS) {
+    sdk.onToolCall(tool.name, async (args, ctx) => {
+      return executeSpacesAction(ctx.haseef.id, ctx.actionId, tool.name, args);
+    });
+  }
+
+  // Connect SSE
+  sdk.connect();
+  state.spacesSDK = sdk;
+  console.log(`[spaces-service] SDK connected for scope "${SCOPE}"`);
+}
+
+/** Request a scope key from Core via the service key. */
+async function requestScopeKey(
+  config: import("./config.js").ServiceConfig,
+  scopeName: string,
+): Promise<string> {
+  const authHeaders = { "Content-Type": "application/json", "x-api-key": config.serviceKey };
+
+  // Revoke existing scope keys (cleanup from previous boots)
+  try {
+    const listRes = await fetch(
+      `${config.coreUrl}/api/keys?type=scope&resourceId=${encodeURIComponent(scopeName)}`,
+      { headers: authHeaders },
+    );
+    if (listRes.ok) {
+      const { keys } = await listRes.json();
+      for (const k of keys ?? []) {
+        await fetch(`${config.coreUrl}/api/keys/${k.id}/revoke`, { method: "POST", headers: authHeaders });
+      }
+    }
+  } catch { /* best-effort cleanup */ }
+
+  // Create fresh scope key
+  const res = await fetch(`${config.coreUrl}/api/keys`, {
+    method: "POST",
+    headers: authHeaders,
+    body: JSON.stringify({
+      type: "scope",
+      resourceId: scopeName,
+      description: `Scope key for "${scopeName}" (auto-provisioned by Spaces)`,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to create scope key (${res.status}): ${text}`);
+  }
+
+  const { key } = await res.json();
+  return key;
 }
 
 /** Discover all haseefs from Core via GET /api/haseefs */

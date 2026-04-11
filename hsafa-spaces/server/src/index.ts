@@ -13,7 +13,6 @@ import mediaRoutes, { mountStaticServing } from "./routes/media.js";
 import aiGenerateRoutes from "./routes/ai-generate.js";
 import apiKeysRoutes from "./routes/api-keys.js";
 import basesRoutes from "./routes/bases.js";
-import scopesRoutes from "./routes/scopes.js";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3005", 10);
@@ -35,7 +34,6 @@ app.use("/api/media", mediaRoutes);
 app.use("/api/ai", aiGenerateRoutes);
 app.use("/api/api-keys", apiKeysRoutes);
 app.use("/api/bases", basesRoutes);
-app.use("/api/scopes", scopesRoutes);
 
 // Health check
 app.get("/health", (_req, res) => {
