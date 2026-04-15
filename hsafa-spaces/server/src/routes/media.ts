@@ -7,7 +7,10 @@ import {
   isAuthError,
 } from "../lib/spaces-auth.js";
 import { storeFile, ensureStorageDirs, getStoragePath } from "../lib/media-storage.js";
-import { speechToText } from "../lib/elevenlabs.js";
+// Speech-to-text temporarily disabled - voice features removed in simplification
+const speechToText = async (_audioBuffer: Buffer, _mimeType: string): Promise<{ text: string }> => {
+  throw new Error("Voice transcription is temporarily disabled");
+};
 import express from "express";
 
 const router = Router();

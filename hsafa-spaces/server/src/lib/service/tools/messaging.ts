@@ -7,7 +7,7 @@ import { prisma } from "../../db.js";
 import { postSpaceMessage } from "../../space-service.js";
 import { state } from "../types.js";
 import { pushInteractiveMessageEvent } from "../sense-events.js";
-import { textToSpeech } from "../../elevenlabs.js";
+// TTS temporarily disabled - voice features removed in simplification
 import { getActiveSpaceId, resolveReplyTo, resolvedSpaceName } from "./shared.js";
 
 export async function handleSendMessage(
@@ -109,31 +109,8 @@ export async function handleSendVoice(
 
   const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
 
-  // Generate TTS audio via ElevenLabs
-  let audioUrl: string;
-  let audioDuration: number;
-  try {
-    const protocol = "http";
-    const baseUrl = `${protocol}://localhost:${process.env.PORT || 3005}`;
-    const ttsResult = await textToSpeech(text, baseUrl, conn?.voiceId, conn?.voiceGender);
-    audioUrl = ttsResult.audioUrl;
-    audioDuration = ttsResult.audioDuration;
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    return { error: `TTS failed: ${errMsg}` };
-  }
-
-  const result = await postSpaceMessage({
-    spaceId,
-    entityId: agentEntityId,
-    role: "assistant",
-    content: "",
-    messageType: "voice",
-    replyTo,
-    metadata: { toolName, actionId, payload: { audioUrl, audioDuration, transcription: text } },
-  });
-
-  return { success: true, messageId: result.messageId, audioUrl, sentTo: resolvedSpaceName(conn!) };
+  // TTS temporarily disabled
+  return { error: "Voice messages are temporarily disabled" };
 }
 
 export async function handleSendFile(

@@ -647,4 +647,75 @@ export const basesApi = {
   },
 };
 
+// ── Skills types ────────────────────────────────────────────────────────────
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string | null;
+  tools: Array<{
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+  }>;
+  config: Record<string, unknown> | null;
+  isBuiltin: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HaseefSkill {
+  id: string;
+  haseefId: string;
+  skillId: string;
+  config: Record<string, unknown> | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  skill: Skill;
+}
+
+// ── Skills API ───────────────────────────────────────────────────────────────
+
+export const skillsApi = {
+  list() {
+    return request<{ skills: Skill[] }>("/skills");
+  },
+
+  get(id: string) {
+    return request<{ skill: Skill }>(`/skills/${id}`);
+  },
+
+  create(data: { name: string; description?: string; tools: unknown[]; config?: Record<string, unknown> }) {
+    return request<{ skill: Skill }>("/skills", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  listForHaseef(haseefId: string) {
+    return request<{ skills: HaseefSkill[] }>(`/skills/haseefs/${haseefId}/skills`);
+  },
+
+  attachToHaseef(haseefId: string, data: { skillId: string; config?: Record<string, unknown> }) {
+    return request<{ haseefSkill: HaseefSkill }>(`/skills/haseefs/${haseefId}/skills`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  detachFromHaseef(haseefId: string, skillId: string) {
+    return request<{ success: boolean }>(`/skills/haseefs/${haseefId}/skills/${skillId}`, {
+      method: "DELETE",
+    });
+  },
+
+  updateHaseefSkill(haseefId: string, skillId: string, data: { config?: Record<string, unknown>; isActive?: boolean }) {
+    return request<{ haseefSkill: HaseefSkill }>(`/skills/haseefs/${haseefId}/skills/${skillId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  },
+};
+
 export { ApiError };

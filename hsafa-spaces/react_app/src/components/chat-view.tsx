@@ -36,10 +36,6 @@ import { MessageRenderer } from "@/components/messages/message-renderer";
 import { cn } from "@/lib/utils";
 import type { AgentActivity, TypingUser, MediaMessageData } from "@/lib/use-space-chat";
 import { mediaApi, aiApi } from "@/lib/api";
-import { ForwardDialog } from "@/components/chat-forward-dialog";
-import { SeenInfoPopup } from "@/components/chat-seen-info";
-import { AiGeneratedPreview } from "@/components/chat-ai-previews";
-import { SearchResults } from "@/components/chat-search-results";
 import { InteractiveProvider } from "@/lib/interactive-context";
 
 interface ChatViewProps {
@@ -720,16 +716,10 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
             <p className="text-xs text-muted-foreground/60">Start the conversation!</p>
           </div>
         ) : searchQuery.trim() ? (
-          /* Search results */
-          <SearchResults
-            messages={messages}
-            query={searchQuery}
-            space={space}
-            onSelect={(id: string) => {
-              setPendingScrollToId(id);
-              closeSearch();
-            }}
-          />
+          /* Search temporarily disabled */
+          <div className="flex flex-col items-center justify-center h-full p-8">
+            <p className="text-muted-foreground">Search is temporarily disabled</p>
+          </div>
         ) : (messages.map((msg, idx) => {
           // Only show avatar on LAST message in a consecutive group
           const isFirstInGroup = idx === 0 || messages[idx - 1].entityId !== msg.entityId || messages[idx - 1].type === "system";
@@ -756,17 +746,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
           );
         }))}
 
-        {/* Seen info popup */}
-        {seenInfoMessageId && (
-          <SeenInfoPopup
-            messageId={seenInfoMessageId}
-            seenBy={messageSeenMap[seenInfoMessageId] || []}
-            members={space.members}
-            currentEntityId={currentEntityId}
-            senderId={messages.find((m) => m.id === seenInfoMessageId)?.entityId || ""}
-            onClose={() => setSeenInfoMessageId(null)}
-          />
-        )}
+        {/* Seen info popup - temporarily disabled */}
 
         {/* Typing / Recording indicator — always show avatars */}
         {typingMembers.length > 0 && (() => {
@@ -912,11 +892,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
                   </>
                 ) : (
                   <>
-                    {/* Generated Component Preview */}
-                    <div key={aiPreviewKey} className="rounded-lg border border-primary/20 bg-primary/5 p-3">
-                      <p className="text-xs font-medium text-primary mb-2">Preview</p>
-                      <AiGeneratedPreview type={aiGenType} data={aiGeneratedData} prompt={aiPrompt} />
-                    </div>
+                    {/* AI Preview temporarily disabled */}
 
                     {/* Options toggle for interactive messages — allow update (not vote, always editable) */}
                     {["confirmation", "choice", "form"].includes(aiGenType || "") && (
@@ -1453,15 +1429,7 @@ export function ChatView({ space, messages, currentEntityId, typingUsers, active
         </div>
       </div>}
 
-      {/* Forward Dialog */}
-      {forwardMessageId && (
-        <ForwardDialog
-          message={messages.find((m) => m.id === forwardMessageId)!}
-          currentSpaceId={space.id}
-          currentEntityId={currentEntityId}
-          onClose={() => setForwardMessageId(null)}
-        />
-      )}
+      {/* Forward Dialog - temporarily disabled */}
     </div>
   );
 }
