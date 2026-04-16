@@ -14,7 +14,7 @@ import { prisma } from "../db.js";
 export function coreHeaders(): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    "x-api-key": state.config!.serviceKey,
+    "x-api-key": state.config!.secretKey,
   };
 }
 

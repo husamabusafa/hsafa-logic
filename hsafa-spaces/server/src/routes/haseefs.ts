@@ -15,8 +15,6 @@ import {
   deleteHaseef as coreDeleteHaseef,
 } from "../lib/core-proxy.js";
 import { getDecryptedApiKey } from "./api-keys.js";
-import { encrypt } from "../lib/encryption.js";
-import { rotateHaseefKey } from "../lib/resource-keys.js";
 
 const router = Router();
 
@@ -126,20 +124,19 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     // Create in Core with profileJson linking to the spaces entity
-    const { haseef: coreHaseef, apiKey: haseefApiKey } = await coreCreateHaseef({
+    const coreHaseef = await coreCreateHaseef({
       name,
       description,
       configJson: config,
       profileJson,
     });
 
-    // Create ownership record (store encrypted haseef API key)
+    // Create ownership record
     await prisma.haseefOwnership.create({
       data: {
         userId: auth.userId,
         haseefId: coreHaseef.id,
         entityId: entity.id,
-        coreApiKey: encrypt(haseefApiKey),
       },
     });
 
@@ -178,7 +175,6 @@ router.post("/", async (req: Request, res: Response) => {
         name: coreHaseef.name,
         description: coreHaseef.description,
         entityId: entity.id,
-        apiKey: haseefApiKey, // returned once to user for CLI use
       },
     });
   } catch (error: any) {
@@ -825,40 +821,6 @@ router.delete("/:id/spaces/:spaceId", async (req: Request, res: Response) => {
     }
     console.error("Remove haseef from space error:", error);
     res.status(500).json({ error: "Failed to remove haseef from space" });
-  }
-});
-
-// =============================================================================
-// POST /api/haseefs/:id/rotate-key — Rotate the Core API key for a haseef (JWT, owner only)
-// =============================================================================
-router.post("/:id/rotate-key", async (req: Request, res: Response) => {
-  const auth = await requireJwtUser(req);
-  if (isJwtError(auth)) {
-    res.status(auth.status).json({ error: auth.error });
-    return;
-  }
-
-  try {
-    const haseefId = req.params.id as string;
-
-    const ownership = await prisma.haseefOwnership.findUnique({
-      where: { userId_haseefId: { userId: auth.userId, haseefId } },
-    });
-    if (!ownership) {
-      res.status(404).json({ error: "Haseef not found or not owned by you" });
-      return;
-    }
-
-    const result = await rotateHaseefKey(auth.userId, haseefId);
-    if (!result) {
-      res.status(502).json({ error: "Failed to rotate haseef key via Core" });
-      return;
-    }
-
-    res.json({ success: true, keyHint: result.newKeyHint });
-  } catch (error) {
-    console.error("Rotate haseef key error:", error);
-    res.status(500).json({ error: "Failed to rotate haseef key" });
   }
 });
 

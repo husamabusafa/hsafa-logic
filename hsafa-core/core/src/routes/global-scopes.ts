@@ -5,7 +5,6 @@ import {
   removeScopeConnection,
   isScopeConnected,
 } from '../lib/tool-dispatcher.js';
-import { assertScopeAccess } from '../middleware/auth.js';
 
 // =============================================================================
 // Global Scopes Routes (v7)
@@ -25,11 +24,6 @@ export const globalScopesRouter = Router();
 globalScopesRouter.put('/:scope/tools', async (req, res) => {
   const { scope } = req.params;
   const { tools } = req.body;
-
-  if (!assertScopeAccess(req, scope)) {
-    res.status(403).json({ error: 'Not authorized to register tools for this scope' });
-    return;
-  }
 
   if (!Array.isArray(tools)) {
     res.status(400).json({ error: 'tools must be an array' });
@@ -121,11 +115,6 @@ globalScopesRouter.get('/:scope/tools', async (req, res) => {
 // GET /api/scopes/:scope/actions/stream — SSE action stream for a scope
 globalScopesRouter.get('/:scope/actions/stream', (req, res) => {
   const { scope } = req.params;
-
-  if (!assertScopeAccess(req, scope)) {
-    res.status(403).json({ error: 'Not authorized to listen on this scope' });
-    return;
-  }
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');

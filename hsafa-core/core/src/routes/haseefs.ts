@@ -2,8 +2,6 @@ import { Router } from 'express';
 import { prisma } from '../lib/db.js';
 import { redis } from '../lib/redis.js';
 import { isRunning, getActiveRunId } from '../lib/coordinator.js';
-import { createApiKey } from '../lib/api-keys.js';
-import { assertHaseefAccess } from '../middleware/auth.js';
 
 // =============================================================================
 // Haseefs Routes (v7)
@@ -16,15 +14,9 @@ export const haseefsRouter = Router();
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────
 
-// POST /api/haseefs — Create (service key only)
+// POST /api/haseefs — Create
 haseefsRouter.post('/', async (req, res) => {
   try {
-    // Only service keys can create haseefs
-    if (req.auth?.keyType !== 'service') {
-      res.status(403).json({ error: 'Service key required to create haseefs' });
-      return;
-    }
-
     const { name, description, profileJson, configJson, scopes } = req.body;
 
     if (!name || !configJson) {
@@ -42,14 +34,7 @@ haseefsRouter.post('/', async (req, res) => {
       },
     });
 
-    // Generate a per-haseef API key
-    const { key: apiKey } = await createApiKey({
-      type: 'haseef',
-      resourceId: haseef.id,
-      description: `Key for haseef "${name}"`,
-    });
-
-    res.status(201).json({ haseef, apiKey });
+    res.status(201).json({ haseef });
   } catch (err: any) {
     if (err.code === 'P2002') {
       res.status(409).json({ error: 'Haseef with this name already exists' });
@@ -60,12 +45,10 @@ haseefsRouter.post('/', async (req, res) => {
   }
 });
 
-// GET /api/haseefs — List (service key: all, haseef key: only that haseef)
+// GET /api/haseefs — List
 haseefsRouter.get('/', async (req, res) => {
   try {
-    const where = req.auth?.keyType === 'haseef' && req.auth.resourceId
-      ? { id: req.auth.resourceId }
-      : {};
+    const where = {};
 
     const haseefs = await prisma.haseef.findMany({
       where,
@@ -88,11 +71,6 @@ haseefsRouter.get('/', async (req, res) => {
 // GET /api/haseefs/:id — Get
 haseefsRouter.get('/:id', async (req, res) => {
   try {
-    if (!assertHaseefAccess(req, req.params.id)) {
-      res.status(403).json({ error: 'Not authorized to access this haseef' });
-      return;
-    }
-
     const haseef = await prisma.haseef.findUnique({
       where: { id: req.params.id },
     });
@@ -116,11 +94,6 @@ haseefsRouter.get('/:id', async (req, res) => {
 // PATCH /api/haseefs/:id — Update
 haseefsRouter.patch('/:id', async (req, res) => {
   try {
-    if (!assertHaseefAccess(req, req.params.id)) {
-      res.status(403).json({ error: 'Not authorized to update this haseef' });
-      return;
-    }
-
     const { name, description, configJson, profileJson, scopes } = req.body;
     const data: Record<string, unknown> = {};
 
@@ -149,20 +122,10 @@ haseefsRouter.patch('/:id', async (req, res) => {
 // DELETE /api/haseefs/:id — Delete
 haseefsRouter.delete('/:id', async (req, res) => {
   try {
-    if (!assertHaseefAccess(req, req.params.id)) {
-      res.status(403).json({ error: 'Not authorized to delete this haseef' });
-      return;
-    }
-
     const haseefId = req.params.id;
 
     // Delete the haseef (cascades runs, memories)
     await prisma.haseef.delete({ where: { id: haseefId } });
-
-    // Clean up API keys for this haseef (not FK-linked, must delete explicitly)
-    await prisma.coreApiKey.deleteMany({
-      where: { keyType: 'haseef', resourceId: haseefId },
-    });
 
     // Clean up Redis state
     await redis.del(`inbox:${haseefId}`).catch(() => {});
@@ -182,10 +145,6 @@ haseefsRouter.delete('/:id', async (req, res) => {
 
 // GET /api/haseefs/:id/profile
 haseefsRouter.get('/:id/profile', async (req, res) => {
-  if (!assertHaseefAccess(req, req.params.id)) {
-    res.status(403).json({ error: 'Not authorized to access this haseef' });
-    return;
-  }
   try {
     const haseef = await prisma.haseef.findUnique({
       where: { id: req.params.id },
@@ -204,10 +163,6 @@ haseefsRouter.get('/:id/profile', async (req, res) => {
 
 // PATCH /api/haseefs/:id/profile
 haseefsRouter.patch('/:id/profile', async (req, res) => {
-  if (!assertHaseefAccess(req, req.params.id)) {
-    res.status(403).json({ error: 'Not authorized to update this haseef' });
-    return;
-  }
   try {
     const haseef = await prisma.haseef.update({
       where: { id: req.params.id },
@@ -229,10 +184,6 @@ haseefsRouter.patch('/:id/profile', async (req, res) => {
 
 // GET /api/haseefs/:id/status
 haseefsRouter.get('/:id/status', async (req, res) => {
-  if (!assertHaseefAccess(req, req.params.id)) {
-    res.status(403).json({ error: 'Not authorized to access this haseef' });
-    return;
-  }
   const running = isRunning(req.params.id);
   const activeRunId = getActiveRunId(req.params.id);
   res.json({ running, activeRunId: activeRunId ?? null });
@@ -243,11 +194,6 @@ haseefsRouter.get('/:id/status', async (req, res) => {
 // GET /api/haseefs/:id/stream — SSE: real-time run events
 haseefsRouter.get('/:id/stream', async (req, res) => {
   const haseefId = req.params.id;
-
-  if (!assertHaseefAccess(req, haseefId)) {
-    res.status(403).json({ error: 'Not authorized to access this haseef' });
-    return;
-  }
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');

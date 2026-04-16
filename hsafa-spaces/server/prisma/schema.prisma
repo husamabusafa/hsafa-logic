@@ -314,7 +314,6 @@ model HaseefOwnership {
   userId      String   @map("user_id")
   haseefId    String   @map("haseef_id") // Core haseef UUID
   entityId    String   @map("entity_id") @db.Uuid
-  coreApiKey  String?  @map("core_api_key") @db.Text // Encrypted per-haseef Core API key (hsk_haseef_*)
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)

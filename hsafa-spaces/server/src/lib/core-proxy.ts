@@ -1,20 +1,20 @@
 // =============================================================================
 // Core Proxy — Helper to call hsafa-core API for Haseef CRUD
 //
-// Uses HSAFA_GATEWAY_URL + CORE_SERVICE_KEY from environment.
+// Uses HSAFA_GATEWAY_URL + CORE_SECRET_KEY from environment.
 // =============================================================================
 
 const CORE_URL = process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
-const SERVICE_KEY = process.env.CORE_SERVICE_KEY || "";
+const SECRET_KEY = process.env.CORE_SECRET_KEY || "";
 
-if (!SERVICE_KEY) {
-  console.warn("[core-proxy] ⚠ CORE_SERVICE_KEY is not set — haseef CRUD will fail");
+if (!SECRET_KEY) {
+  console.warn("[core-proxy] ⚠ CORE_SECRET_KEY is not set — haseef CRUD will fail");
 }
 
 function headers(): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    "x-api-key": SERVICE_KEY,
+    "x-api-key": SECRET_KEY,
   };
 }
 
@@ -48,7 +48,7 @@ export async function createHaseef(data: {
   configJson: Record<string, unknown>;
   profileJson?: Record<string, unknown>;
   scopes?: string[];
-}): Promise<{ haseef: CoreHaseef; apiKey: string }> {
+}): Promise<CoreHaseef> {
   const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs`, {
     method: "POST",
     headers: headers(),
@@ -62,7 +62,7 @@ export async function createHaseef(data: {
     throw { status: res.status, error: `Core create failed: ${text}` };
   }
   const json = await res.json();
-  return { haseef: json.haseef, apiKey: json.apiKey };
+  return json.haseef;
 }
 
 export async function getHaseef(id: string): Promise<CoreHaseef> {

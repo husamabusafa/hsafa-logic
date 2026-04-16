@@ -14,7 +14,7 @@
 //
 // Split into sub-modules for clarity:
 //   types.ts           — shared state, types, connection helpers
-//   config.ts          — env var loading (coreUrl, serviceKey)
+//   config.ts          — env var loading (coreUrl, secretKey)
 //   core-api.ts        — Core HTTP helpers (sync per-haseef instructions, sense events)
 //   tool-handlers.ts   — tool execution (executeAction + all case handlers)
 //   scope-registry.ts  — SDK creation, tool registration, onToolCall wiring + connect()
@@ -108,13 +108,10 @@ export async function bootstrapExtension(): Promise<void> {
 async function loadSpacesPlugin(): Promise<void> {
   const config = state.config!;
 
-  // Request a scope key from Core
-  const scopeKey = await requestScopeKey(config, SCOPE);
-
-  // Create SDK
+  // Create SDK with the shared secret key
   const sdk = new HsafaSDK({
     coreUrl: config.coreUrl,
-    apiKey: scopeKey,
+    apiKey: config.secretKey,
     scope: SCOPE,
   });
 
@@ -138,47 +135,6 @@ async function loadSpacesPlugin(): Promise<void> {
   sdk.connect();
   state.spacesSDK = sdk;
   console.log(`[spaces-service] SDK connected for scope "${SCOPE}"`);
-}
-
-/** Request a scope key from Core via the service key. */
-async function requestScopeKey(
-  config: import("./config.js").ServiceConfig,
-  scopeName: string,
-): Promise<string> {
-  const authHeaders = { "Content-Type": "application/json", "x-api-key": config.serviceKey };
-
-  // Revoke existing scope keys (cleanup from previous boots)
-  try {
-    const listRes = await fetch(
-      `${config.coreUrl}/api/keys?type=scope&resourceId=${encodeURIComponent(scopeName)}`,
-      { headers: authHeaders },
-    );
-    if (listRes.ok) {
-      const { keys } = await listRes.json();
-      for (const k of keys ?? []) {
-        await fetch(`${config.coreUrl}/api/keys/${k.id}/revoke`, { method: "POST", headers: authHeaders });
-      }
-    }
-  } catch { /* best-effort cleanup */ }
-
-  // Create fresh scope key
-  const res = await fetch(`${config.coreUrl}/api/keys`, {
-    method: "POST",
-    headers: authHeaders,
-    body: JSON.stringify({
-      type: "scope",
-      resourceId: scopeName,
-      description: `Scope key for "${scopeName}" (auto-provisioned by Spaces)`,
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Failed to create scope key (${res.status}): ${text}`);
-  }
-
-  const { key } = await res.json();
-  return key;
 }
 
 /** Discover all haseefs from Core via GET /api/haseefs */
