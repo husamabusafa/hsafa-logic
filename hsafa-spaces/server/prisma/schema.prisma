@@ -47,6 +47,7 @@ model User {
 
   haseefOwnerships HaseefOwnership[]
   apiKeys          ApiKey[]
+  skillInstances   SkillInstance[]
   defaultBase      Base?    @relation("userDefaultBase", fields: [defaultBaseId], references: [id])
 
   @@map("users")
@@ -345,41 +346,69 @@ model ApiKey {
 }
 
 // =============================================================================
-// SKILL — Reusable skill with tools that can be attached to haseefs
+// SKILL TEMPLATE — Prebuilt skill definitions (database, scheduler, etc.)
 // =============================================================================
 
-model Skill {
-  id          String   @id @default(uuid()) @db.Uuid
-  name        String
-  description String?
-  tools       Json     @db.JsonB
-  config      Json?    @db.JsonB
-  isBuiltin   Boolean  @default(false) @map("is_builtin")
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+model SkillTemplate {
+  id              String   @id @default(uuid()) @db.Uuid
+  name            String   @unique                          // "database", "scheduler"
+  displayName     String   @map("display_name")             // "Database", "Scheduler"
+  description     String?  @db.Text
+  category        String?                                   // "data", "automation", "communication"
+  configSchema    Json     @map("config_schema") @db.JsonB   // JSON Schema for config validation
+  toolDefinitions Json     @map("tool_definitions") @db.JsonB // Array of tool definitions
+  instructions    String?  @db.Text                          // LLM instructions injected into prompt
+  iconUrl         String?  @map("icon_url")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  haseefSkills HaseefSkill[]
+  instances SkillInstance[]
 
-  @@index([isBuiltin])
-  @@map("skills")
+  @@map("skill_templates")
 }
 
 // =============================================================================
-// HASEEF SKILL — Junction table linking skills to haseefs
+// SKILL INSTANCE — User-created instance of a template with specific config
+// Each instance gets a unique name used as the skill name in Core.
+// e.g. template "database" → instance "production_db" with config {connectionString: "..."}
+// =============================================================================
+
+model SkillInstance {
+  id            String   @id @default(uuid()) @db.Uuid
+  name          String   @unique                           // Unique skill name: "production_db"
+  displayName   String   @map("display_name")              // "Production Database"
+  templateId    String   @map("template_id") @db.Uuid
+  config        Json     @default("{}") @db.JsonB           // Instance-specific config
+  userId        String   @map("user_id")
+  status        String   @default("active")                // "active" | "inactive" | "error"
+  statusMessage String?  @map("status_message")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  template     SkillTemplate @relation(fields: [templateId], references: [id])
+  user         User          @relation(fields: [userId], references: [id])
+  haseefSkills HaseefSkill[]
+
+  @@index([userId])
+  @@index([templateId])
+  @@map("skill_instances")
+}
+
+// =============================================================================
+// HASEEF SKILL — Links a skill instance to a haseef
 // =============================================================================
 
 model HaseefSkill {
-  id        String   @id @default(uuid()) @db.Uuid
-  haseefId  String   @map("haseef_id")
-  skillId   String   @map("skill_id") @db.Uuid
-  config    Json?    @db.JsonB
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id         String   @id @default(uuid()) @db.Uuid
+  haseefId   String   @map("haseef_id")
+  instanceId String   @map("instance_id") @db.Uuid
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  instance SkillInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
 
-  @@unique([haseefId, skillId])
+  @@unique([haseefId, instanceId])
   @@index([haseefId])
   @@map("haseef_skills")
 }

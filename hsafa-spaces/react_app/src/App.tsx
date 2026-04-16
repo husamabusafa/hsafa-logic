@@ -20,7 +20,7 @@ import { AuthPage } from "@/components/auth-page";
 import { VerifyEmailPage } from "@/components/verify-email-page";
 import { AuthCallback } from "@/components/auth-callback";
 import { ApiKeysPage } from "@/components/api-keys-page";
-import { SkillsPage } from "@/components/skills-page";
+import { SkillsPage, SkillTemplateGallery, SkillTemplateCreatePage } from "@/components/skills-page";
 import { BasesPage, JoinByLinkPage, JoinSpaceByLinkPage } from "@/components/bases-page";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { haseefsApi, spacesApi, invitationsApi, basesApi, type HaseefListItem, type SmartSpace, type SpaceMember } from "@/lib/api";
@@ -492,6 +492,8 @@ function AppContent() {
 
             {/* Skills */}
             <Route path="/skills" element={<SkillsPage />} />
+            <Route path="/skills/new" element={<SkillTemplateGallery />} />
+            <Route path="/skills/new/:templateName" element={<SkillTemplateCreatePage />} />
 
             {/* Bases */}
             <Route path="/bases" element={<BasesPage />} />

@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import { bootstrapExtension } from "./lib/service/index.js";
+import { bootSkillManager } from "./lib/skills/manager.js";
+import { loadServiceConfig } from "./lib/service/config.js";
 import authRoutes from "./routes/auth.js";
 import smartSpacesRoutes from "./routes/smart-spaces.js";
 import entitiesRoutes from "./routes/entities.js";
@@ -54,5 +56,15 @@ app.listen(PORT, async () => {
     await bootstrapExtension();
   } catch (err) {
     console.error("[spaces-server] Extension bootstrap failed:", err);
+  }
+
+  // Boot skill instance manager (seed templates, reconnect active instances)
+  const svcConfig = loadServiceConfig();
+  if (svcConfig) {
+    try {
+      await bootSkillManager({ coreUrl: svcConfig.coreUrl, secretKey: svcConfig.secretKey });
+    } catch (err) {
+      console.error("[spaces-server] Skill manager boot failed:", err);
+    }
   }
 });

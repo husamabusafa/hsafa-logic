@@ -34,6 +34,21 @@ async function request<T>(
     headers,
   });
 
+  // Guard against non-JSON responses (e.g. HTML 404 from Express)
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    if (!res.ok) {
+      throw new ApiError(`Request failed (${res.status})`, res.status);
+    }
+    // Attempt JSON parse anyway for responses without explicit content-type
+    try {
+      const data = await res.json();
+      return data as T;
+    } catch {
+      throw new ApiError(`Unexpected response format (${res.status})`, res.status);
+    }
+  }
+
   const data = await res.json();
 
   if (!res.ok) {
@@ -649,72 +664,106 @@ export const basesApi = {
 
 // ── Skills types ────────────────────────────────────────────────────────────
 
-export interface Skill {
+export interface SkillTemplate {
   id: string;
   name: string;
+  displayName: string;
   description: string | null;
-  tools: Array<{
+  category: string | null;
+  configSchema: Record<string, unknown>;
+  toolDefinitions: Array<{
     name: string;
     description: string;
     inputSchema: Record<string, unknown>;
+    mode?: string;
   }>;
-  config: Record<string, unknown> | null;
-  isBuiltin: boolean;
+  instructions: string | null;
+  iconUrl: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SkillInstance {
+  id: string;
+  name: string;
+  displayName: string;
+  templateId: string;
+  config: Record<string, unknown>;
+  userId: string;
+  status: string;
+  statusMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  template: SkillTemplate;
+  connected?: boolean;
 }
 
 export interface HaseefSkill {
   id: string;
   haseefId: string;
-  skillId: string;
-  config: Record<string, unknown> | null;
+  instanceId: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
-  skill: Skill;
+  instance: SkillInstance;
+  connected?: boolean;
 }
 
 // ── Skills API ───────────────────────────────────────────────────────────────
 
 export const skillsApi = {
-  list() {
-    return request<{ skills: Skill[] }>("/skills");
+  // Templates
+  listTemplates() {
+    return request<{ templates: SkillTemplate[] }>("/skills/templates");
   },
 
-  get(id: string) {
-    return request<{ skill: Skill }>(`/skills/${id}`);
+  getTemplate(name: string) {
+    return request<{ template: SkillTemplate }>(`/skills/templates/${name}`);
   },
 
-  create(data: { name: string; description?: string; tools: unknown[]; config?: Record<string, unknown> }) {
-    return request<{ skill: Skill }>("/skills", {
+  // Instances
+  listInstances() {
+    return request<{ instances: SkillInstance[] }>("/skills/instances");
+  },
+
+  createInstance(data: { name: string; displayName?: string; templateName: string; config?: Record<string, unknown> }) {
+    return request<{ instance: SkillInstance }>("/skills/instances", {
       method: "POST",
       body: JSON.stringify(data),
     });
   },
 
-  listForHaseef(haseefId: string) {
-    return request<{ skills: HaseefSkill[] }>(`/skills/haseefs/${haseefId}/skills`);
-  },
-
-  attachToHaseef(haseefId: string, data: { skillId: string; config?: Record<string, unknown> }) {
-    return request<{ haseefSkill: HaseefSkill }>(`/skills/haseefs/${haseefId}/skills`, {
-      method: "POST",
+  updateInstance(id: string, data: { config: Record<string, unknown> }) {
+    return request<{ instance: SkillInstance }>(`/skills/instances/${id}`, {
+      method: "PATCH",
       body: JSON.stringify(data),
     });
   },
 
-  detachFromHaseef(haseefId: string, skillId: string) {
-    return request<{ success: boolean }>(`/skills/haseefs/${haseefId}/skills/${skillId}`, {
+  deleteInstance(id: string) {
+    return request<{ success: boolean }>(`/skills/instances/${id}`, {
       method: "DELETE",
     });
   },
 
-  updateHaseefSkill(haseefId: string, skillId: string, data: { config?: Record<string, unknown>; isActive?: boolean }) {
-    return request<{ haseefSkill: HaseefSkill }>(`/skills/haseefs/${haseefId}/skills/${skillId}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
+  // Attach/Detach
+  attachToHaseef(instanceId: string, haseefId: string) {
+    return request<{ haseefSkill: HaseefSkill }>(`/skills/instances/${instanceId}/attach`, {
+      method: "POST",
+      body: JSON.stringify({ haseefId }),
     });
+  },
+
+  detachFromHaseef(instanceId: string, haseefId: string) {
+    return request<{ success: boolean }>(`/skills/instances/${instanceId}/detach`, {
+      method: "DELETE",
+      body: JSON.stringify({ haseefId }),
+    });
+  },
+
+  // Haseef skills
+  listForHaseef(haseefId: string) {
+    return request<{ skills: HaseefSkill[] }>(`/skills/haseefs/${haseefId}`);
   },
 };
 

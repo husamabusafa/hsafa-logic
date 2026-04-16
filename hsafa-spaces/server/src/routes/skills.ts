@@ -2,6 +2,12 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import { prisma } from "../lib/db.js";
 import { verifyToken } from "../lib/auth.js";
+import {
+  createInstance,
+  deleteInstance,
+  updateInstanceConfig,
+  isInstanceConnected,
+} from "../lib/skills/manager.js";
 
 const router = Router();
 
@@ -35,50 +41,46 @@ function isJwtError(r: any): r is { status: number; error: string } {
 }
 
 // =============================================================================
-// GET /api/skills — List all available skills
+// GET /api/skills/templates — List all prebuilt skill templates
 // =============================================================================
 
-router.get("/", async (_req: Request, res: Response) => {
+router.get("/templates", async (_req: Request, res: Response) => {
   try {
-    const skills = await prisma.skill.findMany({
-      orderBy: [{ isBuiltin: "desc" }, { name: "asc" }],
+    const templates = await prisma.skillTemplate.findMany({
+      orderBy: { name: "asc" },
     });
-
-    res.json({ skills });
+    res.json({ templates });
   } catch (error) {
-    console.error("List skills error:", error);
-    res.status(500).json({ error: "Failed to list skills" });
+    console.error("List templates error:", error);
+    res.status(500).json({ error: "Failed to list templates" });
   }
 });
 
 // =============================================================================
-// GET /api/skills/:id — Get skill details
+// GET /api/skills/templates/:name — Get template details
 // =============================================================================
 
-router.get("/:id", async (req: Request, res: Response) => {
+router.get("/templates/:name", async (req: Request, res: Response) => {
   try {
-    const id = req.params.id as string;
-    const skill = await prisma.skill.findUnique({
-      where: { id },
+    const template = await prisma.skillTemplate.findUnique({
+      where: { name: req.params.name as string },
     });
-
-    if (!skill) {
-      res.status(404).json({ error: "Skill not found" });
+    if (!template) {
+      res.status(404).json({ error: "Template not found" });
       return;
     }
-
-    res.json({ skill });
+    res.json({ template });
   } catch (error) {
-    console.error("Get skill error:", error);
-    res.status(500).json({ error: "Failed to get skill" });
+    console.error("Get template error:", error);
+    res.status(500).json({ error: "Failed to get template" });
   }
 });
 
 // =============================================================================
-// POST /api/skills — Create a new custom skill (admin only in future)
+// GET /api/skills/instances — List user's skill instances
 // =============================================================================
 
-router.post("/", async (req: Request, res: Response) => {
+router.get("/instances", async (req: Request, res: Response) => {
   const auth = await requireJwtUser(req);
   if (isJwtError(auth)) {
     res.status(auth.status).json({ error: auth.error });
@@ -86,35 +88,231 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
-    const { name, description, tools, config } = req.body;
-
-    if (!name || !tools || !Array.isArray(tools)) {
-      res.status(400).json({ error: "name and tools array are required" });
-      return;
-    }
-
-    const skill = await prisma.skill.create({
-      data: {
-        name,
-        description: description || null,
-        tools: tools as any,
-        config: config || null,
-        isBuiltin: false,
-      },
+    const instances = await prisma.skillInstance.findMany({
+      where: { userId: auth.userId },
+      include: { template: true },
+      orderBy: { createdAt: "desc" },
     });
 
-    res.status(201).json({ skill });
+    res.json({
+      instances: instances.map((i) => ({
+        ...i,
+        connected: isInstanceConnected(i.id),
+      })),
+    });
   } catch (error) {
-    console.error("Create skill error:", error);
-    res.status(500).json({ error: "Failed to create skill" });
+    console.error("List instances error:", error);
+    res.status(500).json({ error: "Failed to list instances" });
   }
 });
 
 // =============================================================================
-// GET /api/haseefs/:haseefId/skills — List skills attached to a haseef
+// POST /api/skills/instances — Create a new skill instance from a template
 // =============================================================================
 
-router.get("/haseefs/:haseefId/skills", async (req: Request, res: Response) => {
+router.post("/instances", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  try {
+    const { name, displayName, templateName, config } = req.body;
+
+    if (!name || !templateName) {
+      res.status(400).json({ error: "name and templateName are required" });
+      return;
+    }
+
+    // Validate name format (lowercase, underscores, no spaces)
+    if (!/^[a-z][a-z0-9_]{1,48}$/.test(name)) {
+      res.status(400).json({
+        error: "name must be lowercase, start with a letter, use only a-z, 0-9, _ (2-49 chars)",
+      });
+      return;
+    }
+
+    const result = await createInstance({
+      name,
+      displayName: displayName || name,
+      templateName,
+      config: config || {},
+      userId: auth.userId,
+    });
+
+    res.status(201).json(result);
+  } catch (error: any) {
+    if (error?.code === "P2002") {
+      res.status(409).json({ error: "An instance with this name already exists" });
+      return;
+    }
+    console.error("Create instance error:", error);
+    res.status(500).json({ error: error.message || "Failed to create instance" });
+  }
+});
+
+// =============================================================================
+// PATCH /api/skills/instances/:id — Update instance config
+// =============================================================================
+
+router.patch("/instances/:id", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  try {
+    const instance = await prisma.skillInstance.findUnique({
+      where: { id: req.params.id as string },
+    });
+    if (!instance || instance.userId !== auth.userId) {
+      res.status(404).json({ error: "Instance not found" });
+      return;
+    }
+
+    const { config } = req.body;
+    if (!config) {
+      res.status(400).json({ error: "config is required" });
+      return;
+    }
+
+    const result = await updateInstanceConfig(instance.id, config);
+    res.json(result);
+  } catch (error: any) {
+    console.error("Update instance error:", error);
+    res.status(500).json({ error: error.message || "Failed to update instance" });
+  }
+});
+
+// =============================================================================
+// DELETE /api/skills/instances/:id — Delete a skill instance
+// =============================================================================
+
+router.delete("/instances/:id", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  try {
+    const instance = await prisma.skillInstance.findUnique({
+      where: { id: req.params.id as string },
+    });
+    if (!instance || instance.userId !== auth.userId) {
+      res.status(404).json({ error: "Instance not found" });
+      return;
+    }
+
+    await deleteInstance(instance.id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Delete instance error:", error);
+    res.status(500).json({ error: "Failed to delete instance" });
+  }
+});
+
+// =============================================================================
+// POST /api/skills/instances/:id/attach — Attach instance to a haseef
+// =============================================================================
+
+router.post("/instances/:id/attach", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  try {
+    const { haseefId } = req.body;
+    if (!haseefId) {
+      res.status(400).json({ error: "haseefId is required" });
+      return;
+    }
+
+    // Verify instance ownership
+    const instance = await prisma.skillInstance.findUnique({
+      where: { id: req.params.id as string },
+    });
+    if (!instance || instance.userId !== auth.userId) {
+      res.status(404).json({ error: "Instance not found" });
+      return;
+    }
+
+    // Verify haseef ownership
+    const ownership = await prisma.haseefOwnership.findFirst({
+      where: { userId: auth.userId, haseefId },
+    });
+    if (!ownership) {
+      res.status(404).json({ error: "Haseef not found or not owned by you" });
+      return;
+    }
+
+    // Create junction
+    const haseefSkill = await prisma.haseefSkill.create({
+      data: { haseefId, instanceId: instance.id },
+      include: { instance: { include: { template: true } } },
+    });
+
+    // TODO: Also add instance.name to haseef's skills[] array in Core via API
+
+    res.status(201).json({ haseefSkill });
+  } catch (error: any) {
+    if (error?.code === "P2002") {
+      res.status(409).json({ error: "Instance already attached to this haseef" });
+      return;
+    }
+    console.error("Attach instance error:", error);
+    res.status(500).json({ error: "Failed to attach instance" });
+  }
+});
+
+// =============================================================================
+// DELETE /api/skills/instances/:id/detach — Detach instance from a haseef
+// =============================================================================
+
+router.delete("/instances/:id/detach", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  try {
+    const { haseefId } = req.body;
+    if (!haseefId) {
+      res.status(400).json({ error: "haseefId is required" });
+      return;
+    }
+
+    const instance = await prisma.skillInstance.findUnique({
+      where: { id: req.params.id as string },
+    });
+    if (!instance || instance.userId !== auth.userId) {
+      res.status(404).json({ error: "Instance not found" });
+      return;
+    }
+
+    await prisma.haseefSkill.deleteMany({
+      where: { haseefId, instanceId: instance.id },
+    });
+
+    // TODO: Also remove instance.name from haseef's skills[] array in Core via API
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Detach instance error:", error);
+    res.status(500).json({ error: "Failed to detach instance" });
+  }
+});
+
+// =============================================================================
+// GET /api/skills/haseefs/:haseefId — List skill instances attached to a haseef
+// =============================================================================
+
+router.get("/haseefs/:haseefId", async (req: Request, res: Response) => {
   const auth = await requireJwtUser(req);
   if (isJwtError(auth)) {
     res.status(auth.status).json({ error: auth.error });
@@ -124,7 +322,6 @@ router.get("/haseefs/:haseefId/skills", async (req: Request, res: Response) => {
   try {
     const haseefId = req.params.haseefId as string;
 
-    // Verify ownership
     const ownership = await prisma.haseefOwnership.findFirst({
       where: { userId: auth.userId, haseefId },
     });
@@ -135,152 +332,19 @@ router.get("/haseefs/:haseefId/skills", async (req: Request, res: Response) => {
 
     const haseefSkills = await prisma.haseefSkill.findMany({
       where: { haseefId },
-      include: { skill: true },
+      include: { instance: { include: { template: true } } },
       orderBy: { createdAt: "desc" },
     });
 
-    res.json({ skills: haseefSkills });
+    res.json({
+      skills: haseefSkills.map((hs) => ({
+        ...hs,
+        connected: isInstanceConnected(hs.instanceId),
+      })),
+    });
   } catch (error) {
     console.error("List haseef skills error:", error);
     res.status(500).json({ error: "Failed to list haseef skills" });
-  }
-});
-
-// =============================================================================
-// POST /api/haseefs/:haseefId/skills — Attach a skill to haseef
-// =============================================================================
-
-router.post("/haseefs/:haseefId/skills", async (req: Request, res: Response) => {
-  const auth = await requireJwtUser(req);
-  if (isJwtError(auth)) {
-    res.status(auth.status).json({ error: auth.error });
-    return;
-  }
-
-  try {
-    const haseefId = req.params.haseefId as string;
-    const { skillId, config } = req.body;
-
-    if (!skillId) {
-      res.status(400).json({ error: "skillId is required" });
-      return;
-    }
-
-    // Verify ownership
-    const ownership = await prisma.haseefOwnership.findFirst({
-      where: { userId: auth.userId, haseefId },
-    });
-    if (!ownership) {
-      res.status(404).json({ error: "Haseef not found or not owned by you" });
-      return;
-    }
-
-    // Verify skill exists
-    const skill = await prisma.skill.findUnique({
-      where: { id: skillId },
-    });
-    if (!skill) {
-      res.status(404).json({ error: "Skill not found" });
-      return;
-    }
-
-    // Create attachment
-    const haseefSkill = await prisma.haseefSkill.create({
-      data: {
-        haseefId,
-        skillId,
-        config: config || null,
-        isActive: true,
-      },
-      include: { skill: true },
-    });
-
-    res.status(201).json({ haseefSkill });
-  } catch (error: any) {
-    if (error.code === "P2002") {
-      res.status(409).json({ error: "Skill already attached to this haseef" });
-      return;
-    }
-    console.error("Attach skill error:", error);
-    res.status(500).json({ error: "Failed to attach skill" });
-  }
-});
-
-// =============================================================================
-// DELETE /api/haseefs/:haseefId/skills/:skillId — Detach a skill
-// =============================================================================
-
-router.delete("/haseefs/:haseefId/skills/:skillId", async (req: Request, res: Response) => {
-  const auth = await requireJwtUser(req);
-  if (isJwtError(auth)) {
-    res.status(auth.status).json({ error: auth.error });
-    return;
-  }
-
-  try {
-    const haseefId = req.params.haseefId as string;
-    const skillId = req.params.skillId as string;
-
-    // Verify ownership
-    const ownership = await prisma.haseefOwnership.findFirst({
-      where: { userId: auth.userId, haseefId },
-    });
-    if (!ownership) {
-      res.status(404).json({ error: "Haseef not found or not owned by you" });
-      return;
-    }
-
-    await prisma.haseefSkill.deleteMany({
-      where: { haseefId, skillId },
-    });
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Detach skill error:", error);
-    res.status(500).json({ error: "Failed to detach skill" });
-  }
-});
-
-// =============================================================================
-// PATCH /api/haseefs/:haseefId/skills/:skillId — Update skill config/active state
-// =============================================================================
-
-router.patch("/haseefs/:haseefId/skills/:skillId", async (req: Request, res: Response) => {
-  const auth = await requireJwtUser(req);
-  if (isJwtError(auth)) {
-    res.status(auth.status).json({ error: auth.error });
-    return;
-  }
-
-  try {
-    const haseefId = req.params.haseefId as string;
-    const skillId = req.params.skillId as string;
-    const { config, isActive } = req.body;
-
-    // Verify ownership
-    const ownership = await prisma.haseefOwnership.findFirst({
-      where: { userId: auth.userId, haseefId },
-    });
-    if (!ownership) {
-      res.status(404).json({ error: "Haseef not found or not owned by you" });
-      return;
-    }
-
-    const updateData: Record<string, any> = {};
-    if (config !== undefined) updateData.config = config;
-    if (isActive !== undefined) updateData.isActive = isActive;
-    updateData.updatedAt = new Date();
-
-    const haseefSkill = await prisma.haseefSkill.update({
-      where: { haseefId_skillId: { haseefId, skillId } },
-      data: updateData,
-      include: { skill: true },
-    });
-
-    res.json({ haseefSkill });
-  } catch (error) {
-    console.error("Update haseef skill error:", error);
-    res.status(500).json({ error: "Failed to update haseef skill" });
   }
 });
 
