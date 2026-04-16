@@ -5,7 +5,7 @@
 export interface SdkOptions {
   coreUrl: string;
   apiKey: string;
-  scope: string;
+  skill: string;
 }
 
 export interface ToolDefinition {
@@ -89,7 +89,7 @@ export interface ToolErrorEvent {
 export interface RunStartedEvent {
   runId: string;
   haseef: { id: string; name: string };
-  triggerScope: string | null;
+  triggerSkill: string | null;
   triggerType: string | null;
 }
 

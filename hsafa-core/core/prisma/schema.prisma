@@ -15,7 +15,7 @@ datasource db {
 // Hsafa Core v7 — Data Model
 //
 // Brain: Haseef profile + 4 memory types + runs
-// Body: Scopes (global tool registry) connected via SSE
+// Body: Skills (global tool registry) connected via SSE
 // Stateless invocations: trigger → run → done
 // =============================================================================
 
@@ -36,7 +36,7 @@ model Haseef {
   description String?
   profileJson Json?    @map("profile_json") @db.JsonB // { phone, email, robotId, ... } — routing table
   configJson  Json     @map("config_json") @db.JsonB  // { model, instructions, ... }
-  scopes      String[] @default(["spaces"])              // ["spaces", "scheduler", "whatsapp"]
+  skills      String[] @default(["spaces"])              // ["spaces", "scheduler", "whatsapp"]
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -51,10 +51,10 @@ model Haseef {
 }
 
 // =============================================================================
-// Scopes — Global tool registry (services register tools here)
+// Skills — Global tool registry (services register tools here)
 // =============================================================================
 
-model Scope {
+model Skill {
   id         String    @id @default(uuid()) @db.Uuid
   name       String    @unique               // "whatsapp", "spaces", "body"
   connected  Boolean   @default(false)       // is the service currently connected?
@@ -62,25 +62,25 @@ model Scope {
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  tools ScopeTool[]
+  tools SkillTool[]
 
-  @@map("scopes")
+  @@map("skills")
 }
 
-model ScopeTool {
+model SkillTool {
   id          String   @id @default(uuid()) @db.Uuid
-  scopeId     String   @map("scope_id") @db.Uuid
+  skillId     String   @map("skill_id") @db.Uuid
   name        String
   description String
   inputSchema Json     @map("input_schema") @db.JsonB
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  scope Scope @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
 
-  @@unique([scopeId, name])
-  @@index([scopeId])
-  @@map("scope_tools")
+  @@unique([skillId, name])
+  @@index([skillId])
+  @@map("skill_tools")
 }
 
 // =============================================================================
@@ -92,7 +92,7 @@ model Run {
   haseefId         String    @map("haseef_id") @db.Uuid
   status           RunStatus @default(running)
 
-  triggerScope     String?   @map("trigger_scope")    // "whatsapp", "spaces"
+  triggerSkill     String?   @map("trigger_skill")    // "whatsapp", "spaces"
   triggerType      String?   @map("trigger_type")     // "message", "email_received"
   summary          String?   @db.Text                 // run summary from done tool
 
@@ -126,7 +126,7 @@ model EpisodicMemory {
   haseefId  String   @map("haseef_id") @db.Uuid
   runId     String?  @map("run_id") @db.Uuid
   summary   String   @db.Text
-  context   Json?    @db.JsonB                       // { triggerScope, triggerType, toolsUsed, ... }
+  context   Json?    @db.JsonB                       // { triggerSkill, triggerType, toolsUsed, ... }
   // embedding Float[] // pgvector — enable when available
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 

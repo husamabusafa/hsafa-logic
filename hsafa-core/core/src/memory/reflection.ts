@@ -11,7 +11,7 @@ import { addEpisode } from './episodic.js';
 export interface RunSummary {
   haseefId: string;
   runId: string;
-  triggerScope?: string;
+  triggerSkill?: string;
   triggerType?: string;
   toolsUsed: string[];
   summary: string;
@@ -26,7 +26,7 @@ export async function reflect(run: RunSummary): Promise<void> {
     runId: run.runId,
     summary: run.summary,
     context: {
-      triggerScope: run.triggerScope,
+      triggerSkill: run.triggerSkill,
       triggerType: run.triggerType,
       toolsUsed: run.toolsUsed,
     },

@@ -38,7 +38,7 @@ export interface ActiveConnection {
 export interface ServiceState {
   config: import("./config.js").ServiceConfig | null;
   connections: Map<string, ActiveConnection>;
-  /** @hsafa/sdk instance for the "spaces" scope (tool dispatch + lifecycle events) */
+  /** @hsafa/sdk instance for the "spaces" skill (tool dispatch + lifecycle events) */
   spacesSDK: HsafaSDK | null;
   /** Heartbeat interval for keeping haseef entities online */
   presenceInterval: ReturnType<typeof setInterval> | null;

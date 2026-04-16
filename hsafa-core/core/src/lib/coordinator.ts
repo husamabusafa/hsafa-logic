@@ -38,7 +38,7 @@ export async function trigger(event: RoutedEvent): Promise<{ runId: string }> {
 
     // Mark the interrupted run
     publishRunEvent(event.haseefId, existing.runId, 'run.interrupted', {
-      reason: `New ${event.type} event from ${event.scope}`,
+      reason: `New ${event.type} event from ${event.skill}`,
     });
   }
 
@@ -70,7 +70,7 @@ async function runInvoker(
       haseefId: event.haseefId,
       haseefName: event.haseefName,
       runId,
-      triggerScope: event.scope,
+      triggerSkill: event.skill,
       triggerType: event.type,
       triggerData: event.data,
       attachments: event.attachments,

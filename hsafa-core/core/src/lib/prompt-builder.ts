@@ -17,7 +17,7 @@ export interface PromptContext {
   haseefName: string;
   description?: string;
   profileJson: Record<string, unknown> | null;
-  scopes: string[];
+  skills: string[];
   instructions?: string;
   memory: MemoryContext;
   persona?: {
@@ -56,7 +56,7 @@ function buildIdentitySection(ctx: PromptContext): string {
     `  name: "${ctx.haseefName}"`,
     `  haseefId: "${ctx.haseefId}"`,
     `  runtime: Hsafa Core v7`,
-    `  scopes: [${ctx.scopes.join(', ')}]`,
+    `  skills: [${ctx.skills.join(', ')}]`,
     `  currentTime: "${now.toISOString()} (${dayName}, ${hours}:${mins} UTC)"`,
   ];
 
@@ -72,6 +72,11 @@ function buildIdentitySection(ctx: PromptContext): string {
     if (ctx.persona.traits && ctx.persona.traits.length > 0) {
       lines.push(`  traits: ${ctx.persona.traits.join(', ')}`);
     }
+  }
+
+  if (ctx.skills.length > 0) {
+    lines.push('');
+    lines.push(`  ACTIVE SKILLS: ${ctx.skills.join(', ')}`);
   }
 
   return lines.join('\n');
@@ -139,8 +144,8 @@ function buildInstructionsSection(ctx: PromptContext): string {
     '  HOW YOU WORK:',
     '  You are event-driven. When something happens — a message, a notification,',
     '  a sensor reading — you react to it naturally.',
-    '  Your connected scopes (listed in IDENTITY) are the domains you can perceive',
-    '  and act in. Each scope provides tools prefixed with the scope name',
+    '  Your connected skills (listed in IDENTITY) are the domains you can perceive',
+    '  and act in. Each skill provides tools prefixed with the skill name',
     '  (e.g. spaces_send_message, whatsapp_send_message).',
     '  Prebuilt tools (done, set_memories, recall_memories) are always available.',
     '',

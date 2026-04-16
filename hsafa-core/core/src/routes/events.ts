@@ -11,7 +11,7 @@ import { trigger } from '../lib/coordinator.js';
 //   haseefId  — direct routing by Haseef UUID
 //   target    — profile-based routing (e.g. { phone: "+966..." })
 //
-// The scope must be active in the target Haseef's scopes[] array.
+// The skill must be active in the target Haseef's skills[] array.
 // Events trigger runs immediately via the coordinator (no inbox queue).
 // =============================================================================
 
@@ -19,10 +19,13 @@ export const eventsRouter = Router();
 
 eventsRouter.post('/', async (req, res) => {
   try {
-    const { scope, type, data, attachments, haseefId, target } = req.body;
+    const { skill, type, data, haseefId, target, attachments } = req.body;
 
-    if (!scope || !type || !data) {
-      res.status(400).json({ error: 'scope, type, and data are required' });
+    // Support legacy 'scope' field for backward compatibility
+    const resolvedSkill = skill || req.body.scope;
+
+    if (!resolvedSkill || !type || !data) {
+      res.status(400).json({ error: 'skill, type, and data are required' });
       return;
     }
 
@@ -33,7 +36,7 @@ eventsRouter.post('/', async (req, res) => {
 
     // Route: resolve event to a specific haseef
     const routed = await routeEvent({
-      scope,
+      skill: resolvedSkill,
       type,
       data,
       attachments,

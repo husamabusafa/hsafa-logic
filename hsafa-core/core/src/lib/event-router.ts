@@ -10,7 +10,7 @@ import { prisma } from './db.js';
 // =============================================================================
 
 export interface IncomingEvent {
-  scope: string;
+  skill: string;
   type: string;
   data: Record<string, unknown>;
   attachments?: Attachment[];
@@ -29,7 +29,7 @@ export interface Attachment {
 export interface RoutedEvent {
   haseefId: string;
   haseefName: string;
-  scope: string;
+  skill: string;
   type: string;
   data: Record<string, unknown>;
   attachments?: Attachment[];
@@ -37,25 +37,25 @@ export interface RoutedEvent {
 
 /**
  * Resolve an incoming event to a specific haseef.
- * Validates that the scope is active for the resolved haseef.
+ * Validates that the skill is active for the resolved haseef.
  */
-export async function routeEvent(event: IncomingEvent): Promise<RoutedEvent> {
+export async function routeEvent(event: IncomingEvent): Promise<RoutedEvent | null> {
   let haseefId: string;
   let haseefName: string;
-  let haseefScopes: string[];
+  let haseefSkills: string[];
 
   if (event.haseefId) {
     // Direct routing
     const haseef = await prisma.haseef.findUnique({
       where: { id: event.haseefId },
-      select: { id: true, name: true, scopes: true },
+      select: { id: true, name: true, skills: true },
     });
     if (!haseef) {
       throw new EventRoutingError(`Haseef "${event.haseefId}" not found`);
     }
     haseefId = haseef.id;
     haseefName = haseef.name;
-    haseefScopes = haseef.scopes;
+    haseefSkills = haseef.skills;
   } else if (event.target) {
     // Profile-based routing
     const haseef = await resolveByProfile(event.target);
@@ -66,22 +66,23 @@ export async function routeEvent(event: IncomingEvent): Promise<RoutedEvent> {
     }
     haseefId = haseef.id;
     haseefName = haseef.name;
-    haseefScopes = haseef.scopes;
+    haseefSkills = haseef.skills;
   } else {
     throw new EventRoutingError('Event must have either haseefId or target');
   }
 
-  // Validate scope is active for this haseef
-  if (!haseefScopes.includes(event.scope)) {
-    throw new EventRoutingError(
-      `Scope "${event.scope}" is not active for haseef "${haseefName}"`,
+  // Validate skill is active for this haseef
+  if (!haseefSkills.includes(event.skill)) {
+    console.warn(
+      `[event-router] Skill "${event.skill}" not active for haseef "${haseefName}" (active: ${haseefSkills.join(', ')})`,
     );
+    return null;
   }
 
   return {
     haseefId,
     haseefName,
-    scope: event.scope,
+    skill: event.skill,
     type: event.type,
     data: event.data,
     attachments: event.attachments,
@@ -94,13 +95,13 @@ export async function routeEvent(event: IncomingEvent): Promise<RoutedEvent> {
  */
 async function resolveByProfile(
   target: Record<string, string>,
-): Promise<{ id: string; name: string; scopes: string[] } | null> {
+): Promise<{ id: string; name: string; skills: string[] } | null> {
   for (const [key, value] of Object.entries(target)) {
     const haseef = await prisma.haseef.findFirst({
       where: {
         profileJson: { path: [key], equals: value },
       },
-      select: { id: true, name: true, scopes: true },
+      select: { id: true, name: true, skills: true },
     });
     if (haseef) return haseef;
   }

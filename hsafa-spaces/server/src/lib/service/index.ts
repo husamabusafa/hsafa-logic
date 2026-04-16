@@ -17,7 +17,7 @@
 //   config.ts          — env var loading (coreUrl, secretKey)
 //   core-api.ts        — Core HTTP helpers (sync per-haseef instructions, sense events)
 //   tool-handlers.ts   — tool execution (executeAction + all case handlers)
-//   scope-registry.ts  — SDK creation, tool registration, onToolCall wiring + connect()
+//   manifest.ts        — skill name + tool definitions + instructions
 //   stream-bridge.ts   — SDK lifecycle event handlers → space SSE
 //   sense-events.ts    — inbox handler, seen watermark, interactive message events
 // =============================================================================
@@ -32,7 +32,7 @@ import { coreHeaders, syncInstructions } from "./core-api.js";
 import { registerLifecycleHandlers } from "./stream-bridge.js";
 import { handleInboxMessage } from "./sense-events.js";
 import { startPresenceCleanup } from "../smartspace-events.js";
-import { SCOPE, TOOLS } from "./manifest.js";
+import { SKILL, TOOLS } from "./manifest.js";
 import { executeSpacesAction } from "./tools/index.js";
 
 // Re-export public API so existing imports from "./service/index.js" keep working
@@ -102,7 +102,7 @@ export async function bootstrapExtension(): Promise<void> {
 }
 
 // =============================================================================
-// Spaces Plugin — direct SDK setup (no scope-registry abstraction)
+// Spaces Plugin — direct SDK setup
 // =============================================================================
 
 async function loadSpacesPlugin(): Promise<void> {
@@ -112,7 +112,7 @@ async function loadSpacesPlugin(): Promise<void> {
   const sdk = new HsafaSDK({
     coreUrl: config.coreUrl,
     apiKey: config.secretKey,
-    scope: SCOPE,
+    skill: SKILL,
   });
 
   // Register tools
@@ -122,7 +122,7 @@ async function loadSpacesPlugin(): Promise<void> {
     inputSchema: t.inputSchema,
   }));
   await sdk.registerTools(toolDefs);
-  console.log(`[spaces-service] Registered ${toolDefs.length} tools for scope "${SCOPE}"`);
+  console.log(`[spaces-service] Registered ${toolDefs.length} tools for skill "${SKILL}"`);
 
   // Wire tool handlers
   for (const tool of TOOLS) {
@@ -134,7 +134,7 @@ async function loadSpacesPlugin(): Promise<void> {
   // Connect SSE
   sdk.connect();
   state.spacesSDK = sdk;
-  console.log(`[spaces-service] SDK connected for scope "${SCOPE}"`);
+  console.log(`[spaces-service] SDK connected for skill "${SKILL}"`);
 }
 
 /** Discover all haseefs from Core via GET /api/haseefs */
@@ -260,8 +260,8 @@ export async function connectNewHaseef(haseef: {
 
   await setupHaseefConnection(haseef);
 
-  // v7: No per-haseef stream setup needed — SDK SSE is scope-level.
-  // The SDK connection already receives actions for all haseefs in the scope.
+  // v7: No per-haseef stream setup needed — SDK SSE is skill-level.
+  // The SDK connection already receives actions for all haseefs in the skill.
 
   console.log(`[spaces-service] Dynamically connected haseef: ${haseef.name}`);
 }

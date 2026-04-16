@@ -6,7 +6,7 @@ import { buildSystemPrompt } from './prompt-builder.js';
 import { assembleMemory } from '../memory/selection.js';
 import { reflect } from '../memory/reflection.js';
 import { publishTextDelta, publishRunEvent, publishToolEvent } from './stream-publisher.js';
-import { emitLifecycleToScope } from './tool-dispatcher.js';
+import { emitLifecycleToSkill } from './tool-dispatcher.js';
 
 import { doneTool } from '../prebuilt-tools/done.js';
 import { buildSetMemoriesTool } from '../prebuilt-tools/set-memories.js';
@@ -50,7 +50,7 @@ export interface InvokeOptions {
   haseefId: string;
   haseefName: string;
   runId: string;
-  triggerScope: string;
+  triggerSkill: string;
   triggerType: string;
   triggerData: Record<string, unknown>;
   attachments?: Array<{ type: string; mimeType: string; url?: string; base64?: string; name?: string }>;
@@ -62,7 +62,7 @@ export interface InvokeOptions {
  * This is the core think loop.
  */
 export async function invoke(opts: InvokeOptions): Promise<void> {
-  const { haseefId, runId, triggerScope, triggerType, triggerData, signal } = opts;
+  const { haseefId, runId, triggerSkill, triggerType, triggerData, signal } = opts;
   const startedAt = Date.now();
 
   // ── 1. Load haseef from DB ────────────────────────────────────────────────
@@ -74,7 +74,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
       description: true,
       profileJson: true,
       configJson: true,
-      scopes: true,
+      skills: true,
     },
   });
 
@@ -90,20 +90,20 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
     data: {
       id: runId,
       haseefId,
-      triggerScope,
+      triggerSkill,
       triggerType,
       status: 'running' as any,
     },
   });
 
-  publishRunEvent(haseefId, runId, 'run.started', { triggerScope, triggerType });
+  publishRunEvent(haseefId, runId, 'run.started', { triggerSkill, triggerType });
 
-  // Emit run.started to all active scopes
-  for (const scope of haseef.scopes) {
-    emitLifecycleToScope(scope, 'run.started', {
+  // Emit run.started to all active skills
+  for (const skill of haseef.skills) {
+    emitLifecycleToSkill(skill, 'run.started', {
       runId,
       haseef: { id: haseefId, name: haseef.name },
-      triggerScope,
+      triggerSkill,
       triggerType,
     });
   }
@@ -122,7 +122,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
       haseefName: haseef.name,
       description: haseef.description ?? undefined,
       profileJson: haseef.profileJson as Record<string, unknown> | null,
-      scopes: haseef.scopes,
+      skills: haseef.skills,
       instructions: config.instructions,
       memory,
       persona: config.persona,
@@ -133,12 +133,12 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
       id: haseef.id,
       name: haseef.name,
       profile: (haseef.profileJson as Record<string, unknown>) ?? {},
-      scopes: haseef.scopes,
+      skills: haseef.skills,
     };
 
-    // Load global scope tools for this haseef's active scopes
-    const scopeTools = await loadScopeTools(haseef.scopes);
-    const v7Tools = buildV7Tools(haseefCtx, scopeTools, config.actionTimeout);
+    // Load global skill tools for this haseef's active skills
+    const skillTools = await loadSkillTools(haseef.skills);
+    const v7Tools = buildV7Tools(haseefCtx, skillTools, config.actionTimeout);
 
     // Build prebuilt tools
     const prebuiltTools = {
@@ -154,7 +154,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
     const model = resolveModel(config.model);
 
     // ── 7. Build user message from event ──────────────────────────────────────
-    const userMessage = formatEventAsMessage(triggerScope, triggerType, triggerData, opts.attachments);
+    const userMessage = formatEventAsMessage(triggerSkill, triggerType, triggerData, opts.attachments);
 
     // ── 8. streamText with AI SDK v6 ────────────────────────────────────────
     const toolsUsed: string[] = [];
@@ -248,9 +248,9 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
       completionTokens,
     });
 
-    // Emit run.completed to all active scopes
-    for (const scope of haseef.scopes) {
-      emitLifecycleToScope(scope, 'run.completed', {
+    // Emit run.completed to all active skills
+    for (const skill of haseef.skills) {
+      emitLifecycleToSkill(skill, 'run.completed', {
         runId,
         haseef: { id: haseefId, name: haseef.name },
         summary: runSummary,
@@ -263,7 +263,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
       await reflect({
         haseefId,
         runId,
-        triggerScope,
+        triggerSkill,
         triggerType,
         toolsUsed: [...new Set(toolsUsed)],
         summary: runSummary,
@@ -304,20 +304,20 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /**
- * Load ScopeTool rows for the given scope names.
+ * Load SkillTool rows for the given skill names.
  */
-async function loadScopeTools(scopeNames: string[]): Promise<V7ToolRow[]> {
-  if (scopeNames.length === 0) return [];
+async function loadSkillTools(skillNames: string[]): Promise<V7ToolRow[]> {
+  if (skillNames.length === 0) return [];
 
-  const tools = await prisma.scopeTool.findMany({
+  const tools = await prisma.skillTool.findMany({
     where: {
-      scope: { name: { in: scopeNames } },
+      skill: { name: { in: skillNames } },
     },
     select: {
       name: true,
       description: true,
       inputSchema: true,
-      scope: { select: { name: true } },
+      skill: { select: { name: true } },
     },
   });
 
@@ -325,7 +325,7 @@ async function loadScopeTools(scopeNames: string[]): Promise<V7ToolRow[]> {
     name: t.name,
     description: t.description,
     inputSchema: t.inputSchema,
-    scopeName: t.scope.name,
+    skillName: t.skill.name,
   }));
 }
 
@@ -333,14 +333,14 @@ async function loadScopeTools(scopeNames: string[]): Promise<V7ToolRow[]> {
  * Format a trigger event as a user message for the LLM.
  */
 function formatEventAsMessage(
-  scope: string,
+  skill: string,
   type: string,
   data: Record<string, unknown>,
   attachments?: Array<{ type: string; mimeType: string; url?: string; base64?: string; name?: string }>,
 ): string {
   const parts: string[] = [];
 
-  parts.push(`[EVENT from ${scope}] type: ${type}`);
+  parts.push(`[EVENT from ${skill}] type: ${type}`);
 
   // Format data as readable key-value pairs
   for (const [key, value] of Object.entries(data)) {

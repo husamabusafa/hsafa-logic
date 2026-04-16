@@ -17,7 +17,7 @@ export const haseefsRouter = Router();
 // POST /api/haseefs — Create
 haseefsRouter.post('/', async (req, res) => {
   try {
-    const { name, description, profileJson, configJson, scopes } = req.body;
+    const { name, description, profileJson, configJson, skills } = req.body;
 
     if (!name || !configJson) {
       res.status(400).json({ error: 'name and configJson are required' });
@@ -30,7 +30,7 @@ haseefsRouter.post('/', async (req, res) => {
         description,
         profileJson: profileJson ?? undefined,
         configJson,
-        scopes: scopes ?? ['spaces'],
+        skills: skills ?? ['spaces'],
       },
     });
 
@@ -94,14 +94,14 @@ haseefsRouter.get('/:id', async (req, res) => {
 // PATCH /api/haseefs/:id — Update
 haseefsRouter.patch('/:id', async (req, res) => {
   try {
-    const { name, description, configJson, profileJson, scopes } = req.body;
+    const { name, description, configJson, profileJson, skills } = req.body;
     const data: Record<string, unknown> = {};
 
     if (name !== undefined) data.name = name;
     if (description !== undefined) data.description = description;
     if (configJson !== undefined) data.configJson = configJson;
     if (profileJson !== undefined) data.profileJson = profileJson;
-    if (scopes !== undefined) data.scopes = scopes;
+    if (skills !== undefined) data.skills = skills;
 
     const haseef = await prisma.haseef.update({
       where: { id: req.params.id },

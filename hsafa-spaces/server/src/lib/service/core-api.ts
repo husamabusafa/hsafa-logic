@@ -2,13 +2,13 @@
 // Spaces Service — Core API Helpers (v7)
 //
 // HTTP calls to hsafa-core for instruction sync and sense events.
-// v7: Tools registered globally by scope-registry via SDK.registerTools().
+// v7: Tools registered globally via SDK.registerTools().
 //     Per-haseef instructions pushed via PATCH /api/haseefs/:id configJson.
 //     submitActionResult removed — SDK handles result posting internally.
 // =============================================================================
 
 import { state } from "./types.js";
-import { SCOPE_INSTRUCTIONS } from "./manifest.js";
+import { SKILL_INSTRUCTIONS } from "./manifest.js";
 import { prisma } from "../db.js";
 
 export function coreHeaders(): Record<string, string> {
@@ -23,9 +23,9 @@ export function coreHeaders(): Record<string, string> {
 // =============================================================================
 
 /**
- * Build and push per-haseef scope instructions to Core via PATCH configJson.
+ * Build and push per-haseef skill instructions to Core via PATCH configJson.
  *
- * In v7, tools are registered globally by the scope registry — this only pushes
+ * In v7, tools are registered globally — this only pushes
  * the dynamic context (YOUR BASES, YOUR SPACES, YOUR SCHEDULES, etc.) into
  * the haseef's prompt.
  *
@@ -68,14 +68,14 @@ export async function syncInstructions(haseefId: string): Promise<void> {
 // =============================================================================
 
 /**
- * Build combined instructions: static scope instructions + dynamic per-haseef context.
+ * Build combined instructions: static skill instructions + dynamic per-haseef context.
  */
 async function buildAllInstructions(haseefId: string): Promise<string> {
   const sections: string[] = [];
 
   // Static instructions
-  if (SCOPE_INSTRUCTIONS) {
-    sections.push(SCOPE_INSTRUCTIONS);
+  if (SKILL_INSTRUCTIONS) {
+    sections.push(SKILL_INSTRUCTIONS);
   }
 
   // Dynamic per-haseef instructions (YOUR BASES + YOUR SPACES)
@@ -187,7 +187,7 @@ export async function pushSenseEvent(
   haseefId: string,
   event: {
     eventId: string;
-    scope: string;
+    skill: string;
     type: string;
     data: Record<string, unknown>;
     attachments?: Array<{ type: "image" | "audio" | "file"; mimeType: string; url?: string; name?: string }>;
@@ -197,7 +197,7 @@ export async function pushSenseEvent(
   const url = `${state.config!.coreUrl}/api/events`;
   const body: Record<string, unknown> = {
     haseefId,
-    scope: event.scope,
+    skill: event.skill,
     type: event.type,
     data: event.data,
   };

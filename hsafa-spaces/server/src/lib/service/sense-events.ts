@@ -15,7 +15,7 @@ import { broadcastSeen } from "../smartspace-events.js";
 import { redis } from "../redis.js";
 import { state, getConnectionsForSpace } from "./types.js";
 import { pushSenseEvent } from "./core-api.js";
-import { SCOPE } from "./manifest.js";
+import { SKILL } from "./manifest.js";
 import type { InboxMessageParams } from "./inbox.js";
 
 
@@ -265,7 +265,7 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
 
     await pushSenseEvent(conn.haseefId, {
       eventId: messageId,
-      scope: SCOPE,
+      skill: SKILL,
       type: "message",
       data: eventData,
       ...(imageAttachments.length > 0 ? { attachments: imageAttachments } : {}),
@@ -339,7 +339,7 @@ export async function pushInteractiveMessageEvent(
   for (const conn of conns) {
     await pushSenseEvent(conn.haseefId, {
       eventId: `interactive-${messageId}`,
-      scope: SCOPE,
+      skill: SKILL,
       type: "interactive_message",
       data: {
         messageId,
@@ -385,7 +385,7 @@ export async function pushMessageResponseEvent(
 
   await pushSenseEvent(senderConn.haseefId, {
     eventId: `response-${messageId}-${Date.now()}`,
-    scope: SCOPE,
+    skill: SKILL,
     type: "message_response",
     data: {
       messageId,
@@ -423,7 +423,7 @@ export async function pushMessageResolvedEvent(
   for (const conn of conns) {
     await pushSenseEvent(conn.haseefId, {
       eventId: `resolved-${messageId}`,
-      scope: SCOPE,
+      skill: SKILL,
       type: "message_resolved",
       data: {
         messageId,

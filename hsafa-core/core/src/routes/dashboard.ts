@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../lib/db.js';
-import { isScopeConnected } from '../lib/tool-dispatcher.js';
+import { isSkillConnected, getConnectedSkills } from '../lib/tool-dispatcher.js';
 import { getActiveHaseefIds } from '../lib/coordinator.js';
 
 // =============================================================================
@@ -16,9 +16,9 @@ dashboardRouter.get('/status', async (_req, res) => {
   try {
     const activeHaseefIds = getActiveHaseefIds();
 
-    const [haseefCount, scopeCount, recentRuns] = await Promise.all([
+    const [haseefCount, skillCount, recentRuns] = await Promise.all([
       prisma.haseef.count(),
-      prisma.scope.count(),
+      prisma.skill.count(),
       prisma.run.findMany({
         orderBy: { createdAt: 'desc' },
         take: 10,
@@ -26,7 +26,7 @@ dashboardRouter.get('/status', async (_req, res) => {
           id: true,
           haseefId: true,
           status: true,
-          triggerScope: true,
+          triggerSkill: true,
           triggerType: true,
           summary: true,
           durationMs: true,
@@ -35,13 +35,8 @@ dashboardRouter.get('/status', async (_req, res) => {
       }),
     ]);
 
-    // Get connected scopes
-    const scopes = await prisma.scope.findMany({
-      select: { name: true },
-    });
-    const connectedScopes = scopes
-      .filter((s) => isScopeConnected(s.name))
-      .map((s) => s.name);
+    // Get connected skills
+    const connectedSkills = getConnectedSkills();
 
     res.json({
       haseefs: {
@@ -49,9 +44,9 @@ dashboardRouter.get('/status', async (_req, res) => {
         activeCount: activeHaseefIds.length,
         activeIds: activeHaseefIds,
       },
-      scopes: {
-        total: scopeCount,
-        connected: connectedScopes,
+      skills: {
+        total: skillCount,
+        connected: connectedSkills,
       },
       recentRuns,
     });

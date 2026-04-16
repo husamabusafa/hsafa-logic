@@ -25,7 +25,7 @@ import {
 import { state, type ActiveConnection } from "./types.js";
 import { isMessageTool, getMessageToolActivity, resolvedSpaceId } from "./tools/index.js";
 import { markHaseefSeen } from "./sense-events.js";
-import { SCOPE } from "./manifest.js";
+import { SKILL } from "./manifest.js";
 import type { HsafaSDK } from "@hsafa/sdk";
 
 /** Per-run snapshot of activeSpaceVersion at run.started time */
@@ -79,13 +79,13 @@ export function registerLifecycleHandlers(): void {
 
 function onRunStarted(
   conn: ActiveConnection,
-  event: { runId: string; triggerScope: string | null; triggerType: string | null; haseef: { id: string; name: string } },
+  event: { runId: string; triggerSkill: string | null; triggerType: string | null; haseef: { id: string; name: string } },
 ): void {
   const runId = event.runId;
 
-  // Detect if this run was triggered by the spaces scope
+  // Detect if this run was triggered by the spaces skill
   const isSpacesTrigger =
-    (event.triggerScope === SCOPE) ||
+    (event.triggerSkill === SKILL) ||
     event.triggerType?.startsWith("ext-spaces:") ||
     event.triggerType?.startsWith("spaces:");
 
@@ -93,7 +93,7 @@ function onRunStarted(
   // Use haseef's entered/active space as the trigger space for routing.
   // In practice, the sense event that triggered this run set the spaceId in data.
   // The haseef's activeSpace will be set when it calls enter_space or when we
-  // detect a spaces-scoped trigger.
+  // detect a spaces-skill trigger.
 
   // Track current run ID for fallback space resolution
   conn.currentRunId = runId ?? null;

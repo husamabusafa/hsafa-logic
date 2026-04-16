@@ -5,7 +5,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { haseefsRouter } from './routes/haseefs.js';
 import { eventsRouter } from './routes/events.js';
-import { globalScopesRouter } from './routes/global-scopes.js';
+import { globalSkillsRouter } from './routes/global-skills.js';
 import { globalActionsRouter } from './routes/global-actions.js';
 import { runsRouter } from './routes/runs.js';
 import { memoryRouter } from './routes/memory.js';
@@ -21,8 +21,8 @@ import { getActiveHaseefIds } from './lib/coordinator.js';
 // Stateless trigger-based architecture. No living processes.
 // Services connect via:
 //   POST /api/events                    — push events (triggers runs)
-//   PUT  /api/scopes/:scope/tools       — register tools
-//   GET  /api/scopes/:scope/actions/stream — consume tool calls (SSE)
+//   PUT  /api/skills/:skill/tools       — register tools
+//   GET  /api/skills/:skill/actions/stream — consume tool calls (SSE)
 //   POST /api/actions/:actionId/result  — return tool results
 // =============================================================================
 
@@ -53,7 +53,8 @@ app.use('/api', requireApiKey());
 // ── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/haseefs', haseefsRouter);
 app.use('/api/events', eventsRouter);
-app.use('/api/scopes', globalScopesRouter);
+app.use('/api/skills', globalSkillsRouter);
+app.use('/api/scopes', globalSkillsRouter); // backward compatibility
 app.use('/api/actions', globalActionsRouter);
 app.use('/api/runs', runsRouter);
 app.use('/api/memory', memoryRouter);

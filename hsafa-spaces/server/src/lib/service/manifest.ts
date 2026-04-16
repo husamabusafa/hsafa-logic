@@ -1,19 +1,19 @@
 // =============================================================================
 // Spaces Service — Tool Definitions (v7)
 //
-// Defines the tools registered under the "spaces" scope.
-// Tools are registered globally via scope-registry → SDK.registerTools()
-// → PUT /api/scopes/:scope/tools.
+// Defines the tools registered under the "spaces" skill.
+// Tools are registered globally via SDK.registerTools()
+// → PUT /api/skills/:skill/tools.
 // =============================================================================
 
-/** Scope name for this service */
-export const SCOPE = "spaces";
+/** Skill name for this service */
+export const SKILL = "spaces";
 
 /**
- * Scope-level instructions synced to core and injected into the Haseef's prompt.
+ * Skill-level instructions synced to core and injected into the Haseef's prompt.
  * These are spaces-specific — core remains generic.
  */
-export const SCOPE_INSTRUCTIONS = `You interact with people through spaces — each space is a separate conversation.
+export const SKILL_INSTRUCTIONS = `You interact with people through spaces — each space is a separate conversation.
 
 HOW IT WORKS:
   Use spaces_send_message to reply. Your text output is internal thought — only tool calls reach people.

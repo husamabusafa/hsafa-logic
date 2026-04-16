@@ -1,10 +1,10 @@
 import { tool, jsonSchema } from 'ai';
-import { dispatchToScope, emitLifecycleToScope } from './tool-dispatcher.js';
+import { dispatchToSkill, emitLifecycleToSkill } from './tool-dispatcher.js';
 
 // =============================================================================
 // Tool Builder (v7)
 //
-// Builds AI SDK tools from global ScopeTool rows.
+// Builds AI SDK tools from global SkillTool rows.
 // Dispatches via SSE (tool-dispatcher) with lifecycle events.
 // =============================================================================
 
@@ -12,21 +12,21 @@ export interface V7ToolRow {
   name: string;
   description: string;
   inputSchema: unknown;
-  scopeName: string;
+  skillName: string;
 }
 
 export interface V7HaseefContext {
   id: string;
   name: string;
   profile: Record<string, unknown>;
-  scopes: string[];
+  skills: string[];
 }
 
 /**
- * v7: Build AI SDK tools from global ScopeTool rows.
+ * v7: Build AI SDK tools from global SkillTool rows.
  * Dispatches via SSE (tool-dispatcher) instead of Redis Streams.
  * Emits tool lifecycle events (tool.input.start, tool.input.delta,
- * tool.call, tool.result, tool.error) to the scope SSE channel so
+ * tool.call, tool.result, tool.error) to the skill SSE channel so
  * services can display typing indicators and track execution.
  */
 export function buildV7Tools(
@@ -43,9 +43,9 @@ export function buildV7Tools(
   };
 
   for (const dbTool of globalTools) {
-    const scope = dbTool.scopeName;
+    const skill = dbTool.skillName;
     const toolName = dbTool.name;
-    const prefixedName = `${scope}_${toolName}`;
+    const prefixedName = `${skill}_${toolName}`;
 
     const schema = jsonSchema<Record<string, unknown>>(dbTool.inputSchema as any);
 
@@ -54,7 +54,7 @@ export function buildV7Tools(
       inputSchema: schema,
 
       onInputStart: ({ toolCallId }: { toolCallId: string }) => {
-        emitLifecycleToScope(scope, 'tool.input.start', {
+        emitLifecycleToSkill(skill, 'tool.input.start', {
           actionId: toolCallId,
           toolName,
           haseef: haseefCtx,
@@ -62,7 +62,7 @@ export function buildV7Tools(
       },
 
       onInputDelta: ({ toolCallId, inputTextDelta }: { toolCallId: string; inputTextDelta: string }) => {
-        emitLifecycleToScope(scope, 'tool.input.delta', {
+        emitLifecycleToSkill(skill, 'tool.input.delta', {
           actionId: toolCallId,
           toolName,
           delta: inputTextDelta,
@@ -71,7 +71,7 @@ export function buildV7Tools(
       },
 
       onInputAvailable: ({ toolCallId, input }: { toolCallId: string; input: unknown }) => {
-        emitLifecycleToScope(scope, 'tool.call', {
+        emitLifecycleToSkill(skill, 'tool.call', {
           actionId: toolCallId,
           toolName,
           args: input,
@@ -82,8 +82,8 @@ export function buildV7Tools(
       execute: async (args: Record<string, unknown>, { toolCallId }: { toolCallId: string }) => {
         const startedAt = Date.now();
         try {
-          const result = await dispatchToScope({
-            scope,
+          const result = await dispatchToSkill({
+            skill,
             actionId: toolCallId,
             toolName,
             args,
@@ -91,7 +91,7 @@ export function buildV7Tools(
             timeout: defaultTimeout,
           });
 
-          emitLifecycleToScope(scope, 'tool.result', {
+          emitLifecycleToSkill(skill, 'tool.result', {
             actionId: toolCallId,
             toolName,
             args,
@@ -103,7 +103,7 @@ export function buildV7Tools(
           return result;
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
-          emitLifecycleToScope(scope, 'tool.error', {
+          emitLifecycleToSkill(skill, 'tool.error', {
             actionId: toolCallId,
             toolName,
             error: errMsg,

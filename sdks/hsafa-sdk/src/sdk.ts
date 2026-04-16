@@ -19,7 +19,7 @@ const MAX_RECONNECT_DELAY = 30_000;
 export class HsafaSDK {
   private readonly coreUrl: string;
   private readonly apiKey: string;
-  readonly scope: string;
+  readonly skill: string;
 
   private toolHandlers = new Map<string, ToolHandler>();
   private eventListeners = new Map<string, Set<(data: unknown) => void>>();
@@ -29,7 +29,7 @@ export class HsafaSDK {
   constructor(opts: SdkOptions) {
     this.coreUrl = opts.coreUrl.replace(/\/$/, '');
     this.apiKey = opts.apiKey;
-    this.scope = opts.scope;
+    this.skill = opts.skill;
   }
 
   // ── 1. REGISTER ─────────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ export class HsafaSDK {
       inputSchema: t.inputSchema ?? inputToJsonSchema(t.input ?? {}),
     }));
 
-    const res = await fetch(`${this.coreUrl}/api/scopes/${this.scope}/tools`, {
+    const res = await fetch(`${this.coreUrl}/api/skills/${this.skill}/tools`, {
       method: 'PUT',
       headers: { 'x-api-key': this.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ tools: body }),
@@ -65,7 +65,7 @@ export class HsafaSDK {
     const res = await fetch(`${this.coreUrl}/api/events`, {
       method: 'POST',
       headers: { 'x-api-key': this.apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scope: this.scope, ...event }),
+      body: JSON.stringify({ skill: this.skill, ...event }),
     });
 
     if (!res.ok) {
@@ -128,7 +128,7 @@ export class HsafaSDK {
   }
 
   private async openSSE(signal: AbortSignal): Promise<void> {
-    const url = `${this.coreUrl}/api/scopes/${this.scope}/actions/stream`;
+    const url = `${this.coreUrl}/api/skills/${this.skill}/actions/stream`;
     const res = await fetch(url, {
       headers: { 'x-api-key': this.apiKey, Accept: 'text/event-stream' },
       signal,
@@ -223,7 +223,7 @@ export class HsafaSDK {
         body: JSON.stringify({ result }),
       });
     } catch (err) {
-      console.error(`[HsafaSDK:${this.scope}] Failed to submit result for action ${actionId}:`, err);
+      console.error(`[HsafaSDK:${this.skill}] Failed to submit result for action ${actionId}:`, err);
     }
   }
 }
