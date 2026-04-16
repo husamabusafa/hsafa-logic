@@ -7,11 +7,13 @@
 import type { SkillTemplateDefinition } from "../types.js";
 import { databaseTemplate } from "./database.js";
 import { schedulerTemplate } from "./scheduler.js";
+import { webTemplate } from "./web.js";
 
 /** All prebuilt skill templates, keyed by template name */
 export const ALL_TEMPLATES: Map<string, SkillTemplateDefinition> = new Map([
   [databaseTemplate.name, databaseTemplate],
   [schedulerTemplate.name, schedulerTemplate],
+  [webTemplate.name, webTemplate],
 ]);
 
 /** Get a template by name */
