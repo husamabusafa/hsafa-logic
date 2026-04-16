@@ -39,6 +39,7 @@ export interface CoreHaseef {
   description?: string;
   profileJson?: Record<string, unknown>;
   configJson?: Record<string, unknown>;
+  skills?: string[];
   createdAt?: string;
 }
 
@@ -108,6 +109,36 @@ export async function deleteHaseef(id: string): Promise<void> {
     const text = await res.text();
     throw { status: res.status, error: `Core delete failed: ${text}` };
   }
+}
+
+/**
+ * Add a skill name to a haseef's skills[] array in Core.
+ * Fetches current skills, appends if not present, then PATCHes.
+ */
+export async function addSkillToHaseef(haseefId: string, skillName: string): Promise<void> {
+  const haseef = await getHaseef(haseefId);
+  const currentSkills: string[] = haseef.skills ?? [];
+  if (currentSkills.includes(skillName)) return;
+  await fetchWithTimeout(`${CORE_URL}/api/haseefs/${haseefId}`, {
+    method: "PATCH",
+    headers: headers(),
+    body: JSON.stringify({ skills: [...currentSkills, skillName] }),
+  });
+}
+
+/**
+ * Remove a skill name from a haseef's skills[] array in Core.
+ * Fetches current skills, filters out the name, then PATCHes.
+ */
+export async function removeSkillFromHaseef(haseefId: string, skillName: string): Promise<void> {
+  const haseef = await getHaseef(haseefId);
+  const currentSkills: string[] = haseef.skills ?? [];
+  if (!currentSkills.includes(skillName)) return;
+  await fetchWithTimeout(`${CORE_URL}/api/haseefs/${haseefId}`, {
+    method: "PATCH",
+    headers: headers(),
+    body: JSON.stringify({ skills: currentSkills.filter((s) => s !== skillName) }),
+  });
 }
 
 export async function listHaseefs(): Promise<CoreHaseef[]> {

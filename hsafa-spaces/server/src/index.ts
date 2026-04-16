@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { bootstrapExtension } from "./lib/service/index.js";
 import { bootSkillManager } from "./lib/skills/manager.js";
+import { startScheduleRunner } from "./lib/skills/schedule-runner.js";
 import { loadServiceConfig } from "./lib/service/config.js";
 import authRoutes from "./routes/auth.js";
 import smartSpacesRoutes from "./routes/smart-spaces.js";
@@ -63,6 +64,7 @@ app.listen(PORT, async () => {
   if (svcConfig) {
     try {
       await bootSkillManager({ coreUrl: svcConfig.coreUrl, secretKey: svcConfig.secretKey });
+      startScheduleRunner();
     } catch (err) {
       console.error("[spaces-server] Skill manager boot failed:", err);
     }

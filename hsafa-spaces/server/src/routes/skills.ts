@@ -8,6 +8,7 @@ import {
   updateInstanceConfig,
   isInstanceConnected,
 } from "../lib/skills/manager.js";
+import { addSkillToHaseef, removeSkillFromHaseef } from "../lib/core-proxy.js";
 
 const router = Router();
 
@@ -256,7 +257,12 @@ router.post("/instances/:id/attach", async (req: Request, res: Response) => {
       include: { instance: { include: { template: true } } },
     });
 
-    // TODO: Also add instance.name to haseef's skills[] array in Core via API
+    // Sync: add instance skill name to haseef's skills[] in Core
+    try {
+      await addSkillToHaseef(haseefId, instance.name);
+    } catch (err) {
+      console.error(`[skills] Failed to sync skill "${instance.name}" to Core for haseef ${haseefId}:`, err);
+    }
 
     res.status(201).json({ haseefSkill });
   } catch (error: any) {
@@ -299,7 +305,12 @@ router.delete("/instances/:id/detach", async (req: Request, res: Response) => {
       where: { haseefId, instanceId: instance.id },
     });
 
-    // TODO: Also remove instance.name from haseef's skills[] array in Core via API
+    // Sync: remove instance skill name from haseef's skills[] in Core
+    try {
+      await removeSkillFromHaseef(haseefId, instance.name);
+    } catch (err) {
+      console.error(`[skills] Failed to remove skill "${instance.name}" from Core for haseef ${haseefId}:`, err);
+    }
 
     res.json({ success: true });
   } catch (error) {

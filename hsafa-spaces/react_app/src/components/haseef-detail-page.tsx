@@ -26,6 +26,13 @@ import {
   SmileIcon,
   MapPinIcon,
   BookOpenIcon,
+  WrenchIcon,
+  Plug2Icon,
+  UnplugIcon,
+  DatabaseIcon,
+  ClockIcon as TimerIcon,
+  WifiIcon,
+  WifiOffIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -37,7 +44,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { haseefsApi, spacesApi, type Haseef, type HaseefListItem, type HaseefSpace, type Contact } from "@/lib/api";
+import { haseefsApi, spacesApi, skillsApi, type Haseef, type HaseefListItem, type HaseefSpace, type Contact, type HaseefSkill, type SkillInstance } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
 import { Avatar } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
@@ -79,6 +86,14 @@ export function HaseefDetailPage({ onDeleted, allHaseefs = [] }: HaseefDetailPag
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
 
+  // Skills state
+  const [haseefSkills, setHaseefSkills] = useState<HaseefSkill[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [allInstances, setAllInstances] = useState<SkillInstance[]>([]);
+  const [showAttachSkill, setShowAttachSkill] = useState(false);
+  const [attachingId, setAttachingId] = useState<string | null>(null);
+  const [detachingId, setDetachingId] = useState<string | null>(null);
+
   const fetchSpaces = useCallback(async () => {
     if (!haseefId) return;
     setSpacesLoading(true);
@@ -89,6 +104,19 @@ export function HaseefDetailPage({ onDeleted, allHaseefs = [] }: HaseefDetailPag
       // non-fatal
     } finally {
       setSpacesLoading(false);
+    }
+  }, [haseefId]);
+
+  const fetchHaseefSkills = useCallback(async () => {
+    if (!haseefId) return;
+    setSkillsLoading(true);
+    try {
+      const { skills } = await skillsApi.listForHaseef(haseefId);
+      setHaseefSkills(skills);
+    } catch {
+      // non-fatal
+    } finally {
+      setSkillsLoading(false);
     }
   }, [haseefId]);
 
@@ -118,6 +146,10 @@ export function HaseefDetailPage({ onDeleted, allHaseefs = [] }: HaseefDetailPag
   useEffect(() => {
     fetchSpaces();
   }, [fetchSpaces]);
+
+  useEffect(() => {
+    fetchHaseefSkills();
+  }, [fetchHaseefSkills]);
 
   const handleDelete = useCallback(async () => {
     if (!haseef) return;
@@ -498,6 +530,206 @@ export function HaseefDetailPage({ onDeleted, allHaseefs = [] }: HaseefDetailPag
             </div>
           </div>
         </div>
+
+        {/* Skills Section */}
+        <div className="rounded-2xl border border-border bg-card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <WrenchIcon className="size-4 text-muted-foreground" />
+              <h3 className="text-sm font-semibold text-foreground">
+                Skills ({haseefSkills.length})
+              </h3>
+            </div>
+            <Button size="sm" onClick={async () => {
+              setShowAttachSkill(true);
+              try {
+                const { instances } = await skillsApi.listInstances();
+                setAllInstances(instances);
+              } catch { /* non-fatal */ }
+            }}>
+              <Plug2Icon className="size-3.5" />
+              Attach Skill
+            </Button>
+          </div>
+
+          {skillsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <LoaderIcon className="size-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : haseefSkills.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <div className="size-10 rounded-xl bg-muted/50 flex items-center justify-center mb-2">
+                <WrenchIcon className="size-5 text-muted-foreground" />
+              </div>
+              <p className="text-sm text-muted-foreground">
+                No skills attached
+              </p>
+              <p className="text-xs text-muted-foreground/70 mt-0.5">
+                Attach a skill to give this haseef new abilities
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {haseefSkills.map((hs) => {
+                const inst = hs.instance;
+                const tmpl = inst?.template;
+                const isScheduler = tmpl?.name === "scheduler";
+                const isDatabase = tmpl?.name === "database";
+                return (
+                  <div
+                    key={hs.id}
+                    className="w-full rounded-xl border border-border/60 bg-background/50 p-3.5 group"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={cn(
+                          "size-9 rounded-lg flex items-center justify-center shrink-0",
+                          isDatabase ? "bg-blue-500/10" : isScheduler ? "bg-amber-500/10" : "bg-primary/10",
+                        )}>
+                          {isDatabase ? (
+                            <DatabaseIcon className="size-4 text-blue-600 dark:text-blue-400" />
+                          ) : isScheduler ? (
+                            <TimerIcon className="size-4 text-amber-600 dark:text-amber-400" />
+                          ) : (
+                            <WrenchIcon className="size-4 text-primary" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-foreground truncate">
+                              {inst?.displayName || inst?.name || "Unknown"}
+                            </span>
+                            {hs.connected ? (
+                              <span className="flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400">
+                                <WifiIcon className="size-2.5" /> Connected
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                <WifiOffIcon className="size-2.5" /> Disconnected
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {tmpl?.displayName || tmpl?.name || "Unknown template"}
+                            {tmpl?.category && (
+                              <span className="ml-1.5 text-muted-foreground/60">· {tmpl.category}</span>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={detachingId === hs.instanceId}
+                        onClick={async () => {
+                          setDetachingId(hs.instanceId);
+                          try {
+                            await skillsApi.detachFromHaseef(hs.instanceId, haseefId!);
+                            toast("Skill detached", "success");
+                            await fetchHaseefSkills();
+                          } catch (err: any) {
+                            toast(err.message || "Failed to detach", "error");
+                          } finally {
+                            setDetachingId(null);
+                          }
+                        }}
+                        className="text-muted-foreground hover:text-destructive shrink-0"
+                      >
+                        {detachingId === hs.instanceId ? (
+                          <LoaderIcon className="size-3.5 animate-spin" />
+                        ) : (
+                          <UnplugIcon className="size-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Attach Skill Dialog */}
+        <Dialog open={showAttachSkill} onClose={() => setShowAttachSkill(false)}>
+          <DialogHeader onClose={() => setShowAttachSkill(false)}>
+            <DialogTitle>Attach skill to {haseef.name}</DialogTitle>
+            <DialogDescription>
+              Select a skill instance to give this haseef access to its tools.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[320px] overflow-y-auto rounded-lg border border-border divide-y divide-border">
+            {(() => {
+              const attachedIds = new Set(haseefSkills.map((hs) => hs.instanceId));
+              const available = allInstances.filter((i) => !attachedIds.has(i.id));
+              if (available.length === 0) {
+                return (
+                  <div className="flex flex-col items-center justify-center py-8 text-center px-4">
+                    <p className="text-sm text-muted-foreground">No available skill instances</p>
+                    <p className="text-xs text-muted-foreground/70 mt-1">
+                      Create a skill instance first from the <button onClick={() => { setShowAttachSkill(false); navigate("/skills"); }} className="text-primary hover:underline">Skills page</button>
+                    </p>
+                  </div>
+                );
+              }
+              return available.map((inst) => {
+                const isAttaching = attachingId === inst.id;
+                const tmpl = inst.template;
+                const isScheduler = tmpl?.name === "scheduler";
+                const isDatabase = tmpl?.name === "database";
+                return (
+                  <button
+                    key={inst.id}
+                    disabled={isAttaching}
+                    onClick={async () => {
+                      setAttachingId(inst.id);
+                      try {
+                        await skillsApi.attachToHaseef(inst.id, haseefId!);
+                        toast("Skill attached", "success");
+                        await fetchHaseefSkills();
+                        setShowAttachSkill(false);
+                      } catch (err: any) {
+                        toast(err.message || "Failed to attach", "error");
+                      } finally {
+                        setAttachingId(null);
+                      }
+                    }}
+                    className="flex items-center gap-3 w-full px-4 py-3 text-left hover:bg-muted/50 transition-colors disabled:opacity-50"
+                  >
+                    <div className={cn(
+                      "size-9 rounded-lg flex items-center justify-center shrink-0",
+                      isDatabase ? "bg-blue-500/10" : isScheduler ? "bg-amber-500/10" : "bg-primary/10",
+                    )}>
+                      {isDatabase ? (
+                        <DatabaseIcon className="size-4 text-blue-600 dark:text-blue-400" />
+                      ) : isScheduler ? (
+                        <TimerIcon className="size-4 text-amber-600 dark:text-amber-400" />
+                      ) : (
+                        <WrenchIcon className="size-4 text-primary" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-medium text-foreground truncate block">
+                        {inst.displayName || inst.name}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {tmpl?.displayName || tmpl?.name || "Unknown"}
+                        {tmpl?.category && ` · ${tmpl.category}`}
+                      </span>
+                    </div>
+                    {isAttaching ? (
+                      <LoaderIcon className="size-4 animate-spin text-muted-foreground shrink-0" />
+                    ) : (
+                      <Plug2Icon className="size-4 text-muted-foreground shrink-0" />
+                    )}
+                  </button>
+                );
+              });
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAttachSkill(false)}>Cancel</Button>
+          </DialogFooter>
+        </Dialog>
 
         {/* Spaces Section */}
         <div className="rounded-2xl border border-border bg-card p-5">

@@ -172,7 +172,12 @@ async function handleQuery(
   }
 
   try {
-    const result = await pool.query(`${sql} LIMIT ${maxRows}`, params);
+    // Only append LIMIT if the query doesn't already contain one
+    let safeSql = sql;
+    if (!/\bLIMIT\b/i.test(sql)) {
+      safeSql = `${sql} LIMIT ${maxRows}`;
+    }
+    const result = await pool.query(safeSql, params);
     return {
       rows: result.rows,
       rowCount: result.rows.length,
