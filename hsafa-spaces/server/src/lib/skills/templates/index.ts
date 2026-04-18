@@ -5,13 +5,17 @@
 // =============================================================================
 
 import type { SkillTemplateDefinition } from "../types.js";
+import { codeTemplate } from "./code.js";
 import { databaseTemplate } from "./database.js";
+import { emailTemplate } from "./email.js";
 import { schedulerTemplate } from "./scheduler.js";
 import { webTemplate } from "./web.js";
 
 /** All prebuilt skill templates, keyed by template name */
 export const ALL_TEMPLATES: Map<string, SkillTemplateDefinition> = new Map([
+  [codeTemplate.name, codeTemplate],
   [databaseTemplate.name, databaseTemplate],
+  [emailTemplate.name, emailTemplate],
   [schedulerTemplate.name, schedulerTemplate],
   [webTemplate.name, webTemplate],
 ]);

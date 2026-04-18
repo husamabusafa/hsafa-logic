@@ -14,7 +14,13 @@
 import { HsafaSDK } from "@hsafa/sdk";
 import { prisma } from "../db.js";
 import { getTemplate, getAllTemplates } from "./templates/index.js";
-import type { SkillHandler, ToolCallContext } from "./types.js";
+import type {
+  SkillHandler,
+  ToolCallContext,
+  SenseLoopContext,
+  SenseEventPayload,
+  SenseEventPusher,
+} from "./types.js";
 
 interface ManagedInstance {
   instanceId: string;
@@ -139,6 +145,7 @@ async function connectInstance(
         haseefName: ctx.haseef.name,
         actionId: ctx.actionId,
         instanceName,
+        haseefProfile: (ctx.haseef.profile ?? {}) as Record<string, unknown>,
       };
       return handler.execute(tool.name, args as Record<string, unknown>, toolCtx);
     });
@@ -154,6 +161,74 @@ async function connectInstance(
     sdk,
     handler,
   });
+
+  // Start the handler's background sense loop, if any.
+  if (handler.startSenseLoop) {
+    const senseCtx = buildSenseLoopContext(instanceId, instanceName, sdk);
+    try {
+      await handler.startSenseLoop(senseCtx);
+    } catch (err) {
+      console.warn(`[skill-manager] startSenseLoop failed for "${instanceName}":`, err);
+    }
+  }
+}
+
+// =============================================================================
+// Sense Loop Context builder
+// =============================================================================
+
+function buildSenseLoopContext(
+  instanceId: string,
+  instanceName: string,
+  sdk: HsafaSDK,
+): SenseLoopContext {
+  const pushEvent: SenseEventPusher = async (haseefId, event) => {
+    try {
+      await sdk.pushEvent({
+        type: event.type,
+        data: event.data,
+        attachments: event.attachments,
+        haseefId,
+      });
+    } catch (err) {
+      console.warn(
+        `[skill-manager] pushEvent(${event.type}) failed for haseef=${haseefId.slice(0, 8)} instance="${instanceName}":`,
+        err,
+      );
+    }
+  };
+
+  const getAttachedHaseefs = async (): Promise<string[]> => {
+    const links = await prisma.haseefSkill.findMany({
+      where: { instanceId, isActive: true },
+      select: { haseefId: true },
+    });
+    return links.map((l: { haseefId: string }) => l.haseefId);
+  };
+
+  const broadcast = async (event: SenseEventPayload) => {
+    const haseefs = await getAttachedHaseefs();
+    await Promise.all(haseefs.map((id) => pushEvent(id, event)));
+  };
+
+  const getHaseefProfile = async (haseefId: string): Promise<Record<string, unknown>> => {
+    try {
+      const res = await fetch(`${coreUrl}/api/haseefs/${haseefId}/profile`, {
+        headers: { "x-api-key": secretKey },
+      });
+      if (!res.ok) return {};
+      const body = (await res.json()) as { profile?: Record<string, unknown> | null };
+      return body.profile ?? {};
+    } catch (err) {
+      console.warn(
+        `[skill-manager] getHaseefProfile(${haseefId.slice(0, 8)}) failed for instance="${instanceName}":`,
+        err,
+      );
+      return {};
+    }
+  };
+
+  return { instanceName, pushEvent, broadcast, getAttachedHaseefs, getHaseefProfile };
 }
 
 // =============================================================================
@@ -163,6 +238,13 @@ async function connectInstance(
 async function disconnectInstance(instanceId: string): Promise<void> {
   const inst = instances.get(instanceId);
   if (!inst) return;
+
+  // Stop sense loop first so it doesn't try to push via a closing SDK.
+  try {
+    await inst.handler.stopSenseLoop?.();
+  } catch (err) {
+    console.warn(`[skill-manager] stopSenseLoop error for "${inst.instanceName}":`, err);
+  }
 
   try {
     inst.sdk.disconnect();
