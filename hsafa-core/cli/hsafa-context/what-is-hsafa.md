@@ -1,72 +1,63 @@
-# What is Hsafa
+# What is Hsafa (v7)
 
-> This file provides AI assistants (Cursor, Windsurf, Copilot, etc.) with context about the Hsafa platform so they can generate correct, idiomatic code for Hsafa scopes.
+> Context for AI assistants generating code in this Hsafa skill project.
 
 ## Overview
 
-**Hsafa** (حصافة — Arabic for intelligence and wisdom) is a runtime for autonomous AI agents called **Haseefs**.
+**Hsafa** is a runtime for autonomous AI agents called **haseefs**. A haseef is not a chatbot — it is a long-lived agent with:
 
-A **Haseef** (حصيف) is NOT a chatbot. It is a long-lived AI agent with:
-- **Identity** — persistent name, personality, profile
-- **Memory** — episodic, semantic, social, procedural memory systems
-- **Consciousness** — compressed history of past cycles for continuity across sessions
-- **Inbox** — queue of incoming sense events from the world
-- **Tools** — actions it can take, provided by connected services (scopes)
-- **Goals & Plans** — autonomous objectives and scheduled actions
-- **Autonomy** — it decides when to act, what to do, and when to stay silent
+- **Identity** — name, description, profile (phone, email, robotId, …)
+- **4 memory types** — semantic (key/value facts), episodic (run summaries), social (people), procedural (learned patterns)
+- **Skills** — named groups of tools, registered by services
+- **Trigger-based execution** — events trigger runs; no continuous loop, no consciousness
 
 ## Architecture: Core + Services
 
-Hsafa follows a strict **Core + Services** separation:
+Hsafa follows a strict **Core + Services** separation.
 
 ### Hsafa Core
-The agent's **mind**. It runs the think loop, manages memory, consciousness, inbox, tool execution, and MCP integration. Core has **zero domain-specific logic** — it doesn't know about chat, databases, emails, or any specific use case.
+The agent's **brain**. Stateless trigger-driven runs (`coordinator → invoker → reflect`). Owns the haseef profile, the 4 memory types, the skill/tool registry, and event routing.
 
 - **API**: REST + SSE at `http://localhost:3001` (default)
-- **Auth**: API keys (`hsk_service_*`, `hsk_haseef_*`, `hsk_scope_*`)
-- **Think Loop**: `SLEEP → DRAIN INBOX → BUILD PROMPT → THINK → SAVE`
+- **Auth**: a single shared `SECRET_KEY` sent as `x-api-key` (or `?api_key=` for SSE)
+- **Stateless**: every run builds a fresh prompt; there is no persistent conversation log
 
-### Services (Scopes)
-Independent systems that connect to Core and give Haseefs capabilities. Each service operates under a **scope** — a named channel that identifies it.
+### Services (one per skill)
+Independent processes that connect to Core and provide tools to haseefs. Each service registers under a **skill** — a named channel.
 
-Examples: `spaces` (chat), `postgres` (database), `scheduler` (cron), `whatsapp`, `jira`, `slack`, etc.
+Examples: `spaces`, `scheduler`, `whatsapp`, `postgres`, `weather`. One service per skill — if you need two WhatsApp providers, use `whatsapp_twilio` and `whatsapp_meta`.
 
-A service does three things:
-1. **Register tools** — tells Core what actions the Haseef can take via this service
-2. **Handle tool calls** — executes actions when the Haseef invokes a tool
-3. **Push sense events** — sends incoming data (messages, notifications, webhooks) into the Haseef's inbox
+A service does four things via `@hsafa/sdk`:
+
+1. `registerTools([...])` — declare tools to Core
+2. `onToolCall(name, handler)` — handle tool calls when they arrive
+3. `pushEvent({...})` — push outside-world events into haseefs
+4. `connect()` — open the long-lived SSE stream
+
+The SDK also exposes `hsafa.memory.*`, `hsafa.haseef.*`, and `hsafa.runs.*` for everything else a skill might need.
 
 ## Key Concepts
 
 | Concept | Description |
 |---------|-------------|
-| **Haseef** | A long-lived AI agent with identity, memory, and autonomy |
-| **Scope** | A named channel identifying a service (e.g. `postgres`, `weather`) |
-| **Scope Key** | API key (`hsk_scope_*`) that authenticates a scope service with Core |
-| **Tool** | An action a Haseef can take (defined by a scope, executed by the service) |
-| **Sense Event** | Incoming data pushed from a service into a Haseef's inbox |
-| **Inbox** | Queue of sense events waiting to be processed in the next think cycle |
-| **SmartSpace** | A shared chat workspace where humans and Haseefs collaborate |
-| **Run** | A single think cycle — triggered by an inbox event, produces tool calls and messages |
-| **Consciousness** | Compressed history of past runs for long-term continuity |
+| **Haseef** | A long-lived AI agent with identity, memory, and skills |
+| **Skill** | A named channel identifying a service (e.g. `weather`, `spaces`) |
+| **Tool** | An action a haseef can take, defined and executed by a skill's service |
+| **Event** | Outside-world signal pushed into a haseef; triggers a run if one isn't already running |
+| **Run** | A single trigger → think → act → done execution |
+| **Memory (4 types)** | semantic / episodic / social / procedural — read/write via `hsafa.memory.*` |
 
-## How a Scope Works (End-to-End)
+## End-to-end Flow
 
 ```
-1. Scope service starts → connects to Core via @hsafa/sdk
-2. Registers tools (e.g. "query", "send_email") → Core now knows the Haseef has these capabilities
-3. Scope is attached to a Haseef → Haseef can now use the tools
-4. Something happens externally → scope pushes a sense event → lands in Haseef's inbox
-5. Haseef wakes up → reads inbox → decides to call a tool → Core dispatches the action via SSE
-6. Scope handler executes the tool → returns result to Core → Haseef continues thinking
+1. Skill service starts → connects to Core via @hsafa/sdk
+2. Registers tools → Core stores them under the skill name
+3. Skill is added to a haseef's skills[] array → haseef can use the tools
+4. External event happens → service calls hsafa.pushEvent({ haseefId or target, … })
+5. Core triggers a run → builds prompt → LLM picks tools → tool calls fan out via SSE
+6. Service handler runs → returns result → Core continues thinking → run finishes
 ```
 
-## This Project is a Scope
+## This Project is a Skill
 
-This project is a **Hsafa scope** — a service that connects to Hsafa Core and provides tools to Haseefs. When building this scope:
-
-- Use `@hsafa/sdk` to connect to Core
-- Define tools with clear names, descriptions, and JSON Schema inputs
-- Implement handlers that execute tool calls and return structured results
-- Optionally push sense events when external things happen
-- Keep tool handlers focused and deterministic — the Haseef decides *when* to call them
+This project is a Hsafa skill — a service that connects to Hsafa Core via `@hsafa/sdk`. When generating code, follow the patterns in `examples.md` and the rules in `instructions.md`.

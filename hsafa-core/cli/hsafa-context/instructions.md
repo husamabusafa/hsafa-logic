@@ -1,32 +1,32 @@
-# Hsafa Scope — AI Instructions
+# Hsafa Skill — AI Instructions
 
-> **This file is for AI assistants (Cursor, Windsurf, Copilot, etc.).** Read all `.md` files in this `.hsafa/` folder to understand the Hsafa platform and how to write scopes correctly.
+> **This file is for AI assistants (Cursor, Windsurf, Copilot, etc.).** Read all `.md` files in this `.hsafa/` folder to understand the Hsafa platform (v7) and how to write skills correctly.
 
 ## Context Files
 
 Read these files in order for full context:
 
-1. **`what-is-hsafa.md`** — What Hsafa is, the Core + Services architecture, key concepts
-2. **`sdk-reference.md`** — Full `@hsafa/sdk` API reference (constructor, registerTools, onToolCall, pushEvent, events, connect)
-3. **`cli-reference.md`** — All CLI commands for managing scopes
-4. **`scope-development-guide.md`** — Best practices, patterns, anti-patterns, project structure
+1. **`what-is-hsafa.md`** — What Hsafa is, the Core + Services architecture
+2. **`sdk-reference.md`** — Pointer to the canonical SDK reference
+3. **`cli-reference.md`** — All CLI commands
+4. **`skill-development-guide.md`** — Best practices, patterns, anti-patterns
 5. **`examples.md`** — Real code examples (API wrapper, database, webhooks, monitoring)
 
 ## Rules for AI
 
-When generating code for this Hsafa scope project:
+When generating code for this Hsafa skill project:
 
-1. **Always use `@hsafa/sdk`** — import `HsafaSDK` from `@hsafa/sdk`
-2. **Follow the 4-step pattern** — create SDK → register tools → handle tool calls → connect
-3. **Use `snake_case` for tool names** — e.g. `get_weather`, `send_email`
-4. **Add descriptions to every tool and every input field** — the Haseef reads these
-5. **Return structured JSON from handlers** — not strings, not raw HTML
-6. **Load config from environment variables** — SCOPE_NAME, SCOPE_KEY, CORE_URL + your own
-7. **Handle errors gracefully** — return `{ error: "message" }` or throw
-8. **Include graceful shutdown** — disconnect SDK on SIGINT/SIGTERM
-9. **Use `formattedContext` in sense events** — human-readable summary for the Haseef's inbox
-10. **Keep tools focused** — one tool = one action, split complex workflows
+1. **Always use `@hsafa/sdk`** — `import { HsafaSDK } from "@hsafa/sdk"`.
+2. **Constructor uses `skill`, not `scope`** — `new HsafaSDK({ coreUrl, apiKey, skill })`.
+3. **Authenticate with the single Core key** — env var `HSAFA_CORE_KEY` (Core's `SECRET_KEY`). There is no per-skill key in v7.
+4. **Use `snake_case` for tool names** — e.g. `get_weather`, `send_email`.
+5. **Add descriptions to every tool and every input field** — the haseef reads them to choose tools.
+6. **Return structured JSON from handlers** — not strings, not raw HTML.
+7. **Use `hsafa.memory.*`, `hsafa.haseef.*`, `hsafa.runs.*`** for state beyond tool calls.
+8. **Handle errors gracefully** — return `{ error: "message" }` or throw.
+9. **Include graceful shutdown** — `hsafa.disconnect()` on `SIGINT` / `SIGTERM`.
+10. **Keep tools focused** — one tool = one action; split complex workflows into multiple tools.
 
 ## This Project
 
-This is a Hsafa scope service. It connects to Hsafa Core and provides tools to Haseefs (autonomous AI agents). The Haseef decides when to call tools — your job is to define what tools are available and implement their execution logic.
+This is a Hsafa skill service. It connects to Hsafa Core and provides tools to haseefs (autonomous AI agents). The haseef decides when to call tools — your job is to define what tools are available and implement the handler logic.

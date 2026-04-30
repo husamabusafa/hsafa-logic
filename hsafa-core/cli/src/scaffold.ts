@@ -1,12 +1,17 @@
 // =============================================================================
-// Scaffold — generates starter skill projects
+// Scaffold — generates starter skill projects for v7 (built with @hsafa/sdk).
+//
+// Generated projects use these env vars:
+//   SKILL_NAME       Name registered with Core (e.g. "weather")
+//   HSAFA_CORE_URL   Core URL (e.g. http://localhost:3001)
+//   HSAFA_CORE_KEY   Core's SECRET_KEY (sent as x-api-key)
 // =============================================================================
 
 import fs from "node:fs";
 import path from "node:path";
 import { writeHsafaContext } from "./hsafa-context.js";
 
-export function scaffoldScope(
+export function scaffoldSkill(
   dir: string,
   name: string,
   lang: string,
@@ -34,14 +39,13 @@ function scaffoldNode(dir: string, name: string, lang: string, starter: string) 
     name,
     version: "0.1.0",
     type: "module",
-    hsafa: { scope: name },
+    hsafa: { skill: name },
     scripts: {
-      dev: isTs ? "npx tsx watch src/index.ts" : "node --watch src/index.js",
-      start: isTs ? "npx tsx src/index.ts" : "node src/index.js",
+      dev: isTs ? "tsx watch --env-file=.env src/index.ts" : "node --watch --env-file=.env src/index.js",
+      start: isTs ? "tsx --env-file=.env src/index.ts" : "node --env-file=.env src/index.js",
     },
     dependencies: {
       "@hsafa/sdk": "^0.0.1",
-      dotenv: "^16.4.5",
     },
     ...(isTs
       ? {
@@ -76,7 +80,12 @@ function scaffoldNode(dir: string, name: string, lang: string, starter: string) 
   writeFile(
     dir,
     ".env",
-    `SCOPE_NAME=${name}\nSCOPE_KEY=\nCORE_URL=http://localhost:3001\n`,
+    [
+      `SKILL_NAME=${name}`,
+      `HSAFA_CORE_URL=http://localhost:3001`,
+      `HSAFA_CORE_KEY=`,
+      ``,
+    ].join("\n"),
   );
 
   // .gitignore
@@ -86,23 +95,36 @@ function scaffoldNode(dir: string, name: string, lang: string, starter: string) 
   const srcDir = path.join(dir, "src");
   fs.mkdirSync(srcDir, { recursive: true });
 
-  // Tools file
-  const toolsContent = getToolsContent(starter, ext);
-  writeFile(srcDir, `tools.${ext}`, toolsContent);
-
-  // Handler file
-  const handlerContent = getHandlerContent(starter, ext);
-  writeFile(srcDir, `handler.${ext}`, handlerContent);
-
-  // Index file
-  const indexContent = getIndexContent(name, ext);
-  writeFile(srcDir, `index.${ext}`, indexContent);
+  writeFile(srcDir, `tools.${ext}`, getToolsContent(starter, ext));
+  writeFile(srcDir, `handler.${ext}`, getHandlerContent(starter, ext));
+  writeFile(srcDir, `index.${ext}`, getIndexContent(name, ext));
 
   // README
   writeFile(
     dir,
     "README.md",
-    `# ${name}\n\nHsafa skill — built with @hsafa/sdk.\n\n## Setup\n\n\`\`\`bash\nnpm install\nhsafa skill dev\n\`\`\`\n\nEnvironment variables (\`.env\`) are auto-configured by \`hsafa skill init\`.\n`,
+    [
+      `# ${name}`,
+      ``,
+      `A Hsafa skill — connects to Hsafa Core via [\`@hsafa/sdk\`](https://www.npmjs.com/package/@hsafa/sdk).`,
+      ``,
+      `## Setup`,
+      ``,
+      "```bash",
+      `npm install`,
+      `# Edit .env: set HSAFA_CORE_KEY to your Core SECRET_KEY`,
+      `npm run dev`,
+      "```",
+      ``,
+      `## Environment`,
+      ``,
+      `| Variable | Purpose |`,
+      `|----------|---------|`,
+      `| \`SKILL_NAME\` | Skill name registered with Core (default: \`${name}\`) |`,
+      `| \`HSAFA_CORE_URL\` | Core URL (default: \`http://localhost:3001\`) |`,
+      `| \`HSAFA_CORE_KEY\` | Core's \`SECRET_KEY\` — used as \`x-api-key\` |`,
+      ``,
+    ].join("\n"),
   );
 
   // .hsafa/ AI context folder
@@ -115,13 +137,18 @@ function scaffoldPython(dir: string, name: string, _starter: string) {
   writeFile(
     dir,
     "requirements.txt",
-    "# Add your dependencies here\n# hsafa-sdk (when published)\n",
+    "# Add your dependencies here\n# A Python @hsafa/sdk is not yet available — use raw HTTP/SSE.\n",
   );
 
   writeFile(
     dir,
     ".env",
-    `SCOPE_NAME=${name}\nSCOPE_KEY=\nCORE_URL=http://localhost:3001\n`,
+    [
+      `SKILL_NAME=${name}`,
+      `HSAFA_CORE_URL=http://localhost:3001`,
+      `HSAFA_CORE_KEY=`,
+      ``,
+    ].join("\n"),
   );
 
   writeFile(dir, ".gitignore", "__pycache__\n*.pyc\n.env\nvenv\n");
@@ -129,16 +156,47 @@ function scaffoldPython(dir: string, name: string, _starter: string) {
   writeFile(
     dir,
     "main.py",
-    `"""${name} — Hsafa scope"""\nimport os\n\n# TODO: Use hsafa Python SDK when available\n# from hsafa import HsafaSDK\n\nSCOPE_NAME = os.environ.get("SCOPE_NAME", "${name}")\nSCOPE_KEY = os.environ.get("SCOPE_KEY", "")\nCORE_URL = os.environ.get("CORE_URL", "http://localhost:3001")\n\nprint(f"[{SCOPE_NAME}] Starting...")\n\n# sdk = HsafaSDK(core_url=CORE_URL, api_key=SCOPE_KEY, scope=SCOPE_NAME)\n# sdk.register_tools([...])\n# sdk.connect()\n`,
+    [
+      `"""${name} — Hsafa skill (Python)`,
+      ``,
+      `A Python SDK is not yet published. Use raw HTTP + SSE against Core:`,
+      `  PUT  {HSAFA_CORE_URL}/api/skills/{SKILL_NAME}/tools         (register tools)`,
+      `  GET  {HSAFA_CORE_URL}/api/skills/{SKILL_NAME}/actions/stream (SSE: tool calls)`,
+      `  POST {HSAFA_CORE_URL}/api/actions/{actionId}/result          (return result)`,
+      `  POST {HSAFA_CORE_URL}/api/events                              (push events)`,
+      `Authenticate every call with x-api-key: {HSAFA_CORE_KEY}.`,
+      `"""`,
+      `import os`,
+      ``,
+      `SKILL_NAME = os.environ.get("SKILL_NAME", "${name}")`,
+      `CORE_URL   = os.environ.get("HSAFA_CORE_URL", "http://localhost:3001")`,
+      `API_KEY    = os.environ.get("HSAFA_CORE_KEY", "")`,
+      ``,
+      `print(f"[{SKILL_NAME}] Starting — Core: {CORE_URL}")`,
+      ``,
+      `# TODO: PUT /api/skills/{SKILL_NAME}/tools and open SSE stream`,
+      ``,
+    ].join("\n"),
   );
 
   writeFile(
     dir,
     "README.md",
-    `# ${name}\n\nHsafa skill (Python).\n\n## Setup\n\n\`\`\`bash\npip install -r requirements.txt\nhsafa skill dev\n# Or manually:\nhsafa skill create --name ${name}\npython main.py\nhsafa skill attach ${name} --haseef <haseef-name>\n\`\`\`\n`,
+    [
+      `# ${name}`,
+      ``,
+      `Hsafa skill (Python).`,
+      ``,
+      `## Setup`,
+      ``,
+      "```bash",
+      `pip install -r requirements.txt`,
+      `# Edit .env: set HSAFA_CORE_KEY`,
+      `python main.py`,
+      "```",
+    ].join("\n"),
   );
 
-  // .hsafa/ AI context folder
   writeHsafaContext(dir);
 }
 
@@ -146,32 +204,42 @@ function scaffoldPython(dir: string, name: string, _starter: string) {
 
 function getIndexContent(name: string, ext: string): string {
   const isTs = ext === "ts";
-  return `${isTs ? 'import "dotenv/config";\nimport { HsafaSDK } from "@hsafa/sdk";\n' : 'require("dotenv/config");\nconst { HsafaSDK } = require("@hsafa/sdk");\n'}import { tools } from "./tools.${ext === "ts" ? "js" : ext}";\nimport { handlers } from "./handler.${ext === "ts" ? "js" : ext}";\n
-const sdk = new HsafaSDK({
-  coreUrl: process.env.CORE_URL || "http://localhost:3001",
-  apiKey: process.env.SCOPE_KEY || "",
-  scope: process.env.SCOPE_NAME || "${name}",
+  const importLine = isTs
+    ? `import { HsafaSDK } from "@hsafa/sdk";`
+    : `const { HsafaSDK } = require("@hsafa/sdk");`;
+
+  return `${importLine}
+import { tools } from "./tools.${isTs ? "js" : ext}";
+import { handlers } from "./handler.${isTs ? "js" : ext}";
+
+const hsafa = new HsafaSDK({
+  coreUrl: process.env.HSAFA_CORE_URL || "http://localhost:3001",
+  apiKey:  process.env.HSAFA_CORE_KEY  || "",
+  skill:   process.env.SKILL_NAME      || "${name}",
 });
 
 async function main() {
-  // Register tools with Core
-  await sdk.registerTools(tools);
-  console.log(\`[\${sdk.scope}] Registered \${tools.length} tools\`);
+  // 1. Register tools with Core
+  await hsafa.registerTools(tools);
+  console.log(\`[\${hsafa.skill}] Registered \${tools.length} tools\`);
 
-  // Wire up handlers
+  // 2. Wire up handlers
   for (const [toolName, handler] of Object.entries(handlers)) {
-    sdk.onToolCall(toolName, handler${isTs ? " as any" : ""});
+    hsafa.onToolCall(toolName, handler${isTs ? " as any" : ""});
   }
 
-  // Connect — starts listening for tool calls via SSE
-  sdk.connect();
-  console.log(\`[\${sdk.scope}] Connected to Core — ready for tool calls\`);
+  // 3. Connect — SSE stream, auto-reconnects
+  hsafa.connect();
+  console.log(\`[\${hsafa.skill}] Connected to Core — ready for tool calls\`);
 }
 
 main().catch((err) => {
   console.error("Fatal:", err);
   process.exit(1);
 });
+
+process.on("SIGINT",  () => { hsafa.disconnect(); process.exit(0); });
+process.on("SIGTERM", () => { hsafa.disconnect(); process.exit(0); });
 `;
 }
 
@@ -180,14 +248,12 @@ function getToolsContent(starter: string, ext: string): string {
   const typeAnnotation = isTs ? ": any[]" : "";
 
   if (starter === "api") {
-    return `// Tool definitions for your scope
+    return `// Tool definitions for your skill
 export const tools${typeAnnotation} = [
   {
     name: "fetch_data",
     description: "Fetch data from the external API",
-    input: {
-      query: { type: "string", description: "Search query" },
-    },
+    input: { query: "string" },
   },
   {
     name: "get_status",
@@ -199,14 +265,12 @@ export const tools${typeAnnotation} = [
   }
 
   if (starter === "database") {
-    return `// Tool definitions for your scope
+    return `// Tool definitions for your skill
 export const tools${typeAnnotation} = [
   {
     name: "query",
-    description: "Run a read-only SQL query",
-    input: {
-      sql: { type: "string", description: "SQL query to execute" },
-    },
+    description: "Run a read-only SQL query (SELECT only)",
+    input: { sql: "string" },
   },
   {
     name: "list_tables",
@@ -218,28 +282,24 @@ export const tools${typeAnnotation} = [
   }
 
   if (starter === "webhook") {
-    return `// Tool definitions for your scope
+    return `// Tool definitions for your skill
 export const tools${typeAnnotation} = [
   {
     name: "list_events",
     description: "List recent webhook events",
-    input: {
-      limit: { type: "number", description: "Max events to return" },
-    },
+    input: { limit: "number?" },
   },
 ];
 `;
   }
 
   // blank
-  return `// Tool definitions for your scope
+  return `// Tool definitions for your skill
 export const tools${typeAnnotation} = [
   {
     name: "hello",
     description: "A simple greeting tool",
-    input: {
-      name: { type: "string", description: "Name to greet" },
-    },
+    input: { name: "string" },
   },
 ];
 `;
@@ -247,16 +307,14 @@ export const tools${typeAnnotation} = [
 
 function getHandlerContent(starter: string, ext: string): string {
   const isTs = ext === "ts";
-  const typeAnnotation = isTs ? ": Record<string, (args: any) => Promise<any>>" : "";
+  const typeAnnotation = isTs ? ": Record<string, (args: any, ctx: any) => Promise<any>>" : "";
 
   if (starter === "api") {
     return `// Tool handlers — implement your logic here
 export const handlers${typeAnnotation} = {
   async fetch_data(args${isTs ? ": { query: string }" : ""}) {
-    // Replace with your actual API call
     const response = await fetch(\`https://api.example.com/search?q=\${encodeURIComponent(args.query)}\`);
-    const data = await response.json();
-    return { results: data };
+    return { results: await response.json() };
   },
 
   async get_status() {
@@ -270,14 +328,12 @@ export const handlers${typeAnnotation} = {
     return `// Tool handlers — implement your logic here
 export const handlers${typeAnnotation} = {
   async query(args${isTs ? ": { sql: string }" : ""}) {
-    // Replace with your actual database client
-    // import { pool } from "./db";
-    // const result = await pool.query(args.sql);
-    return { rows: [], message: "TODO: connect to your database" };
+    // TODO: connect to your database
+    return { rows: [], message: "TODO: wire up your DB client" };
   },
 
   async list_tables() {
-    return { tables: [], message: "TODO: connect to your database" };
+    return { tables: [] };
   },
 };
 `;
@@ -290,20 +346,20 @@ const events${isTs ? ": any[]" : ""} = []; // In-memory store for demo
 
 export const handlers${typeAnnotation} = {
   async list_events(args${isTs ? ": { limit?: number }" : ""}) {
-    const limit = args.limit || 10;
-    return { events: events.slice(-limit) };
+    return { events: events.slice(-(args.limit || 10)) };
   },
 };
 
-// TODO: Set up an HTTP server to receive webhooks
-// and push them as sense events via sdk.pushEvent()
+// TODO: Stand up an HTTP server to receive webhooks, then call hsafa.pushEvent(...)
 `;
   }
 
   // blank
   return `// Tool handlers — implement your logic here
 export const handlers${typeAnnotation} = {
-  async hello(args${isTs ? ": { name: string }" : ""}) {
+  async hello(args${isTs ? ": { name: string }" : ""}, ctx${isTs ? ": { haseef: { id: string; name: string } }" : ""}) {
+    // ctx.haseef.id is the haseef calling this tool — useful for memory:
+    //   await hsafa.memory.set(ctx.haseef.id, [{ key: "last_greeted", value: args.name }]);
     return { message: \`Hello, \${args.name}!\` };
   },
 };

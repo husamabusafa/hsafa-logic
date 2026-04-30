@@ -1,7 +1,7 @@
 // =============================================================================
 // .hsafa/ context folder content — embedded as strings for CLI distribution.
-// These files are written into every scaffolded scope project so AI tools
-// (Cursor, Windsurf, Copilot, etc.) have full context about Hsafa.
+// These files are written into every scaffolded skill project so AI tools
+// (Cursor, Windsurf, Copilot, etc.) have full v7 context.
 // =============================================================================
 
 import fs from "node:fs";
@@ -15,412 +15,155 @@ export interface ContextFile {
 export const HSAFA_CONTEXT_FILES: ContextFile[] = [
   {
     name: "instructions.md",
-    content: `# Hsafa Scope — AI Instructions
+    content: `# Hsafa Skill — AI Instructions
 
-> **This file is for AI assistants (Cursor, Windsurf, Copilot, etc.).** Read all \`.md\` files in this \`.hsafa/\` folder to understand the Hsafa platform and how to write scopes correctly.
+> **This file is for AI assistants (Cursor, Windsurf, Copilot, etc.).** Read all \`.md\` files in this \`.hsafa/\` folder to understand the Hsafa platform (v7) and how to write skills correctly.
 
 ## Context Files
 
 Read these files in order for full context:
 
-1. **\`what-is-hsafa.md\`** — What Hsafa is, the Core + Services architecture, key concepts
-2. **\`sdk-reference.md\`** — Full \`@hsafa/sdk\` API reference (constructor, registerTools, onToolCall, pushEvent, events, connect)
-3. **\`cli-reference.md\`** — All CLI commands for managing scopes
-4. **\`scope-development-guide.md\`** — Best practices, patterns, anti-patterns, project structure
+1. **\`what-is-hsafa.md\`** — What Hsafa is, the Core + Services architecture
+2. **\`sdk-reference.md\`** — Pointer to the canonical SDK reference
+3. **\`cli-reference.md\`** — All CLI commands
+4. **\`skill-development-guide.md\`** — Best practices, patterns, anti-patterns
 5. **\`examples.md\`** — Real code examples (API wrapper, database, webhooks, monitoring)
 
 ## Rules for AI
 
-When generating code for this Hsafa scope project:
+When generating code for this Hsafa skill project:
 
-1. **Always use \`@hsafa/sdk\`** — import \`HsafaSDK\` from \`@hsafa/sdk\`
-2. **Follow the 4-step pattern** — create SDK → register tools → handle tool calls → connect
-3. **Use \`snake_case\` for tool names** — e.g. \`get_weather\`, \`send_email\`
-4. **Add descriptions to every tool and every input field** — the Haseef reads these
-5. **Return structured JSON from handlers** — not strings, not raw HTML
-6. **Load config from environment variables** — SCOPE_NAME, SCOPE_KEY, CORE_URL + your own
-7. **Handle errors gracefully** — return \`{ error: "message" }\` or throw
-8. **Include graceful shutdown** — disconnect SDK on SIGINT/SIGTERM
-9. **Use \`formattedContext\` in sense events** — human-readable summary for the Haseef's inbox
-10. **Keep tools focused** — one tool = one action, split complex workflows
+1. **Always use \`@hsafa/sdk\`** — \`import { HsafaSDK } from "@hsafa/sdk"\`.
+2. **Constructor uses \`skill\`, not \`scope\`** — \`new HsafaSDK({ coreUrl, apiKey, skill })\`.
+3. **Authenticate with the single Core key** — env var \`HSAFA_CORE_KEY\` (Core's \`SECRET_KEY\`). There is no per-skill key in v7.
+4. **Use \`snake_case\` for tool names** — e.g. \`get_weather\`, \`send_email\`.
+5. **Add descriptions to every tool and every input field** — the haseef reads them to choose tools.
+6. **Return structured JSON from handlers** — not strings, not raw HTML.
+7. **Use \`hsafa.memory.*\`, \`hsafa.haseef.*\`, \`hsafa.runs.*\`** for state beyond tool calls.
+8. **Handle errors gracefully** — return \`{ error: "message" }\` or throw.
+9. **Include graceful shutdown** — \`hsafa.disconnect()\` on \`SIGINT\` / \`SIGTERM\`.
+10. **Keep tools focused** — one tool = one action; split complex workflows into multiple tools.
 
 ## This Project
 
-This is a Hsafa scope service. It connects to Hsafa Core and provides tools to Haseefs (autonomous AI agents). The Haseef decides when to call tools — your job is to define what tools are available and implement their execution logic.
+This is a Hsafa skill service. It connects to Hsafa Core and provides tools to haseefs (autonomous AI agents). The haseef decides when to call tools — your job is to define what tools are available and implement the handler logic.
 `,
   },
   {
     name: "what-is-hsafa.md",
-    content: `# What is Hsafa
+    content: `# What is Hsafa (v7)
 
-> This file provides AI assistants (Cursor, Windsurf, Copilot, etc.) with context about the Hsafa platform so they can generate correct, idiomatic code for Hsafa scopes.
+> Context for AI assistants generating code in this Hsafa skill project.
 
 ## Overview
 
-**Hsafa** (from Arabic — intelligence and wisdom) is a runtime for autonomous AI agents called **Haseefs**.
+**Hsafa** is a runtime for autonomous AI agents called **haseefs**. A haseef is not a chatbot — it is a long-lived agent with:
 
-A **Haseef** is NOT a chatbot. It is a long-lived AI agent with:
-- **Identity** — persistent name, personality, profile
-- **Memory** — episodic, semantic, social, procedural memory systems
-- **Consciousness** — compressed history of past cycles for continuity across sessions
-- **Inbox** — queue of incoming sense events from the world
-- **Tools** — actions it can take, provided by connected services (scopes)
-- **Goals & Plans** — autonomous objectives and scheduled actions
-- **Autonomy** — it decides when to act, what to do, and when to stay silent
+- **Identity** — name, description, profile (phone, email, robotId, …)
+- **4 memory types** — semantic (key/value facts), episodic (run summaries), social (people), procedural (learned patterns)
+- **Skills** — named groups of tools, registered by services
+- **Trigger-based execution** — events trigger runs; no continuous loop, no consciousness
 
 ## Architecture: Core + Services
 
-Hsafa follows a strict **Core + Services** separation:
+Hsafa follows a strict **Core + Services** separation.
 
 ### Hsafa Core
-The agent's **mind**. It runs the think loop, manages memory, consciousness, inbox, tool execution, and MCP integration. Core has **zero domain-specific logic** — it doesn't know about chat, databases, emails, or any specific use case.
+The agent's **brain**. Stateless trigger-driven runs (\`coordinator → invoker → reflect\`). Owns the haseef profile, the 4 memory types, the skill/tool registry, and event routing.
 
 - **API**: REST + SSE at \`http://localhost:3001\` (default)
-- **Auth**: API keys (\`hsk_service_*\`, \`hsk_haseef_*\`, \`hsk_scope_*\`)
-- **Think Loop**: \`SLEEP → DRAIN INBOX → BUILD PROMPT → THINK → SAVE\`
+- **Auth**: a single shared \`SECRET_KEY\` sent as \`x-api-key\` (or \`?api_key=\` for SSE)
+- **Stateless**: every run builds a fresh prompt; there is no persistent conversation log
 
-### Services (Scopes)
-Independent systems that connect to Core and give Haseefs capabilities. Each service operates under a **scope** — a named channel that identifies it.
+### Services (one per skill)
+Independent processes that connect to Core and provide tools to haseefs. Each service registers under a **skill** — a named channel.
 
-Examples: \`spaces\` (chat), \`postgres\` (database), \`scheduler\` (cron), \`whatsapp\`, \`jira\`, \`slack\`, etc.
+Examples: \`spaces\`, \`scheduler\`, \`whatsapp\`, \`postgres\`, \`weather\`. One service per skill — if you need two WhatsApp providers, use \`whatsapp_twilio\` and \`whatsapp_meta\`.
 
-A service does three things:
-1. **Register tools** — tells Core what actions the Haseef can take via this service
-2. **Handle tool calls** — executes actions when the Haseef invokes a tool
-3. **Push sense events** — sends incoming data (messages, notifications, webhooks) into the Haseef's inbox
+A service does four things via \`@hsafa/sdk\`:
+
+1. \`registerTools([...])\` — declare tools to Core
+2. \`onToolCall(name, handler)\` — handle tool calls when they arrive
+3. \`pushEvent({...})\` — push outside-world events into haseefs
+4. \`connect()\` — open the long-lived SSE stream
+
+The SDK also exposes \`hsafa.memory.*\`, \`hsafa.haseef.*\`, and \`hsafa.runs.*\` for everything else a skill might need.
 
 ## Key Concepts
 
 | Concept | Description |
 |---------|-------------|
-| **Haseef** | A long-lived AI agent with identity, memory, and autonomy |
-| **Scope** | A named channel identifying a service (e.g. \`postgres\`, \`weather\`) |
-| **Scope Key** | API key (\`hsk_scope_*\`) that authenticates a scope service with Core |
-| **Tool** | An action a Haseef can take (defined by a scope, executed by the service) |
-| **Sense Event** | Incoming data pushed from a service into a Haseef's inbox |
-| **Inbox** | Queue of sense events waiting to be processed in the next think cycle |
-| **SmartSpace** | A shared chat workspace where humans and Haseefs collaborate |
-| **Run** | A single think cycle — triggered by an inbox event, produces tool calls and messages |
-| **Consciousness** | Compressed history of past runs for long-term continuity |
+| **Haseef** | A long-lived AI agent with identity, memory, and skills |
+| **Skill** | A named channel identifying a service (e.g. \`weather\`, \`spaces\`) |
+| **Tool** | An action a haseef can take, defined and executed by a skill's service |
+| **Event** | Outside-world signal pushed into a haseef; triggers a run if one isn't already running |
+| **Run** | A single trigger → think → act → done execution |
+| **Memory (4 types)** | semantic / episodic / social / procedural — read/write via \`hsafa.memory.*\` |
 
-## How a Scope Works (End-to-End)
+## End-to-end Flow
 
 \`\`\`
-1. Scope service starts → connects to Core via @hsafa/sdk
-2. Registers tools (e.g. "query", "send_email") → Core now knows the Haseef has these capabilities
-3. Scope is attached to a Haseef → Haseef can now use the tools
-4. Something happens externally → scope pushes a sense event → lands in Haseef's inbox
-5. Haseef wakes up → reads inbox → decides to call a tool → Core dispatches the action via SSE
-6. Scope handler executes the tool → returns result to Core → Haseef continues thinking
+1. Skill service starts → connects to Core via @hsafa/sdk
+2. Registers tools → Core stores them under the skill name
+3. Skill is added to a haseef's skills[] array → haseef can use the tools
+4. External event happens → service calls hsafa.pushEvent({ haseefId or target, … })
+5. Core triggers a run → builds prompt → LLM picks tools → tool calls fan out via SSE
+6. Service handler runs → returns result → Core continues thinking → run finishes
 \`\`\`
 
-## This Project is a Scope
+## This Project is a Skill
 
-This project is a **Hsafa scope** — a service that connects to Hsafa Core and provides tools to Haseefs. When building this scope:
-
-- Use \`@hsafa/sdk\` to connect to Core
-- Define tools with clear names, descriptions, and JSON Schema inputs
-- Implement handlers that execute tool calls and return structured results
-- Optionally push sense events when external things happen
-- Keep tool handlers focused and deterministic — the Haseef decides *when* to call them
+This project is a Hsafa skill — a service that connects to Hsafa Core via \`@hsafa/sdk\`. When generating code, follow the patterns in \`examples.md\` and the rules in \`instructions.md\`.
 `,
   },
   {
     name: "sdk-reference.md",
     content: `# @hsafa/sdk Reference
 
-> Complete API reference for the Hsafa SDK used to build scope services.
+The full, authoritative SDK reference lives in the SDK package itself:
 
-## Install
+→ **[\`sdks/hsafa-sdk/README.md\`](https://www.npmjs.com/package/@hsafa/sdk)** (or in the monorepo: \`sdks/hsafa-sdk/README.md\`)
 
-\`\`\`bash
-npm install @hsafa/sdk
-\`\`\`
+It covers:
 
-## Quick Start
+- The 4 core methods: \`registerTools\`, \`onToolCall\`, \`pushEvent\`, \`connect\` / \`on\`
+- The \`hsafa.memory.*\` namespace — read/write all 4 memory types
+- The \`hsafa.haseef.*\` namespace — CRUD haseefs, profile, skills
+- The \`hsafa.runs.*\` namespace — list/get past runs
+- All exported types
+
+This file is intentionally a pointer so there is exactly one source of truth for the SDK API.
+
+## TL;DR
 
 \`\`\`typescript
-import { HsafaSDK } from '@hsafa/sdk';
+import { HsafaSDK } from "@hsafa/sdk";
 
-const sdk = new HsafaSDK({
-  coreUrl: process.env.CORE_URL || 'http://localhost:3001',
-  apiKey: process.env.SCOPE_KEY || '',
-  scope: process.env.SCOPE_NAME || 'my-scope',
+const hsafa = new HsafaSDK({
+  coreUrl: process.env.HSAFA_CORE_URL!,  // "http://localhost:3001"
+  apiKey:  process.env.HSAFA_CORE_KEY!,  // Core's SECRET_KEY
+  skill:   process.env.SKILL_NAME!,      // unique skill name
 });
 
-// 1. Register tools
-await sdk.registerTools([
-  {
-    name: 'get_weather',
-    description: 'Get current weather for a city',
-    input: { city: 'string', units: 'string?' },
-  },
+await hsafa.registerTools([
+  { name: "ping", description: "Reply with pong", input: {} },
 ]);
 
-// 2. Handle tool calls
-sdk.onToolCall('get_weather', async (args, ctx) => {
-  const weather = await fetchWeather(args.city as string);
-  return { temperature: weather.temp, conditions: weather.desc };
+hsafa.onToolCall("ping", async (args, ctx) => {
+  // ctx.haseef = { id, name, profile }
+  // ctx.actionId = unique action ID
+  return { pong: true };
 });
 
-// 3. Connect (opens SSE stream, auto-reconnects)
-sdk.connect();
+hsafa.connect(); // SSE stream, auto-reconnects 2s → 30s
 \`\`\`
 
-## Constructor
+## Reading haseef memory inside a handler
 
 \`\`\`typescript
-new HsafaSDK(options: SdkOptions)
-\`\`\`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| \`coreUrl\` | \`string\` | Core API base URL (e.g. \`http://localhost:3001\`) |
-| \`apiKey\` | \`string\` | Scope key for authentication (\`hsk_scope_*\`) |
-| \`scope\` | \`string\` | Scope name identifying this service |
-
-## Registering Tools
-
-\`\`\`typescript
-await sdk.registerTools(tools: ToolDefinition[])
-\`\`\`
-
-Sends a PUT request to Core to register all tools for this scope. Call this once at startup. Calling it again replaces all previous tools.
-
-### ToolDefinition
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| \`name\` | \`string\` | Yes | Tool name (snake_case recommended) |
-| \`description\` | \`string\` | Yes | What the tool does — the Haseef reads this to decide when to use it |
-| \`input\` | \`Record<string, string>\` | No | Shorthand type map (see below) |
-| \`inputSchema\` | \`object\` | No | Raw JSON Schema (overrides \`input\` if both provided) |
-
-### Input Shorthand
-
-For simple tools, use the shorthand type strings:
-
-\`\`\`typescript
-input: {
-  city: 'string',        // required string
-  units: 'string?',      // optional string
-  limit: 'number',       // required number
-  verbose: 'boolean?',   // optional boolean
-  tags: 'string[]',      // required string array
-  counts: 'number[]',    // required number array
-  metadata: 'object',    // required object (any shape)
-}
-\`\`\`
-
-Append \`?\` to make a field optional.
-
-### Raw JSON Schema
-
-For complex inputs (nested objects, enums, etc.), use \`inputSchema\` directly:
-
-\`\`\`typescript
-{
-  name: 'create_task',
-  description: 'Create a task with subtasks',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      title: { type: 'string', description: 'Task title' },
-      priority: { type: 'string', enum: ['low', 'medium', 'high'] },
-      subtasks: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            name: { type: 'string' },
-            done: { type: 'boolean' },
-          },
-          required: ['name'],
-        },
-      },
-    },
-    required: ['title'],
-  },
-}
-\`\`\`
-
-### Schema Helper
-
-Convert shorthand to JSON Schema manually:
-
-\`\`\`typescript
-import { inputToJsonSchema } from '@hsafa/sdk';
-
-const schema = inputToJsonSchema({ city: 'string', units: 'string?' });
-// → { type: 'object', properties: { city: { type: 'string' }, units: { type: 'string' } }, required: ['city'] }
-\`\`\`
-
-## Handling Tool Calls
-
-\`\`\`typescript
-sdk.onToolCall(toolName: string, handler: ToolHandler)
-\`\`\`
-
-Register a handler for a specific tool. When a Haseef invokes this tool, the handler runs and its return value is sent back as the tool result.
-
-\`\`\`typescript
-type ToolHandler = (
-  args: Record<string, unknown>,
-  ctx: ToolCallContext,
-) => Promise<unknown>;
-\`\`\`
-
-### ToolCallContext
-
-| Field | Type | Description |
-|-------|------|-------------|
-| \`actionId\` | \`string\` | Unique ID for this tool call action |
-| \`haseef\` | \`HaseefContext\` | The Haseef that invoked the tool |
-
-### HaseefContext
-
-| Field | Type | Description |
-|-------|------|-------------|
-| \`id\` | \`string\` | Haseef UUID |
-| \`name\` | \`string\` | Haseef display name |
-| \`profile\` | \`Record<string, unknown>\` | Haseef profile data |
-
-### Handler Patterns
-
-\`\`\`typescript
-// Simple handler
-sdk.onToolCall('ping', async () => {
-  return { pong: true, timestamp: Date.now() };
-});
-
-// Handler with args and context
-sdk.onToolCall('send_email', async (args, ctx) => {
-  console.log(\\\`Haseef \\\${ctx.haseef.name} wants to send an email\\\`);
-  await emailService.send({
-    to: args.to as string,
-    subject: args.subject as string,
-    body: args.body as string,
-  });
-  return { sent: true };
-});
-
-// Error handling — thrown errors are sent back as { error: "message" }
-sdk.onToolCall('risky_action', async (args) => {
-  if (!args.confirmed) {
-    throw new Error('Action requires confirmation');
-  }
-  return await doRiskyThing();
-});
-\`\`\`
-
-## Pushing Events
-
-\`\`\`typescript
-await sdk.pushEvent(event: PushEventPayload)
-\`\`\`
-
-Push a sense event into a Haseef's inbox. This is how your service tells the Haseef that something happened.
-
-### PushEventPayload
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| \`type\` | \`string\` | Yes | Event type (e.g. \`new_order\`, \`alert\`) |
-| \`data\` | \`Record<string, unknown>\` | Yes | Event payload |
-| \`haseefId\` | \`string\` | No | Target a specific Haseef |
-| \`target\` | \`Record<string, string>\` | No | Routing metadata |
-| \`attachments\` | \`Attachment[]\` | No | File/image/audio attachments |
-
-### Attachment
-
-| Field | Type | Description |
-|-------|------|-------------|
-| \`type\` | \`'image' \\| 'audio' \\| 'file'\` | Attachment type |
-| \`mimeType\` | \`string\` | MIME type |
-| \`url\` | \`string\` | URL to the file (use this OR base64) |
-| \`base64\` | \`string\` | Base64-encoded content (use this OR url) |
-| \`name\` | \`string\` | Optional filename |
-
-### Examples
-
-\`\`\`typescript
-// Simple event
-await sdk.pushEvent({
-  type: 'new_order',
-  data: { orderId: '12345', total: 99.99, customer: 'Alice' },
-  haseefId: 'haseef-uuid',
-});
-
-// Event with formatted context (recommended)
-await sdk.pushEvent({
-  type: 'alert',
-  data: {
-    severity: 'high',
-    message: 'Server CPU at 95%',
-    formattedContext: [
-      '[SERVER ALERT]',
-      'Server: prod-api-1',
-      'CPU: 95% (threshold: 80%)',
-      '',
-      '>>> Decide what to do.',
-    ].join('\\n'),
-  },
-  haseefId: 'haseef-uuid',
-});
-\`\`\`
-
-## Listening to Events
-
-Subscribe to real-time lifecycle events via the SSE stream:
-
-\`\`\`typescript
-sdk.on(event: SdkEventType, listener: (data) => void)
-sdk.off(event: SdkEventType, listener: (data) => void)
-\`\`\`
-
-### Available Events
-
-| Event | Payload | Description |
-|-------|---------|-------------|
-| \`run.started\` | \`{ runId, haseef, triggerScope, triggerType }\` | A Haseef think cycle began |
-| \`tool.input.start\` | \`{ actionId, toolName, haseef }\` | Tool input streaming started |
-| \`tool.input.delta\` | \`{ actionId, toolName, delta, partialArgs, haseef }\` | Partial tool args received |
-| \`tool.call\` | \`{ actionId, toolName, args, haseef }\` | Tool call dispatched with final args |
-| \`tool.result\` | \`{ actionId, toolName, args, result, durationMs, haseef }\` | Tool returned a result |
-| \`tool.error\` | \`{ actionId, toolName, error, haseef }\` | Tool call failed |
-| \`run.completed\` | \`{ runId, haseef, summary, durationMs }\` | Think cycle finished |
-
-\`\`\`typescript
-sdk.on('run.started', (event) => {
-  console.log(\\\`Run \\\${event.runId} started for \\\${event.haseef.name}\\\`);
-});
-
-sdk.on('tool.error', (event) => {
-  console.error(\\\`\\\${event.toolName} failed:\\\`, event.error);
-});
-\`\`\`
-
-## Connection
-
-\`\`\`typescript
-sdk.connect()    // Open SSE stream (auto-reconnects with backoff 2s → 30s)
-sdk.disconnect() // Close SSE stream
-\`\`\`
-
-## Environment Variables
-
-| Variable | Description | Source |
-|----------|-------------|--------|
-| \`SCOPE_NAME\` | Scope name (matches what's registered in Core) | Set by user or platform |
-| \`SCOPE_KEY\` | API key for Core auth (\`hsk_scope_*\`) | Generated by \`hsafa skill create\` or platform |
-| \`CORE_URL\` | Core API base URL | \`http://localhost:3001\` (local) or platform URL |
-
-## Graceful Shutdown
-
-\`\`\`typescript
-process.on('SIGINT', () => {
-  sdk.disconnect();
-  process.exit(0);
+hsafa.onToolCall("summarize_my_day", async (args, ctx) => {
+  const recent = await hsafa.memory.search(ctx.haseef.id, "today", 10);
+  return { summary: recent.map(m => m.value).join("\\n") };
 });
 \`\`\`
 `,
@@ -429,7 +172,7 @@ process.on('SIGINT', () => {
     name: "cli-reference.md",
     content: `# Hsafa CLI Reference
 
-> All CLI commands for managing scopes.
+> All CLI commands for managing skills (v7).
 
 ## Install
 
@@ -437,7 +180,15 @@ process.on('SIGINT', () => {
 npm install -g @hsafa/cli
 \`\`\`
 
-## Authentication
+## Configuration
+
+\`\`\`bash
+hsafa config set-server <url>      # e.g. https://spaces.hsafa.com or http://localhost:3005
+hsafa config show
+hsafa config reset
+\`\`\`
+
+## Authentication (against the Spaces server)
 
 \`\`\`bash
 hsafa auth login                              # Interactive (browser)
@@ -447,112 +198,107 @@ hsafa auth whoami                             # Show current user
 hsafa auth logout                             # Clear credentials
 \`\`\`
 
-## Skill Commands
-
-### New Skill (scaffold + register + configure)
+## Building a Custom Skill (with @hsafa/sdk)
 
 \`\`\`bash
-hsafa skill init <name> [--lang typescript|javascript|python] [--starter blank|api|database|webhook] [--haseef <name>]
+# 1. Scaffold a project
+hsafa skill init my-weather --lang typescript --starter blank
+
+# 2. Configure environment
+cd my-weather
+# Edit .env: set HSAFA_CORE_KEY to your Core SECRET_KEY
+npm install
+
+# 3. Run it
+hsafa skill dev   # delegates to: npm run dev
 \`\`\`
 
-Scaffolds project, registers scope, provisions key, writes \`.env\`, and optionally attaches to a haseef. One command does everything.
+A scaffolded project uses these env vars:
 
-### Register Existing Project
+| Var | Purpose |
+|------|--------|
+| \`SKILL_NAME\` | Skill name registered with Core |
+| \`HSAFA_CORE_URL\` | Core URL (default \`http://localhost:3001\`) |
+| \`HSAFA_CORE_KEY\` | Core's \`SECRET_KEY\` — the single shared API key |
 
-\`\`\`bash
-hsafa skill create [--name <name>] [--haseef <name>]
-\`\`\`
+## Managing Skill Instances (Spaces server)
 
-Run from a project directory. Reads scope name from \`package.json\`, registers, provisions key, writes \`.env\`.
-
-### Quick Dev (auto-create + run)
-
-\`\`\`bash
-hsafa skill dev [--haseef <name>]
-\`\`\`
-
-Auto-creates scope if needed, attaches to haseef, starts dev server (\`tsx watch\`).
-
-### Register External Skill
+These commands talk to the Spaces server, where users create configured **instances** of skill **templates**.
 
 \`\`\`bash
-hsafa skill register --key hsk_scope_... --name <name>
-\`\`\`
+# Browse what templates exist
+hsafa skill templates
 
-For self-hosted skills that already have a key.
+# Create an instance from a template
+hsafa skill create my_db --template database --display "My Postgres"
 
-### Attach / Detach (by name!)
-
-\`\`\`bash
-hsafa skill attach <scope-name> --haseef <haseef-name>
-hsafa skill detach <scope-name> --haseef <haseef-name>
-\`\`\`
-
-Haseefs can be referenced by **name** (case-insensitive) or UUID.
-
-### List / Delete
-
-\`\`\`bash
+# List your instances
 hsafa skill list
-hsafa skill delete <name> [-y]
+
+# Delete an instance
+hsafa skill delete my_db -y
+
+# Attach / detach an instance to/from a haseef
+hsafa skill attach my_db --haseef atlas
+hsafa skill detach my_db --haseef atlas
+
+# Show all skills attached to a haseef
+hsafa skill show --haseef atlas
 \`\`\`
 
-## Local Development Workflow
+Haseefs can be referenced by **name** (case-insensitive) or **UUID**.
 
-\`\`\`bash
-hsafa skill init my-scope --haseef atlas     # scaffold + register + attach
-cd my-scope && npm install
-npm run dev                                   # tools are live!
-# edit code → auto-restart → tools update
-\`\`\`
+## Removed Commands (v6 → v7)
 
-Environment variables (\`SCOPE_NAME\`, \`SCOPE_KEY\`, \`CORE_URL\`) are auto-written to \`.env\` by \`init\` and \`create\`. No manual configuration needed.
+| Old command | Why it's gone |
+|-------------|---------------|
+| \`hsafa skill register --key hsk_scope_*\` | v7 uses a single Core \`SECRET_KEY\`; there are no per-skill keys |
+| \`hsafa skill publish\` | Marketplace publish API isn't part of v7 yet |
+| \`hsafa skill install <slug>\` | No marketplace install in v7 yet |
 `,
   },
   {
-    name: "scope-development-guide.md",
-    content: `# Scope Development Guide
+    name: "skill-development-guide.md",
+    content: `# Skill Development Guide (v7)
 
-> How to build a high-quality Hsafa scope — best practices, patterns, and anti-patterns.
+> How to build a high-quality Hsafa skill — best practices, patterns, anti-patterns.
 
 ## Project Structure
 
 \`\`\`
-my-scope/
+my-skill/
 ├── .hsafa/                # AI context (this folder)
 ├── src/
-│   ├── index.ts           # SDK setup, connect, register tools
+│   ├── index.ts           # SDK setup, register tools, connect
 │   ├── tools.ts           # Tool definitions (name, schema, description)
 │   └── handler.ts         # Tool call handlers (your logic)
-├── .env                   # SCOPE_KEY, CORE_URL, SCOPE_NAME
+├── .env                   # SKILL_NAME, HSAFA_CORE_URL, HSAFA_CORE_KEY
 ├── package.json
 └── README.md
 \`\`\`
 
 ## The 4-Step Pattern
 
-Every scope follows the same pattern:
-
 \`\`\`typescript
-import { HsafaSDK } from '@hsafa/sdk';
+import { HsafaSDK } from "@hsafa/sdk";
 
 // 1. CREATE SDK INSTANCE
-const sdk = new HsafaSDK({
-  coreUrl: process.env.CORE_URL!,
-  apiKey: process.env.SCOPE_KEY!,
-  scope: process.env.SCOPE_NAME!,
+const hsafa = new HsafaSDK({
+  coreUrl: process.env.HSAFA_CORE_URL!,
+  apiKey:  process.env.HSAFA_CORE_KEY!,
+  skill:   process.env.SKILL_NAME!,
 });
 
 // 2. REGISTER TOOLS
-await sdk.registerTools(tools);
+await hsafa.registerTools(tools);
 
 // 3. HANDLE TOOL CALLS
-sdk.onToolCall('tool_name', async (args, ctx) => {
-  return { success: true, data: result };
+hsafa.onToolCall("tool_name", async (args, ctx) => {
+  return { success: true };
 });
 
 // 4. CONNECT
-sdk.connect();
+hsafa.connect();
 \`\`\`
 
 ## Writing Good Tools
@@ -560,32 +306,80 @@ sdk.connect();
 ### Naming
 - Use \`snake_case\`: \`get_weather\`, \`send_email\`, \`list_tables\`
 - Be specific: \`search_customers\` not \`search\`
-- Prefix with a verb: \`get_\`, \`list_\`, \`create_\`, \`update_\`, \`delete_\`, \`send_\`, \`run_\`
+- Verb-prefix: \`get_\`, \`list_\`, \`create_\`, \`update_\`, \`delete_\`, \`send_\`, \`run_\`
 
 ### Descriptions
-The Haseef reads the description to decide when to use a tool. Be clear and specific:
+The haseef reads the description to decide when to use a tool.
 
 \`\`\`typescript
 // GOOD
-{ description: 'Run a read-only SQL query (SELECT only). Returns rows as JSON. LIMIT is enforced automatically.' }
+{ description: "Run a read-only SQL query (SELECT only). Returns rows as JSON. LIMIT enforced automatically." }
 
 // BAD
-{ description: 'Query the database.' }
+{ description: "Query the database." }
 \`\`\`
 
 ### Input Schemas
-Always add \`description\` to every field:
+Add \`description\` to every field. Prefer the shorthand for simple types:
 
 \`\`\`typescript
-inputSchema: {
-  type: 'object',
-  properties: {
-    table: { type: 'string', description: 'Table name to watch (e.g. "orders")' },
-    operation: { type: 'string', enum: ['INSERT', 'UPDATE', 'DELETE'], description: 'Which operation to watch' },
-  },
-  required: ['table', 'operation'],
+{
+  name: "get_weather",
+  description: "Get current weather for a city",
+  input: { city: "string", units: "string?" },  // ? = optional
 }
 \`\`\`
+
+For complex inputs use raw JSON Schema via \`inputSchema\`.
+
+## Reading / Writing Memory
+
+A handler always has \`ctx.haseef.id\` — use it with the memory namespace:
+
+\`\`\`typescript
+hsafa.onToolCall("remember_preference", async (args, ctx) => {
+  await hsafa.memory.set(ctx.haseef.id, [
+    { key: "preferred_units", value: args.units, importance: 6 },
+  ]);
+  return { saved: true };
+});
+
+hsafa.onToolCall("recall_preferences", async (args, ctx) => {
+  const facts = await hsafa.memory.search(ctx.haseef.id, "preference");
+  return { facts };
+});
+\`\`\`
+
+The 4 memory types:
+
+| Namespace call | Type | Use it for |
+|---|---|---|
+| \`memory.list / search / set / delete\` | semantic | key/value facts the haseef should remember |
+| \`memory.episodes / searchEpisodes\` | episodic | summaries of past runs |
+| \`memory.social\` | social | what the haseef knows about specific people |
+| \`memory.procedural\` | procedural | learned patterns / "how to" knowledge |
+
+## Pushing Events
+
+Use \`pushEvent\` when something external happens that should reach a haseef.
+
+\`\`\`typescript
+// Direct routing by haseef ID:
+await hsafa.pushEvent({
+  type: "new_order",
+  data: { orderId, total },
+  haseefId: targetHaseefId,
+});
+
+// Or route by profile field — Core finds the matching haseef:
+await hsafa.pushEvent({
+  type: "whatsapp_message",
+  data: { text },
+  target: { phone: "+15555551234" },
+});
+\`\`\`
+
+The skill name is added automatically — don't pass it.
 
 ## Handler Best Practices
 
@@ -593,224 +387,189 @@ inputSchema: {
 \`\`\`typescript
 // GOOD
 return { customers: [...], totalCount: 42, hasMore: true };
-
 // BAD
 return "Found 42 customers";
 \`\`\`
 
 ### Handle errors gracefully
 \`\`\`typescript
-sdk.onToolCall('query', async (args) => {
+hsafa.onToolCall("query", async (args) => {
   try {
-    const result = await db.query(args.sql as string);
-    return { rows: result.rows, rowCount: result.rowCount };
+    return { rows: await db.query(args.sql) };
   } catch (err) {
-    return { error: err.message, hint: 'Check your SQL syntax' };
+    return { error: (err as Error).message, hint: "Check your SQL syntax" };
   }
 });
 \`\`\`
 
 ### Keep handlers focused
-Each handler does ONE thing. Split complex workflows into multiple tools.
-
-## Pushing Sense Events
-
-Use \`formattedContext\` for human-readable inbox context:
-
-\`\`\`typescript
-await sdk.pushEvent({
-  type: 'new_order',
-  haseefId: targetHaseefId,
-  data: {
-    orderId: order.id,
-    total: order.total,
-    formattedContext: [
-      '[NEW ORDER RECEIVED]',
-      \\\`Order #\\\${order.id} — $\\\${order.total}\\\`,
-      '',
-      '>>> Decide what to do.',
-    ].join('\\n'),
-  },
-});
-\`\`\`
-
-## Environment Variables
-
-### Required (every scope)
-\`\`\`
-SCOPE_NAME=my-scope
-SCOPE_KEY=hsk_scope_...
-CORE_URL=http://localhost:3001
-\`\`\`
-
-### Scope-specific
-Add your own for API keys, database URLs, etc. When deployed, user config is injected as env vars.
+One tool = one action. Split complex workflows into multiple tools.
 
 ## Anti-Patterns
 
-- **Don't make tools too broad** — one tool = one action
-- **Don't return raw HTML or large blobs** — return structured JSON
-- **Don't hold state between tool calls** — each call is independent
-- **Don't use generic tool names** — \`run\`, \`do\`, \`action\` tell the Haseef nothing
-- **Don't forget input validation** — always validate and sanitize
-- **Don't skip graceful shutdown** — always disconnect SDK on SIGINT/SIGTERM
+- ❌ Tools too broad — one tool = one action.
+- ❌ Returning raw HTML or huge blobs — return structured JSON.
+- ❌ Holding state between tool calls — each call is independent. Use memory for state.
+- ❌ Generic tool names — \`run\`, \`do\`, \`action\` tell the haseef nothing.
+- ❌ Skipping graceful shutdown — call \`hsafa.disconnect()\` on \`SIGINT\` / \`SIGTERM\`.
+- ❌ Hardcoding Core's URL or key — read \`HSAFA_CORE_URL\` and \`HSAFA_CORE_KEY\`.
 `,
   },
   {
     name: "examples.md",
-    content: `# Hsafa Scope Examples
+    content: `# Hsafa Skill Examples (v7)
 
-> Code examples for common scope patterns.
+> Code examples for common skill patterns. All use \`@hsafa/sdk\`.
 
 ## REST API Wrapper
 
 \`\`\`typescript
-import { HsafaSDK } from '@hsafa/sdk';
+import { HsafaSDK } from "@hsafa/sdk";
 
-const sdk = new HsafaSDK({
-  coreUrl: process.env.CORE_URL!,
-  apiKey: process.env.SCOPE_KEY!,
-  scope: process.env.SCOPE_NAME!,
+const hsafa = new HsafaSDK({
+  coreUrl: process.env.HSAFA_CORE_URL!,
+  apiKey:  process.env.HSAFA_CORE_KEY!,
+  skill:   process.env.SKILL_NAME!,
 });
 
-await sdk.registerTools([
+await hsafa.registerTools([
   {
-    name: 'get_weather',
-    description: 'Get current weather for a city. Returns temperature, conditions, humidity.',
+    name: "get_weather",
+    description: "Get current weather for a city. Returns temperature, conditions, humidity.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
-        city: { type: 'string', description: 'City name (e.g. "Tokyo")' },
-        units: { type: 'string', enum: ['metric', 'imperial'], description: 'Temperature units' },
+        city:  { type: "string", description: "City name (e.g. \\"Tokyo\\")" },
+        units: { type: "string", enum: ["metric", "imperial"], description: "Temperature units" },
       },
-      required: ['city'],
+      required: ["city"],
     },
   },
 ]);
 
-sdk.onToolCall('get_weather', async (args) => {
+hsafa.onToolCall("get_weather", async (args) => {
   const API_KEY = process.env.WEATHER_API_KEY!;
-  const units = (args.units as string) || 'metric';
+  const units   = (args.units as string) || "metric";
   const res = await fetch(
-    \\\`https://api.openweathermap.org/data/2.5/weather?q=\\\${encodeURIComponent(args.city as string)}&units=\\\${units}&appid=\\\${API_KEY}\\\`
+    \`https://api.openweathermap.org/data/2.5/weather?q=\${encodeURIComponent(args.city as string)}&units=\${units}&appid=\${API_KEY}\`
   );
-  if (!res.ok) return { error: \\\`City "\\\${args.city}" not found\\\` };
+  if (!res.ok) return { error: \`City "\${args.city}" not found\` };
   const data = await res.json();
   return {
-    city: data.name,
+    city:        data.name,
     temperature: data.main.temp,
-    conditions: data.weather[0].description,
-    humidity: data.main.humidity,
-    windSpeed: data.wind.speed,
+    conditions:  data.weather[0].description,
+    humidity:    data.main.humidity,
   };
 });
 
-sdk.connect();
+hsafa.connect();
 \`\`\`
 
-## Database Scope
+## Database Skill (with memory)
 
 \`\`\`typescript
-import { HsafaSDK } from '@hsafa/sdk';
-import pg from 'pg';
+import { HsafaSDK } from "@hsafa/sdk";
+import pg from "pg";
 
-const sdk = new HsafaSDK({
-  coreUrl: process.env.CORE_URL!,
-  apiKey: process.env.SCOPE_KEY!,
-  scope: process.env.SCOPE_NAME!,
+const hsafa = new HsafaSDK({
+  coreUrl: process.env.HSAFA_CORE_URL!,
+  apiKey:  process.env.HSAFA_CORE_KEY!,
+  skill:   process.env.SKILL_NAME!,
 });
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
-await sdk.registerTools([
+await hsafa.registerTools([
   {
-    name: 'query',
-    description: 'Run a read-only SQL query (SELECT only). Returns rows as JSON.',
+    name: "query",
+    description: "Run a read-only SQL query (SELECT only). Returns rows as JSON.",
     inputSchema: {
-      type: 'object',
-      properties: { sql: { type: 'string', description: 'SELECT query to run' } },
-      required: ['sql'],
+      type: "object",
+      properties: { sql: { type: "string", description: "SELECT query" } },
+      required: ["sql"],
     },
   },
   {
-    name: 'list_tables',
-    description: 'List all tables in the database with row counts.',
-    inputSchema: { type: 'object', properties: {} },
+    name: "list_tables",
+    description: "List all tables in the database.",
+    input: {},
   },
 ]);
 
-sdk.onToolCall('query', async (args) => {
+hsafa.onToolCall("query", async (args, ctx) => {
   const sql = (args.sql as string).trim();
-  if (!sql.toUpperCase().startsWith('SELECT')) {
-    return { error: 'Only SELECT queries are allowed' };
+  if (!sql.toUpperCase().startsWith("SELECT")) {
+    return { error: "Only SELECT queries are allowed" };
   }
   const result = await pool.query(sql);
+
+  // Remember the last query for this haseef
+  await hsafa.memory.set(ctx.haseef.id, [
+    { key: "last_query", value: sql, importance: 4 },
+  ]);
+
   return { rows: result.rows, rowCount: result.rowCount };
 });
 
-sdk.onToolCall('list_tables', async () => {
+hsafa.onToolCall("list_tables", async () => {
   const result = await pool.query(
-    'SELECT tablename, n_live_tup AS approx_rows FROM pg_stat_user_tables ORDER BY tablename'
+    "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename"
   );
-  return { tables: result.rows };
+  return { tables: result.rows.map((r) => r.tablename) };
 });
 
-sdk.connect();
+hsafa.connect();
 
-process.on('SIGINT', async () => {
-  sdk.disconnect();
+process.on("SIGINT", async () => {
+  hsafa.disconnect();
   await pool.end();
   process.exit(0);
 });
 \`\`\`
 
-## Webhook Listener + Sense Events
+## Webhook Listener + Push Events
 
 \`\`\`typescript
-import { HsafaSDK } from '@hsafa/sdk';
-import express from 'express';
+import { HsafaSDK } from "@hsafa/sdk";
+import express from "express";
 
-const sdk = new HsafaSDK({
-  coreUrl: process.env.CORE_URL!,
-  apiKey: process.env.SCOPE_KEY!,
-  scope: process.env.SCOPE_NAME!,
+const hsafa = new HsafaSDK({
+  coreUrl: process.env.HSAFA_CORE_URL!,
+  apiKey:  process.env.HSAFA_CORE_KEY!,
+  skill:   process.env.SKILL_NAME!,
 });
 
-const HASEEF_ID = process.env.HASEEF_ID!;
-
-await sdk.registerTools([
+await hsafa.registerTools([
   {
-    name: 'list_events',
-    description: 'List recent webhook events.',
-    input: { limit: 'number?', type: 'string?' },
+    name: "list_events",
+    description: "List recent webhook events.",
+    input: { limit: "number?" },
   },
 ]);
 
-const events: any[] = [];
+const events: Array<{ type: string; data: unknown; receivedAt: string }> = [];
 
-sdk.onToolCall('list_events', async (args) => {
-  let filtered = events;
-  if (args.type) filtered = filtered.filter(e => e.type === args.type);
-  return { events: filtered.slice(-(args.limit as number || 10)) };
+hsafa.onToolCall("list_events", async (args) => {
+  const limit = (args.limit as number) || 10;
+  return { events: events.slice(-limit) };
 });
 
-sdk.connect();
+hsafa.connect();
 
 const app = express();
 app.use(express.json());
 
-app.post('/webhook', async (req, res) => {
-  const event = { type: req.body.type || 'unknown', data: req.body, receivedAt: new Date().toISOString() };
+app.post("/webhook", async (req, res) => {
+  const event = { type: req.body.type ?? "unknown", data: req.body, receivedAt: new Date().toISOString() };
   events.push(event);
 
-  await sdk.pushEvent({
-    type: \\\`webhook_\\\${event.type}\\\`,
-    haseefId: HASEEF_ID,
-    data: {
-      ...event.data,
-      formattedContext: \\\`[WEBHOOK: \\\${event.type}]\\\\n\\\${JSON.stringify(event.data, null, 2)}\\\\n\\\\n>>> Process this.\\\`,
-    },
-  }).catch(err => console.error('Push failed:', err));
+  // Forward to a haseef as a sense event — route by phone in this example
+  await hsafa.pushEvent({
+    type:   \`webhook_\${event.type}\`,
+    data:   event.data as Record<string, unknown>,
+    target: { phone: req.body.phone },
+  }).catch((err) => console.error("Push failed:", err));
 
   res.json({ received: true });
 });
@@ -821,81 +580,70 @@ app.listen(3100);
 ## Monitoring + Alerts
 
 \`\`\`typescript
-import { HsafaSDK } from '@hsafa/sdk';
+import { HsafaSDK } from "@hsafa/sdk";
 
-const sdk = new HsafaSDK({
-  coreUrl: process.env.CORE_URL!,
-  apiKey: process.env.SCOPE_KEY!,
-  scope: 'monitoring',
+const hsafa = new HsafaSDK({
+  coreUrl: process.env.HSAFA_CORE_URL!,
+  apiKey:  process.env.HSAFA_CORE_KEY!,
+  skill:   "monitoring",
 });
 
-await sdk.registerTools([
+await hsafa.registerTools([
   {
-    name: 'get_system_status',
-    description: 'Get current system health metrics (CPU, memory, disk).',
-    inputSchema: { type: 'object', properties: {} },
+    name: "get_system_status",
+    description: "Get current system health metrics (CPU, memory, disk).",
+    input: {},
   },
 ]);
 
-sdk.onToolCall('get_system_status', async () => {
-  return {
-    cpu: { usage: 45, cores: 8 },
-    memory: { usedGb: 12.3, totalGb: 32, percent: 38 },
-    disk: { usedGb: 180, totalGb: 500, percent: 36 },
-    uptime: '14d 6h',
-  };
-});
+hsafa.onToolCall("get_system_status", async () => ({
+  cpu:    { usage: 45 },
+  memory: { percent: 38 },
+  disk:   { percent: 36 },
+}));
 
-sdk.connect();
+hsafa.connect();
 
-// Poll and push alerts
+// Poll and push alerts to all haseefs that have this skill
 setInterval(async () => {
   const cpu = await getCpuUsage();
-  if (cpu > 80) {
-    await sdk.pushEvent({
-      type: 'cpu_alert',
-      haseefId: process.env.HASEEF_ID!,
-      data: {
-        severity: cpu > 95 ? 'critical' : 'warning',
-        cpuUsage: cpu,
-        formattedContext: \\\`[CPU ALERT] Usage: \\\${cpu}% (threshold: 80%)\\\\n>>> Decide what to do.\\\`,
-      },
+  if (cpu < 80) return;
+
+  const haseefs = await hsafa.haseef.list();
+  for (const h of haseefs) {
+    if (!h.skills?.includes("monitoring")) continue;
+    await hsafa.pushEvent({
+      type: "cpu_alert",
+      data: { severity: cpu > 95 ? "critical" : "warning", cpuUsage: cpu },
+      haseefId: h.id,
     });
   }
 }, 60_000);
+
+declare function getCpuUsage(): Promise<number>;
 \`\`\`
 
 ## Common Patterns
 
-### Retry with Backoff
+### Retry with backoff
 \`\`\`typescript
 async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
   for (let i = 0; i < maxRetries; i++) {
     try { return await fn(); }
     catch (err) {
       if (i === maxRetries - 1) throw err;
-      await new Promise(r => setTimeout(r, 1000 * 2 ** i));
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** i));
     }
   }
-  throw new Error('Unreachable');
+  throw new Error("unreachable");
 }
 \`\`\`
 
-### Config from Environment
+### Event logging
 \`\`\`typescript
-const config = {
-  apiKey: process.env.API_KEY || '',
-  region: process.env.REGION || 'us-east-1',
-  maxResults: parseInt(process.env.MAX_RESULTS || '100'),
-};
-if (!config.apiKey) { console.error('API_KEY required'); process.exit(1); }
-\`\`\`
-
-### Event Logging
-\`\`\`typescript
-sdk.on('run.started', (e) => console.log(\\\`Run \\\${e.runId} started\\\`));
-sdk.on('tool.error', (e) => console.error(\\\`\\\${e.toolName} error:\\\`, e.error));
-sdk.on('run.completed', (e) => console.log(\\\`Run done in \\\${e.durationMs}ms\\\`));
+hsafa.on("run.started",   (e) => console.log(\`[\${e.haseef.name}] run started\`));
+hsafa.on("tool.error",    (e) => console.error(\`[\${e.toolName}] \${e.error}\`));
+hsafa.on("run.completed", (e) => console.log(\`run done in \${e.durationMs}ms\`));
 \`\`\`
 `,
   },

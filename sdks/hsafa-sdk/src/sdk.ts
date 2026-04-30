@@ -10,6 +10,17 @@ import type {
   SdkEventType,
   SdkEventMap,
   ToolCallContext,
+  Haseef,
+  CreateHaseefInput,
+  UpdateHaseefInput,
+  SemanticMemory,
+  SemanticMemoryInput,
+  EpisodicMemory,
+  SocialMemory,
+  ProceduralMemory,
+  MemoryStats,
+  Run,
+  ListRunsOptions,
 } from './types.js';
 import { inputToJsonSchema, parsePartialJson } from './schema.js';
 
@@ -73,6 +84,129 @@ export class HsafaSDK {
       throw new Error(`pushEvent failed (${res.status}): ${text}`);
     }
   }
+
+  // ── Haseef API ───────────────────────────────────────────────────────────────
+
+  readonly haseef = {
+    list: async (): Promise<Haseef[]> => {
+      const data = await this.request<{ haseefs: Haseef[] }>('GET', '/api/haseefs');
+      return data.haseefs;
+    },
+
+    get: async (id: string): Promise<Haseef> => {
+      const data = await this.request<{ haseef: Haseef }>('GET', `/api/haseefs/${id}`);
+      return data.haseef;
+    },
+
+    create: async (input: CreateHaseefInput): Promise<Haseef> => {
+      const data = await this.request<{ haseef: Haseef }>('POST', '/api/haseefs', input);
+      return data.haseef;
+    },
+
+    update: async (id: string, patch: UpdateHaseefInput): Promise<Haseef> => {
+      const data = await this.request<{ haseef: Haseef }>('PATCH', `/api/haseefs/${id}`, patch);
+      return data.haseef;
+    },
+
+    delete: async (id: string): Promise<void> => {
+      await this.request<unknown>('DELETE', `/api/haseefs/${id}`);
+    },
+
+    getProfile: async (id: string): Promise<Record<string, unknown>> => {
+      const data = await this.request<{ profile: Record<string, unknown> }>('GET', `/api/haseefs/${id}/profile`);
+      return data.profile ?? {};
+    },
+
+    updateProfile: async (id: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      const data = await this.request<{ profile: Record<string, unknown> }>('PATCH', `/api/haseefs/${id}/profile`, patch);
+      return data.profile ?? {};
+    },
+
+    addSkill: async (id: string, skillName: string): Promise<Haseef> => {
+      const haseef = await this.haseef.get(id);
+      const current = haseef.skills ?? [];
+      if (current.includes(skillName)) return haseef;
+      return this.haseef.update(id, { skills: [...current, skillName] });
+    },
+
+    removeSkill: async (id: string, skillName: string): Promise<Haseef> => {
+      const haseef = await this.haseef.get(id);
+      const current = haseef.skills ?? [];
+      if (!current.includes(skillName)) return haseef;
+      return this.haseef.update(id, { skills: current.filter((s) => s !== skillName) });
+    },
+
+    status: async (id: string): Promise<{ running: boolean; activeRunId: string | null }> => {
+      return this.request('GET', `/api/haseefs/${id}/status`);
+    },
+  };
+
+  // ── Memory API ───────────────────────────────────────────────────────────────
+
+  readonly memory = {
+    list: async (haseefId: string): Promise<SemanticMemory[]> => {
+      const data = await this.request<{ memories: SemanticMemory[] }>('GET', `/api/memory/${haseefId}/semantic`);
+      return data.memories;
+    },
+
+    search: async (haseefId: string, query: string, limit = 20): Promise<SemanticMemory[]> => {
+      const qs = `?q=${encodeURIComponent(query)}&limit=${limit}`;
+      const data = await this.request<{ results: SemanticMemory[] }>('GET', `/api/memory/${haseefId}/semantic/search${qs}`);
+      return data.results;
+    },
+
+    set: async (haseefId: string, memories: SemanticMemoryInput[]): Promise<{ stored: number }> => {
+      return this.request('POST', `/api/memory/${haseefId}/semantic`, { memories });
+    },
+
+    delete: async (haseefId: string, keys: string[]): Promise<{ deleted: number }> => {
+      return this.request('DELETE', `/api/memory/${haseefId}/semantic`, { keys });
+    },
+
+    episodes: async (haseefId: string, limit = 20): Promise<EpisodicMemory[]> => {
+      const data = await this.request<{ episodes: EpisodicMemory[] }>('GET', `/api/memory/${haseefId}/episodic?limit=${limit}`);
+      return data.episodes;
+    },
+
+    searchEpisodes: async (haseefId: string, query: string, limit = 10): Promise<EpisodicMemory[]> => {
+      const qs = `?q=${encodeURIComponent(query)}&limit=${limit}`;
+      const data = await this.request<{ results: EpisodicMemory[] }>('GET', `/api/memory/${haseefId}/episodic/search${qs}`);
+      return data.results;
+    },
+
+    social: async (haseefId: string): Promise<SocialMemory[]> => {
+      const data = await this.request<{ people: SocialMemory[] }>('GET', `/api/memory/${haseefId}/social`);
+      return data.people;
+    },
+
+    procedural: async (haseefId: string): Promise<ProceduralMemory[]> => {
+      const data = await this.request<{ patterns: ProceduralMemory[] }>('GET', `/api/memory/${haseefId}/procedural`);
+      return data.patterns;
+    },
+
+    stats: async (haseefId: string): Promise<MemoryStats> => {
+      return this.request('GET', `/api/memory/${haseefId}/stats`);
+    },
+  };
+
+  // ── Runs API ─────────────────────────────────────────────────────────────────
+
+  readonly runs = {
+    list: async (opts: ListRunsOptions = {}): Promise<Run[]> => {
+      const params = new URLSearchParams();
+      if (opts.haseefId) params.set('haseefId', opts.haseefId);
+      if (opts.status) params.set('status', opts.status);
+      if (opts.limit) params.set('limit', String(opts.limit));
+      const qs = params.toString();
+      const data = await this.request<{ runs: Run[] }>('GET', `/api/runs${qs ? `?${qs}` : ''}`);
+      return data.runs;
+    },
+
+    get: async (runId: string): Promise<Run> => {
+      const data = await this.request<{ run: Run }>('GET', `/api/runs/${runId}`);
+      return data.run;
+    },
+  };
 
   // ── 4. LISTEN ────────────────────────────────────────────────────────────────
 
@@ -225,5 +359,28 @@ export class HsafaSDK {
     } catch (err) {
       console.error(`[HsafaSDK:${this.skill}] Failed to submit result for action ${actionId}:`, err);
     }
+  }
+
+  // Generic typed request helper for Core JSON endpoints.
+  private async request<T>(
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    path: string,
+    body?: unknown,
+  ): Promise<T> {
+    const init: RequestInit = {
+      method,
+      headers: { 'x-api-key': this.apiKey, 'Content-Type': 'application/json' },
+    };
+    if (body !== undefined) init.body = JSON.stringify(body);
+
+    const res = await fetch(`${this.coreUrl}${path}`, init);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`${method} ${path} failed (${res.status}): ${text}`);
+    }
+    if (res.status === 204) return undefined as T;
+    const contentType = res.headers.get('content-type') ?? '';
+    if (!contentType.includes('application/json')) return undefined as T;
+    return (await res.json()) as T;
   }
 }

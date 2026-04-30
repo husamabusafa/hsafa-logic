@@ -16,5 +16,16 @@ export type {
   ToolErrorEvent,
   RunStartedEvent,
   RunCompletedEvent,
+  Haseef,
+  CreateHaseefInput,
+  UpdateHaseefInput,
+  SemanticMemory,
+  SemanticMemoryInput,
+  EpisodicMemory,
+  SocialMemory,
+  ProceduralMemory,
+  MemoryStats,
+  Run,
+  ListRunsOptions,
 } from './types.js';
 export { inputToJsonSchema } from './schema.js';

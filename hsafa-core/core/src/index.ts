@@ -54,7 +54,6 @@ app.use('/api', requireApiKey());
 app.use('/api/haseefs', haseefsRouter);
 app.use('/api/events', eventsRouter);
 app.use('/api/skills', globalSkillsRouter);
-app.use('/api/scopes', globalSkillsRouter); // backward compatibility
 app.use('/api/actions', globalActionsRouter);
 app.use('/api/runs', runsRouter);
 app.use('/api/memory', memoryRouter);

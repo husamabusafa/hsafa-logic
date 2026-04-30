@@ -40,7 +40,7 @@ No plugins. No abilities. No in-process extensions. Services run wherever they w
                     ┌─────────────────────────────┐
                     │         DASHBOARD            │
                     │  Create haseefs, toggle      │
-                    │  scopes, edit profiles,      │
+                    │  skills, edit profiles,      │
                     │  browse memory, view runs    │
                     └──────────────┬──────────────┘
                                    │ HTTP API
@@ -64,15 +64,15 @@ No plugins. No abilities. No in-process extensions. Services run wherever they w
                     │              │                │
                     │  ┌───────────▼────────────┐  │
                     │  │   TOOL REGISTRY        │  │
-                    │  │   scope → tools        │  │
-                    │  │   scope → SSE channel  │  │
+                    │  │   skill → tools        │  │
+                    │  │   skill → SSE channel  │  │
                     │  └───────────┬────────────┘  │
                     │              │                │
                     │  ┌───────────▼────────────┐  │
                     │  │   MEMORY SYSTEM        │  │
                     │  │   episodic + semantic   │  │
                     │  │   social + procedural   │  │
-                    │  │   pgvector search       │  │
+                    │  │   keyword search        │  │
                     │  └────────────────────────┘  │
                     │                              │
                     └───┬──────┬──────┬──────┬─────┘
@@ -106,7 +106,7 @@ import { HsafaSDK } from '@hsafa/sdk';
 const hsafa = new HsafaSDK({
   coreUrl: process.env.HSAFA_CORE_URL,   // "https://core.example.com"
   apiKey: process.env.HSAFA_API_KEY,      // "sk-..."
-  scope: 'whatsapp',                      // unique name for this service
+  skill: 'whatsapp',                      // unique name for this service
 });
 
 // 1. Tell Core what you can do
@@ -126,12 +126,14 @@ hsafa.connect();
 
 The developer never sees HTTP or SSE. The SDK handles everything:
 
+**Core protocol (the 4 things every skill needs):**
+
 | Method | SDK translates to |
 |--------|-------------------|
-| `registerTools([...])` | `PUT /api/scopes/{scope}/tools` |
+| `registerTools([...])` | `PUT /api/skills/{skill}/tools` |
 | `pushEvent({...})` | `POST /api/events` |
 | `onToolCall(name, handler)` | Registers handler locally |
-| `connect()` | Opens SSE to `GET /api/scopes/{scope}/actions/stream` |
+| `connect()` | Opens SSE to `GET /api/skills/{skill}/actions/stream` |
 
 When Core needs a tool executed:
 1. Core sends a tool call request over the SSE connection
@@ -139,13 +141,30 @@ When Core needs a tool executed:
 3. Handler runs and returns a result
 4. SDK posts the result to `POST /api/actions/{actionId}/result`
 
+**Read/write the haseef brain (for skills that need state beyond just tool calls):**
+
+| Namespace | Methods |
+|-----------|---------|
+| `hsafa.memory` | `list(haseefId)`, `search(haseefId, q)`, `set(haseefId, [...])`, `delete(haseefId, keys)`, `episodes(id)`, `searchEpisodes(id, q)`, `social(id)`, `procedural(id)`, `stats(id)` |
+| `hsafa.haseef` | `list()`, `get(id)`, `create(input)`, `update(id, patch)`, `delete(id)`, `getProfile(id)`, `updateProfile(id, patch)`, `addSkill(id, name)`, `removeSkill(id, name)`, `status(id)` |
+| `hsafa.runs` | `list({ haseefId, status, limit })`, `get(runId)` |
+
+Example — a skill that reads memory inside a tool handler:
+
+```typescript
+hsafa.onToolCall('summarize_my_day', async (args, ctx) => {
+  const today = await hsafa.memory.search(ctx.haseef.id, 'today', 10);
+  return { summary: today.map(m => m.value).join('\n') };
+});
+```
+
 ```typescript
 // Inside the SDK — the developer never sees this
 class HsafaSDK {
   private handlers = new Map<string, ToolHandler>();
 
   async registerTools(tools: ToolDefinition[]): Promise<void> {
-    await fetch(`${this.coreUrl}/api/scopes/${this.scope}/tools`, {
+    await fetch(`${this.coreUrl}/api/skills/${this.skill}/tools`, {
       method: 'PUT',
       headers: { 'x-api-key': this.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ tools }),
@@ -160,38 +179,50 @@ class HsafaSDK {
     await fetch(`${this.coreUrl}/api/events`, {
       method: 'POST',
       headers: { 'x-api-key': this.apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scope: this.scope, ...event }),
+      body: JSON.stringify({ skill: this.skill, ...event }),
     });
   }
 
   async connect(): Promise<void> {
-    const stream = new EventSource(
-      `${this.coreUrl}/api/scopes/${this.scope}/actions/stream`,
-      { headers: { 'x-api-key': this.apiKey } }
-    );
+    // Standard EventSource cannot send custom headers, so the SDK uses
+    // fetch() + ReadableStream and parses the SSE protocol manually.
+    const res = await fetch(`${this.coreUrl}/api/skills/${this.skill}/actions/stream`, {
+      headers: { 'x-api-key': this.apiKey, Accept: 'text/event-stream' },
+    });
 
-    stream.onmessage = async (event) => {
-      const action = JSON.parse(event.data);
-      const handler = this.handlers.get(action.toolName);
-      if (!handler) return;
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
 
-      try {
-        const result = await handler(action.args, {
-          haseef: action.haseef,  // { id, name, profile }
-        });
-        await fetch(`${this.coreUrl}/api/actions/${action.actionId}/result`, {
-          method: 'POST',
-          headers: { 'x-api-key': this.apiKey, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ result }),
-        });
-      } catch (err) {
-        await fetch(`${this.coreUrl}/api/actions/${action.actionId}/result`, {
-          method: 'POST',
-          headers: { 'x-api-key': this.apiKey, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ error: err.message }),
-        });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const action = JSON.parse(line.slice(6));
+        const handler = this.handlers.get(action.toolName);
+        if (!handler) continue;
+
+        try {
+          const result = await handler(action.args, { haseef: action.haseef });
+          await this.postResult(action.actionId, { result });
+        } catch (err) {
+          await this.postResult(action.actionId, { error: (err as Error).message });
+        }
       }
-    };
+    }
+  }
+
+  private async postResult(actionId: string, body: object): Promise<void> {
+    await fetch(`${this.coreUrl}/api/actions/${actionId}/result`, {
+      method: 'POST',
+      headers: { 'x-api-key': this.apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
   }
 }
 ```
@@ -263,15 +294,15 @@ async function handleEvent(event: IncomingEvent): Promise<void> {
     throw new Error('Event must have either haseefId or target');
   }
 
-  // Check scope is active for this haseef
+  // Check skill is active for this haseef
   const haseef = await db.haseef.findUnique({ where: { id: haseefId } });
-  if (!haseef.scopes.includes(event.scope)) {
-    throw new Error(`Scope "${event.scope}" is not active for this haseef`);
+  if (!haseef.skills.includes(event.skill)) {
+    throw new Error(`Skill "${event.skill}" is not active for this haseef`);
   }
 
   // Trigger the haseef
   coordinator.trigger(haseefId, {
-    scope: event.scope,
+    skill: event.skill,
     type: event.type,
     data: event.data,
     attachments: event.attachments,
@@ -293,7 +324,7 @@ async function resolveByProfile(target: Record<string, string>): Promise<Haseef 
 
 ### Which Mode to Use
 
-| Scope | Routing mode | Why |
+| Skill | Routing mode | Why |
 |-------|-------------|-----|
 | WhatsApp | `target: { phone }` | Message arrives at a phone number, service doesn't track haseefs |
 | Email | `target: { email }` | Email arrives at an address |
@@ -320,50 +351,50 @@ Every haseef has a profile — key-value identity data that services use for rou
     "location": "Riyadh",
     "language": "ar"
   },
-  "scopes": ["whatsapp", "spaces", "body", "vision", "voice"]
+  "skills": ["whatsapp", "spaces", "body", "vision", "voice"]
 }
 ```
 
 Profile fields are freeform. Any service can use any field. Core doesn't validate profile field names — it just matches them when routing events.
 
-**The profile is the routing table.** No binding config. No scope-specific config. The haseef's identity IS the config.
+**The profile is the routing table.** No binding config. No skill-specific config. The haseef's identity IS the config.
 
 ---
 
-## Scope Management
+## Skill Management
 
-### What a Scope Is
+### What a Skill Is
 
-A scope is a named group of tools registered by a service. Each service registers under one scope.
+A skill is a named group of tools registered by a service. Each service registers under one skill.
 
-**Important constraint: one service per scope.** A scope has exactly one SSE connection, one set of tools, and one service handling tool calls. If you need two WhatsApp providers, use different scopes: `whatsapp_twilio`, `whatsapp_meta`. This keeps dispatch simple — Core never has to decide which of multiple services should handle a tool call.
+**Important constraint: one service per skill.** A skill has exactly one SSE connection, one set of tools, and one service handling tool calls. If you need two WhatsApp providers, use different skills: `whatsapp_twilio`, `whatsapp_meta`. This keeps dispatch simple — Core never has to decide which of multiple services should handle a tool call.
 
 ```
-scope: "whatsapp"  → tools: [send_message, send_image, get_contacts]
-scope: "email"     → tools: [send_email, get_inbox, reply_email]
-scope: "body"      → tools: [move, grab, wave, look_at]
-scope: "vision"    → tools: [capture_image, detect_objects, find_person]
+skill: "whatsapp"  → tools: [send_message, send_image, get_contacts]
+skill: "email"     → tools: [send_email, get_inbox, reply_email]
+skill: "body"      → tools: [move, grab, wave, look_at]
+skill: "vision"    → tools: [capture_image, detect_objects, find_person]
 ```
 
-### Activating Scopes Per Haseef
+### Activating Skills Per Haseef
 
-Each haseef has a list of active scopes. Just a list of strings — toggle on/off.
+Each haseef has a list of active skills. Just a list of strings — toggle on/off.
 
 ```json
 {
   "name": "Atlas",
-  "scopes": ["whatsapp", "spaces", "body", "vision", "voice"]
+  "skills": ["whatsapp", "spaces", "body", "vision", "voice"]
 }
 ```
 
 ```json
 {
   "name": "Support",
-  "scopes": ["email", "database"]
+  "skills": ["email", "database"]
 }
 ```
 
-When the LLM runs, Core only loads tools from the haseef's active scopes. Atlas gets WhatsApp + Spaces + robot tools. Support gets email + database tools.
+When the LLM runs, Core only loads tools from the haseef's active skills. Atlas gets WhatsApp + Spaces + robot tools. Support gets email + database tools.
 
 ### Dashboard: Just Checkboxes
 
@@ -398,63 +429,32 @@ No config forms. No API tokens. Just toggle which services this haseef can use. 
 ```
 Core owns:                    Service owns:
   ├─ Haseef profile             ├─ API keys & credentials (env vars)
-  ├─ Active scopes list         ├─ Tool implementation logic
+  ├─ Active skills list         ├─ Tool implementation logic
   ├─ Event routing              ├─ External connections (APIs, hardware)
   ├─ Tool dispatch to services  ├─ Event detection & pushing
   ├─ Memory system              └─ Its own deployment & scaling
   └─ LLM orchestration
 ```
 
-### API Key Ownership
+### Authentication
 
-Every API key identifies an owner. Core uses this to enforce two security invariants:
+Core has **one secret key** for all API access. Set it via the `SECRET_KEY` environment variable.
 
-1. **Haseef ownership** — When a haseef is created (`POST /api/haseefs`), Core records which API key created it (`apiKeyId`). Only that API key can read, update, or delete the haseef.
+Every authenticated request must include the key in either:
+- `x-api-key` header — for normal requests
+- `?api_key=` query param — for SSE streams (`EventSource` cannot set headers)
 
-2. **Scope ownership** — When a scope registers tools (`PUT /api/scopes/:scope/tools`), Core records which API key registered it (`apiKeyId`). This lets downstream consumers (like Spaces) know who owns each scope.
-
-**Scope attachment validation** — When `PATCH /api/haseefs/:id` updates the `scopes[]` array, Core checks:
-- The API key must own the haseef
-- Every scope being attached must either:
-  - Belong to the same API key (same owner), OR
-  - Be a platform scope (`apiKeyId = null` — e.g. `spaces`, `scheduler`)
-
-This prevents User A from attaching User B's scope to their haseef, or modifying User B's haseef.
-
-```typescript
-// Pseudocode — scope attachment validation inside PATCH /api/haseefs/:id
-async function validateScopeAttachment(haseefId: string, scopeNames: string[], apiKeyId: string) {
-  const haseef = await db.haseef.findUnique({ where: { id: haseefId } });
-  if (haseef.apiKeyId !== apiKeyId) throw new Error('Forbidden');
-
-  for (const name of scopeNames) {
-    const scope = await db.scope.findUnique({ where: { name } });
-    if (!scope) throw new Error(`Scope "${name}" does not exist`);
-    // Platform scopes (apiKeyId = null) are always allowed
-    if (scope.apiKeyId !== null && scope.apiKeyId !== apiKeyId) {
-      throw new Error(`Forbidden: scope "${name}" belongs to another owner`);
-    }
-  }
-}
+```
+SECRET_KEY=sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-**`GET /api/scopes` response** includes `apiKeyId` per scope so Spaces can filter by user:
-
-```json
-[
-  { "name": "spaces",       "connected": true, "apiKeyId": null,          "tools": [...] },
-  { "name": "my-gmail",     "connected": true, "apiKeyId": "key-abc-123", "tools": [...] },
-  { "name": "sara-twitter", "connected": true, "apiKeyId": "key-xyz-789", "tools": [...] }
-]
-```
-
-Spaces server maps API key IDs to users and filters: each user only sees platform scopes + scopes registered by their own API keys.
+Anyone holding the key has full access. There is no per-haseef or per-skill ownership in Core — multi-tenant filtering (e.g. "show this user only their own haseefs") is handled by the layer above Core (the Spaces server, which has its own user system).
 
 ---
 
-## Scope Scenarios
+## Skill Scenarios
 
-### 1. Email Scope
+### 1. Email Skill
 
 ```
 Where it runs: Any server
@@ -462,7 +462,7 @@ Routes by: target.email
 ```
 
 ```typescript
-const hsafa = new HsafaSDK({ coreUrl, apiKey, scope: 'email' });
+const hsafa = new HsafaSDK({ coreUrl, apiKey, skill: 'email' });
 
 // TOOLS
 await hsafa.registerTools([
@@ -527,7 +527,7 @@ hsafa.connect();
 
 ---
 
-### 2. WhatsApp Scope
+### 2. WhatsApp Skill
 
 ```
 Where it runs: Any server
@@ -535,7 +535,7 @@ Routes by: target.phone
 ```
 
 ```typescript
-const hsafa = new HsafaSDK({ coreUrl, apiKey, scope: 'whatsapp' });
+const hsafa = new HsafaSDK({ coreUrl, apiKey, skill: 'whatsapp' });
 
 // TOOLS
 await hsafa.registerTools([
@@ -594,7 +594,7 @@ hsafa.connect();
 
 ---
 
-### 3. Spaces Scope
+### 3. Spaces Skill
 
 ```
 Where it runs: Separate server (has frontend, SSE, DB)
@@ -602,7 +602,7 @@ Routes by: haseefId (space server manages membership)
 ```
 
 ```typescript
-const hsafa = new HsafaSDK({ coreUrl, apiKey, scope: 'spaces' });
+const hsafa = new HsafaSDK({ coreUrl, apiKey, skill: 'spaces' });
 
 // TOOLS
 await hsafa.registerTools([
@@ -720,7 +720,7 @@ hsafa.connect();
 ```
 Where it runs: ON THE ROBOT'S COMPUTER
 Routes by: target.robotId
-Three scopes, one process
+Three skills, one process
 ```
 
 ```typescript
@@ -732,11 +732,11 @@ import { TTS, STT } from './audio';
 
 const ROBOT_ID = process.env.ROBOT_ID;  // "reachy-01"
 
-const body = new HsafaSDK({ coreUrl, apiKey, scope: 'body' });
-const vision = new HsafaSDK({ coreUrl, apiKey, scope: 'vision' });
-const voice = new HsafaSDK({ coreUrl, apiKey, scope: 'voice' });
+const body = new HsafaSDK({ coreUrl, apiKey, skill: 'body' });
+const vision = new HsafaSDK({ coreUrl, apiKey, skill: 'vision' });
+const voice = new HsafaSDK({ coreUrl, apiKey, skill: 'voice' });
 
-// ─── BODY SCOPE ─────────────────────────────────────────
+// ─── BODY SKILL ─────────────────────────────────────────
 
 await body.registerTools([
   { name: 'move', description: 'Move the robot',
@@ -794,7 +794,7 @@ Hardware.onBatteryLow((level) => {
   });
 });
 
-// ─── VISION SCOPE ───────────────────────────────────────
+// ─── VISION SKILL ───────────────────────────────────────
 
 await vision.registerTools([
   { name: 'capture_image', description: 'Take a photo from the camera',
@@ -852,7 +852,7 @@ Camera.onGesture((gesture) => {
   });
 });
 
-// ─── VOICE SCOPE ────────────────────────────────────────
+// ─── VOICE SKILL ────────────────────────────────────────
 
 await voice.registerTools([
   { name: 'speak', description: 'Say something out loud through the speaker',
@@ -902,7 +902,7 @@ console.log(`Robot service connected for ${ROBOT_ID}`);
 {
   "name": "Atlas",
   "profile": { "robotId": "reachy-01" },
-  "scopes": ["body", "vision", "voice"]
+  "skills": ["body", "vision", "voice"]
 }
 ```
 
@@ -929,7 +929,7 @@ No integration code. The LLM is the integration layer.
 
 ---
 
-### 7. Game Control Scope
+### 7. Game Control Skill
 
 ```
 Where it runs: Game server or alongside game client
@@ -937,7 +937,7 @@ Routes by: target.playerId
 ```
 
 ```typescript
-const hsafa = new HsafaSDK({ coreUrl, apiKey, scope: 'game' });
+const hsafa = new HsafaSDK({ coreUrl, apiKey, skill: 'game' });
 
 await hsafa.registerTools([
   { name: 'move_character', description: 'Move character in direction',
@@ -1008,7 +1008,7 @@ hsafa.connect();
 
 ---
 
-### 8. Database Scope
+### 8. Database Skill
 
 ```
 Where it runs: Any server with DB access
@@ -1016,7 +1016,7 @@ Routes by: haseefId (from trigger payload or broadcast)
 ```
 
 ```typescript
-const hsafa = new HsafaSDK({ coreUrl, apiKey, scope: 'database' });
+const hsafa = new HsafaSDK({ coreUrl, apiKey, skill: 'database' });
 
 await hsafa.registerTools([
   { name: 'query', description: 'Run a read-only SQL query',
@@ -1127,7 +1127,7 @@ Routes by: haseefId (company knows the assignment)
 
 ```typescript
 // Example: internal HR + CRM system
-const hsafa = new HsafaSDK({ coreUrl, apiKey, scope: 'company' });
+const hsafa = new HsafaSDK({ coreUrl, apiKey, skill: 'company' });
 
 await hsafa.registerTools([
   { name: 'get_employee', description: 'Look up employee by name',
@@ -1292,43 +1292,51 @@ await hsafa.registerTools([
 
 ## Core API Routes
 
+All `/api/*` routes require the `x-api-key` header (or `?api_key=` query param for SSE).
+
 ```
-# Haseef CRUD (ownership-scoped: API key can only see/modify haseefs it created)
-POST   /api/haseefs                              # Create haseef (records apiKeyId from x-api-key)
-GET    /api/haseefs                              # List haseefs owned by this API key
-GET    /api/haseefs/:id                          # Get haseef details (must own)
-PATCH  /api/haseefs/:id                          # Update haseef (must own; scope attachment validated)
-DELETE /api/haseefs/:id                          # Delete haseef (must own)
+# Haseef CRUD
+POST   /api/haseefs                              # Create haseef
+GET    /api/haseefs                              # List all haseefs
+GET    /api/haseefs/:id                          # Get haseef details
+PATCH  /api/haseefs/:id                          # Update haseef (name, profile, skills, config)
+DELETE /api/haseefs/:id                          # Delete haseef
+
+# Profile
+GET    /api/haseefs/:id/profile                  # Get profile JSON
+PATCH  /api/haseefs/:id/profile                  # Update profile JSON
+
+# Status / Stream
+GET    /api/haseefs/:id/status                   # { running, activeRunId }
+GET    /api/haseefs/:id/stream                   # SSE: real-time text deltas + tool events
 
 # Events (services push events to haseefs)
 POST   /api/events                               # Push event (with haseefId or target)
 
-# Scopes (services register tools)
-PUT    /api/scopes/:scope/tools                  # Register/update tools (records apiKeyId as scope owner)
-GET    /api/scopes                               # List all registered scopes (includes apiKeyId for filtering)
-GET    /api/scopes/:scope/tools                  # List tools in a scope
+# Skills (services register tools)
+PUT    /api/skills/:skill/tools                  # Register/update tools
+GET    /api/skills                               # List all registered skills
+GET    /api/skills/:skill/tools                  # List tools in a skill
+GET    /api/skills/:skill/actions/stream         # SSE: tool call requests for this skill (used by SDK)
 
-# Actions (tool call dispatch)
-GET    /api/scopes/:scope/actions/stream         # SSE: tool call requests for this scope
-POST   /api/actions												      	  # Temporary: tool call requests via polling
+# Actions (tool call result submission)
 POST   /api/actions/:actionId/result             # Submit tool call result
 
-# Consciousness / Runs
-GET    /api/haseefs/:id/stream                   # SSE: real-time thinking output
-GET    /api/haseefs/:id/runs                     # Run history
-GET    /api/haseefs/:id/runs/:runId              # Run details
+# Runs
+GET    /api/runs                                 # List runs (?limit, ?status, ?haseefId)
+GET    /api/runs/:runId                          # Get run details
 
 # Memory
-GET    /api/haseefs/:id/memory                   # Browse memories
-POST   /api/haseefs/:id/memory                   # Add memory manually
-PATCH  /api/haseefs/:id/memory/:key              # Edit memory
-DELETE /api/haseefs/:id/memory/:key              # Delete memory
-POST   /api/haseefs/:id/memory/search            # Semantic search memories
+GET    /api/memory/:haseefId                     # List all 4 memory types
+POST   /api/memory/:haseefId/semantic            # Create semantic memory
+PATCH  /api/memory/semantic/:id                  # Update semantic memory
+DELETE /api/memory/semantic/:id                  # Delete semantic memory
+POST   /api/memory/:haseefId/search              # Search across memory types
 
 # Dashboard
-GET    /api/dashboard/status                     # Overview: haseefs, scopes, connections
+GET    /api/dashboard/status                     # Overview: haseefs, skills, connections, recent runs
 
-GET    /health
+GET    /health                                   # Health check (no auth)
 ```
 
 ---
@@ -1342,10 +1350,9 @@ model Haseef {
   id           String   @id @default(uuid())
   name         String   @unique
   description  String?
-  apiKeyId     String                          // which API key created this haseef (ownership)
   profileJson  Json?    @db.JsonB              // { phone, email, robotId, ... }
   configJson   Json     @db.JsonB              // { model, instructions, ... }
-  scopes       String[] @default([])           // ["whatsapp", "spaces", "body"]
+  skills       String[] @default([])           // ["whatsapp", "spaces", "body"]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -1356,36 +1363,35 @@ model Haseef {
   procedural   ProceduralMemory[]
 }
 
-model Scope {
+model Skill {
   id          String   @id @default(uuid())
   name        String   @unique                // "whatsapp", "body", "email"
-  apiKeyId    String?                         // which API key registered this scope (ownership, null = platform)
   connected   Boolean  @default(false)        // is the service currently connected?
   lastSeenAt  DateTime?                       // last heartbeat
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  tools       ScopeTool[]
+  tools       SkillTool[]
 }
 
-model ScopeTool {
+model SkillTool {
   id          String @id @default(uuid())
-  scopeId     String
+  skillId     String
   name        String                          // "send_message"
   description String                          // "Send a WhatsApp message"
   inputSchema Json   @db.JsonB               // { to: "string", text: "string" }
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  scope Scope @relation(fields: [scopeId], references: [id], onDelete: Cascade)
-  @@unique([scopeId, name])
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  @@unique([skillId, name])
 }
 
 model Run {
   id               String    @id @default(uuid())
   haseefId         String
   status           String    @default("running")   // running, completed, interrupted, failed
-  triggerScope     String?                          // "whatsapp", "spaces"
+  triggerSkill     String?                          // "whatsapp", "spaces"
   triggerType      String?                          // "message", "email_received"
   summary          String?   @db.Text
   stepCount        Int       @default(0)
@@ -1405,7 +1411,7 @@ model EpisodicMemory {
   runId     String?
   summary   String   @db.Text
   context   Json?    @db.JsonB
-  embedding Float[]                           // pgvector
+  // embedding Float[]                        // pgvector — planned, currently disabled
   createdAt DateTime @default(now())
 
   haseef Haseef @relation(fields: [haseefId], references: [id], onDelete: Cascade)
@@ -1418,7 +1424,7 @@ model SemanticMemory {
   key        String
   value      String    @db.Text
   importance Int       @default(5)            // 1-10
-  embedding  Float[]                          // pgvector
+  // embedding Float[]                         // pgvector — planned, currently disabled
   recalledAt DateTime?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
@@ -1465,7 +1471,7 @@ model ProceduralMemory {
 | Component | Purpose |
 |-----------|---------|
 | **Node.js + TypeScript** | Core runtime |
-| **Postgres + pgvector** | All storage + semantic search |
+| **Postgres** | All storage. pgvector planned for semantic search (currently disabled). |
 | **Redis** | Event wakeup (BRPOP), real-time streaming (Pub/Sub) |
 | **Vercel AI SDK** (`ai`) | LLM integration, streamText, tool loop |
 | **Prisma** | Database access |
@@ -1492,9 +1498,9 @@ core/src/
   middleware/
     auth.ts                         # x-api-key validation
   routes/
-    haseefs.ts                      # Haseef CRUD, profile, scopes
+    haseefs.ts                      # Haseef CRUD, profile, skills
     events.ts                       # POST /api/events — receive and route events
-    scopes.ts                       # Scope + tool registration
+    skills.ts                       # Skill + tool registration
     actions.ts                      # Action stream (SSE) + result submission
     memory.ts                       # Memory CRUD + search
     runs.ts                         # Run history
@@ -1506,14 +1512,14 @@ core/src/
     invoker.ts                      # The think loop: perceive → think → act → remember
     event-router.ts                 # Resolve events to haseefs (by ID or profile target)
     tool-dispatcher.ts              # Route tool calls to services via SSE
-    tool-builder.ts                 # ScopeTool rows → AI SDK tools
+    tool-builder.ts                 # SkillTool rows → AI SDK tools
     prompt-builder.ts               # System prompt construction
     stream-publisher.ts             # Publish text deltas + tool events to Redis Pub/Sub
     model-registry.ts               # LLM provider registry
   memory/
     working.ts                      # Load working memory from source
-    episodic.ts                     # Run summaries + pgvector search
-    semantic.ts                     # Facts + pgvector search
+    episodic.ts                     # Run summaries + keyword search (pgvector planned)
+    semantic.ts                     # Facts + keyword search (pgvector planned)
     social.ts                       # Person models
     procedural.ts                   # Learned patterns
     reflection.ts                   # Post-run reflection + learning
@@ -1533,9 +1539,9 @@ core/src/
 
 ```
 1. Service starts
-2. SDK calls PUT /api/scopes/whatsapp/tools → registers tools in DB
-3. SDK opens SSE to GET /api/scopes/whatsapp/actions/stream
-4. Core marks scope "whatsapp" as connected
+2. SDK calls PUT /api/skills/whatsapp/tools → registers tools in DB
+3. SDK opens SSE to GET /api/skills/whatsapp/actions/stream
+4. Core marks skill "whatsapp" as connected
 5. Service is ready — tools available, events can flow
 ```
 
@@ -1547,13 +1553,13 @@ core/src/
    })
 2. SDK calls POST /api/events
 3. Core event-router resolves target: finds haseef with profile.phone matching
-4. Core checks: is "whatsapp" in this haseef's scopes list? Yes
+4. Core checks: is "whatsapp" in this haseef's skills list? Yes
 5. Coordinator triggers the haseef
 6. If haseef is already thinking → interrupt (abort current run)
 7. Invoker runs:
    a. Load haseef profile + config
    b. Assemble memory (episodic + semantic + social search)
-   c. Load tools from haseef's active scopes
+   c. Load tools from haseef's active skills
    d. Build system prompt
    e. streamText() with LLM
 8. LLM decides to call send_message({ to: '...', text: '...' })
@@ -1569,8 +1575,8 @@ core/src/
 
 ```
 Core (LLM calls tool)
-  → tool-dispatcher identifies scope for this tool
-  → sends action on SSE channel for that scope:
+  → tool-dispatcher identifies skill for this tool
+  → sends action on SSE channel for that skill:
     {
       actionId: "abc-123",
       toolName: "send_message",
@@ -1597,8 +1603,8 @@ The dashboard is a web UI for managing everything. Config lives in Postgres, so 
 
 | Feature | What it does |
 |---------|-------------|
-| **Haseef management** | Create, edit, delete haseefs. Edit profile, instructions, model, active scopes |
-| **Scope overview** | See all connected services, their tools, connection status |
+| **Haseef management** | Create, edit, delete haseefs. Edit profile, instructions, model, active skills |
+| **Skill overview** | See all connected services, their tools, connection status |
 | **Memory browser** | Search, view, edit, delete a haseef's memories |
 | **Run history** | See every run — trigger, tools called, summary, tokens, duration |
 | **Live feed** | Real-time stream of what haseefs are doing right now |
@@ -1607,7 +1613,7 @@ The dashboard is a web UI for managing everything. Config lives in Postgres, so 
 
 Everything is in the database:
 - Change a haseef's profile → next run uses the new profile
-- Toggle a scope on/off → next run includes/excludes those tools
+- Toggle a skill on/off → next run includes/excludes those tools
 - Edit instructions → next run uses the new instructions
 - Change model → next run uses the new model
 
@@ -1623,7 +1629,7 @@ Haseefs are stateless function invocations. They load config fresh from DB on ev
 | **Services** | Body — perceive and act. Own their own credentials and logic. |
 | **SDK** | 3 methods: registerTools, onToolCall, pushEvent. Handles all HTTP/SSE. |
 | **Routing** | By profile field (`target: { phone }`) or direct (`haseefId`). Core resolves. |
-| **Scopes** | Named groups of tools. Services register globally. Haseefs activate per-scope. |
+| **Skills** | Named groups of tools. Services register globally. Haseefs activate per-skill. |
 | **Config** | All in Postgres. Dashboard edits. Zero restarts. |
-| **Memory** | Structured: episodic, semantic, social, procedural. pgvector search. |
+| **Memory** | Structured: episodic, semantic, social, procedural. Keyword search (pgvector planned). |
 | **Deployment** | Core = one server. Services = wherever they want. Connect via SDK. |

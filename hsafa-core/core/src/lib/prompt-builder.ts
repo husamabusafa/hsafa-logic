@@ -6,7 +6,7 @@ import type { MemoryContext } from '../memory/selection.js';
 // Builds a fresh system prompt for each run. Stateless — no consciousness.
 //
 // Structure:
-//   IDENTITY      — who you are, your scopes
+//   IDENTITY      — who you are, your skills
 //   PROFILE       — admin-managed identity data
 //   MEMORIES      — 4 types: semantic, episodic, social, procedural
 //   INSTRUCTIONS  — core behavior + admin config

@@ -5,7 +5,7 @@
 
 import { Command } from "commander";
 import { registerAuthCommands } from "./commands/auth.js";
-import { registerSkillCommands } from "./commands/scope.js";
+import { registerSkillCommands } from "./commands/skill.js";
 import { registerConfigCommands } from "./commands/config.js";
 
 const program = new Command();
@@ -13,7 +13,7 @@ const program = new Command();
 program
   .name("hsafa")
   .description("Hsafa CLI — build and manage skills for your haseefs")
-  .version("3.0.2");
+  .version("7.0.0");
 
 registerConfigCommands(program);
 registerAuthCommands(program);

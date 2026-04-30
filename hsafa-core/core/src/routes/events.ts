@@ -21,10 +21,7 @@ eventsRouter.post('/', async (req, res) => {
   try {
     const { skill, type, data, haseefId, target, attachments } = req.body;
 
-    // Support legacy 'scope' field for backward compatibility
-    const resolvedSkill = skill || req.body.scope;
-
-    if (!resolvedSkill || !type || !data) {
+    if (!skill || !type || !data) {
       res.status(400).json({ error: 'skill, type, and data are required' });
       return;
     }
@@ -36,7 +33,7 @@ eventsRouter.post('/', async (req, res) => {
 
     // Route: resolve event to a specific haseef
     const routed = await routeEvent({
-      skill: resolvedSkill,
+      skill,
       type,
       data,
       attachments,

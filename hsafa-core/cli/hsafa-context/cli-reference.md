@@ -1,6 +1,6 @@
 # Hsafa CLI Reference
 
-> Build and manage skills — the plugin system that gives Haseefs new capabilities.
+> All CLI commands for managing skills (v7).
 
 ## Install
 
@@ -8,160 +8,78 @@
 npm install -g @hsafa/cli
 ```
 
-## Authentication
+## Configuration
 
 ```bash
-hsafa auth login          # Interactive login (browser, token paste, or email/password)
-hsafa auth login --browser               # Force browser login
-hsafa auth login --token <token>         # Authenticate with existing token
-hsafa auth login --email e --password p  # Non-interactive (CI)
-hsafa auth logout         # Clear stored credentials
-hsafa auth whoami         # Show current user
+hsafa config set-server <url>      # e.g. https://spaces.hsafa.com or http://localhost:3005
+hsafa config show
+hsafa config reset
 ```
 
-## Skill Commands
-
-### Scaffold a New Skill
+## Authentication (against the Spaces server)
 
 ```bash
-hsafa skill init <name> [--lang <language>] [--starter <template>] [--haseef <name>]
+hsafa auth login                              # Interactive (browser)
+hsafa auth login --token <token>              # With existing token
+hsafa auth login --email e --password p       # Non-interactive (CI)
+hsafa auth whoami                             # Show current user
+hsafa auth logout                             # Clear credentials
 ```
 
-Creates a project directory, registers the skill, provisions a scope key, and writes `.env`. Ready to run immediately.
-
-| Option | Values | Default |
-|--------|--------|---------|
-| `--lang` | `typescript`, `javascript`, `python` | `typescript` |
-| `--starter` | `blank`, `api`, `database`, `webhook` | `blank` |
-| `--haseef` | Attach to a haseef by name or ID | — |
-
-**Starters:**
-
-| Starter | Description |
-|---------|-------------|
-| `blank` | Minimal setup — SDK wired, one example tool |
-| `api` | Wraps an external REST API (fetch helper, auth pattern) |
-| `database` | Connects to a database (connection pool, query tools) |
-| `webhook` | Listens for incoming webhooks and pushes sense events |
-
-### Register an Existing Project
+## Building a Custom Skill (with @hsafa/sdk)
 
 ```bash
-hsafa skill create [--name <name>] [--haseef <name>]
+# 1. Scaffold a project
+hsafa skill init my-weather --lang typescript --starter blank
+
+# 2. Configure environment
+cd my-weather
+# Edit .env: set HSAFA_CORE_KEY to your Core SECRET_KEY
+npm install
+
+# 3. Run it
+hsafa skill dev   # delegates to: npm run dev
 ```
 
-Run from inside an existing project directory. Reads the skill name from `package.json` (or use `--name`). Provisions a scope key and writes `.env`.
+A scaffolded project uses these env vars:
 
-### Run Locally
+| Var | Purpose |
+|------|--------|
+| `SKILL_NAME` | Skill name registered with Core |
+| `HSAFA_CORE_URL` | Core URL (default `http://localhost:3001`) |
+| `HSAFA_CORE_KEY` | Core's `SECRET_KEY` — the single shared API key |
 
-```bash
-hsafa skill dev [--haseef <name>]
-```
+## Managing Skill Instances (Spaces server)
 
-Auto-registers the skill if needed, then starts the dev server (`npm run dev` or `python main.py`). Your skill connects to Core via SSE — tools are live immediately.
-
-### Install from Marketplace
-
-```bash
-hsafa skill install <slug> [--dir <path>] [--haseef <name>]
-```
-
-Downloads a marketplace skill template as a local project. You run it yourself with `hsafa skill dev`.
-
-### Publish to Marketplace
+These commands talk to the Spaces server, where users create configured **instances** of skill **templates**.
 
 ```bash
-hsafa skill publish [--name <name>] [--slug <slug>] [--description <text>] [--icon <icon>] [--private]
-```
+# Browse what templates exist
+hsafa skill templates
 
-Publishes your skill so others can install it via `hsafa skill install`.
+# Create an instance from a template
+hsafa skill create my_db --template database --display "My Postgres"
 
-| Option | Description |
-|--------|-------------|
-| `--slug` | Marketplace slug (defaults to skill name) |
-| `--description` | Description |
-| `--icon` | Icon name (e.g. Database, Plug) |
-| `--private` | Only visible to you |
-
-### Register External Skill
-
-```bash
-hsafa skill register --key <hsk_scope_...> --name <name> [--description <text>]
-```
-
-Register a skill that's already running on your own server. You manage it — Spaces just knows about it.
-
-### List Skills
-
-```bash
+# List your instances
 hsafa skill list
+
+# Delete an instance
+hsafa skill delete my_db -y
+
+# Attach / detach an instance to/from a haseef
+hsafa skill attach my_db --haseef atlas
+hsafa skill detach my_db --haseef atlas
+
+# Show all skills attached to a haseef
+hsafa skill show --haseef atlas
 ```
 
-Shows all your skills with connection status.
+Haseefs can be referenced by **name** (case-insensitive) or **UUID**.
 
-### Delete a Skill
+## Removed Commands (v6 → v7)
 
-```bash
-hsafa skill delete <name> [-y]
-```
-
-### Attach / Detach from Haseef
-
-A haseef can only use a skill's tools after the skill is attached to it.
-
-```bash
-hsafa skill attach <name> --haseef <name>
-hsafa skill detach <name> --haseef <name>
-```
-
-Haseefs can be referenced by name (case-insensitive) or UUID.
-
-## Getting Started
-
-```bash
-# 1. Scaffold + register
-hsafa skill init my-weather --lang typescript
-
-# 2. Enter project + install
-cd my-weather && npm install
-
-# 3. Run locally (auto-connects to Core)
-hsafa skill dev
-
-# 4. Attach to a haseef
-hsafa skill attach my-weather --haseef atlas
-
-# 5. Chat with the haseef — your tools are live!
-# 6. Edit code → auto-restarts → changes take effect immediately
-```
-
-**Tips:**
-- `hsafa skill dev` handles everything: registration, key provisioning, dev server
-- Attach to a **test haseef** during development
-- Never commit your `.env` (scope key) to git
-
-## Environment Variables
-
-Every skill needs these (auto-configured by `init` / `create` / `dev`):
-
-| Variable | Description |
-|----------|-------------|
-| `SCOPE_NAME` | Skill name |
-| `SCOPE_KEY` | Auth key (`hsk_scope_*`) — auto-provisioned |
-| `CORE_URL` | Core API URL — auto from Spaces config |
-
-## Quick Reference
-
-```
-hsafa auth login                              # authenticate
-hsafa skill init <name> [--lang] [--starter]  # scaffold + register new skill
-hsafa skill create [--name]                   # register existing project
-hsafa skill dev [--haseef]                    # auto-setup + run locally
-hsafa skill install <slug>                    # install from marketplace
-hsafa skill publish [--name]                  # publish to marketplace
-hsafa skill register --key --name             # register external skill
-hsafa skill list                              # show all skills
-hsafa skill attach <name> --haseef <name>     # connect to haseef
-hsafa skill detach <name> --haseef <name>     # disconnect from haseef
-hsafa skill delete <name>                     # remove skill
-```
+| Old command | Why it's gone |
+|-------------|---------------|
+| `hsafa skill register --key hsk_scope_*` | v7 uses a single Core `SECRET_KEY`; there are no per-skill keys |
+| `hsafa skill publish` | Marketplace publish API isn't part of v7 yet |
+| `hsafa skill install <slug>` | No marketplace install in v7 yet |

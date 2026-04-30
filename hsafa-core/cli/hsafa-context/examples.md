@@ -1,388 +1,228 @@
-# Hsafa Scope Examples
+# Hsafa Skill Examples (v7)
 
-> Real code examples for common scope patterns. Copy and adapt these.
+> Code examples for common skill patterns. All use `@hsafa/sdk`.
 
-## Example 1: REST API Wrapper
-
-A scope that wraps an external REST API (e.g. weather, stock prices, etc.):
+## REST API Wrapper
 
 ```typescript
-// src/tools.ts
-export const tools = [
+import { HsafaSDK } from "@hsafa/sdk";
+
+const hsafa = new HsafaSDK({
+  coreUrl: process.env.HSAFA_CORE_URL!,
+  apiKey:  process.env.HSAFA_CORE_KEY!,
+  skill:   process.env.SKILL_NAME!,
+});
+
+await hsafa.registerTools([
   {
-    name: 'get_weather',
-    description: 'Get current weather for a city. Returns temperature, conditions, humidity, and wind speed.',
+    name: "get_weather",
+    description: "Get current weather for a city. Returns temperature, conditions, humidity.",
     inputSchema: {
-      type: 'object',
+      type: "object",
       properties: {
-        city: { type: 'string', description: 'City name (e.g. "Tokyo", "New York")' },
-        units: { type: 'string', enum: ['metric', 'imperial'], description: 'Temperature units. Defaults to metric.' },
+        city:  { type: "string", description: "City name (e.g. \"Tokyo\")" },
+        units: { type: "string", enum: ["metric", "imperial"], description: "Temperature units" },
       },
-      required: ['city'],
+      required: ["city"],
     },
   },
-  {
-    name: 'get_forecast',
-    description: 'Get 5-day weather forecast for a city.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        city: { type: 'string', description: 'City name' },
-        days: { type: 'number', description: 'Number of days (1-5). Defaults to 3.' },
-      },
-      required: ['city'],
-    },
-  },
-];
+]);
+
+hsafa.onToolCall("get_weather", async (args) => {
+  const API_KEY = process.env.WEATHER_API_KEY!;
+  const units   = (args.units as string) || "metric";
+  const res = await fetch(
+    `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(args.city as string)}&units=${units}&appid=${API_KEY}`
+  );
+  if (!res.ok) return { error: `City "${args.city}" not found` };
+  const data = await res.json();
+  return {
+    city:        data.name,
+    temperature: data.main.temp,
+    conditions:  data.weather[0].description,
+    humidity:    data.main.humidity,
+  };
+});
+
+hsafa.connect();
 ```
 
-```typescript
-// src/handler.ts
-const API_KEY = process.env.WEATHER_API_KEY!;
-const BASE_URL = 'https://api.openweathermap.org/data/2.5';
-
-export const handlers = {
-  async get_weather(args: { city: string; units?: string }) {
-    const units = args.units || 'metric';
-    const res = await fetch(
-      `${BASE_URL}/weather?q=${encodeURIComponent(args.city)}&units=${units}&appid=${API_KEY}`
-    );
-    if (!res.ok) return { error: `City "${args.city}" not found` };
-    const data = await res.json();
-    return {
-      city: data.name,
-      temperature: data.main.temp,
-      feelsLike: data.main.feels_like,
-      conditions: data.weather[0].description,
-      humidity: data.main.humidity,
-      windSpeed: data.wind.speed,
-      units,
-    };
-  },
-
-  async get_forecast(args: { city: string; days?: number }) {
-    const days = Math.min(args.days || 3, 5);
-    const res = await fetch(
-      `${BASE_URL}/forecast?q=${encodeURIComponent(args.city)}&cnt=${days * 8}&appid=${API_KEY}&units=metric`
-    );
-    if (!res.ok) return { error: `City "${args.city}" not found` };
-    const data = await res.json();
-    // Group by day
-    const byDay: Record<string, any[]> = {};
-    for (const item of data.list) {
-      const day = item.dt_txt.split(' ')[0];
-      if (!byDay[day]) byDay[day] = [];
-      byDay[day].push({
-        time: item.dt_txt.split(' ')[1],
-        temp: item.main.temp,
-        conditions: item.weather[0].description,
-      });
-    }
-    return { city: data.city.name, forecast: byDay };
-  },
-};
-```
-
-## Example 2: Database Scope
-
-A scope that connects to a database and provides query tools:
+## Database Skill (with memory)
 
 ```typescript
-// src/index.ts
-import { HsafaSDK } from '@hsafa/sdk';
-import pg from 'pg';
+import { HsafaSDK } from "@hsafa/sdk";
+import pg from "pg";
 
-const sdk = new HsafaSDK({
-  coreUrl: process.env.CORE_URL!,
-  apiKey: process.env.SCOPE_KEY!,
-  scope: process.env.SCOPE_NAME!,
+const hsafa = new HsafaSDK({
+  coreUrl: process.env.HSAFA_CORE_URL!,
+  apiKey:  process.env.HSAFA_CORE_KEY!,
+  skill:   process.env.SKILL_NAME!,
 });
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
-await sdk.registerTools([
+await hsafa.registerTools([
   {
-    name: 'query',
-    description: 'Run a read-only SQL query (SELECT only). Returns rows as JSON.',
+    name: "query",
+    description: "Run a read-only SQL query (SELECT only). Returns rows as JSON.",
     inputSchema: {
-      type: 'object',
-      properties: {
-        sql: { type: 'string', description: 'The SELECT query to run' },
-      },
-      required: ['sql'],
+      type: "object",
+      properties: { sql: { type: "string", description: "SELECT query" } },
+      required: ["sql"],
     },
   },
   {
-    name: 'list_tables',
-    description: 'List all tables in the database with row counts.',
-    inputSchema: { type: 'object', properties: {} },
+    name: "list_tables",
+    description: "List all tables in the database.",
+    input: {},
   },
 ]);
 
-sdk.onToolCall('query', async (args) => {
+hsafa.onToolCall("query", async (args, ctx) => {
   const sql = (args.sql as string).trim();
-  if (!sql.toUpperCase().startsWith('SELECT')) {
-    return { error: 'Only SELECT queries are allowed' };
+  if (!sql.toUpperCase().startsWith("SELECT")) {
+    return { error: "Only SELECT queries are allowed" };
   }
-  try {
-    const result = await pool.query(sql);
-    return { rows: result.rows, rowCount: result.rowCount };
-  } catch (err: any) {
-    return { error: err.message };
-  }
+  const result = await pool.query(sql);
+
+  // Remember the last query for this haseef
+  await hsafa.memory.set(ctx.haseef.id, [
+    { key: "last_query", value: sql, importance: 4 },
+  ]);
+
+  return { rows: result.rows, rowCount: result.rowCount };
 });
 
-sdk.onToolCall('list_tables', async () => {
-  const result = await pool.query(`
-    SELECT tablename, n_live_tup AS approx_rows
-    FROM pg_stat_user_tables
-    ORDER BY tablename
-  `);
-  return { tables: result.rows };
+hsafa.onToolCall("list_tables", async () => {
+  const result = await pool.query(
+    "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename"
+  );
+  return { tables: result.rows.map((r) => r.tablename) };
 });
 
-sdk.connect();
-console.log(`[${sdk.scope}] Connected — ready for tool calls`);
+hsafa.connect();
 
-process.on('SIGINT', async () => {
-  sdk.disconnect();
+process.on("SIGINT", async () => {
+  hsafa.disconnect();
   await pool.end();
   process.exit(0);
 });
 ```
 
-## Example 3: Webhook Listener + Sense Events
-
-A scope that receives webhooks and pushes them as sense events:
+## Webhook Listener + Push Events
 
 ```typescript
-// src/index.ts
-import { HsafaSDK } from '@hsafa/sdk';
-import express from 'express';
+import { HsafaSDK } from "@hsafa/sdk";
+import express from "express";
 
-const sdk = new HsafaSDK({
-  coreUrl: process.env.CORE_URL!,
-  apiKey: process.env.SCOPE_KEY!,
-  scope: process.env.SCOPE_NAME!,
+const hsafa = new HsafaSDK({
+  coreUrl: process.env.HSAFA_CORE_URL!,
+  apiKey:  process.env.HSAFA_CORE_KEY!,
+  skill:   process.env.SKILL_NAME!,
 });
 
-const HASEEF_ID = process.env.HASEEF_ID!;
-const events: Array<{ type: string; data: any; receivedAt: string }> = [];
-
-// Register tools
-await sdk.registerTools([
+await hsafa.registerTools([
   {
-    name: 'list_events',
-    description: 'List recent webhook events received by this scope.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        limit: { type: 'number', description: 'Max events to return (default 10)' },
-        type: { type: 'string', description: 'Filter by event type' },
-      },
-    },
+    name: "list_events",
+    description: "List recent webhook events.",
+    input: { limit: "number?" },
   },
 ]);
 
-sdk.onToolCall('list_events', async (args) => {
-  let filtered = events;
-  if (args.type) filtered = filtered.filter(e => e.type === args.type);
+const events: Array<{ type: string; data: unknown; receivedAt: string }> = [];
+
+hsafa.onToolCall("list_events", async (args) => {
   const limit = (args.limit as number) || 10;
-  return { events: filtered.slice(-limit), totalCount: filtered.length };
+  return { events: events.slice(-limit) };
 });
 
-// Connect to Core for tool calls
-sdk.connect();
+hsafa.connect();
 
-// Start webhook server
 const app = express();
 app.use(express.json());
 
-app.post('/webhook', async (req, res) => {
-  const event = {
-    type: req.body.type || 'unknown',
-    data: req.body,
-    receivedAt: new Date().toISOString(),
-  };
-
+app.post("/webhook", async (req, res) => {
+  const event = { type: req.body.type ?? "unknown", data: req.body, receivedAt: new Date().toISOString() };
   events.push(event);
-  if (events.length > 1000) events.splice(0, events.length - 1000);
 
-  // Push as sense event to Haseef
-  await sdk.pushEvent({
-    type: `webhook_${event.type}`,
-    haseefId: HASEEF_ID,
-    data: {
-      ...event.data,
-      formattedContext: [
-        `[WEBHOOK RECEIVED: ${event.type}]`,
-        `Payload: ${JSON.stringify(event.data, null, 2)}`,
-        '',
-        '>>> Process this webhook event.',
-      ].join('\n'),
-    },
-  }).catch(err => console.error('Failed to push event:', err));
+  // Forward to a haseef as a sense event — route by phone in this example
+  await hsafa.pushEvent({
+    type:   `webhook_${event.type}`,
+    data:   event.data as Record<string, unknown>,
+    target: { phone: req.body.phone },
+  }).catch((err) => console.error("Push failed:", err));
 
   res.json({ received: true });
 });
 
-app.listen(3100, () => {
-  console.log(`[${sdk.scope}] Webhook server on :3100, SDK connected to Core`);
-});
+app.listen(3100);
 ```
 
-## Example 4: Monitoring + Alerts
-
-A scope that polls a system and pushes alerts:
+## Monitoring + Alerts
 
 ```typescript
-import { HsafaSDK } from '@hsafa/sdk';
+import { HsafaSDK } from "@hsafa/sdk";
 
-const sdk = new HsafaSDK({
-  coreUrl: process.env.CORE_URL!,
-  apiKey: process.env.SCOPE_KEY!,
-  scope: 'monitoring',
+const hsafa = new HsafaSDK({
+  coreUrl: process.env.HSAFA_CORE_URL!,
+  apiKey:  process.env.HSAFA_CORE_KEY!,
+  skill:   "monitoring",
 });
 
-const HASEEF_ID = process.env.HASEEF_ID!;
-
-await sdk.registerTools([
+await hsafa.registerTools([
   {
-    name: 'get_system_status',
-    description: 'Get current system health metrics (CPU, memory, disk, active connections).',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'get_alert_history',
-    description: 'Get recent alerts with timestamps and severity.',
-    input: { limit: 'number?', severity: 'string?' },
+    name: "get_system_status",
+    description: "Get current system health metrics (CPU, memory, disk).",
+    input: {},
   },
 ]);
 
-sdk.onToolCall('get_system_status', async () => {
-  // Replace with actual monitoring logic
-  return {
-    cpu: { usage: 45, cores: 8 },
-    memory: { usedGb: 12.3, totalGb: 32, percent: 38 },
-    disk: { usedGb: 180, totalGb: 500, percent: 36 },
-    activeConnections: 142,
-    uptime: '14d 6h',
-  };
-});
+hsafa.onToolCall("get_system_status", async () => ({
+  cpu:    { usage: 45 },
+  memory: { percent: 38 },
+  disk:   { percent: 36 },
+}));
 
-sdk.onToolCall('get_alert_history', async (args) => {
-  // Replace with actual alert store
-  return { alerts: [], totalCount: 0 };
-});
+hsafa.connect();
 
-sdk.connect();
-
-// Polling loop — check every 60s
+// Poll and push alerts to all haseefs that have this skill
 setInterval(async () => {
-  const cpuUsage = await getCpuUsage(); // your implementation
-  if (cpuUsage > 80) {
-    await sdk.pushEvent({
-      type: 'cpu_alert',
-      haseefId: HASEEF_ID,
-      data: {
-        severity: cpuUsage > 95 ? 'critical' : 'warning',
-        cpuUsage,
-        formattedContext: [
-          `[CPU ALERT — ${cpuUsage > 95 ? 'CRITICAL' : 'WARNING'}]`,
-          `CPU usage: ${cpuUsage}% (threshold: 80%)`,
-          '',
-          '>>> Decide what to do.',
-        ].join('\n'),
-      },
+  const cpu = await getCpuUsage();
+  if (cpu < 80) return;
+
+  const haseefs = await hsafa.haseef.list();
+  for (const h of haseefs) {
+    if (!h.skills?.includes("monitoring")) continue;
+    await hsafa.pushEvent({
+      type: "cpu_alert",
+      data: { severity: cpu > 95 ? "critical" : "warning", cpuUsage: cpu },
+      haseefId: h.id,
     });
   }
 }, 60_000);
+
+declare function getCpuUsage(): Promise<number>;
 ```
-
-## Example 5: Using `inputToJsonSchema` Helper
-
-For simple tools, use the shorthand:
-
-```typescript
-import { HsafaSDK, inputToJsonSchema } from '@hsafa/sdk';
-
-const sdk = new HsafaSDK({ /* ... */ });
-
-await sdk.registerTools([
-  {
-    name: 'send_notification',
-    description: 'Send a push notification to a user.',
-    input: {
-      userId: 'string',
-      title: 'string',
-      body: 'string',
-      priority: 'string?',  // optional
-    },
-  },
-  {
-    name: 'bulk_send',
-    description: 'Send notification to multiple users.',
-    input: {
-      userIds: 'string[]',   // array of strings
-      title: 'string',
-      body: 'string',
-    },
-  },
-]);
-```
-
-The SDK automatically converts the `input` shorthand to JSON Schema when registering.
 
 ## Common Patterns
 
-### Retry with Backoff
-For unreliable external services:
-
+### Retry with backoff
 ```typescript
 async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
   for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await fn();
-    } catch (err) {
+    try { return await fn(); }
+    catch (err) {
       if (i === maxRetries - 1) throw err;
-      await new Promise(r => setTimeout(r, 1000 * 2 ** i));
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** i));
     }
   }
-  throw new Error('Unreachable');
-}
-
-sdk.onToolCall('fetch_data', async (args) => {
-  return await withRetry(() => externalApi.getData(args.query as string));
-});
-```
-
-### Config from Environment
-Load scope-specific configuration:
-
-```typescript
-const config = {
-  apiKey: process.env.API_KEY || '',
-  region: process.env.REGION || 'us-east-1',
-  maxResults: parseInt(process.env.MAX_RESULTS || '100'),
-  readOnly: process.env.READ_ONLY !== 'false',
-};
-
-if (!config.apiKey) {
-  console.error('[my-scope] API_KEY env var is required');
-  process.exit(1);
+  throw new Error("unreachable");
 }
 ```
 
-### Logging Events
-
+### Event logging
 ```typescript
-sdk.on('run.started', (e) =>
-  console.log(`[${sdk.scope}] Run ${e.runId} started for ${e.haseef.name}`)
-);
-sdk.on('tool.error', (e) =>
-  console.error(`[${sdk.scope}] ${e.toolName} error:`, e.error)
-);
-sdk.on('run.completed', (e) =>
-  console.log(`[${sdk.scope}] Run ${e.runId} done in ${e.durationMs}ms`)
-);
+hsafa.on("run.started",   (e) => console.log(`[${e.haseef.name}] run started`));
+hsafa.on("tool.error",    (e) => console.error(`[${e.toolName}] ${e.error}`));
+hsafa.on("run.completed", (e) => console.log(`run done in ${e.durationMs}ms`));
 ```

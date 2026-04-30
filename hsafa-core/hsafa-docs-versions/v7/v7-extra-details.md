@@ -14,7 +14,7 @@ import { HsafaSDK } from '@hsafa/sdk';
 const hsafa = new HsafaSDK({
   coreUrl: process.env.HSAFA_CORE_URL,
   apiKey: process.env.HSAFA_API_KEY,
-  scope: 'spaces',
+  skill: 'spaces',
 });
 
 // 1. REGISTER — tell Core what you can do
@@ -51,11 +51,11 @@ hsafa.connect();
 
 | Public Method | Internal HTTP/SSE |
 |---|---|
-| `registerTools([...])` | `PUT /api/scopes/{scope}/tools` |
+| `registerTools([...])` | `PUT /api/skills/{skill}/tools` |
 | `onToolCall(name, fn)` | Registers handler in local map |
 | `pushEvent({...})` | `POST /api/events` |
 | `on(event, fn)` | Registers listener in local map |
-| `connect()` | Opens SSE to `GET /api/scopes/{scope}/actions/stream` |
+| `connect()` | Opens SSE to `GET /api/skills/{skill}/actions/stream` |
 
 The SSE stream multiplexes:
 - **Tool call requests** → routed to `onToolCall` handlers
@@ -66,11 +66,11 @@ The SSE stream multiplexes:
 
 ## 2. Tool Lifecycle Events (via `on()`)
 
-Core emits these events on the scope SSE stream as it processes the LLM's fullStream:
+Core emits these events on the skill SSE stream as it processes the LLM's fullStream:
 
 ### Event: `tool.input.start`
 
-Fired when the LLM begins generating arguments for a tool in this scope.
+Fired when the LLM begins generating arguments for a tool in this skill.
 
 ```typescript
 hsafa.on('tool.input.start', (event) => {
@@ -139,13 +139,13 @@ hsafa.on('tool.error', (event) => {
 
 ### Event: `run.started`
 
-Fired when a haseef begins a run. **Visibility rule**: every connected service receives `run.started` and `run.completed` for ALL haseefs that have their scope active — even if this service didn't trigger the run. For example, if a WhatsApp message triggers Atlas, and Atlas has both `whatsapp` and `spaces` scopes active, the spaces service also sees `run.started`. This is intentional: it lets services show status (e.g., "Atlas is thinking...") regardless of who triggered the run.
+Fired when a haseef begins a run. **Visibility rule**: every connected service receives `run.started` and `run.completed` for ALL haseefs that have their skill active — even if this service didn't trigger the run. For example, if a WhatsApp message triggers Atlas, and Atlas has both `whatsapp` and `spaces` skills active, the spaces service also sees `run.started`. This is intentional: it lets services show status (e.g., "Atlas is thinking...") regardless of who triggered the run.
 
 ```typescript
 hsafa.on('run.started', (event) => {
   event.runId
   event.haseef       // { id, name }
-  event.triggerScope  // "spaces"
+  event.triggerSkill  // "spaces"
   event.triggerType   // "message"
 });
 ```
@@ -228,15 +228,15 @@ This is optional — services that don't need text preview can ignore `tool.inpu
 
 ## 4. Online Indicator
 
-The `Scope.connected` field in Core DB tracks whether a service is actively connected:
+The `Skill.connected` field in Core DB tracks whether a service is actively connected:
 
-- SDK calls `connect()` → opens SSE → Core sets `Scope.connected = true`, updates `lastSeenAt`
-- SSE disconnects → Core sets `Scope.connected = false`
+- SDK calls `connect()` → opens SSE → Core sets `Skill.connected = true`, updates `lastSeenAt`
+- SSE disconnects → Core sets `Skill.connected = false`
 - SDK sends periodic heartbeats → Core updates `lastSeenAt`
 
-The dashboard shows 🟢/🔴 per scope. Spaces can also query `GET /api/scopes` to show "AI available" in the UI.
+The dashboard shows 🟢/🔴 per skill. Spaces can also query `GET /api/skills` to show "AI available" in the UI.
 
-For per-haseef online status: a haseef is "online" if ALL its active scopes are connected.
+For per-haseef online status: a haseef is "online" if ALL its active skills are connected.
 
 ---
 
@@ -254,9 +254,9 @@ V7's invoker uses `streamText()` or `ToolLoopAgent.stream()` from AI SDK v6. Her
 
 #### fullStream Events → Core SSE Events
 
-Core iterates `fullStream` and re-emits to the scope SSE channel:
+Core iterates `fullStream` and re-emits to the skill SSE channel:
 
-| AI SDK fullStream event | Core emits to scope SSE |
+| AI SDK fullStream event | Core emits to skill SSE |
 |---|---|
 | `tool-call-streaming-start` | `tool.input.start` |
 | `tool-call-delta` (`argsTextDelta`) | `tool.input.delta` |
@@ -274,16 +274,16 @@ External service tools ARE registered with `execute` functions. The `execute` fu
 
 ```typescript
 // Inside Core's tool-builder.ts
-function buildExternalTool(scopeTool: ScopeTool, scope: string): AISdkTool {
+function buildExternalTool(skillTool: SkillTool, skill: string): AISdkTool {
   return tool({
-    description: scopeTool.description,
-    inputSchema: buildZodSchema(scopeTool.inputSchema),
+    description: skillTool.description,
+    inputSchema: buildZodSchema(skillTool.inputSchema),
     execute: async (args, { toolCallId }) => {
       // Dispatch to service via SSE action channel
       const result = await toolDispatcher.dispatch({
         actionId: toolCallId,
-        scope,
-        toolName: scopeTool.name,
+        skill,
+        toolName: skillTool.name,
         args,
         haseef: currentHaseef,
       });
@@ -304,20 +304,20 @@ tool({
   description: '...',
   inputSchema: z.object({ ... }),
   onInputStart: ({ toolCallId }) => {
-    // Emit tool.input.start to scope SSE
-    scopeStream.emit('tool.input.start', { actionId: toolCallId, toolName, haseef });
+    // Emit tool.input.start to skill SSE
+    skillStream.emit('tool.input.start', { actionId: toolCallId, toolName, haseef });
   },
   onInputDelta: ({ toolCallId, inputTextDelta }) => {
-    // Emit tool.input.delta to scope SSE
-    scopeStream.emit('tool.input.delta', { actionId: toolCallId, delta: inputTextDelta, haseef });
+    // Emit tool.input.delta to skill SSE
+    skillStream.emit('tool.input.delta', { actionId: toolCallId, delta: inputTextDelta, haseef });
   },
   onInputAvailable: ({ toolCallId, input }) => {
-    // Emit tool.call to scope SSE
-    scopeStream.emit('tool.call', { actionId: toolCallId, args: input, haseef });
+    // Emit tool.call to skill SSE
+    skillStream.emit('tool.call', { actionId: toolCallId, args: input, haseef });
   },
   execute: async (args) => {
     const result = await toolDispatcher.dispatch({ ... });
-    // Emit tool.result to scope SSE (after execute returns)
+    // Emit tool.result to skill SSE (after execute returns)
     return result;
   },
 });
@@ -333,7 +333,7 @@ V7 can use either `streamText` with `stopWhen` or `ToolLoopAgent`. Both produce 
 // Core creates agent once per haseef
 const agent = new ToolLoopAgent({
   model: resolveModel(haseef.configJson.model),
-  tools: buildTools(haseef),  // prebuilt + external scope tools
+  tools: buildTools(haseef),  // prebuilt + external skill tools
   stopWhen: stepCountIs(50),
   prepareStep: async ({ stepNumber, steps }) => {
     // Mid-run logic: check interrupts, inject context
@@ -398,20 +398,20 @@ A small React app (Vite + Tailwind + shadcn/ui) that talks to Core API. ~10 page
 
 | Page | Endpoint | What it shows |
 |---|---|---|
-| Haseef List | `GET /api/haseefs` | All haseefs, status, active scopes |
-| Haseef Edit | `PATCH /api/haseefs/:id` | Name, profile fields, model, instructions, scope toggles |
-| Scope Overview | `GET /api/scopes` | All registered scopes, connection status, tool count |
-| Scope Detail | `GET /api/scopes/:scope/tools` | Tools in scope, descriptions, schemas |
+| Haseef List | `GET /api/haseefs` | All haseefs, status, active skills |
+| Haseef Edit | `PATCH /api/haseefs/:id` | Name, profile fields, model, instructions, skill toggles |
+| Skill Overview | `GET /api/skills` | All registered skills, connection status, tool count |
+| Skill Detail | `GET /api/skills/:skill/tools` | Tools in skill, descriptions, schemas |
 | Memory Browser | `GET /api/haseefs/:id/memory` | Search, view, edit, delete memories |
 | Run History | `GET /api/haseefs/:id/runs` | Every run — trigger, tools called, summary, tokens, duration |
 | Run Detail | `GET /api/haseefs/:id/runs/:runId` | Step-by-step breakdown, tool calls, results |
 | Live Feed | `GET /api/haseefs/:id/stream` (SSE) | Real-time: what haseef is doing right now |
-| Status | `GET /api/dashboard/status` | Overview: haseef count, scope health, recent activity |
+| Status | `GET /api/dashboard/status` | Overview: haseef count, skill health, recent activity |
 
 ### No Restarts
 
 Everything is in Postgres. Changes take effect on the next run:
-- Toggle a scope → next run includes/excludes those tools
+- Toggle a skill → next run includes/excludes those tools
 - Edit profile → next run uses new identity
 - Change model → next run uses new LLM
 - Edit instructions → next run uses new prompt
@@ -447,13 +447,13 @@ Spaces becomes a **general-purpose chat platform** (like WhatsApp). No haseef ma
 
 **What moves OUT of spaces:**
 - Haseef CRUD → Core dashboard
-- Haseef entity creation → happens via SDK when haseef is assigned to spaces scope
+- Haseef entity creation → happens via SDK when haseef is assigned to spaces skill
 - core-proxy.ts → deleted
 - service/ directory → replaced by ~50 lines of SDK integration
 
 ### How Haseefs Join Spaces
 
-1. Admin creates haseef in Core dashboard, toggles "spaces" scope
+1. Admin creates haseef in Core dashboard, toggles "spaces" skill
 2. Spaces server (via SDK) gets notified, creates an agent entity in spaces DB
 3. Admin (or the haseef itself) joins the entity to specific spaces
 4. Messages in those spaces trigger events via `hsafa.pushEvent()`
@@ -469,7 +469,7 @@ import { TOOLS } from './hsafa-tools';
 export const hsafa = new HsafaSDK({
   coreUrl: process.env.HSAFA_CORE_URL,
   apiKey: process.env.HSAFA_API_KEY,
-  scope: 'spaces',
+  skill: 'spaces',
 });
 
 await hsafa.registerTools(TOOLS);
@@ -521,7 +521,7 @@ The API surface is intentionally minimal (3 methods + events). Easy to port:
 | `hsafa-sdk-rust` | Rust | Embedded, robot firmware | P3 — much later |
 
 Each SDK implements the same 4 concepts:
-1. `registerTools` → `PUT /api/scopes/{scope}/tools`
+1. `registerTools` → `PUT /api/skills/{skill}/tools`
 2. `onToolCall` / `on_tool_call` → local handler registry
 3. `pushEvent` / `push_event` → `POST /api/events`
 4. `on` → event listener + SSE parsing
@@ -535,7 +535,7 @@ from hsafa_sdk import HsafaSDK
 hsafa = HsafaSDK(
     core_url=os.environ["HSAFA_CORE_URL"],
     api_key=os.environ["HSAFA_API_KEY"],
-    scope="vision",
+    skill="vision",
 )
 
 await hsafa.register_tools([
@@ -566,9 +566,9 @@ Some tools execute inside Core, not via services. These are registered as prebui
 | `done` | Signal run completion + summary | Core (in-process) |
 | `set_memories` | Store semantic memories | Core (Postgres) |
 | `delete_memories` | Remove memories | Core (Postgres) |
-| `recall_memories` | Search memories + episodic history | Core (pgvector) |
+| `recall_memories` | Search memories + episodic history | Core (Postgres keyword) |
 
-These are always available to every haseef. They don't go through the scope SSE dispatch — they execute directly in the AI SDK tool loop.
+These are always available to every haseef. They don't go through the skill SSE dispatch — they execute directly in the AI SDK tool loop.
 
 ---
 
@@ -581,7 +581,7 @@ When the LLM calls an external tool (registered by a service via SDK):
 2. AI SDK triggers execute() on the tool
 3. execute() creates a pending action:
    - Generates actionId
-   - Sends action on the scope's SSE channel:
+   - Sends action on the skill's SSE channel:
      { actionId, toolName, args, haseef: { id, name, profile } }
    - Waits for result (Promise with timeout)
 4. Service SDK receives action on SSE
@@ -597,9 +597,9 @@ When the LLM calls an external tool (registered by a service via SDK):
 
 If a service doesn't respond within the timeout (default: 30s), the execute function returns an error result: `{ error: "Tool execution timed out" }`. The LLM sees this and can decide what to do (retry, skip, tell the user).
 
-### Multiple Services, Same Scope
+### Multiple Services, Same Skill
 
-Only ONE service per scope. If you need multiple WhatsApp services (e.g., different providers), use different scopes: `whatsapp_twilio`, `whatsapp_meta`.
+Only ONE service per skill. If you need multiple WhatsApp services (e.g., different providers), use different skills: `whatsapp_twilio`, `whatsapp_meta`.
 
 ---
 

@@ -118,3 +118,110 @@ export interface SdkEventMap {
   'run.started': RunStartedEvent;
   'run.completed': RunCompletedEvent;
 }
+
+// =============================================================================
+// Haseef API
+// =============================================================================
+
+export interface Haseef {
+  id: string;
+  name: string;
+  description?: string | null;
+  profileJson?: Record<string, unknown> | null;
+  configJson?: Record<string, unknown>;
+  skills?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CreateHaseefInput {
+  name: string;
+  description?: string;
+  configJson: Record<string, unknown>;
+  profileJson?: Record<string, unknown>;
+  skills?: string[];
+}
+
+export interface UpdateHaseefInput {
+  name?: string;
+  description?: string;
+  configJson?: Record<string, unknown>;
+  profileJson?: Record<string, unknown>;
+  skills?: string[];
+}
+
+// =============================================================================
+// Memory API
+// =============================================================================
+
+export interface SemanticMemoryInput {
+  key: string;
+  value: string;
+  importance?: number;
+}
+
+export interface SemanticMemory {
+  id: string;
+  haseefId: string;
+  key: string;
+  value: string;
+  importance: number;
+  recalledAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EpisodicMemory {
+  id: string;
+  haseefId: string;
+  runId?: string | null;
+  summary: string;
+  context?: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface SocialMemory {
+  id: string;
+  haseefId: string;
+  personKey: string;
+  observations: unknown;
+  updatedAt: string;
+}
+
+export interface ProceduralMemory {
+  id: string;
+  haseefId: string;
+  pattern: string;
+  confidence: number;
+  updatedAt: string;
+}
+
+export interface MemoryStats {
+  haseefId: string;
+  counts: { semantic: number; episodic: number; social: number; procedural: number };
+  total: number;
+}
+
+// =============================================================================
+// Runs API
+// =============================================================================
+
+export interface Run {
+  id: string;
+  haseefId: string;
+  status: string;
+  triggerSkill?: string | null;
+  triggerType?: string | null;
+  startedAt: string;
+  completedAt?: string | null;
+  durationMs?: number | null;
+  summary?: string | null;
+  tokensUsed?: number | null;
+  toolCallCount?: number | null;
+}
+
+export interface ListRunsOptions {
+  haseefId?: string;
+  status?: string;
+  limit?: number;
+}

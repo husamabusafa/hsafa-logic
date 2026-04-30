@@ -2,7 +2,6 @@ packages:
   - sdks/node
   - sdks/hsafa-sdk
   - hsafa-core/core
-  - hsafa-core/sdks/service-node
   - hsafa-core/services/test-service
   - hsafa-core/cli
   - hsafa-spaces/server

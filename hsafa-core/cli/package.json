@@ -1,7 +1,7 @@
 {
   "name": "@hsafa/cli",
-  "version": "3.0.2",
-  "description": "Hsafa CLI — build and manage skills for your haseefs",
+  "version": "7.0.0",
+  "description": "Hsafa CLI (v7) — scaffold custom skills, manage skill instances, and connect them to haseefs",
   "type": "module",
   "bin": {
     "hsafa": "dist/index.js"
@@ -31,7 +31,7 @@
   "keywords": [
     "hsafa",
     "cli",
-    "scopes",
+    "skills",
     "haseef"
   ],
   "license": "MIT"

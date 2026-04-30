@@ -1,9 +1,9 @@
 {
   "name": "@hsafa/core",
-  "version": "4.0.0",
+  "version": "7.0.0",
   "type": "module",
   "private": true,
-  "description": "Hsafa Core v4 - The Haseef Mind: Consciousness, Think Cycle, Extensions",
+  "description": "Hsafa Core v7 — Stateless brain: trigger-based runs, 4-type memory, skills via @hsafa/sdk",
   "scripts": {
     "dev": "tsx watch --env-file=.env src/index.ts",
     "build": "tsc",
