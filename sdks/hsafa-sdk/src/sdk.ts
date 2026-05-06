@@ -27,9 +27,12 @@ import { inputToJsonSchema, parsePartialJson } from './schema.js';
 const DEFAULT_RECONNECT_DELAY = 2_000;
 const MAX_RECONNECT_DELAY = 30_000;
 
+const DEFAULT_API_BASE = '/api/v7';
+
 export class HsafaSDK {
   private readonly coreUrl: string;
   private readonly apiKey: string;
+  private readonly apiBase: string;
   readonly skill: string;
 
   private toolHandlers = new Map<string, ToolHandler>();
@@ -41,6 +44,7 @@ export class HsafaSDK {
     this.coreUrl = opts.coreUrl.replace(/\/$/, '');
     this.apiKey = opts.apiKey;
     this.skill = opts.skill;
+    this.apiBase = (opts.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, '');
   }
 
   // ── 1. REGISTER ─────────────────────────────────────────────────────────────
@@ -52,7 +56,7 @@ export class HsafaSDK {
       inputSchema: t.inputSchema ?? inputToJsonSchema(t.input ?? {}),
     }));
 
-    const res = await fetch(`${this.coreUrl}/api/skills/${this.skill}/tools`, {
+    const res = await fetch(`${this.coreUrl}${this.apiBase}/skills/${this.skill}/tools`, {
       method: 'PUT',
       headers: { 'x-api-key': this.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ tools: body }),
@@ -73,7 +77,7 @@ export class HsafaSDK {
   // ── 3. PUSH ──────────────────────────────────────────────────────────────────
 
   async pushEvent(event: PushEventPayload): Promise<void> {
-    const res = await fetch(`${this.coreUrl}/api/events`, {
+    const res = await fetch(`${this.coreUrl}${this.apiBase}/events`, {
       method: 'POST',
       headers: { 'x-api-key': this.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ skill: this.skill, ...event }),
@@ -89,36 +93,36 @@ export class HsafaSDK {
 
   readonly haseef = {
     list: async (): Promise<Haseef[]> => {
-      const data = await this.request<{ haseefs: Haseef[] }>('GET', '/api/haseefs');
+      const data = await this.request<{ haseefs: Haseef[] }>('GET', `${this.apiBase}/haseefs`);
       return data.haseefs;
     },
 
     get: async (id: string): Promise<Haseef> => {
-      const data = await this.request<{ haseef: Haseef }>('GET', `/api/haseefs/${id}`);
+      const data = await this.request<{ haseef: Haseef }>('GET', `${this.apiBase}/haseefs/${id}`);
       return data.haseef;
     },
 
     create: async (input: CreateHaseefInput): Promise<Haseef> => {
-      const data = await this.request<{ haseef: Haseef }>('POST', '/api/haseefs', input);
+      const data = await this.request<{ haseef: Haseef }>('POST', `${this.apiBase}/haseefs`, input);
       return data.haseef;
     },
 
     update: async (id: string, patch: UpdateHaseefInput): Promise<Haseef> => {
-      const data = await this.request<{ haseef: Haseef }>('PATCH', `/api/haseefs/${id}`, patch);
+      const data = await this.request<{ haseef: Haseef }>('PATCH', `${this.apiBase}/haseefs/${id}`, patch);
       return data.haseef;
     },
 
     delete: async (id: string): Promise<void> => {
-      await this.request<unknown>('DELETE', `/api/haseefs/${id}`);
+      await this.request<unknown>('DELETE', `${this.apiBase}/haseefs/${id}`);
     },
 
     getProfile: async (id: string): Promise<Record<string, unknown>> => {
-      const data = await this.request<{ profile: Record<string, unknown> }>('GET', `/api/haseefs/${id}/profile`);
+      const data = await this.request<{ profile: Record<string, unknown> }>('GET', `${this.apiBase}/haseefs/${id}/profile`);
       return data.profile ?? {};
     },
 
     updateProfile: async (id: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> => {
-      const data = await this.request<{ profile: Record<string, unknown> }>('PATCH', `/api/haseefs/${id}/profile`, patch);
+      const data = await this.request<{ profile: Record<string, unknown> }>('PATCH', `${this.apiBase}/haseefs/${id}/profile`, patch);
       return data.profile ?? {};
     },
 
@@ -137,7 +141,7 @@ export class HsafaSDK {
     },
 
     status: async (id: string): Promise<{ running: boolean; activeRunId: string | null }> => {
-      return this.request('GET', `/api/haseefs/${id}/status`);
+      return this.request('GET', `${this.apiBase}/haseefs/${id}/status`);
     },
   };
 
@@ -145,47 +149,47 @@ export class HsafaSDK {
 
   readonly memory = {
     list: async (haseefId: string): Promise<SemanticMemory[]> => {
-      const data = await this.request<{ memories: SemanticMemory[] }>('GET', `/api/memory/${haseefId}/semantic`);
+      const data = await this.request<{ memories: SemanticMemory[] }>('GET', `${this.apiBase}/memory/${haseefId}/semantic`);
       return data.memories;
     },
 
     search: async (haseefId: string, query: string, limit = 20): Promise<SemanticMemory[]> => {
       const qs = `?q=${encodeURIComponent(query)}&limit=${limit}`;
-      const data = await this.request<{ results: SemanticMemory[] }>('GET', `/api/memory/${haseefId}/semantic/search${qs}`);
+      const data = await this.request<{ results: SemanticMemory[] }>('GET', `${this.apiBase}/memory/${haseefId}/semantic/search${qs}`);
       return data.results;
     },
 
     set: async (haseefId: string, memories: SemanticMemoryInput[]): Promise<{ stored: number }> => {
-      return this.request('POST', `/api/memory/${haseefId}/semantic`, { memories });
+      return this.request('POST', `${this.apiBase}/memory/${haseefId}/semantic`, { memories });
     },
 
     delete: async (haseefId: string, keys: string[]): Promise<{ deleted: number }> => {
-      return this.request('DELETE', `/api/memory/${haseefId}/semantic`, { keys });
+      return this.request('DELETE', `${this.apiBase}/memory/${haseefId}/semantic`, { keys });
     },
 
     episodes: async (haseefId: string, limit = 20): Promise<EpisodicMemory[]> => {
-      const data = await this.request<{ episodes: EpisodicMemory[] }>('GET', `/api/memory/${haseefId}/episodic?limit=${limit}`);
+      const data = await this.request<{ episodes: EpisodicMemory[] }>('GET', `${this.apiBase}/memory/${haseefId}/episodic?limit=${limit}`);
       return data.episodes;
     },
 
     searchEpisodes: async (haseefId: string, query: string, limit = 10): Promise<EpisodicMemory[]> => {
       const qs = `?q=${encodeURIComponent(query)}&limit=${limit}`;
-      const data = await this.request<{ results: EpisodicMemory[] }>('GET', `/api/memory/${haseefId}/episodic/search${qs}`);
+      const data = await this.request<{ results: EpisodicMemory[] }>('GET', `${this.apiBase}/memory/${haseefId}/episodic/search${qs}`);
       return data.results;
     },
 
     social: async (haseefId: string): Promise<SocialMemory[]> => {
-      const data = await this.request<{ people: SocialMemory[] }>('GET', `/api/memory/${haseefId}/social`);
+      const data = await this.request<{ people: SocialMemory[] }>('GET', `${this.apiBase}/memory/${haseefId}/social`);
       return data.people;
     },
 
     procedural: async (haseefId: string): Promise<ProceduralMemory[]> => {
-      const data = await this.request<{ patterns: ProceduralMemory[] }>('GET', `/api/memory/${haseefId}/procedural`);
+      const data = await this.request<{ patterns: ProceduralMemory[] }>('GET', `${this.apiBase}/memory/${haseefId}/procedural`);
       return data.patterns;
     },
 
     stats: async (haseefId: string): Promise<MemoryStats> => {
-      return this.request('GET', `/api/memory/${haseefId}/stats`);
+      return this.request('GET', `${this.apiBase}/memory/${haseefId}/stats`);
     },
   };
 
@@ -198,12 +202,12 @@ export class HsafaSDK {
       if (opts.status) params.set('status', opts.status);
       if (opts.limit) params.set('limit', String(opts.limit));
       const qs = params.toString();
-      const data = await this.request<{ runs: Run[] }>('GET', `/api/runs${qs ? `?${qs}` : ''}`);
+      const data = await this.request<{ runs: Run[] }>('GET', `${this.apiBase}/runs${qs ? `?${qs}` : ''}`);
       return data.runs;
     },
 
     get: async (runId: string): Promise<Run> => {
-      const data = await this.request<{ run: Run }>('GET', `/api/runs/${runId}`);
+      const data = await this.request<{ run: Run }>('GET', `${this.apiBase}/runs/${runId}`);
       return data.run;
     },
   };
@@ -262,7 +266,7 @@ export class HsafaSDK {
   }
 
   private async openSSE(signal: AbortSignal): Promise<void> {
-    const url = `${this.coreUrl}/api/skills/${this.skill}/actions/stream`;
+    const url = `${this.coreUrl}${this.apiBase}/skills/${this.skill}/actions/stream`;
     const res = await fetch(url, {
       headers: { 'x-api-key': this.apiKey, Accept: 'text/event-stream' },
       signal,
@@ -351,7 +355,7 @@ export class HsafaSDK {
 
   private async postResult(actionId: string, result: unknown): Promise<void> {
     try {
-      await fetch(`${this.coreUrl}/api/actions/${actionId}/result`, {
+      await fetch(`${this.coreUrl}${this.apiBase}/actions/${actionId}/result`, {
         method: 'POST',
         headers: { 'x-api-key': this.apiKey, 'Content-Type': 'application/json' },
         body: JSON.stringify({ result }),

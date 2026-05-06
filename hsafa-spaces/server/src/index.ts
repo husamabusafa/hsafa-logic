@@ -63,7 +63,11 @@ app.listen(PORT, async () => {
   const svcConfig = loadServiceConfig();
   if (svcConfig) {
     try {
-      await bootSkillManager({ coreUrl: svcConfig.coreUrl, secretKey: svcConfig.secretKey });
+      await bootSkillManager({
+        coreUrl:  svcConfig.coreUrl,
+        secretKey: svcConfig.secretKey,
+        apiBase:   svcConfig.apiBase,
+      });
       startScheduleRunner();
     } catch (err) {
       console.error("[spaces-server] Skill manager boot failed:", err);

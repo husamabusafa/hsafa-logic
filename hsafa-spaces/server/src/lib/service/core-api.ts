@@ -38,7 +38,7 @@ export async function syncInstructions(haseefId: string): Promise<void> {
 
   try {
     // Read current haseef configJson to avoid overwriting model/voice config
-    const getUrl = `${state.config!.coreUrl}/api/haseefs/${haseefId}`;
+    const getUrl = `${state.config!.coreUrl}${state.config!.apiBase}/haseefs/${haseefId}`;
     const getRes = await fetch(getUrl, { headers: coreHeaders() });
     if (!getRes.ok) {
       console.warn(`[core-api] Failed to read haseef ${haseefId}: ${getRes.status}`);
@@ -47,7 +47,7 @@ export async function syncInstructions(haseefId: string): Promise<void> {
     const { haseef } = (await getRes.json()) as { haseef: { configJson: Record<string, unknown> } };
     const currentConfig = haseef?.configJson ?? {};
 
-    const patchUrl = `${state.config!.coreUrl}/api/haseefs/${haseefId}`;
+    const patchUrl = `${state.config!.coreUrl}${state.config!.apiBase}/haseefs/${haseefId}`;
     const patchRes = await fetch(patchUrl, {
       method: "PATCH",
       headers: coreHeaders(),
@@ -194,7 +194,7 @@ export async function pushSenseEvent(
     timestamp?: string;
   },
 ): Promise<void> {
-  const url = `${state.config!.coreUrl}/api/events`;
+  const url = `${state.config!.coreUrl}${state.config!.apiBase}/events`;
   const body: Record<string, unknown> = {
     haseefId,
     skill: event.skill,

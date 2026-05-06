@@ -6,6 +6,11 @@ export interface SdkOptions {
   coreUrl: string;
   apiKey: string;
   skill: string;
+  /**
+   * API base path on Core. Defaults to `/api/v7`.
+   * Override only when targeting a non-standard mount point.
+   */
+  apiBase?: string;
 }
 
 export interface ToolDefinition {

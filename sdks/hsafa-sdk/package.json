@@ -1,6 +1,6 @@
 {
   "name": "@hsafa/sdk",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Hsafa SDK v7 — connect any service to a Haseef brain",
   "type": "module",
   "main": "dist/index.js",
@@ -15,7 +15,12 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {},
   "devDependencies": {

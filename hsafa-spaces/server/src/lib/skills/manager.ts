@@ -36,14 +36,16 @@ const instances = new Map<string, ManagedInstance>();
 /** Core config — set during boot */
 let coreUrl: string;
 let secretKey: string;
+let apiBase: string;
 
 // =============================================================================
 // Boot — seed templates + connect active instances
 // =============================================================================
 
-export async function bootSkillManager(config: { coreUrl: string; secretKey: string }): Promise<void> {
+export async function bootSkillManager(config: { coreUrl: string; secretKey: string; apiBase?: string }): Promise<void> {
   coreUrl = config.coreUrl;
   secretKey = config.secretKey;
+  apiBase = (config.apiBase ?? "/api/v7").replace(/\/$/, "");
 
   // 1. Seed/sync templates into DB
   await seedTemplates();
@@ -213,7 +215,7 @@ function buildSenseLoopContext(
 
   const getHaseefProfile = async (haseefId: string): Promise<Record<string, unknown>> => {
     try {
-      const res = await fetch(`${coreUrl}/api/haseefs/${haseefId}/profile`, {
+      const res = await fetch(`${coreUrl}${apiBase}/haseefs/${haseefId}/profile`, {
         headers: { "x-api-key": secretKey },
       });
       if (!res.ok) return {};

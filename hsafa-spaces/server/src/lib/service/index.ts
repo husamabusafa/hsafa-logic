@@ -142,7 +142,7 @@ async function discoverHaseefs(): Promise<
   Array<{ id: string; name: string; profileJson?: Record<string, unknown>; configJson?: Record<string, unknown> }>
 > {
   try {
-    const url = `${state.config!.coreUrl}/api/haseefs`;
+    const url = `${state.config!.coreUrl}${state.config!.apiBase}/haseefs`;
     const res = await fetch(url, { headers: coreHeaders() });
     if (!res.ok) {
       console.error(`[spaces-service] Failed to list haseefs: ${res.status}`);

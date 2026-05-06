@@ -6,6 +6,7 @@
 
 const CORE_URL = process.env.HSAFA_CORE_URL || process.env.HSAFA_GATEWAY_URL || "http://localhost:3001";
 const SECRET_KEY = process.env.CORE_SECRET_KEY || "";
+const API_BASE = process.env.HSAFA_CORE_API_BASE || "/api/v7";
 
 if (!SECRET_KEY) {
   console.warn("[core-proxy] ⚠ CORE_SECRET_KEY is not set — haseef CRUD will fail");
@@ -50,7 +51,7 @@ export async function createHaseef(data: {
   profileJson?: Record<string, unknown>;
   skills?: string[];
 }): Promise<CoreHaseef> {
-  const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs`, {
+  const res = await fetchWithTimeout(`${CORE_URL}${API_BASE}/haseefs`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({
@@ -67,7 +68,7 @@ export async function createHaseef(data: {
 }
 
 export async function getHaseef(id: string): Promise<CoreHaseef> {
-  const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs/${id}`, {
+  const res = await fetchWithTimeout(`${CORE_URL}${API_BASE}/haseefs/${id}`, {
     headers: headers(),
   });
   if (!res.ok) {
@@ -87,7 +88,7 @@ export async function updateHaseef(
     profileJson?: Record<string, unknown>;
   },
 ): Promise<CoreHaseef> {
-  const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs/${id}`, {
+  const res = await fetchWithTimeout(`${CORE_URL}${API_BASE}/haseefs/${id}`, {
     method: "PATCH",
     headers: headers(),
     body: JSON.stringify(data),
@@ -101,7 +102,7 @@ export async function updateHaseef(
 }
 
 export async function deleteHaseef(id: string): Promise<void> {
-  const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs/${id}`, {
+  const res = await fetchWithTimeout(`${CORE_URL}${API_BASE}/haseefs/${id}`, {
     method: "DELETE",
     headers: headers(),
   });
@@ -119,7 +120,7 @@ export async function addSkillToHaseef(haseefId: string, skillName: string): Pro
   const haseef = await getHaseef(haseefId);
   const currentSkills: string[] = haseef.skills ?? [];
   if (currentSkills.includes(skillName)) return;
-  await fetchWithTimeout(`${CORE_URL}/api/haseefs/${haseefId}`, {
+  await fetchWithTimeout(`${CORE_URL}${API_BASE}/haseefs/${haseefId}`, {
     method: "PATCH",
     headers: headers(),
     body: JSON.stringify({ skills: [...currentSkills, skillName] }),
@@ -134,7 +135,7 @@ export async function removeSkillFromHaseef(haseefId: string, skillName: string)
   const haseef = await getHaseef(haseefId);
   const currentSkills: string[] = haseef.skills ?? [];
   if (!currentSkills.includes(skillName)) return;
-  await fetchWithTimeout(`${CORE_URL}/api/haseefs/${haseefId}`, {
+  await fetchWithTimeout(`${CORE_URL}${API_BASE}/haseefs/${haseefId}`, {
     method: "PATCH",
     headers: headers(),
     body: JSON.stringify({ skills: currentSkills.filter((s) => s !== skillName) }),
@@ -142,7 +143,7 @@ export async function removeSkillFromHaseef(haseefId: string, skillName: string)
 }
 
 export async function listHaseefs(): Promise<CoreHaseef[]> {
-  const res = await fetchWithTimeout(`${CORE_URL}/api/haseefs`, {
+  const res = await fetchWithTimeout(`${CORE_URL}${API_BASE}/haseefs`, {
     headers: headers(),
   });
   if (!res.ok) {

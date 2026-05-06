@@ -10,11 +10,14 @@ export interface ServiceConfig {
   coreUrl: string;
   /** Secret key for Core API access */
   secretKey: string;
+  /** Versioned API path on Core (default: /api/v7) */
+  apiBase: string;
 }
 
 export function loadServiceConfig(): ServiceConfig | null {
   const coreUrl = process.env.HSAFA_GATEWAY_URL || process.env.CORE_URL;
   const secretKey = process.env.CORE_SECRET_KEY;
+  const apiBase = process.env.HSAFA_CORE_API_BASE || "/api/v7";
 
   if (!coreUrl || !secretKey) {
     console.warn(
@@ -23,5 +26,5 @@ export function loadServiceConfig(): ServiceConfig | null {
     return null;
   }
 
-  return { coreUrl, secretKey };
+  return { coreUrl, secretKey, apiBase };
 }
