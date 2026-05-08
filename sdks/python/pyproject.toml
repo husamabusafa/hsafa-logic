@@ -1,0 +1,16 @@
+[project]
+name = "hsafa-sdk"
+version = "0.1.0"
+description = "Hsafa SDK v7 — connect any service to a Haseef brain"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "httpx>=0.27.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -45,7 +45,7 @@ function scaffoldNode(dir: string, name: string, lang: string, starter: string) 
       start: isTs ? "tsx --env-file=.env src/index.ts" : "node --env-file=.env src/index.js",
     },
     dependencies: {
-      "@hsafa/sdk": "^0.0.1",
+      "@hsafa/sdk": "0.1.0",
     },
     ...(isTs
       ? {

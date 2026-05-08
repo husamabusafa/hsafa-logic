@@ -1,6 +1,6 @@
 {
   "name": "@hsafa/cli",
-  "version": "7.0.0",
+  "version": "7.0.1",
   "description": "Hsafa CLI (v7) — scaffold custom skills, manage skill instances, and connect them to haseefs",
   "type": "module",
   "bin": {

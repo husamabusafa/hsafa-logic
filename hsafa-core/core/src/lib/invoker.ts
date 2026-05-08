@@ -154,7 +154,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
     const model = resolveModel(config.model);
 
     // ── 7. Build user message from event ──────────────────────────────────────
-    const userMessage = formatEventAsMessage(triggerSkill, triggerType, triggerData, opts.attachments);
+    const userContent = formatEventAsMessage(triggerSkill, triggerType, triggerData, opts.attachments);
 
     // ── 8. streamText with AI SDK v6 ────────────────────────────────────────
     const toolsUsed: string[] = [];
@@ -162,7 +162,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
     const result = streamText({
       model: model as any,
       system: systemPrompt,
-      messages: [{ role: 'user' as const, content: userMessage }] as any,
+      messages: [{ role: 'user' as const, content: userContent }] as any,
       tools: allTools as any,
       toolChoice: 'required' as any,
       stopWhen: [hasToolCall('done'), stepCountIs(MAX_STEPS)] as any,
@@ -331,29 +331,51 @@ async function loadSkillTools(skillNames: string[]): Promise<V7ToolRow[]> {
 
 /**
  * Format a trigger event as a user message for the LLM.
+ * Returns an array of content parts for multimodal support (text + images/files).
  */
 function formatEventAsMessage(
   skill: string,
   type: string,
   data: Record<string, unknown>,
   attachments?: Array<{ type: string; mimeType: string; url?: string; base64?: string; name?: string }>,
-): string {
-  const parts: string[] = [];
+): Array<{ type: 'text'; text: string } | { type: 'image'; image: string } | { type: 'file'; data: string; mediaType: string; filename?: string }> {
+  const textParts: string[] = [];
 
-  parts.push(`[EVENT from ${skill}] type: ${type}`);
+  textParts.push(`[EVENT from ${skill}] type: ${type}`);
 
   // Format data as readable key-value pairs
   for (const [key, value] of Object.entries(data)) {
     if (typeof value === 'string') {
-      parts.push(`${key}: ${value}`);
+      textParts.push(`${key}: ${value}`);
     } else {
-      parts.push(`${key}: ${JSON.stringify(value)}`);
+      textParts.push(`${key}: ${JSON.stringify(value)}`);
     }
   }
 
   if (attachments && attachments.length > 0) {
-    parts.push(`attachments: ${attachments.map((a) => `[${a.type}: ${a.name ?? a.mimeType}]`).join(', ')}`);
+    textParts.push(`attachments: ${attachments.map((a) => `[${a.type}: ${a.name ?? a.mimeType}]`).join(', ')}`);
   }
 
-  return parts.join('\n');
+  const content: ReturnType<typeof formatEventAsMessage> = [
+    { type: 'text', text: textParts.join('\n') },
+  ];
+
+  // Add images as content parts
+  for (const a of attachments ?? []) {
+    if (a.type === 'image' && a.url) {
+      content.push({ type: 'image', image: a.url });
+    } else if (a.type === 'image' && a.base64) {
+      content.push({ type: 'image', image: `data:${a.mimeType};base64,${a.base64}` });
+    } else if (a.base64) {
+      // File (audio, pdf, etc.)
+      content.push({
+        type: 'file',
+        data: `data:${a.mimeType};base64,${a.base64}`,
+        mediaType: a.mimeType,
+        filename: a.name,
+      });
+    }
+  }
+
+  return content;
 }

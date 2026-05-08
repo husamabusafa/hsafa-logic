@@ -1,6 +1,6 @@
 FROM node:20-alpine AS base
 
-RUN apk add --no-cache openssl && npm install -g pnpm
+RUN apk add --no-cache openssl
 
 WORKDIR /app
 
@@ -8,11 +8,10 @@ WORKDIR /app
 FROM base AS dependencies
 
 COPY package.json ./
-COPY pnpm-lock.yaml* ./
 COPY prisma ./prisma
 
 # Install ALL dependencies (including dev) for build
-RUN npm install -g pnpm && pnpm install --include=dev && pnpm prisma generate
+RUN npm install --ignore-scripts && npx prisma generate
 
 # --- Development (local docker-compose) ---
 FROM base AS development
@@ -22,7 +21,7 @@ COPY . ./
 
 EXPOSE 3001
 
-CMD ["pnpm", "run", "dev"]
+CMD ["npm", "run", "dev"]
 
 # --- Builder ---
 FROM base AS builder
