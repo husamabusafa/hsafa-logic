@@ -107,14 +107,40 @@ const legacyDeprecation: express.RequestHandler = (_req, res, next) => {
 };
 app.use('/api', legacyDeprecation, buildApiRouter());
 
-// ── Health check (no auth, no rate limit) ───────────────────────────────────
+// ── Health & readiness (no auth, no rate limit) ─────────────────────────────
+
+const BUILD_TIME = process.env.BUILD_TIME ?? 'dev';
+
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     service: 'hsafa-core',
     version: '7.0.0',
     apiVersion: API_VERSION,
+    buildTime: BUILD_TIME,
     activeRuns: getActiveHaseefIds().length,
+  });
+});
+
+app.get('/ready', async (_req, res) => {
+  const checks: Record<string, boolean> = {};
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    checks.database = true;
+  } catch {
+    checks.database = false;
+  }
+  try {
+    await redis.ping();
+    checks.redis = true;
+  } catch {
+    checks.redis = false;
+  }
+  const ok = checks.database && checks.redis;
+  res.status(ok ? 200 : 503).json({
+    status: ok ? 'ready' : 'not_ready',
+    checks,
+    buildTime: BUILD_TIME,
   });
 });
 

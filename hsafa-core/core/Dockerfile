@@ -35,6 +35,7 @@ RUN npx tsc
 FROM base AS production
 
 ENV NODE_ENV=production
+ENV BUILD_TIME="2026-05-08T13:44:00Z"
 
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist

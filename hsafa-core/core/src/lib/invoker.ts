@@ -50,17 +50,59 @@ const ModelConfigSchema = z.union([
   }),
 ]);
 
-const HaseefConfigSchema = z.object({
-  model: ModelConfigSchema,
-  instructions: z.string().optional(),
-  persona: z.object({
-    name: z.string(),
-    description: z.string(),
-    style: z.string().optional(),
-    traits: z.array(z.string()).optional(),
-  }).optional(),
-  actionTimeout: z.number().optional(),
+// Backward-compatible: old dashboards/SDKs write "llm" instead of "model",
+// "system_prompt" instead of "instructions", and extra fields like api_key,
+// base_url, max_tokens, temperature that we strip.
+const LegacyLlmSchema = z.object({
+  provider: z.string(),
+  model: z.string(),
+  api_key: z.string().nullable().optional(),
+  base_url: z.string().optional(),
+  max_tokens: z.number().optional(),
+  temperature: z.number().optional(),
 });
+
+const HaseefConfigSchema = z
+  .object({
+    model: ModelConfigSchema.optional(),
+    llm: LegacyLlmSchema.optional(),
+    instructions: z.string().optional(),
+    system_prompt: z.string().optional(),
+    persona: z
+      .object({
+        name: z.string(),
+        description: z.string(),
+        style: z.string().optional(),
+        traits: z.array(z.string()).optional(),
+      })
+      .optional(),
+    actionTimeout: z.number().optional(),
+  })
+  .transform((raw: { model?: any; llm?: any; instructions?: string; system_prompt?: string; persona?: any; actionTimeout?: number }) => {
+    // Normalize legacy "llm" → "model"
+    const model = raw.model
+      ?? (raw.llm
+        ? {
+            provider: raw.llm.provider,
+            model: raw.llm.model,
+            apiKey: raw.llm.api_key ?? undefined,
+          }
+        : undefined);
+
+    // Normalize legacy "system_prompt" → "instructions"
+    const instructions = raw.instructions ?? raw.system_prompt ?? undefined;
+
+    return { ...raw, model, instructions };
+  })
+  .refine((data: { model?: any }) => data.model !== undefined, {
+    message: 'model (or legacy llm) is required in configJson',
+  })
+  .transform((data: { model: any; instructions?: string; persona?: any; actionTimeout?: number }) => ({
+    model: data.model,
+    instructions: data.instructions,
+    persona: data.persona,
+    actionTimeout: data.actionTimeout,
+  }));
 
 export interface InvokeOptions {
   haseefId: string;
@@ -111,7 +153,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
       `configJson type=${typeof haseef.configJson} value=`,
       haseef.configJson,
     );
-    console.error('[invoker] Zod issues:', configResult.error.issues.map((i: { path: (string | number)[]; message: string }) => `${i.path.join('.')}: ${i.message}`).join('; '));
+    console.error('[invoker] Zod issues:', configResult.error.message);
     return;
   }
   const config = configResult.data;
