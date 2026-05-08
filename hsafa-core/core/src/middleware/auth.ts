@@ -7,15 +7,15 @@ import { Request, Response, NextFunction } from 'express';
 // Read from: x-api-key header or api_key query param (SSE fallback).
 // =============================================================================
 
-const SECRET_KEY = process.env.SECRET_KEY;
+const SECRET_KEY = process.env.HSAFA_SECRET_KEY;
 
 /**
- * Require a valid secret key. Rejects if SECRET_KEY is not configured or doesn't match.
+ * Require a valid secret key. Rejects if HSAFA_SECRET_KEY is not configured or doesn't match.
  */
 export function requireApiKey() {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!SECRET_KEY) {
-      console.error('[auth] SECRET_KEY env var is not set');
+      console.error('[auth] HSAFA_SECRET_KEY env var is not set');
       res.status(500).json({ error: 'Server auth not configured' });
       return;
     }
