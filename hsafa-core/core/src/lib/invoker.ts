@@ -25,8 +25,20 @@ import { z } from 'zod';
 
 const MAX_STEPS = 50;
 
-const HaseefConfigSchema = z.object({
-  model: z.object({
+// ---------------------------------------------------------------------------
+// Model config can be either an object { provider, model } or a string
+// "provider:model" (e.g. "openrouter:openai/gpt-5.4-mini").
+// ---------------------------------------------------------------------------
+const ModelConfigSchema = z.union([
+  z.string().transform((s: string) => {
+    const idx = s.indexOf(':');
+    if (idx === -1) {
+      // No colon — assume openrouter (common for shorthand IDs like openai/gpt-5)
+      return { provider: 'openrouter', model: s };
+    }
+    return { provider: s.slice(0, idx), model: s.slice(idx + 1) };
+  }),
+  z.object({
     provider: z.string(),
     model: z.string(),
     apiKey: z.string().optional(),
@@ -36,6 +48,10 @@ const HaseefConfigSchema = z.object({
       summary: z.enum(['auto', 'always', 'never']).optional(),
     }).optional(),
   }),
+]);
+
+const HaseefConfigSchema = z.object({
+  model: ModelConfigSchema,
   instructions: z.string().optional(),
   persona: z.object({
     name: z.string(),
@@ -64,6 +80,9 @@ export interface InvokeOptions {
 export async function invoke(opts: InvokeOptions): Promise<void> {
   const { haseefId, runId, triggerSkill, triggerType, triggerData, signal } = opts;
   const startedAt = Date.now();
+  let runCreated = false;
+
+  console.log(`[invoker] Starting run ${runId} for haseef ${haseefId}`);
 
   // ── 1. Load haseef from DB ────────────────────────────────────────────────
   const haseef = await prisma.haseef.findUnique({
@@ -79,22 +98,42 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
   });
 
   if (!haseef) {
-    console.error(`[invoker] Haseef ${haseefId} not found`);
+    console.error(`[invoker] Haseef ${haseefId} not found — aborting run ${runId}`);
     return;
   }
+  console.log(`[invoker] Loaded haseef "${haseef.name}" (${haseefId})`);
 
-  const config = HaseefConfigSchema.parse(haseef.configJson);
+  // ── 2. Parse config (defensive — logs exact failure reason) ───────────────
+  const configResult = HaseefConfigSchema.safeParse(haseef.configJson);
+  if (!configResult.success) {
+    console.error(
+      `[invoker] Invalid configJson for haseef "${haseef.name}". ` +
+      `configJson type=${typeof haseef.configJson} value=`,
+      haseef.configJson,
+    );
+    console.error('[invoker] Zod issues:', configResult.error.issues.map((i: { path: (string | number)[]; message: string }) => `${i.path.join('.')}: ${i.message}`).join('; '));
+    return;
+  }
+  const config = configResult.data;
+  console.log(`[invoker] Parsed config: model=${config.model.provider}:${config.model.model}`);
 
-  // ── 2. Create run record ──────────────────────────────────────────────────
-  await prisma.run.create({
-    data: {
-      id: runId,
-      haseefId,
-      triggerSkill,
-      triggerType,
-      status: 'running' as any,
-    },
-  });
+  // ── 3. Create run record ──────────────────────────────────────────────────
+  try {
+    await prisma.run.create({
+      data: {
+        id: runId,
+        haseefId,
+        triggerSkill,
+        triggerType,
+        status: 'running' as any,
+      },
+    });
+    runCreated = true;
+    console.log(`[invoker] Run ${runId} persisted in DB`);
+  } catch (dbErr: any) {
+    console.error(`[invoker] Failed to persist run ${runId}:`, dbErr.message ?? dbErr);
+    return;
+  }
 
   publishRunEvent(haseefId, runId, 'run.started', { triggerSkill, triggerType });
 
@@ -107,16 +146,18 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
       triggerType,
     });
   }
+  console.log(`[invoker] Emitted run.started to ${haseef.skills.length} skill(s): ${haseef.skills.join(', ')}`);
 
   try {
-    // ── 3. Assemble memory ────────────────────────────────────────────────────
+    // ── 4. Assemble memory ────────────────────────────────────────────────────
+    console.log(`[invoker] Assembling memory…`);
     const memory = await assembleMemory({
       haseefId,
       triggerType,
       triggerData,
     });
 
-    // ── 4. Build system prompt ────────────────────────────────────────────────
+    // ── 5. Build system prompt ────────────────────────────────────────────────
     const systemPrompt = buildSystemPrompt({
       haseefId: haseef.id,
       haseefName: haseef.name,
@@ -128,7 +169,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
       persona: config.persona,
     });
 
-    // ── 5. Build tools ────────────────────────────────────────────────────────
+    // ── 6. Build tools ────────────────────────────────────────────────────────
     const haseefCtx: V7HaseefContext = {
       id: haseef.id,
       name: haseef.name,
@@ -149,14 +190,18 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
     };
 
     const allTools = { ...prebuiltTools, ...v7Tools } as ToolSet;
+    const toolNames = Object.keys(allTools);
+    console.log(`[invoker] Tools available: ${toolNames.join(', ')}`);
 
-    // ── 6. Resolve model ──────────────────────────────────────────────────────
+    // ── 7. Resolve model ──────────────────────────────────────────────────────
+    console.log(`[invoker] Resolving model ${config.model.provider}:${config.model.model}…`);
     const model = resolveModel(config.model);
 
-    // ── 7. Build user message from event ──────────────────────────────────────
+    // ── 8. Build user message from event ──────────────────────────────────────
     const userContent = formatEventAsMessage(triggerSkill, triggerType, triggerData, opts.attachments);
 
-    // ── 8. streamText with AI SDK v6 ────────────────────────────────────────
+    // ── 9. streamText with AI SDK v6 ────────────────────────────────────────
+    console.log(`[invoker] Calling LLM…`);
     const toolsUsed: string[] = [];
 
     const result = streamText({
@@ -185,6 +230,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
         publishTextDelta(haseefId, runId, p.text ?? p.textDelta ?? '');
       } else if (p.type === 'tool-call') {
         toolsUsed.push(p.toolName);
+        console.log(`[invoker] Tool call: ${p.toolName}`);
         publishToolEvent(haseefId, runId, 'tool.call', {
           toolName: p.toolName,
           args: p.args ?? p.input,
@@ -202,7 +248,9 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
       }
     }
 
-    // ── 9. Extract usage ──────────────────────────────────────────────────────
+    console.log(`[invoker] Stream ended. Tools used: ${[...new Set(toolsUsed)].join(', ') || '(none)'}`);
+
+    // ── 10. Extract usage ──────────────────────────────────────────────────────
     let promptTokens = 0;
     let completionTokens = 0;
     let stepCount = 0;
@@ -223,7 +271,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
       stepCount = toolsUsed.length;
     }
 
-    // ── 10. Finalize run ──────────────────────────────────────────────────────
+    // ── 11. Finalize run ──────────────────────────────────────────────────────
     const durationMs = Date.now() - startedAt;
     const status = signal.aborted ? 'interrupted' : 'completed';
 
@@ -258,7 +306,9 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
       });
     }
 
-    // ── 11. Post-run reflection ─────────────────────────────────────────────
+    console.log(`[invoker] Run ${runId} finalized — status: ${status}`);
+
+    // ── 12. Post-run reflection ─────────────────────────────────────────────
     if (runSummary && !signal.aborted) {
       await reflect({
         haseefId,
@@ -272,30 +322,34 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
   } catch (err) {
     if (signal.aborted) {
       // Expected — run was interrupted by coordinator
-      await prisma.run.update({
-        where: { id: runId },
-        data: {
-          status: 'interrupted' as any,
-          durationMs: Date.now() - startedAt,
-          completedAt: new Date(),
-          errorMessage: 'Interrupted by new event',
-        },
-      });
+      if (runCreated) {
+        await prisma.run.update({
+          where: { id: runId },
+          data: {
+            status: 'interrupted' as any,
+            durationMs: Date.now() - startedAt,
+            completedAt: new Date(),
+            errorMessage: 'Interrupted by new event',
+          },
+        }).catch(() => {});
+      }
       return;
     }
 
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`[invoker] Run ${runId} failed:`, errMsg);
 
-    await prisma.run.update({
-      where: { id: runId },
-      data: {
-        status: 'failed' as any,
-        errorMessage: errMsg,
-        durationMs: Date.now() - startedAt,
-        completedAt: new Date(),
-      },
-    });
+    if (runCreated) {
+      await prisma.run.update({
+        where: { id: runId },
+        data: {
+          status: 'failed' as any,
+          errorMessage: errMsg,
+          durationMs: Date.now() - startedAt,
+          completedAt: new Date(),
+        },
+      }).catch(() => {});
+    }
 
     publishRunEvent(haseefId, runId, 'run.failed', { error: errMsg });
   }
