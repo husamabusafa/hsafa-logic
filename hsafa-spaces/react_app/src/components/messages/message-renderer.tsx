@@ -5,7 +5,6 @@ import { VoteMessage } from "./vote-message";
 import { ChoiceMessage } from "./choice-message";
 import { FormMessage } from "./form-message";
 import { CardMessage } from "./card-message";
-import { ImageMessage } from "./image-message";
 import { VoiceMessage } from "./voice-message";
 import { VideoMessage } from "./video-message";
 import { FileMessage } from "./file-message";
@@ -235,7 +234,9 @@ function renderContent(message: MockMessage, isOwn = false) {
     case "card":
       return <CardMessage message={message} />;
     case "image":
-      return <ImageMessage message={message} />;
+      // Images flow through metadata.files[] → AttachmentsRenderer (handled at top of renderContent).
+      // If we reach here it's a malformed image message — fall back to text.
+      return <TextMessage message={message} />;
     case "voice":
       return <VoiceMessage message={message} isOwn={isOwn} />;
     case "video":

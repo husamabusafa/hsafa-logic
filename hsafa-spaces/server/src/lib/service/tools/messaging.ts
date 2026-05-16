@@ -74,20 +74,35 @@ export async function handleSendImage(
   if (!imageUrl) return { error: "imageUrl is required" };
   if (!agentEntityId) return { error: "agentEntityId not resolved" };
 
-  const caption = (args.caption as string) || undefined;
+  const caption = (args.caption as string) || "";
+  const fileName = (args.fileName as string) || deriveImageFileName(imageUrl);
+  const fileMimeType = (args.fileMimeType as string) || "image/png";
   const replyTo = await resolveReplyTo(args.replyTo as string | undefined);
 
   const result = await postSpaceMessage({
     spaceId,
     entityId: agentEntityId,
     role: "assistant",
-    content: caption || "",
+    content: caption,
     messageType: "image",
     replyTo,
-    metadata: { toolName, actionId, payload: { imageUrl, caption } },
+    metadata: {
+      toolName,
+      actionId,
+      files: [{ type: "image", url: imageUrl, fileName, fileMimeType }],
+    },
   });
 
   return { success: true, messageId: result.messageId, sentTo: resolvedSpaceName(conn!) };
+}
+
+function deriveImageFileName(url: string): string {
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split("/").filter(Boolean).pop();
+    if (last && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(last)) return last;
+  } catch { /* ignore */ }
+  return "image.png";
 }
 
 export async function handleSendVoice(

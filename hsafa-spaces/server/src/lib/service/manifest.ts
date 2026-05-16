@@ -337,17 +337,25 @@ export const TOOLS = [
   {
     name: "send_image",
     description:
-      "Send an image message to your current space. Provide a URL to an image (e.g. a generated image, an external link). Returns {success:true, messageId}.",
+      "Send an image message to your current space. Provide any HTTP(S) image URL — e.g. one returned by an image-generation skill, a fetched URL, or any external image link. Returns {success:true, messageId}.",
     inputSchema: {
       type: "object" as const,
       properties: {
         imageUrl: {
           type: "string",
-          description: "URL of the image to send.",
+          description: "HTTP(S) URL of the image to send.",
         },
         caption: {
           type: "string",
-          description: "Optional caption/description for the image.",
+          description: "Optional caption/description shown next to the image.",
+        },
+        fileName: {
+          type: "string",
+          description: "Optional display filename (e.g. 'sunset.png'). Auto-derived from URL if omitted.",
+        },
+        fileMimeType: {
+          type: "string",
+          description: "Optional MIME type (e.g. 'image/png'). Defaults to image/png.",
         },
         replyTo: {
           type: "string",

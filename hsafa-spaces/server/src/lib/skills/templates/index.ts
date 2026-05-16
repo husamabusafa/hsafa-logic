@@ -8,6 +8,7 @@ import type { SkillTemplateDefinition } from "../types.js";
 import { codeTemplate } from "./code.js";
 import { databaseTemplate } from "./database.js";
 import { emailTemplate } from "./email.js";
+import { imageGenTemplate } from "./image_gen.js";
 import { schedulerTemplate } from "./scheduler.js";
 import { webTemplate } from "./web.js";
 
@@ -16,6 +17,7 @@ export const ALL_TEMPLATES: Map<string, SkillTemplateDefinition> = new Map([
   [codeTemplate.name, codeTemplate],
   [databaseTemplate.name, databaseTemplate],
   [emailTemplate.name, emailTemplate],
+  [imageGenTemplate.name, imageGenTemplate],
   [schedulerTemplate.name, schedulerTemplate],
   [webTemplate.name, webTemplate],
 ]);

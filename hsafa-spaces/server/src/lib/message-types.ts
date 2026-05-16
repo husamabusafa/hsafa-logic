@@ -160,6 +160,8 @@ export function generateSnippet(
     }
 
     case "image":
+      // Real image messages always carry their attachment in metadata.files[]
+      // and are handled by the multi-file branch above. This is a fallback.
       return hasText ? `🖼️ ${truncate(content, maxLength - 3)}` : "🖼️ Image";
 
     case "voice":

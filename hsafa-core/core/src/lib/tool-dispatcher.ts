@@ -14,7 +14,10 @@ import { prisma } from './db.js';
 //   service SDK → POST /api/actions/:actionId/result → resolveAction()
 // =============================================================================
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+// Default tool dispatch timeout. Long enough to cover slow operations like
+// image generation (gpt-image-1, DALL·E 3, OpenRouter routing) which can take
+// 60–120s. Individual haseefs can override via configJson.actionTimeout.
+const DEFAULT_TIMEOUT_MS = 180_000;
 
 // Per-skill SSE connections (one skill can have many connected clients)
 const skillConnections = new Map<string, Set<Response>>();
@@ -146,7 +149,11 @@ export async function dispatchToSkill(opts: DispatchOptions): Promise<unknown> {
   return new Promise<unknown>((resolve) => {
     const timer = setTimeout(() => {
       pendingActions.delete(actionId);
-      resolve({ error: `Tool "${toolName}" timed out after ${timeout}ms` });
+      resolve({
+        error: `Tool "${toolName}" timed out after ${Math.round(timeout / 1000)}s. ` +
+          `If this tool is expected to take longer (e.g. image generation), ` +
+          `increase the haseef's configJson.actionTimeout (in ms).`,
+      });
     }, timeout);
 
     pendingActions.set(actionId, { resolve, timer, startedAt: Date.now() });

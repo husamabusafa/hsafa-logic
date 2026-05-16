@@ -144,12 +144,22 @@ export function adaptMessage(
     base.cardActions = payload.actions as MockMessage["cardActions"];
   }
 
-  // Image
-  if (msgType === "image" && payload) {
-    base.imageUrl = (payload.imageUrl ?? payload.url) as string;
-    base.imageCaption = payload.caption as string;
-    base.imageWidth = payload.width as number;
-    base.imageHeight = payload.height as number;
+  // Image messages now flow through metadata.files[] (handled below).
+  // Legacy support: if an old DB row still has payload.imageUrl, translate
+  // it into a single-file attachment so the unified renderer picks it up.
+  if (msgType === "image" && payload && !meta.files) {
+    const legacyUrl = (payload.imageUrl ?? payload.url) as string | undefined;
+    if (legacyUrl) {
+      (meta as Record<string, unknown>).files = [
+        {
+          url: legacyUrl,
+          fileName: (payload.fileName as string) || "image.png",
+          fileSize: 0,
+          fileMimeType: (payload.fileMimeType as string) || "image/png",
+          type: "image",
+        },
+      ];
+    }
   }
 
   // Voice
@@ -692,8 +702,17 @@ export function useSpaceChat(
         // Single file fallback
         switch (data.type) {
           case "image":
-            payload.imageUrl = data.url;
-            if (data.thumbnailUrl) payload.thumbnailUrl = data.thumbnailUrl;
+            // Use unified files[] shape for single images too
+            if (data.url) {
+              filesArray.push({
+                url: data.url,
+                fileName: data.fileName ?? "image.png",
+                fileSize: data.fileSize ?? 0,
+                fileMimeType: data.fileMimeType ?? "image/png",
+                thumbnailUrl: data.thumbnailUrl,
+                type: "image",
+              });
+            }
             break;
           case "voice":
             payload.audioUrl = data.url;
@@ -722,20 +741,19 @@ export function useSpaceChat(
         createdAt: new Date().toISOString(),
         seenBy: [],
         type: msgType,
-        ...(msgType === "image" && data.url ? { imageUrl: data.url, imageCaption: data.text } : {}),
         ...(msgType === "voice" ? { audioUrl: data.url, audioDuration: data.audioDuration, transcription: data.transcription } : {}),
         ...(msgType === "file" && data.url ? { fileUrl: data.url, fileName: data.fileName, fileSize: data.fileSize, fileMimeType: data.fileMimeType } : {}),
       };
 
-      // Populate attachments for multi-file uploads
-      if (data.files && data.files.length > 0) {
-        optimistic.attachments = data.files.map((f) => ({
-          url: f.url,
-          fileName: f.fileName,
-          fileSize: f.fileSize,
-          fileMimeType: f.fileMimeType,
-          thumbnailUrl: f.thumbnailUrl,
-          type: f.type,
+      // Populate attachments from unified filesArray (multi-file or single-image fallback)
+      if (filesArray.length > 0) {
+        optimistic.attachments = filesArray.map((f) => ({
+          url: f.url as string,
+          fileName: f.fileName as string,
+          fileSize: (f.fileSize as number) ?? 0,
+          fileMimeType: f.fileMimeType as string,
+          thumbnailUrl: f.thumbnailUrl as string | undefined,
+          type: f.type as "image" | "file" | "video",
         }));
       }
 

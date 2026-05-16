@@ -24,7 +24,164 @@ import {
   ArrowLeft,
   ChevronRight,
   Zap,
+  Eye,
+  EyeOff,
 } from "lucide-react";
+
+// ── Schema helpers ───────────────────────────────────────────────────────────
+
+/** Convert a camelCase / snake_case key into a human title. */
+function prettifyKey(key: string): string {
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Heuristic for detecting secret-ish fields (so we render a masked input). */
+function isSecretField(key: string, schema: any): boolean {
+  if (schema?.format === "password") return true;
+  if (schema?.writeOnly === true) return true;
+  return /(?:api[_-]?key|secret|token|password|access[_-]?key)/i.test(key);
+}
+
+/** Resolve the effective enum/labels/default for a field, applying x-enumByField. */
+function resolveFieldOptions(
+  schema: any,
+  allValues: Record<string, string>,
+): { enum?: string[]; enumLabels?: string[]; default?: string } {
+  const dep = schema?.["x-enumByField"];
+  if (dep?.field && dep.map) {
+    const otherVal = allValues[dep.field];
+    const branch = dep.map[otherVal];
+    if (branch) {
+      return {
+        enum: branch.enum,
+        enumLabels: branch.enumLabels,
+        default: branch.default,
+      };
+    }
+  }
+  return {
+    enum: schema?.enum,
+    enumLabels: schema?.enumLabels,
+    default: schema?.default !== undefined ? String(schema.default) : undefined,
+  };
+}
+
+// ── Config field renderer ────────────────────────────────────────────────────
+
+interface ConfigFieldProps {
+  fieldKey: string;
+  schema: any;
+  required: boolean;
+  value: string;
+  allValues: Record<string, string>;
+  onChange: (next: string) => void;
+}
+
+function ConfigField({ fieldKey, schema, required, value, allValues, onChange }: ConfigFieldProps) {
+  const [revealSecret, setRevealSecret] = useState(false);
+
+  const label = schema?.title ?? prettifyKey(fieldKey);
+  const description: string | undefined = schema?.description;
+  const opts = resolveFieldOptions(schema, allValues);
+
+  const inputClass =
+    "w-full px-3 py-2.5 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all";
+
+  // 1) Enum → select (covers static enum AND dependent enum via x-enumByField)
+  if (opts.enum && opts.enum.length > 0) {
+    const labels = opts.enumLabels && opts.enumLabels.length === opts.enum.length ? opts.enumLabels : opts.enum;
+    return (
+      <div>
+        <FieldLabel label={label} required={required} />
+        <select
+          value={value || opts.default || opts.enum[0]}
+          onChange={(e) => onChange(e.target.value)}
+          className={inputClass}
+        >
+          {opts.enum.map((v, i) => (
+            <option key={v} value={v}>
+              {labels[i]}
+            </option>
+          ))}
+        </select>
+        {description && <p className="text-xs text-muted-foreground mt-1">{description}</p>}
+      </div>
+    );
+  }
+
+  // 2) Boolean → select
+  if (schema?.type === "boolean") {
+    return (
+      <div>
+        <FieldLabel label={label} required={required} />
+        <select
+          value={value || "false"}
+          onChange={(e) => onChange(e.target.value)}
+          className={inputClass}
+        >
+          <option value="true">Yes</option>
+          <option value="false">No</option>
+        </select>
+        {description && <p className="text-xs text-muted-foreground mt-1">{description}</p>}
+      </div>
+    );
+  }
+
+  // 3) Secret → masked input with reveal toggle
+  if (isSecretField(fieldKey, schema)) {
+    return (
+      <div>
+        <FieldLabel label={label} required={required} />
+        <div className="relative">
+          <input
+            type={revealSecret ? "text" : "password"}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={`Paste your ${label.toLowerCase()}…`}
+            autoComplete="off"
+            className={`${inputClass} pr-10 font-mono`}
+          />
+          <button
+            type="button"
+            onClick={() => setRevealSecret((v) => !v)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-muted-foreground hover:text-foreground transition-colors"
+            tabIndex={-1}
+          >
+            {revealSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+        {description && <p className="text-xs text-muted-foreground mt-1">{description}</p>}
+      </div>
+    );
+  }
+
+  // 4) Default — text or number input
+  return (
+    <div>
+      <FieldLabel label={label} required={required} />
+      <input
+        type={schema?.type === "number" ? "number" : "text"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={opts.default !== undefined ? `Default: ${opts.default}` : ""}
+        className={inputClass}
+      />
+      {description && <p className="text-xs text-muted-foreground mt-1">{description}</p>}
+    </div>
+  );
+}
+
+function FieldLabel({ label, required }: { label: string; required: boolean }) {
+  return (
+    <label className="text-sm font-medium block mb-1.5">
+      {label}
+      {required && <span className="text-destructive ml-0.5">*</span>}
+    </label>
+  );
+}
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -432,11 +589,20 @@ export function SkillTemplateCreatePage() {
     if (!templateName) return;
     skillsApi.getTemplate(templateName).then((res) => {
       setTemplate(res.template);
-      // Pre-populate config fields from schema defaults
+      // Pre-populate config fields from schema defaults — two passes so that
+      // dependent fields (x-enumByField) resolve against the resolved parent value.
       const fields: Record<string, string> = {};
       const props = (res.template.configSchema as any)?.properties ?? {};
+      // Pass 1: static defaults
       for (const [key, schema] of Object.entries(props) as [string, any][]) {
         fields[key] = schema.default !== undefined ? String(schema.default) : "";
+      }
+      // Pass 2: dependent defaults (e.g. model default depends on provider)
+      for (const [key, schema] of Object.entries(props) as [string, any][]) {
+        const opts = resolveFieldOptions(schema, fields);
+        if (!fields[key] && opts.default !== undefined) {
+          fields[key] = opts.default;
+        }
       }
       setConfigFields(fields);
       setIsLoading(false);
@@ -600,38 +766,34 @@ export function SkillTemplateCreatePage() {
             <div className="pt-2">
               <h3 className="text-sm font-semibold mb-3">Configuration</h3>
               <div className="space-y-4">
-                {Object.entries(schemaProps).map(([key, schema]: [string, any]) => {
-                  const isRequired = requiredFields.includes(key);
-                  return (
-                    <div key={key}>
-                      <label className="text-sm font-medium block mb-1.5">
-                        {key}
-                        {isRequired && <span className="text-destructive ml-0.5">*</span>}
-                      </label>
-                      {schema.type === "boolean" ? (
-                        <select
-                          value={configFields[key] || "false"}
-                          onChange={(e) => setConfigFields((prev) => ({ ...prev, [key]: e.target.value }))}
-                          className="w-full px-3 py-2.5 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
-                        >
-                          <option value="true">true</option>
-                          <option value="false">false</option>
-                        </select>
-                      ) : (
-                        <input
-                          type={schema.type === "number" ? "number" : "text"}
-                          value={configFields[key] || ""}
-                          onChange={(e) => setConfigFields((prev) => ({ ...prev, [key]: e.target.value }))}
-                          placeholder={schema.default !== undefined ? `Default: ${schema.default}` : ""}
-                          className="w-full px-3 py-2.5 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
-                        />
-                      )}
-                      {schema.description && (
-                        <p className="text-xs text-muted-foreground mt-1">{schema.description}</p>
-                      )}
-                    </div>
-                  );
-                })}
+                {Object.entries(schemaProps).map(([key, schema]: [string, any]) => (
+                  <ConfigField
+                    key={key}
+                    fieldKey={key}
+                    schema={schema}
+                    required={requiredFields.includes(key)}
+                    value={configFields[key] ?? ""}
+                    allValues={configFields}
+                    onChange={(next) =>
+                      setConfigFields((prev) => {
+                        const updated = { ...prev, [key]: next };
+                        // Reset dependent fields when their parent changes.
+                        // e.g. when "provider" changes, reset "model" to the new branch's default.
+                        for (const [otherKey, otherSchema] of Object.entries(schemaProps) as [
+                          string,
+                          any,
+                        ][]) {
+                          const dep = otherSchema?.["x-enumByField"];
+                          if (dep?.field === key) {
+                            const branch = dep.map?.[next];
+                            updated[otherKey] = branch?.default ?? "";
+                          }
+                        }
+                        return updated;
+                      })
+                    }
+                  />
+                ))}
               </div>
             </div>
           )}

@@ -245,18 +245,6 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
         }
       }
     }
-    // Also handle single image from payload (agent-sent images)
-    if (!imageAttachments.length && messageType === "image" && metadata?.payload) {
-      const p = metadata.payload as Record<string, unknown>;
-      const imgUrl = (p.imageUrl ?? p.url) as string | undefined;
-      if (imgUrl) {
-        imageAttachments.push({
-          type: "image",
-          mimeType: "image/png",
-          url: imgUrl,
-        });
-      }
-    }
 
     // Auto-set activeSpace so tool handlers know which space triggered this run
     // without relying on the LLM calling enter_space with the correct spaceId.
@@ -487,12 +475,11 @@ function buildMediaFallbackContent(
   if (originalContent && originalContent.trim()) return originalContent;
 
   switch (messageType) {
-    case "image": {
-      const caption = payload?.caption as string | undefined;
-      return caption
-        ? `[Image message] ${caption}`
-        : "[Image message — no caption provided]";
-    }
+    case "image":
+      // Image messages always carry their attachment in metadata.files[],
+      // which is handled by the branch above. If we get here it means the
+      // message had no files entry — describe it generically.
+      return originalContent ? `[Image] ${originalContent}` : "[Image message]";
     case "voice": {
       const transcription = payload?.transcription as string | undefined;
       const duration = payload?.audioDuration as number | undefined;
