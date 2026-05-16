@@ -1,4 +1,11 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+
+// Load .env from the directory containing this source file, not process.cwd()
+const __dirname = dirname(fileURLToPath(import.meta.url));
+loadEnv({ path: join(__dirname, "../.env") });
+
 import express from "express";
 import cors from "cors";
 import { bootstrapExtension } from "./lib/service/index.js";
