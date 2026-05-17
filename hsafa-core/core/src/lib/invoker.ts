@@ -240,7 +240,7 @@ export async function invoke(opts: InvokeOptions): Promise<void> {
     const model = resolveModel(config.model);
 
     // ── 8. Build user message from event ──────────────────────────────────────
-    const userContent = formatEventAsMessage(triggerSkill, triggerType, triggerData, opts.attachments);
+    const userContent = await formatEventAsMessage(triggerSkill, triggerType, triggerData, opts.attachments);
 
     // ── 9. streamText with AI SDK v6 ────────────────────────────────────────
     console.log(`[invoker] Calling LLM…`);
@@ -429,12 +429,12 @@ async function loadSkillTools(skillNames: string[]): Promise<V7ToolRow[]> {
  * Format a trigger event as a user message for the LLM.
  * Returns an array of content parts for multimodal support (text + images/files).
  */
-function formatEventAsMessage(
+async function formatEventAsMessage(
   skill: string,
   type: string,
   data: Record<string, unknown>,
   attachments?: Array<{ type: string; mimeType: string; url?: string; base64?: string; name?: string }>,
-): Array<{ type: 'text'; text: string } | { type: 'image'; image: string } | { type: 'file'; data: string; mediaType: string; filename?: string }> {
+): Promise<Array<{ type: 'text'; text: string } | { type: 'image'; image: string } | { type: 'file'; data: string; mediaType: string; filename?: string }>> {
   const textParts: string[] = [];
 
   textParts.push(`[EVENT from ${skill}] type: ${type}`);
@@ -452,16 +452,19 @@ function formatEventAsMessage(
     textParts.push(`attachments: ${attachments.map((a) => `[${a.type}: ${a.name ?? a.mimeType}]`).join(', ')}`);
   }
 
-  const content: ReturnType<typeof formatEventAsMessage> = [
+  const content: Array<{ type: 'text'; text: string } | { type: 'image'; image: string } | { type: 'file'; data: string; mediaType: string; filename?: string }> = [
     { type: 'text', text: textParts.join('\n') },
   ];
 
   // Add images as content parts
   for (const a of attachments ?? []) {
-    if (a.type === 'image' && a.url) {
-      content.push({ type: 'image', image: a.url });
-    } else if (a.type === 'image' && a.base64) {
-      content.push({ type: 'image', image: `data:${a.mimeType};base64,${a.base64}` });
+    if (a.type === 'image') {
+      if (a.base64) {
+        content.push({ type: 'image', image: `data:${a.mimeType};base64,${a.base64}` });
+      } else if (a.url) {
+        const imageUrl = await fetchAndInlineIfLocal(a.url, a.mimeType);
+        content.push({ type: 'image', image: imageUrl });
+      }
     } else if (a.base64) {
       // File (audio, pdf, etc.)
       content.push({
@@ -474,4 +477,23 @@ function formatEventAsMessage(
   }
 
   return content;
+}
+
+/** If the URL points to localhost/127.0.0.1, fetch it and inline as a base64 data URL so external LLM providers can read it. */
+async function fetchAndInlineIfLocal(url: string, mimeType?: string): Promise<string> {
+  try {
+    const parsed = new URL(url);
+    const isLocal = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1';
+    if (!isLocal) return url;
+
+    const res = await fetch(url);
+    if (!res.ok) return url;
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const b64 = buffer.toString('base64');
+    const mt = mimeType || res.headers.get('content-type') || 'image/png';
+    return `data:${mt};base64,${b64}`;
+  } catch {
+    return url;
+  }
 }
