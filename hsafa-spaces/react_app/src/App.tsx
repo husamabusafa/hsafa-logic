@@ -485,7 +485,7 @@ function AppContent() {
             <Route path="/spaces/:spaceId" element={<SpaceChatRoute spaces={spaces} haseefs={haseefs} onRefreshSpaces={fetchSpaces} />} />
 
             {/* Haseefs */}
-            <Route path="/haseefs" element={<HaseefsGridPage haseefs={haseefs} isLoading={haseefsLoading} />} />
+            <Route path="/haseefs" element={<HaseefsGridPage haseefs={haseefs} isLoading={haseefsLoading} onImported={fetchHaseefs} />} />
             <Route path="/haseefs/new" element={<HaseefCreatePage onCreated={fetchHaseefs} />} />
             <Route path="/haseefs/:haseefId" element={<HaseefDetailPage onDeleted={fetchHaseefs} allHaseefs={haseefs} />} />
             <Route path="/haseefs/:haseefId/edit" element={<HaseefEditPage onSaved={fetchHaseefs} />} />

@@ -13,6 +13,7 @@ import {
   getHaseef as coreGetHaseef,
   updateHaseef as coreUpdateHaseef,
   deleteHaseef as coreDeleteHaseef,
+  listHaseefs as coreListHaseefs,
 } from "../lib/core-proxy.js";
 import { getDecryptedApiKey } from "./api-keys.js";
 
@@ -218,6 +219,183 @@ router.get("/", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("List haseefs error:", error);
     res.status(500).json({ error: "Failed to list haseefs" });
+  }
+});
+
+// =============================================================================
+// GET /api/haseefs/importable — List haseefs in Core not yet owned by anyone
+// =============================================================================
+router.get("/importable", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  try {
+    const [coreHaseefs, allOwnerships] = await Promise.all([
+      coreListHaseefs(),
+      prisma.haseefOwnership.findMany({ select: { haseefId: true } }),
+    ]);
+
+    const ownedIds = new Set(allOwnerships.map((o) => o.haseefId));
+    const importable = coreHaseefs
+      .filter((h) => !ownedIds.has(h.id))
+      .map((h) => ({
+        id: h.id,
+        name: h.name,
+        description: h.description ?? null,
+        createdAt: h.createdAt ?? null,
+      }));
+
+    res.json({ haseefs: importable });
+  } catch (error: any) {
+    if (error?.status) {
+      res.status(error.status).json({ error: error.error });
+      return;
+    }
+    console.error("List importable haseefs error:", error);
+    res.status(500).json({ error: "Failed to list importable haseefs" });
+  }
+});
+
+// =============================================================================
+// POST /api/haseefs/import — Claim an existing Core haseef into your account
+// =============================================================================
+router.post("/import", async (req: Request, res: Response) => {
+  const auth = await requireJwtUser(req);
+  if (isJwtError(auth)) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  try {
+    const { haseefId } = req.body as { haseefId?: string };
+    if (!haseefId || typeof haseefId !== "string") {
+      res.status(400).json({ error: "haseefId is required" });
+      return;
+    }
+
+    // 1. Fetch from Core (404 if missing)
+    let coreHaseef;
+    try {
+      coreHaseef = await coreGetHaseef(haseefId);
+    } catch (err: any) {
+      if (err?.status === 404) {
+        res.status(404).json({ error: "Haseef not found in Core" });
+        return;
+      }
+      throw err;
+    }
+
+    // 2. Reject if already claimed (by anyone)
+    const existingOwnership = await prisma.haseefOwnership.findFirst({
+      where: { haseefId },
+    });
+    if (existingOwnership) {
+      const sameUser = existingOwnership.userId === auth.userId;
+      res.status(409).json({
+        error: sameUser
+          ? "You already own this haseef"
+          : "Haseef is already owned by another user",
+      });
+      return;
+    }
+
+    // 3. Resolve or create the agent entity in Spaces
+    let entityId = (coreHaseef.profileJson as Record<string, unknown> | undefined)
+      ?.entityId as string | undefined;
+
+    if (entityId) {
+      const existing = await prisma.entity.findUnique({ where: { id: entityId } });
+      if (!existing) {
+        // profileJson references a non-existent entity — recreate it with that ID
+        await prisma.entity.create({
+          data: {
+            id: entityId,
+            type: "agent",
+            displayName: coreHaseef.name,
+          },
+        });
+      }
+    } else {
+      // No entityId in profileJson — find by name or create fresh
+      const existingByName = await prisma.entity.findFirst({
+        where: { displayName: coreHaseef.name, type: "agent" },
+        select: { id: true },
+      });
+      entityId = existingByName?.id ?? crypto.randomUUID();
+      if (!existingByName) {
+        await prisma.entity.create({
+          data: { id: entityId, type: "agent", displayName: coreHaseef.name },
+        });
+      }
+      // Persist the link back to Core so future bootstraps resolve it consistently
+      const newProfileJson = {
+        ...((coreHaseef.profileJson as Record<string, unknown> | undefined) ?? {}),
+        entityId,
+      };
+      try {
+        await coreUpdateHaseef(haseefId, { profileJson: newProfileJson });
+      } catch (err) {
+        console.warn("[haseefs/import] Failed to patch Core profileJson:", err);
+      }
+    }
+
+    // 4. Create ownership
+    await prisma.haseefOwnership.create({
+      data: { userId: auth.userId, haseefId, entityId: entityId! },
+    });
+
+    // 5. Add the entity to the user's default base (best-effort)
+    const user = await prisma.user.findUnique({
+      where: { id: auth.userId },
+      select: { defaultBaseId: true },
+    });
+    if (user?.defaultBaseId) {
+      await prisma.baseMember
+        .create({
+          data: {
+            baseId: user.defaultBaseId,
+            entityId: entityId!,
+            role: "member",
+          },
+        })
+        .catch((err) => {
+          // Ignore duplicate-membership conflicts
+          if (err?.code !== "P2002") {
+            console.warn("[haseefs/import] Failed to add to base:", err);
+          }
+        });
+    }
+
+    // 6. Connect to the spaces service (idempotent — no-op if already connected)
+    try {
+      await connectNewHaseef({
+        id: coreHaseef.id,
+        name: coreHaseef.name,
+        profileJson: coreHaseef.profileJson,
+        configJson: coreHaseef.configJson,
+      });
+    } catch (err) {
+      console.warn("[haseefs/import] Failed to auto-connect:", err);
+    }
+
+    res.status(201).json({
+      haseef: {
+        id: coreHaseef.id,
+        name: coreHaseef.name,
+        description: coreHaseef.description,
+        entityId,
+      },
+    });
+  } catch (error: any) {
+    if (error?.status) {
+      res.status(error.status).json({ error: error.error });
+      return;
+    }
+    console.error("Import haseef error:", error);
+    res.status(500).json({ error: "Failed to import haseef" });
   }
 });
 

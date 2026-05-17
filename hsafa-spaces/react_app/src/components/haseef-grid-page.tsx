@@ -1,3 +1,4 @@
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   PlusIcon,
@@ -6,20 +7,33 @@ import {
   LoaderIcon,
   CalendarIcon,
   ActivityIcon,
+  DownloadIcon,
+  CheckIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import type { HaseefListItem } from "@/lib/api";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { useToast } from "@/components/ui/toast";
+import { haseefsApi, type HaseefListItem } from "@/lib/api";
 
 // ─── Grid Page ───────────────────────────────────────────────────────────────
 
 interface HaseefsGridPageProps {
   haseefs: HaseefListItem[];
   isLoading: boolean;
+  onImported?: () => void;
 }
 
-export function HaseefsGridPage({ haseefs, isLoading }: HaseefsGridPageProps) {
+export function HaseefsGridPage({ haseefs, isLoading, onImported }: HaseefsGridPageProps) {
   const navigate = useNavigate();
+  const [showImport, setShowImport] = useState(false);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -32,10 +46,16 @@ export function HaseefsGridPage({ haseefs, isLoading }: HaseefsGridPageProps) {
               Manage your AI agents
             </p>
           </div>
-          <Button onClick={() => navigate("/haseefs/new")}>
-            <PlusIcon className="size-4" />
-            New Haseef
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setShowImport(true)}>
+              <DownloadIcon className="size-4" />
+              Import
+            </Button>
+            <Button onClick={() => navigate("/haseefs/new")}>
+              <PlusIcon className="size-4" />
+              New Haseef
+            </Button>
+          </div>
         </div>
 
         {/* Grid */}
@@ -111,6 +131,164 @@ export function HaseefsGridPage({ haseefs, isLoading }: HaseefsGridPageProps) {
           </div>
         )}
       </div>
+
+      <ImportHaseefDialog
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        onImported={() => {
+          setShowImport(false);
+          onImported?.();
+        }}
+      />
     </div>
+  );
+}
+
+// ─── Import Dialog ───────────────────────────────────────────────────────────
+
+interface ImportableHaseef {
+  id: string;
+  name: string;
+  description: string | null;
+  createdAt: string | null;
+}
+
+function ImportHaseefDialog({
+  open,
+  onClose,
+  onImported,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const { toast } = useToast();
+  const [items, setItems] = useState<ImportableHaseef[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [manualId, setManualId] = useState("");
+  const [importingId, setImportingId] = useState<string | null>(null);
+
+  const fetchList = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { haseefs } = await haseefsApi.listImportable();
+      setItems(haseefs);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load haseefs");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      setManualId("");
+      fetchList();
+    }
+  }, [open, fetchList]);
+
+  const doImport = async (haseefId: string) => {
+    if (!haseefId) return;
+    setImportingId(haseefId);
+    try {
+      const { haseef } = await haseefsApi.import(haseefId);
+      toast(`Imported ${haseef.name}`, "success");
+      onImported();
+    } catch (err: any) {
+      toast(err?.message || "Could not import haseef", "error");
+    } finally {
+      setImportingId(null);
+    }
+  };
+
+  const trimmedManual = manualId.trim();
+
+  return (
+    <Dialog open={open} onClose={onClose} className="max-w-lg">
+      <DialogHeader onClose={onClose}>
+        <DialogTitle>Import existing Haseef</DialogTitle>
+        <DialogDescription>
+          Claim a Haseef that already exists in Core but isn't owned by anyone in Spaces yet.
+        </DialogDescription>
+      </DialogHeader>
+
+      {/* List of importable haseefs */}
+      <div className="space-y-2 max-h-72 overflow-y-auto -mx-1 px-1">
+        {loading ? (
+          <div className="flex items-center justify-center py-10">
+            <LoaderIcon className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : error ? (
+          <div className="text-sm text-destructive py-4">{error}</div>
+        ) : items.length === 0 ? (
+          <div className="text-sm text-muted-foreground py-6 text-center">
+            No unclaimed haseefs available.
+          </div>
+        ) : (
+          items.map((h) => (
+            <div
+              key={h.id}
+              className="flex items-center gap-3 rounded-lg border border-border bg-card p-3"
+            >
+              <div className="size-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                <BotIcon className="size-4 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-foreground truncate">{h.name}</div>
+                <div className="text-xs text-muted-foreground font-mono truncate">{h.id}</div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={importingId !== null}
+                onClick={() => doImport(h.id)}
+              >
+                {importingId === h.id ? (
+                  <LoaderIcon className="size-3.5 animate-spin" />
+                ) : (
+                  <>
+                    <CheckIcon className="size-3.5" />
+                    Claim
+                  </>
+                )}
+              </Button>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Manual paste */}
+      <div className="mt-4 pt-4 border-t border-border">
+        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+          Or paste a Haseef ID
+        </label>
+        <div className="flex items-center gap-2">
+          <Input
+            placeholder="haseef-id-uuid"
+            value={manualId}
+            onChange={(e) => setManualId(e.target.value)}
+            className="font-mono text-xs"
+          />
+          <Button
+            disabled={!trimmedManual || importingId !== null}
+            onClick={() => doImport(trimmedManual)}
+          >
+            {importingId === trimmedManual ? (
+              <LoaderIcon className="size-4 animate-spin" />
+            ) : (
+              "Import"
+            )}
+          </Button>
+        </div>
+      </div>
+
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+      </DialogFooter>
+    </Dialog>
   );
 }

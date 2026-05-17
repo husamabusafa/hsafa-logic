@@ -171,6 +171,19 @@ export const haseefsApi = {
     return request<{ success: boolean }>(`/haseefs/${id}`, { method: "DELETE" });
   },
 
+  listImportable() {
+    return request<{
+      haseefs: Array<{ id: string; name: string; description: string | null; createdAt: string | null }>;
+    }>("/haseefs/importable");
+  },
+
+  import(haseefId: string) {
+    return request<{ haseef: Haseef }>("/haseefs/import", {
+      method: "POST",
+      body: JSON.stringify({ haseefId }),
+    });
+  },
+
   addToSpace(haseefId: string, spaceId: string) {
     return request<{ success: boolean }>(`/haseefs/${haseefId}/spaces/${spaceId}`, {
       method: "POST",
