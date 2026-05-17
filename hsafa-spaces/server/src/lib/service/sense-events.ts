@@ -231,16 +231,51 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       eventData.replyTo = replyTo;
     }
 
-    // Extract image attachments for multimodal LLM support
-    const imageAttachments: Array<{ type: "image" | "audio" | "file"; mimeType: string; url?: string; name?: string }> = [];
+    // Extract file attachments for multimodal LLM support (images + PDFs + files)
+    const attachments: Array<{ type: "image" | "audio" | "file"; mimeType: string; url?: string; base64?: string; name?: string }> = [];
     if (metadata?.files && Array.isArray(metadata.files)) {
       for (const f of metadata.files as Array<Record<string, unknown>>) {
-        if (f.type === "image" && f.url) {
-          imageAttachments.push({
+        const fileUrl = f.url as string | undefined;
+        const fileType = f.type as string;
+        const fileMime = (f.fileMimeType as string) || "application/octet-stream";
+        const fileName = f.fileName as string | undefined;
+        if (!fileUrl) continue;
+
+        if (fileType === "image") {
+          attachments.push({
             type: "image",
-            mimeType: (f.fileMimeType as string) || "image/png",
-            url: f.url as string,
-            name: f.fileName as string | undefined,
+            mimeType: fileMime,
+            url: fileUrl,
+            name: fileName,
+          });
+        } else {
+          // For non-image files (PDFs, docs, etc.), inline as base64 so the LLM can read them.
+          // Localhost URLs are fetched internally; external URLs are passed as-is.
+          try {
+            const parsed = new URL(fileUrl);
+            const isLocal = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "::1";
+            if (isLocal) {
+              const res = await fetch(fileUrl);
+              if (res.ok) {
+                const buf = Buffer.from(await res.arrayBuffer());
+                attachments.push({
+                  type: "file",
+                  mimeType: fileMime,
+                  base64: buf.toString("base64"),
+                  name: fileName,
+                });
+                continue;
+              }
+            }
+          } catch {
+            // fall through to URL-based attachment
+          }
+          // External URL — pass as-is (provider may or may not support fetching it)
+          attachments.push({
+            type: "file",
+            mimeType: fileMime,
+            url: fileUrl,
+            name: fileName,
           });
         }
       }
@@ -256,7 +291,7 @@ export async function handleInboxMessage(params: InboxMessageParams): Promise<vo
       skill: SKILL,
       type: "message",
       data: eventData,
-      ...(imageAttachments.length > 0 ? { attachments: imageAttachments } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
     });
 
     // Track message as pending-seen — will be flushed when run.started confirms
