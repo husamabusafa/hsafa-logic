@@ -60,7 +60,9 @@ services:
       FRONTEND_URL: ${FRONTEND_URL}
       # Core connection (for extension bridge)
       HSAFA_CORE_URL: ${HSAFA_CORE_URL:-https://core.hsafa.com}
-      CORE_SERVICE_KEY: ${CORE_SERVICE_KEY}
+      HSAFA_GATEWAY_URL: ${HSAFA_GATEWAY_URL:-https://core.hsafa.com}
+      # Must match HSAFA_SECRET_KEY in the Core container's env
+      CORE_SECRET_KEY: ${CORE_SECRET_KEY}
       # Optional: ElevenLabs
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
       # Optional: OpenAI/OpenRouter for AI features
